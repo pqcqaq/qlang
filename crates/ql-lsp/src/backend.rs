@@ -1627,6 +1627,15 @@ fn supports_workspace_source_root_definition_rename(kind: ql_analysis::SymbolKin
     )
 }
 
+fn supports_workspace_source_root_member_rename(kind: ql_analysis::SymbolKind) -> bool {
+    matches!(
+        kind,
+        ql_analysis::SymbolKind::Variant
+            | ql_analysis::SymbolKind::Field
+            | ql_analysis::SymbolKind::Method
+    )
+}
+
 fn supports_workspace_import_type_definition(kind: ql_analysis::SymbolKind) -> bool {
     matches!(
         kind,
@@ -4869,7 +4878,11 @@ fn rename_for_workspace_source_root_symbol_with_open_docs(
     let Some(definition_target) = analysis.definition_at(offset) else {
         return Ok(None);
     };
-    if !supports_workspace_source_root_definition_rename(definition_target.kind)
+    let supports_root_definition_rename =
+        supports_workspace_source_root_definition_rename(definition_target.kind);
+    let supports_root_member_rename =
+        supports_workspace_source_root_member_rename(definition_target.kind);
+    if (!supports_root_definition_rename && !supports_root_member_rename)
         || !occurrence_matches_definition_target(analysis, offset, &definition_target)
         || definition_target.name == new_name
     {
@@ -4879,6 +4892,49 @@ fn rename_for_workspace_source_root_symbol_with_open_docs(
     let Some(rename) = analysis.rename_at(offset, new_name)? else {
         return Ok(None);
     };
+
+    if supports_root_member_rename {
+        let mut changes = HashMap::<Url, Vec<TextEdit>>::new();
+        changes.insert(
+            uri.clone(),
+            rename
+                .edits
+                .into_iter()
+                .map(|edit| TextEdit::new(span_to_range(source, edit.span), edit.replacement))
+                .collect(),
+        );
+
+        if let Some(locations) = workspace_source_references_for_root_symbol_with_open_docs(
+            uri, source, analysis, package, open_docs, position, true,
+        ) {
+            for location in locations {
+                if location.uri == *uri {
+                    continue;
+                }
+
+                changes
+                    .entry(location.uri)
+                    .or_default()
+                    .push(TextEdit::new(location.range, new_name.to_owned()));
+            }
+        }
+
+        for edits in changes.values_mut() {
+            edits.sort_by_key(|edit| {
+                (
+                    edit.range.start.line,
+                    edit.range.start.character,
+                    edit.range.end.line,
+                    edit.range.end.character,
+                )
+            });
+            edits.dedup_by(|left, right| {
+                left.range == right.range && left.new_text == right.new_text
+            });
+        }
+
+        return Ok(Some(WorkspaceEdit::new(changes)));
+    }
 
     let mut changes = HashMap::<Url, Vec<TextEdit>>::new();
     changes.insert(
@@ -5746,32 +5802,34 @@ fn workspace_source_references_for_root_symbol_with_open_docs(
         ),
     );
 
-    let package_segments = package_path_segments(source)?;
-    let mut import_path = package_segments
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    import_path.push(definition_target.name.clone());
-    merge_unique_reference_locations(
-        &mut locations,
-        workspace_import_reference_locations_with_open_docs(
-            package,
-            current_path.as_deref(),
-            open_docs,
-            &import_path,
-            include_declaration,
-        ),
-    );
-    merge_unique_reference_locations(
-        &mut locations,
-        workspace_broken_import_reference_locations_for_visible_sources(
-            package.manifest().manifest_path.as_path(),
-            current_path.as_deref(),
-            &import_path,
-            include_declaration,
-            open_docs,
-        ),
-    );
+    if supports_workspace_source_root_definition_rename(definition_target.kind) {
+        let package_segments = package_path_segments(source)?;
+        let mut import_path = package_segments
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        import_path.push(definition_target.name.clone());
+        merge_unique_reference_locations(
+            &mut locations,
+            workspace_import_reference_locations_with_open_docs(
+                package,
+                current_path.as_deref(),
+                open_docs,
+                &import_path,
+                include_declaration,
+            ),
+        );
+        merge_unique_reference_locations(
+            &mut locations,
+            workspace_broken_import_reference_locations_for_visible_sources(
+                package.manifest().manifest_path.as_path(),
+                current_path.as_deref(),
+                &import_path,
+                include_declaration,
+                open_docs,
+            ),
+        );
+    }
 
     (!locations.is_empty()).then_some(locations)
 }
@@ -17059,6 +17117,326 @@ impl Config {
                 && reference.range.start
                     == offset_to_position(&jobs_source, nth_offset(&jobs_source, "value", 1))
         }));
+    }
+
+    #[test]
+    fn workspace_root_field_rename_updates_broken_consumers_without_touching_same_named_root_imports()
+     {
+        let temp = TempDir::new("ql-lsp-workspace-root-field-rename-broken-consumers");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config as Cfg
+use demo.core.value
+
+pub fn main(config: Cfg) -> Int {
+    let current = config.value
+    return value(current) + config.
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn value(current: Int) -> Int {
+    return current
+}
+
+impl Config {
+    pub fn total(self) -> Int {
+        return self.value + value(self.value)
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn value(current: Int) -> Int
+"#,
+        );
+
+        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let core_analysis = analyze_source(&core_source).expect("core source should analyze");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&app_source).is_err());
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let edit = rename_for_workspace_source_root_symbol_with_open_docs(
+            &core_uri,
+            &core_source,
+            &core_analysis,
+            &package,
+            &file_open_documents(vec![
+                (core_uri.clone(), core_source.clone()),
+                (app_uri.clone(), app_source.clone()),
+            ]),
+            offset_to_position(&core_source, nth_offset(&core_source, "value", 1)),
+            "count",
+        )
+        .expect("rename should succeed")
+        .expect("rename should return workspace edits");
+
+        assert_workspace_edit_changes(
+            edit,
+            vec![
+                (
+                    core_uri,
+                    vec![
+                        TextEdit::new(
+                            span_to_range(
+                                &core_source,
+                                Span::new(
+                                    nth_offset(&core_source, "value", 1),
+                                    nth_offset(&core_source, "value", 1) + "value".len(),
+                                ),
+                            ),
+                            "count".to_owned(),
+                        ),
+                        TextEdit::new(
+                            span_to_range(
+                                &core_source,
+                                Span::new(
+                                    nth_offset(&core_source, "value", 3),
+                                    nth_offset(&core_source, "value", 3) + "value".len(),
+                                ),
+                            ),
+                            "count".to_owned(),
+                        ),
+                        TextEdit::new(
+                            span_to_range(
+                                &core_source,
+                                Span::new(
+                                    nth_offset(&core_source, "value", 5),
+                                    nth_offset(&core_source, "value", 5) + "value".len(),
+                                ),
+                            ),
+                            "count".to_owned(),
+                        ),
+                    ],
+                ),
+                (
+                    app_uri,
+                    vec![TextEdit::new(
+                        span_to_range(
+                            &app_source,
+                            Span::new(
+                                nth_offset(&app_source, "value", 2),
+                                nth_offset(&app_source, "value", 2) + "value".len(),
+                            ),
+                        ),
+                        "count".to_owned(),
+                    )],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn workspace_root_variant_rename_updates_consumers_without_touching_same_named_root_imports() {
+        let temp = TempDir::new("ql-lsp-workspace-root-variant-rename");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Command as Cmd
+use demo.core.Retry as retry_fn
+
+pub fn main() -> Int {
+    let command = Cmd.Retry(1)
+    match command {
+        Cmd.Retry(count) => retry_fn(count),
+        Cmd.Stop => 0,
+    }
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+    Stop,
+}
+
+pub fn Retry(current: Int) -> Int {
+    return current
+}
+
+pub fn build() -> Command {
+    return Command.Retry(0)
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+    Stop,
+}
+
+pub fn Retry(current: Int) -> Int
+"#,
+        );
+
+        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let core_analysis = analyze_source(&core_source).expect("core source should analyze");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let edit = rename_for_workspace_source_root_symbol_with_open_docs(
+            &core_uri,
+            &core_source,
+            &core_analysis,
+            &package,
+            &file_open_documents(vec![
+                (core_uri.clone(), core_source.clone()),
+                (app_uri.clone(), app_source.clone()),
+            ]),
+            offset_to_position(&core_source, nth_offset(&core_source, "Retry", 1)),
+            "Again",
+        )
+        .expect("rename should succeed")
+        .expect("rename should return workspace edits");
+
+        assert_workspace_edit_changes(
+            edit,
+            vec![
+                (
+                    core_uri,
+                    vec![
+                        TextEdit::new(
+                            span_to_range(
+                                &core_source,
+                                Span::new(
+                                    nth_offset(&core_source, "Retry", 1),
+                                    nth_offset(&core_source, "Retry", 1) + "Retry".len(),
+                                ),
+                            ),
+                            "Again".to_owned(),
+                        ),
+                        TextEdit::new(
+                            span_to_range(
+                                &core_source,
+                                Span::new(
+                                    nth_offset(&core_source, "Retry", 3),
+                                    nth_offset(&core_source, "Retry", 3) + "Retry".len(),
+                                ),
+                            ),
+                            "Again".to_owned(),
+                        ),
+                    ],
+                ),
+                (
+                    app_uri,
+                    vec![
+                        TextEdit::new(
+                            span_to_range(
+                                &app_source,
+                                Span::new(
+                                    nth_offset(&app_source, "Retry", 2),
+                                    nth_offset(&app_source, "Retry", 2) + "Retry".len(),
+                                ),
+                            ),
+                            "Again".to_owned(),
+                        ),
+                        TextEdit::new(
+                            span_to_range(
+                                &app_source,
+                                Span::new(
+                                    nth_offset(&app_source, "Retry", 3),
+                                    nth_offset(&app_source, "Retry", 3) + "Retry".len(),
+                                ),
+                            ),
+                            "Again".to_owned(),
+                        ),
+                    ],
+                ),
+            ],
+        );
     }
 
     #[test]

@@ -80,6 +80,7 @@
 - workspace root `function / const / static / struct / enum / trait / type alias` 现在也补上了 references 聚合：无论从源码定义点还是同文件使用点发起，都会保留当前文件内引用，并联动返回 workspace 中对应 import alias/use 位置；这条 import/use 聚合会读取 open docs；对当前 package 可见的 broken consumers，也会保守补回 import/use。
 - healthy workspace 下，workspace root source-backed `enum variant / struct field / receiver method` 的 references 现在也会补回当前 package 可见的 analyzed workspace consumers；当前已锁住从导出包源码定义点或同文件使用点发起的 variant/member references 聚合。
 - broken-source / parse-error 下，workspace root source-backed `enum variant / struct field / receiver method` 的 references 现在也会补回当前 package 可见的 broken workspace consumers；当前已锁住从导出包源码定义点或同文件使用点发起的 member references 聚合。
+- healthy source 下，workspace root source-backed `enum variant / struct field / receiver method` 也已开放 workspace rename：当前可从导出包源码定义点或同文件使用点发起，并会联动改写当前文件与可见 workspace consumers 里的真实 member uses；这条路径不会误改同名顶层 root import path。
 - healthy source 下，workspace root import/use 的 `prepareRename` 现在也会读取已打开但未落盘的导出 workspace 源码，不再要求先保存文件。
 - source-preferred dependency tooling 现在按 manifest 身份区分同名本地依赖；definition / typeDefinition / references / current-document `documentHighlight` / dependency completion / `workspace/symbol` 不会再串到另一个依赖实例。
 - `workspace/symbol` 对 workspace 外本地路径依赖在源码可用时会优先返回源码里的 value / method / trait / extend symbols；源码不可用时仍回退到 `.qi`。这条行为现在也覆盖 `workspace_roots` / 无打开文档入口；同名本地依赖也不会再因为 source-preferred 排除而误丢另一个依赖的 `.qi` 符号。
