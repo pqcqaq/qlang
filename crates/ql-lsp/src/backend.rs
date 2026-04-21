@@ -1087,30 +1087,6 @@ struct WorkspaceSourceSymbolMatch {
     kind: ql_analysis::SymbolKind,
 }
 
-fn extend_workspace_import_symbol_matches(
-    package: &ql_analysis::PackageAnalysis,
-    current_path: Option<&Path>,
-    current_source: Option<&str>,
-    current_analysis: Option<&Analysis>,
-    import_prefix: &[String],
-    imported_name: &str,
-    supports_kind: fn(ql_analysis::SymbolKind) -> bool,
-    matches: &mut Vec<WorkspaceSourceSymbolMatch>,
-) {
-    let open_docs = OpenDocuments::new();
-    extend_workspace_import_symbol_matches_with_open_docs(
-        package,
-        current_path,
-        current_source,
-        current_analysis,
-        &open_docs,
-        import_prefix,
-        imported_name,
-        supports_kind,
-        matches,
-    );
-}
-
 fn extend_workspace_import_symbol_matches_with_open_docs(
     package: &ql_analysis::PackageAnalysis,
     current_path: Option<&Path>,
@@ -1230,58 +1206,6 @@ struct BrokenSourceImportBinding {
     local_name: String,
     imported_span: Span,
     definition_span: Span,
-}
-
-fn workspace_source_symbol_matches_for_import_binding(
-    uri: &Url,
-    source: &str,
-    analysis: Option<&Analysis>,
-    package: &ql_analysis::PackageAnalysis,
-    import_prefix: &[String],
-    imported_name: &str,
-    supports_kind: fn(ql_analysis::SymbolKind) -> bool,
-) -> Vec<WorkspaceSourceSymbolMatch> {
-    let current_path = uri.to_file_path().ok();
-    let mut matches = Vec::new();
-
-    extend_workspace_import_symbol_matches(
-        package,
-        current_path.as_deref(),
-        Some(source),
-        analysis,
-        import_prefix,
-        imported_name,
-        supports_kind,
-        &mut matches,
-    );
-
-    for candidate_manifest_path in
-        source_preferred_manifest_paths_for_package(package.manifest().manifest_path.as_path())
-    {
-        let Some(member_package) = package_analysis_for_path(&candidate_manifest_path) else {
-            continue;
-        };
-        extend_workspace_import_symbol_matches(
-            &member_package,
-            None,
-            None,
-            None,
-            import_prefix,
-            imported_name,
-            supports_kind,
-            &mut matches,
-        );
-    }
-
-    matches.sort_by_key(|symbol| {
-        (
-            symbol.location.uri.to_string(),
-            symbol.location.range.start.line,
-            symbol.location.range.start.character,
-        )
-    });
-    matches.dedup_by(|left, right| left.location == right.location && left.kind == right.kind);
-    matches
 }
 
 fn workspace_source_symbol_matches_for_import_binding_with_open_docs(
@@ -1428,20 +1352,22 @@ fn workspace_source_type_definition_location_for_import_binding_with_open_docs(
     (matches.len() == 1).then(|| matches[0].clone())
 }
 
-fn workspace_source_kind_for_import_binding(
+fn workspace_source_kind_for_import_binding_with_open_docs(
     uri: &Url,
     source: &str,
     analysis: Option<&Analysis>,
     package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
     import_prefix: &[String],
     imported_name: &str,
     supports_kind: fn(ql_analysis::SymbolKind) -> bool,
 ) -> Option<ql_analysis::SymbolKind> {
-    let matches = workspace_source_symbol_matches_for_import_binding(
+    let matches = workspace_source_symbol_matches_for_import_binding_with_open_docs(
         uri,
         source,
         analysis,
         package,
+        open_docs,
         import_prefix,
         imported_name,
         supports_kind,
@@ -1872,11 +1798,12 @@ fn workspace_source_hover_for_import_in_broken_source_with_open_docs(
     )
 }
 
-fn workspace_import_semantic_tokens_in_analysis(
+fn workspace_import_semantic_tokens_in_analysis_with_open_docs(
     uri: &Url,
     source: &str,
     analysis: &Analysis,
     package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
 ) -> Vec<ql_analysis::SemanticTokenOccurrence> {
     let (tokens, _) = lex(source);
     let bindings = broken_source_import_bindings_in_tokens(&tokens);
@@ -1884,11 +1811,12 @@ fn workspace_import_semantic_tokens_in_analysis(
     let mut local_name_kinds = HashMap::<String, ql_analysis::SymbolKind>::new();
 
     for binding in bindings {
-        let Some(kind) = workspace_source_kind_for_import_binding(
+        let Some(kind) = workspace_source_kind_for_import_binding_with_open_docs(
             uri,
             source,
             Some(analysis),
             package,
+            open_docs,
             &binding.import_prefix,
             binding.imported_name.as_str(),
             supports_workspace_import_definition,
@@ -1918,21 +1846,23 @@ fn workspace_import_semantic_tokens_in_analysis(
     occurrences
 }
 
-fn workspace_import_semantic_tokens_in_broken_source(
+fn workspace_import_semantic_tokens_in_broken_source_with_open_docs(
     uri: &Url,
     source: &str,
     package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
 ) -> Vec<ql_analysis::SemanticTokenOccurrence> {
     let (tokens, _) = lex(source);
     let mut unique_bindings = HashMap::<String, (Span, ql_analysis::SymbolKind)>::new();
     let mut local_name_counts = HashMap::<String, usize>::new();
 
     for binding in broken_source_import_bindings_in_tokens(&tokens) {
-        let Some(kind) = workspace_source_kind_for_import_binding(
+        let Some(kind) = workspace_source_kind_for_import_binding_with_open_docs(
             uri,
             source,
             None,
             package,
+            open_docs,
             &binding.import_prefix,
             binding.imported_name.as_str(),
             supports_workspace_import_definition,
@@ -1998,11 +1928,25 @@ fn semantic_tokens_for_workspace_package_analysis(
     analysis: &Analysis,
     package: &ql_analysis::PackageAnalysis,
 ) -> SemanticTokensResult {
+    let open_docs = OpenDocuments::new();
+    semantic_tokens_for_workspace_package_analysis_with_open_docs(
+        uri, source, analysis, package, &open_docs,
+    )
+}
+
+fn semantic_tokens_for_workspace_package_analysis_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+) -> SemanticTokensResult {
     let mut tokens = analysis.semantic_tokens();
     let dependency_import_root_tokens =
         package.dependency_import_root_semantic_tokens_in_source(source);
-    let workspace_import_root_tokens =
-        workspace_import_semantic_tokens_in_analysis(uri, source, analysis, package);
+    let workspace_import_root_tokens = workspace_import_semantic_tokens_in_analysis_with_open_docs(
+        uri, source, analysis, package, open_docs,
+    );
     let overridden_import_spans = dependency_import_root_tokens
         .iter()
         .chain(workspace_import_root_tokens.iter())
@@ -2025,10 +1969,24 @@ fn semantic_tokens_for_workspace_dependency_fallback(
     source: &str,
     package: &ql_analysis::PackageAnalysis,
 ) -> SemanticTokensResult {
+    let open_docs = OpenDocuments::new();
+    semantic_tokens_for_workspace_dependency_fallback_with_open_docs(
+        uri, source, package, &open_docs,
+    )
+}
+
+fn semantic_tokens_for_workspace_dependency_fallback_with_open_docs(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+) -> SemanticTokensResult {
     let mut tokens = package.dependency_fallback_semantic_tokens_in_source(source);
-    tokens.extend(workspace_import_semantic_tokens_in_broken_source(
-        uri, source, package,
-    ));
+    tokens.extend(
+        workspace_import_semantic_tokens_in_broken_source_with_open_docs(
+            uri, source, package, open_docs,
+        ),
+    );
     sort_and_dedup_semantic_tokens(&mut tokens);
     semantic_tokens_result_from_occurrences(source, tokens)
 }
@@ -5571,14 +5529,19 @@ impl LanguageServer for Backend {
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
+            let open_docs = self.open_file_documents().await;
             if let Ok(analysis) = analyze_source(&source) {
-                return Ok(Some(semantic_tokens_for_workspace_package_analysis(
-                    &uri, &source, &analysis, &package,
-                )));
+                return Ok(Some(
+                    semantic_tokens_for_workspace_package_analysis_with_open_docs(
+                        &uri, &source, &analysis, &package, &open_docs,
+                    ),
+                ));
             }
-            return Ok(Some(semantic_tokens_for_workspace_dependency_fallback(
-                &uri, &source, &package,
-            )));
+            return Ok(Some(
+                semantic_tokens_for_workspace_dependency_fallback_with_open_docs(
+                    &uri, &source, &package, &open_docs,
+                ),
+            ));
         }
 
         let Ok(analysis) = analyze_source(&source) else {
@@ -5803,7 +5766,10 @@ mod tests {
         rename_for_workspace_source_root_symbol_from_import_with_open_docs,
         rename_for_workspace_source_root_symbol_with_open_docs, same_dependency_definition_target,
         semantic_tokens_for_workspace_dependency_fallback,
-        semantic_tokens_for_workspace_package_analysis, workspace_dependency_document_highlights,
+        semantic_tokens_for_workspace_dependency_fallback_with_open_docs,
+        semantic_tokens_for_workspace_package_analysis,
+        semantic_tokens_for_workspace_package_analysis_with_open_docs,
+        workspace_dependency_document_highlights,
         workspace_dependency_reference_locations_with_open_docs,
         workspace_import_document_highlights, workspace_import_document_highlights_with_open_docs,
         workspace_source_definition_for_dependency,
@@ -12645,6 +12611,159 @@ pub struct Config {
     }
 
     #[test]
+    fn workspace_import_semantic_tokens_prefer_open_workspace_source_symbol_kinds() {
+        let temp = TempDir::new("ql-lsp-workspace-import-semantic-tokens-open-docs");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Command as Cmd
+use demo.core.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    let built = Cfg { value: 1, limit: 2 }
+    let command = Cmd.Retry(1)
+    return built.value + config.value + command.unwrap_or(0)
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let open_core_source = r#"
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+}
+
+impl Command {
+    pub fn unwrap_or(self, fallback: Int) -> Int {
+        match self {
+            Command.Retry(value) => value,
+        }
+    }
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+"#
+        .to_owned();
+
+        let SemanticTokensResult::Tokens(disk_tokens) =
+            semantic_tokens_for_workspace_package_analysis(&uri, &source, &analysis, &package)
+        else {
+            panic!("expected full semantic tokens")
+        };
+        let disk_decoded = decode_semantic_tokens(&disk_tokens.data);
+
+        let SemanticTokensResult::Tokens(tokens) =
+            semantic_tokens_for_workspace_package_analysis_with_open_docs(
+                &uri,
+                &source,
+                &analysis,
+                &package,
+                &file_open_documents(vec![
+                    (uri.clone(), source.clone()),
+                    (core_uri, open_core_source),
+                ]),
+            )
+        else {
+            panic!("expected full semantic tokens")
+        };
+        let decoded = decode_semantic_tokens(&tokens.data);
+        let legend = semantic_tokens_legend();
+        let class_type = legend
+            .token_types
+            .iter()
+            .position(|token_type| *token_type == SemanticTokenType::CLASS)
+            .expect("class legend entry should exist") as u32;
+        let enum_type = legend
+            .token_types
+            .iter()
+            .position(|token_type| *token_type == SemanticTokenType::ENUM)
+            .expect("enum legend entry should exist") as u32;
+
+        for (needle, occurrence, token_type) in [
+            ("Cfg", 1usize, class_type),
+            ("Cfg", 2usize, class_type),
+            ("Cfg", 3usize, class_type),
+            ("Cmd", 1usize, enum_type),
+            ("Cmd", 2usize, enum_type),
+        ] {
+            let span = Span::new(
+                nth_offset(&source, needle, occurrence),
+                nth_offset(&source, needle, occurrence) + needle.len(),
+            );
+            let range = span_to_range(&source, span);
+            assert!(!disk_decoded.contains(&(
+                range.start.line,
+                range.start.character,
+                range.end.character - range.start.character,
+                token_type,
+            )));
+            assert!(decoded.contains(&(
+                range.start.line,
+                range.start.character,
+                range.end.character - range.start.character,
+                token_type,
+            )));
+        }
+    }
+
+    #[test]
     fn workspace_import_semantic_tokens_survive_parse_errors() {
         let temp = TempDir::new("ql-lsp-workspace-import-semantic-tokens-parse-errors");
         let app_path = temp.write(
@@ -12756,6 +12875,149 @@ pub struct Config {
                 nth_offset(&source, needle, occurrence) + needle.len(),
             );
             let range = span_to_range(&source, span);
+            assert!(decoded.contains(&(
+                range.start.line,
+                range.start.character,
+                range.end.character - range.start.character,
+                token_type,
+            )));
+        }
+    }
+
+    #[test]
+    fn workspace_import_semantic_tokens_survive_parse_errors_with_open_workspace_source() {
+        let temp = TempDir::new("ql-lsp-workspace-import-semantic-tokens-parse-errors-open-docs");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Command as Cmd
+use demo.core.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    let built = Cfg { value: 1, limit: 2
+    let command = Cmd.Retry(1)
+    return built.value
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let open_core_source = r#"
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+"#
+        .to_owned();
+
+        let SemanticTokensResult::Tokens(disk_tokens) =
+            semantic_tokens_for_workspace_dependency_fallback(&uri, &source, &package)
+        else {
+            panic!("expected full semantic tokens")
+        };
+        let disk_decoded = decode_semantic_tokens(&disk_tokens.data);
+
+        let SemanticTokensResult::Tokens(tokens) =
+            semantic_tokens_for_workspace_dependency_fallback_with_open_docs(
+                &uri,
+                &source,
+                &package,
+                &file_open_documents(vec![
+                    (uri.clone(), source.clone()),
+                    (core_uri, open_core_source),
+                ]),
+            )
+        else {
+            panic!("expected full semantic tokens")
+        };
+        let decoded = decode_semantic_tokens(&tokens.data);
+        let legend = semantic_tokens_legend();
+        let class_type = legend
+            .token_types
+            .iter()
+            .position(|token_type| *token_type == SemanticTokenType::CLASS)
+            .expect("class legend entry should exist") as u32;
+        let enum_type = legend
+            .token_types
+            .iter()
+            .position(|token_type| *token_type == SemanticTokenType::ENUM)
+            .expect("enum legend entry should exist") as u32;
+
+        for (needle, occurrence, token_type) in [
+            ("Cfg", 1usize, class_type),
+            ("Cfg", 2usize, class_type),
+            ("Cfg", 3usize, class_type),
+            ("Cmd", 1usize, enum_type),
+            ("Cmd", 2usize, enum_type),
+        ] {
+            let span = Span::new(
+                nth_offset(&source, needle, occurrence),
+                nth_offset(&source, needle, occurrence) + needle.len(),
+            );
+            let range = span_to_range(&source, span);
+            assert!(!disk_decoded.contains(&(
+                range.start.line,
+                range.start.character,
+                range.end.character - range.start.character,
+                token_type,
+            )));
             assert!(decoded.contains(&(
                 range.start.line,
                 range.start.character,

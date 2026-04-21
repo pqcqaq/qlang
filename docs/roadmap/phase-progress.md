@@ -38,6 +38,7 @@
 - healthy workspace 下的 dependency-backed LSP 已有一批可依赖能力：workspace symbol、source-preferred navigation、dependency completion、current-document `documentHighlight`、semantic tokens，以及 source-backed dependency `method / field / enum variant` workspace rename；source-preferred navigation 现在同时覆盖 workspace members 和 workspace 外本地路径依赖，definition / typeDefinition / references / `documentHighlight` / completion / workspace rename / `workspace/symbol` 都已有 open unsaved source 合同。healthy source 的 workspace import references 现在同时覆盖 value import 和 type import 的 alias/use，并会读取 open unsaved 的导出源码与其他 workspace consumer 源码；workspace root `function / const / static / struct / enum / trait / type alias` 的 references / rename 已覆盖 import/use 发起；这一轮又补齐了 import/use `prepareRename` 的 open-doc 路径。
 - healthy workspace import `hover/definition/declaration/typeDefinition` 这一轮也补上了 open-doc 路径；未保存的导出 workspace 源码现在会直接参与导航，而不再落回磁盘旧版本。
 - healthy workspace import `documentHighlight` 这一轮也补上了 open-doc 路径；当前文件 import/use 高亮现在会直接跟随未保存的导出 workspace 源码。
+- workspace import semantic tokens 这一轮也补上了 open-doc 路径；healthy 与 parse-error fallback 两条着色路径都会直接跟随未保存的导出 workspace 源码。
 - `qlsp` 现在会声明 `.` completion trigger，VSCode 中输入成员访问和点分 dependency 路径时可直接自动弹出补全，而不必继续手动触发 completion。
 - `workspace` 外本地路径依赖的 import references 现在也走源码优先路径；broken-source fallback 已补齐到这一条路径。
 - `workspace/symbol` 现在也会对 workspace 外本地路径依赖做源码优先返回，并保留 `.qi` 回退；这条能力已补到 `workspace_roots` / 无打开文档入口，当前已锁住 value / method / trait / extend symbol。
