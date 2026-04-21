@@ -12944,6 +12944,98 @@ fn project_emit_interface_path(
         1
     })?;
 
+    if output.is_some() && manifest.workspace.is_some() {
+        if let Some(selected_package_name) = selected_package_name {
+            let (_, package_manifest) = resolve_project_selected_package_manifest(
+                path,
+                Some(selected_package_name),
+                emit_command_label.as_str(),
+            )?;
+            match emit_package_interface_path(
+                &package_manifest.manifest_path,
+                output,
+                emit_command_label.as_str(),
+                changed_only,
+            ) {
+                Ok(result) => report_emit_interface_result(result),
+                Err(EmitPackageInterfaceError::ManifestNotFound { .. }) => {
+                    report_package_interface_failure(
+                        &package_manifest.manifest_path,
+                        None,
+                        output,
+                        changed_only,
+                        None,
+                    );
+                    return Err(1);
+                }
+                Err(EmitPackageInterfaceError::SourceFailure { code, .. }) => {
+                    report_package_interface_source_failure(
+                        &package_manifest.manifest_path,
+                        None,
+                        output,
+                        changed_only,
+                        None,
+                    );
+                    return Err(code);
+                }
+                Err(EmitPackageInterfaceError::Code { code, .. }) => {
+                    report_package_interface_failure(
+                        &package_manifest.manifest_path,
+                        None,
+                        output,
+                        changed_only,
+                        None,
+                    );
+                    return Err(code);
+                }
+                Err(EmitPackageInterfaceError::ManifestFailure { .. }) => {
+                    report_package_interface_manifest_failure(
+                        &package_manifest.manifest_path,
+                        None,
+                        output,
+                        changed_only,
+                        None,
+                    );
+                    return Err(1);
+                }
+                Err(EmitPackageInterfaceError::NoSourceFilesFailure { source_root, .. }) => {
+                    report_package_interface_no_sources_failure(
+                        &package_manifest.manifest_path,
+                        None,
+                        &source_root,
+                        output,
+                        changed_only,
+                        None,
+                    );
+                    return Err(1);
+                }
+                Err(EmitPackageInterfaceError::SourceRootFailure { source_root, .. }) => {
+                    report_package_interface_source_root_failure(
+                        &package_manifest.manifest_path,
+                        None,
+                        &source_root,
+                        output,
+                        changed_only,
+                        None,
+                    );
+                    return Err(1);
+                }
+                Err(EmitPackageInterfaceError::OutputPathFailure { output_path, .. }) => {
+                    report_package_interface_output_failure(
+                        &package_manifest.manifest_path,
+                        None,
+                        &output_path,
+                        output,
+                        changed_only,
+                        None,
+                    );
+                    return Err(1);
+                }
+            }
+            return Ok(());
+        }
+    }
+
     if manifest.package.is_some() {
         if let Some(selected_package_name) = selected_package_name {
             let actual_package_name = package_name(&manifest).map_err(|error| {

@@ -5126,6 +5126,103 @@ name = "tool"
 }
 
 #[test]
+fn project_emit_interface_supports_workspace_root_package_selector_with_output() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-workspace-selector-output");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create workspace-only package directory for selector output test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    let output_path = project_root.join("artifacts").join("app-custom.qi");
+    let default_interface_path = app_root.join("app.qi");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&project_root)
+        .args(["--package", "app", "--output"])
+        .arg(&output_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --package --output` workspace-only manifest",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-interface-workspace-selector-output",
+        "workspace-only interface emission with selector output",
+        &output,
+    )
+    .expect("workspace-only selector output should succeed");
+    expect_snapshot_matches(
+        "project-interface-workspace-selector-output",
+        "workspace-only selector output stdout",
+        &format!("wrote interface: {}\n", output_path.display()),
+        &stdout,
+    )
+    .expect("workspace-only selector output should report the custom output path");
+    expect_snapshot_matches(
+        "project-interface-workspace-selector-output",
+        "workspace-only selector output stderr",
+        "",
+        &stderr,
+    )
+    .expect("workspace-only selector output should stay silent on stderr");
+    expect_file_exists(
+        "project-interface-workspace-selector-output",
+        &output_path,
+        "workspace selector custom interface",
+        "workspace-only interface emission with selector output",
+    )
+    .expect("workspace-only selector output should create the custom interface artifact");
+    assert!(
+        !default_interface_path.exists(),
+        "workspace-only selector output should not also create `{}`",
+        default_interface_path.display()
+    );
+
+    let expected = "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn exported() -> Int
+";
+    let actual = read_normalized_file(&output_path, "workspace selector custom qi artifact");
+    expect_snapshot_matches(
+        "project-interface-workspace-selector-output",
+        "workspace selector custom qi artifact",
+        expected,
+        &actual,
+    )
+    .expect("workspace-only selector output artifact should match the exported interface");
+}
+
+#[test]
 fn project_emit_interface_rejects_output_path_for_workspace_only_manifest() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-workspace-output");
