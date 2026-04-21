@@ -14,6 +14,7 @@ name = "qlsp"
 path = "src/main.rs"
 
 [dependencies]
+ql-ast.workspace = true
 ql-analysis.workspace = true
 ql-diagnostics.workspace = true
 ql-fmt.workspace = true

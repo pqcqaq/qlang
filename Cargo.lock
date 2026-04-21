@@ -531,6 +531,7 @@ name = "ql-lsp"
 version = "0.1.0"
 dependencies = [
  "ql-analysis",
+ "ql-ast",
  "ql-diagnostics",
  "ql-fmt",
  "ql-lexer",
