@@ -29,7 +29,7 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - healthy package/workspace 下，LSP 的 source-preferred dependency tooling 已覆盖 workspace members 和 workspace 外本地路径依赖；definition、typeDefinition、references、`documentHighlight`、completion、`workspace/symbol` 与 source-backed dependency `method / field / enum variant` workspace rename 都会按 manifest 身份区分同名本地依赖，并优先读取已打开但未落盘的源码。
 - healthy workspace/local dependency 下，source-backed dependency `method / field` 的 `hover`、`definition`、`typeDefinition`、`references`、`documentHighlight`、semantic tokens、`prepareRename`、workspace rename 现在都会在成员只存在于未保存源码、磁盘 `.qi` 仍旧过期时继续优先读取 open docs；一旦能定位到真实 workspace 源码，rename 会跳过生成的 `.qi` 编辑。
 - `qlsp` 现已支持 `textDocument/formatting`；VSCode 可直接调用 `qfmt` 做整文档格式化。当前仅支持可成功解析的源码，暂不支持 range / on-type formatting。
-- `qlsp` 现已支持 `textDocument/implementation`；same-file trait/type surface 仍可直接跳转，workspace / 本地路径依赖里导入的 `struct / enum / trait` 现在会聚合当前包、可见 workspace members 与本地依赖源码里的 `impl` / `extend` / trait `impl` block，并优先读取 parseable open docs。当前仍未补 imported trait method 的跨包 implementation，也还没做更宽的全局 implementation index。
+- `qlsp` 现已支持 `textDocument/implementation`；same-file trait/type surface、workspace / 本地路径依赖 source-preferred 导航下的 `struct / enum / trait`，以及 trait method definition 都可直接跳转。type/trait surface 会聚合当前包、可见 workspace members 与本地依赖源码里的 `impl` / `extend` / trait `impl` block；trait method definition 会聚合匹配的 `impl` method；两条路径都会优先读取 parseable open docs。当前还没做更宽的全局 implementation index。
 - 这一轮补齐了 healthy workspace import 的 open-doc 导航一致性：`hover`、`definition`、`declaration`、`typeDefinition` 现在也会优先读取已打开但未落盘的 workspace 源码，而不是回退到磁盘旧内容。
 - healthy workspace import `documentHighlight` 这一轮也补上了 open-doc 路径；未保存的导出 workspace 源码现在会直接参与当前文件 import/use 高亮。
 - healthy workspace import semantic tokens 这一轮也补上了 open-doc 路径；healthy 与 parse-error fallback 两条着色路径都会直接读取未保存的导出 workspace 源码。
@@ -129,7 +129,7 @@ npm run package:vsix
 
 安装插件后可直接在 VSCode 使用 `Format Document`。这条能力由 `qlsp` 调用 `qfmt` 提供，当前只做整文档格式化；若源码存在 parse error，会跳过格式化并给出 warning。
 
-同一套 `qlsp` 现在也支持 `Go to Implementation`。same-file trait/type surface 仍会跳到当前文件里的 `impl` / `extend` block；workspace / 本地路径依赖里导入的 `struct / enum / trait` 会聚合当前包、可见 workspace members 与本地依赖源码里的实现块，并优先读取 parseable open docs。当前还不覆盖 imported trait method 的跨包 implementation，也没做更宽的全局 implementation index。
+同一套 `qlsp` 现在也支持 `Go to Implementation`。same-file trait/type surface 会跳到当前文件里的 `impl` / `extend` block；workspace / 本地路径依赖 source-preferred 导航下的 `struct / enum / trait` 会聚合当前包、可见 workspace members 与本地依赖源码里的实现块；trait method definition 会聚合匹配的 `impl` method。两条路径都会优先读取 parseable open docs。当前还没做更宽的全局 implementation index。
 
 ## 文档开发
 
