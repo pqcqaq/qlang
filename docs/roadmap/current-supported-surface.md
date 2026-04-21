@@ -65,7 +65,7 @@
   - source-preferred navigation：对 workspace members 和 workspace 外本地路径依赖，能唯一回溯到源码时优先跳源码而不是 `.qi`
   - package-aware semantic tokens
 - healthy workspace 下，source-preferred dependency definition / typeDefinition / references / current-document `documentHighlight` / method completion 现在会直接读取已打开但未落盘的本地依赖源码，而不是只看磁盘文件。
-- healthy workspace / 本地路径依赖下，source-backed dependency `method / field` 的 `hover / definition / references / current-document documentHighlight` 现在也会在成员只存在于未保存源码、磁盘 `.qi` 仍旧过期时继续优先读取 open docs。
+- healthy workspace / 本地路径依赖下，source-backed dependency `method / field` 的 `hover / definition / typeDefinition / references / current-document documentHighlight / semantic tokens` 现在也会在成员只存在于未保存源码、磁盘 `.qi` 仍旧过期时继续优先读取 open docs。
 - healthy workspace 下，workspace import `hover/definition/declaration/typeDefinition` 现在也会读取已打开但未落盘的导出 workspace 源码，不再要求先保存文件才能看到正确导航结果。
 - healthy workspace 下，workspace import `documentHighlight` 现在也会读取已打开但未落盘的导出 workspace 源码；当前文件 import/use 高亮不再落回磁盘旧版本。
 - healthy workspace 下，workspace import semantic tokens 现在也会读取已打开但未落盘的导出 workspace 源码；healthy 与 parse-error fallback 两条着色路径都不再落回磁盘旧版本。

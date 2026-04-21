@@ -3957,6 +3957,212 @@ fn public_struct_completion_binding(
     public_struct_completion_binding_in_source(package, source_path, &module_source, struct_name)
 }
 
+fn public_type_symbol_in_module(
+    module: &ql_ast::Module,
+    type_name: &str,
+) -> Vec<(SymbolKind, Span, String)> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            AstItemKind::Struct(struct_decl)
+                if is_public(&struct_decl.visibility) && struct_decl.name == type_name =>
+            {
+                Some((
+                    SymbolKind::Struct,
+                    struct_decl.name_span,
+                    struct_decl.name.clone(),
+                ))
+            }
+            AstItemKind::Enum(enum_decl)
+                if is_public(&enum_decl.visibility) && enum_decl.name == type_name =>
+            {
+                Some((
+                    SymbolKind::Enum,
+                    enum_decl.name_span,
+                    enum_decl.name.clone(),
+                ))
+            }
+            AstItemKind::Trait(trait_decl)
+                if is_public(&trait_decl.visibility) && trait_decl.name == type_name =>
+            {
+                Some((
+                    SymbolKind::Trait,
+                    trait_decl.name_span,
+                    trait_decl.name.clone(),
+                ))
+            }
+            AstItemKind::TypeAlias(type_alias)
+                if is_public(&type_alias.visibility) && type_alias.name == type_name =>
+            {
+                Some((
+                    SymbolKind::TypeAlias,
+                    type_alias.name_span,
+                    type_alias.name.clone(),
+                ))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn package_public_type_target_for_type_expr_with_override(
+    package: &PackageAnalysis,
+    source_override: Option<(&str, &ql_ast::Module)>,
+    ty: &ql_ast::TypeExpr,
+) -> Option<DependencyDefinitionTarget> {
+    let ql_ast::TypeExprKind::Named { path, .. } = &ty.kind else {
+        return None;
+    };
+    let [type_name] = path.segments.as_slice() else {
+        return None;
+    };
+
+    let mut matches = Vec::<(SymbolKind, Span, String, String)>::new();
+    if let Some((override_source_path, override_module)) = source_override {
+        matches.extend(
+            public_type_symbol_in_module(override_module, type_name)
+                .into_iter()
+                .map(|(kind, span, name)| {
+                    (
+                        kind,
+                        span,
+                        normalized_module_source_path(override_source_path),
+                        name,
+                    )
+                }),
+        );
+    }
+
+    for module in &package.modules {
+        let Some(module_source_path) = package_module_source_path(package, module.path()) else {
+            continue;
+        };
+        if source_override.is_some_and(|(override_source_path, _)| {
+            normalized_module_source_path(override_source_path) == module_source_path
+        }) {
+            continue;
+        }
+        matches.extend(
+            public_type_symbol_in_module(module.analysis().ast(), type_name)
+                .into_iter()
+                .map(|(kind, span, name)| (kind, span, module_source_path.clone(), name)),
+        );
+    }
+
+    if matches.len() != 1 {
+        return None;
+    }
+    let (kind, span, source_path, name) = matches.pop()?;
+    Some(DependencyDefinitionTarget {
+        package_name: package.manifest.package.as_ref()?.name.clone(),
+        manifest_path: package.manifest.manifest_path.clone(),
+        source_path,
+        kind,
+        name,
+        path: default_interface_path(&package.manifest).ok()?,
+        span,
+    })
+}
+
+fn package_question_inner_type_target_for_type_expr_with_override(
+    package: &PackageAnalysis,
+    source_override: Option<(&str, &ql_ast::Module)>,
+    ty: &ql_ast::TypeExpr,
+) -> Option<DependencyDefinitionTarget> {
+    let ql_ast::TypeExprKind::Named { path, args } = &ty.kind else {
+        return None;
+    };
+    let [type_name] = path.segments.as_slice() else {
+        return None;
+    };
+    let inner = match (type_name.as_str(), args.as_slice()) {
+        ("Option", [inner]) => inner,
+        ("Result", [inner, ..]) => inner,
+        _ => return None,
+    };
+    package_public_type_target_for_type_expr_with_override(package, source_override, inner).or_else(
+        || {
+            package_question_inner_type_target_for_type_expr_with_override(
+                package,
+                source_override,
+                inner,
+            )
+        },
+    )
+}
+
+fn package_common_type_target_for_type_exprs_with_override(
+    package: &PackageAnalysis,
+    source_override: Option<(&str, &ql_ast::Module)>,
+    items: &[ql_ast::TypeExpr],
+) -> Option<DependencyDefinitionTarget> {
+    let mut items = items.iter();
+    let first = package_public_type_target_for_type_expr_with_override(
+        package,
+        source_override,
+        items.next()?,
+    )?;
+    for item in items {
+        let target =
+            package_public_type_target_for_type_expr_with_override(package, source_override, item)?;
+        if target != first {
+            return None;
+        }
+    }
+    Some(first)
+}
+
+fn package_iterable_element_type_target_for_type_expr_with_override(
+    package: &PackageAnalysis,
+    source_override: Option<(&str, &ql_ast::Module)>,
+    ty: &ql_ast::TypeExpr,
+) -> Option<DependencyDefinitionTarget> {
+    match &ty.kind {
+        ql_ast::TypeExprKind::Array { element, .. } => {
+            package_public_type_target_for_type_expr_with_override(
+                package,
+                source_override,
+                element,
+            )
+        }
+        ql_ast::TypeExprKind::Tuple(items) => {
+            package_common_type_target_for_type_exprs_with_override(package, source_override, items)
+        }
+        _ => None,
+    }
+}
+
+fn package_question_inner_iterable_element_type_target_for_type_expr_with_override(
+    package: &PackageAnalysis,
+    source_override: Option<(&str, &ql_ast::Module)>,
+    ty: &ql_ast::TypeExpr,
+) -> Option<DependencyDefinitionTarget> {
+    let ql_ast::TypeExprKind::Named { path, args } = &ty.kind else {
+        return None;
+    };
+    let [type_name] = path.segments.as_slice() else {
+        return None;
+    };
+    let inner = match (type_name.as_str(), args.as_slice()) {
+        ("Option", [inner]) => inner,
+        ("Result", [inner, ..]) => inner,
+        _ => return None,
+    };
+    package_iterable_element_type_target_for_type_expr_with_override(
+        package,
+        source_override,
+        inner,
+    )
+    .or_else(|| {
+        package_question_inner_iterable_element_type_target_for_type_expr_with_override(
+            package,
+            source_override,
+            inner,
+        )
+    })
+}
+
 fn public_struct_completion_binding_in_source(
     package: &PackageAnalysis,
     source_path: &str,
@@ -3987,10 +4193,29 @@ fn public_struct_completion_binding_in_source(
                     detail: dependency_struct_field_detail(field),
                     ty: render_dependency_type_expr(&field.ty),
                     definition_span: field.name_span,
-                    type_definition: None,
-                    question_type_definition: None,
-                    iterable_element_type_definition: None,
-                    question_iterable_element_type_definition: None,
+                    type_definition: package_public_type_target_for_type_expr_with_override(
+                        package,
+                        Some((source_path, &module)),
+                        &field.ty,
+                    ),
+                    question_type_definition:
+                        package_question_inner_type_target_for_type_expr_with_override(
+                            package,
+                            Some((source_path, &module)),
+                            &field.ty,
+                        ),
+                    iterable_element_type_definition:
+                        package_iterable_element_type_target_for_type_expr_with_override(
+                            package,
+                            Some((source_path, &module)),
+                            &field.ty,
+                        ),
+                    question_iterable_element_type_definition:
+                        package_question_inner_iterable_element_type_target_for_type_expr_with_override(
+                            package,
+                            Some((source_path, &module)),
+                            &field.ty,
+                        ),
                 },
             )
         })
@@ -4076,10 +4301,43 @@ fn public_struct_methods_for_source_path(
                                     .as_ref()
                                     .map(render_dependency_type_expr),
                                 definition_span: method.name_span,
-                                return_type_definition: None,
-                                question_return_type_definition: None,
-                                iterable_element_type_definition: None,
-                                question_iterable_element_type_definition: None,
+                                return_type_definition: method.return_type.as_ref().and_then(|ty| {
+                                    package_public_type_target_for_type_expr_with_override(
+                                        package,
+                                        Some((module_source_path.as_str(), &module_ast)),
+                                        ty,
+                                    )
+                                }),
+                                question_return_type_definition: method
+                                    .return_type
+                                    .as_ref()
+                                    .and_then(|ty| {
+                                        package_question_inner_type_target_for_type_expr_with_override(
+                                            package,
+                                            Some((module_source_path.as_str(), &module_ast)),
+                                            ty,
+                                        )
+                                    }),
+                                iterable_element_type_definition: method
+                                    .return_type
+                                    .as_ref()
+                                    .and_then(|ty| {
+                                        package_iterable_element_type_target_for_type_expr_with_override(
+                                            package,
+                                            Some((module_source_path.as_str(), &module_ast)),
+                                            ty,
+                                        )
+                                    }),
+                                question_iterable_element_type_definition: method
+                                    .return_type
+                                    .as_ref()
+                                    .and_then(|ty| {
+                                        package_question_inner_iterable_element_type_target_for_type_expr_with_override(
+                                            package,
+                                            Some((module_source_path.as_str(), &module_ast)),
+                                            ty,
+                                        )
+                                    }),
                             });
                     }
                 }
@@ -4107,10 +4365,43 @@ fn public_struct_methods_for_source_path(
                                     .as_ref()
                                     .map(render_dependency_type_expr),
                                 definition_span: method.name_span,
-                                return_type_definition: None,
-                                question_return_type_definition: None,
-                                iterable_element_type_definition: None,
-                                question_iterable_element_type_definition: None,
+                                return_type_definition: method.return_type.as_ref().and_then(|ty| {
+                                    package_public_type_target_for_type_expr_with_override(
+                                        package,
+                                        Some((module_source_path.as_str(), &module_ast)),
+                                        ty,
+                                    )
+                                }),
+                                question_return_type_definition: method
+                                    .return_type
+                                    .as_ref()
+                                    .and_then(|ty| {
+                                        package_question_inner_type_target_for_type_expr_with_override(
+                                            package,
+                                            Some((module_source_path.as_str(), &module_ast)),
+                                            ty,
+                                        )
+                                    }),
+                                iterable_element_type_definition: method
+                                    .return_type
+                                    .as_ref()
+                                    .and_then(|ty| {
+                                        package_iterable_element_type_target_for_type_expr_with_override(
+                                            package,
+                                            Some((module_source_path.as_str(), &module_ast)),
+                                            ty,
+                                        )
+                                    }),
+                                question_iterable_element_type_definition: method
+                                    .return_type
+                                    .as_ref()
+                                    .and_then(|ty| {
+                                        package_question_inner_iterable_element_type_target_for_type_expr_with_override(
+                                            package,
+                                            Some((module_source_path.as_str(), &module_ast)),
+                                            ty,
+                                        )
+                                    }),
                             });
                     }
                 }

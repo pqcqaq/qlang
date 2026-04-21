@@ -1922,6 +1922,49 @@ fn sort_and_dedup_semantic_tokens(tokens: &mut Vec<ql_analysis::SemanticTokenOcc
     tokens.dedup_by(|left, right| left.span == right.span && left.kind == right.kind);
 }
 
+fn dependency_member_semantic_tokens_with_open_docs(
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+) -> Vec<ql_analysis::SemanticTokenOccurrence> {
+    let mut tokens = lex(source)
+        .0
+        .iter()
+        .filter(|token| token.kind == TokenKind::Ident)
+        .filter_map(|token| {
+            let position = span_to_range(source, token.span).start;
+            let open_occurrence_span =
+                dependency_occurrence_span_with_open_docs_at(source, package, open_docs, position)?;
+            if open_occurrence_span != token.span {
+                return None;
+            }
+            let open_target = dependency_definition_target_with_open_docs_at(
+                source, analysis, package, open_docs, position,
+            )?;
+            let kind = match open_target.kind {
+                ql_analysis::SymbolKind::Field => ql_analysis::SymbolKind::Field,
+                ql_analysis::SymbolKind::Method => ql_analysis::SymbolKind::Method,
+                _ => return None,
+            };
+
+            let disk_occurrence_span = dependency_occurrence_span_at(source, package, position);
+            let disk_target = dependency_definition_target_at(source, analysis, package, position);
+            let changed = disk_occurrence_span != Some(token.span)
+                || match disk_target.as_ref() {
+                    Some(target) => !same_dependency_definition_target(target, &open_target),
+                    None => true,
+                };
+            changed.then_some(ql_analysis::SemanticTokenOccurrence {
+                span: token.span,
+                kind,
+            })
+        })
+        .collect::<Vec<_>>();
+    sort_and_dedup_semantic_tokens(&mut tokens);
+    tokens
+}
+
 fn semantic_tokens_for_workspace_package_analysis(
     uri: &Url,
     source: &str,
@@ -1944,6 +1987,12 @@ fn semantic_tokens_for_workspace_package_analysis_with_open_docs(
     let mut tokens = analysis.semantic_tokens();
     let dependency_import_root_tokens =
         package.dependency_import_root_semantic_tokens_in_source(source);
+    let dependency_member_tokens = dependency_member_semantic_tokens_with_open_docs(
+        source,
+        Some(analysis),
+        package,
+        open_docs,
+    );
     let workspace_import_root_tokens = workspace_import_semantic_tokens_in_analysis_with_open_docs(
         uri, source, analysis, package, open_docs,
     );
@@ -1952,12 +2001,21 @@ fn semantic_tokens_for_workspace_package_analysis_with_open_docs(
         .chain(workspace_import_root_tokens.iter())
         .map(|token| (token.span.start, token.span.end))
         .collect::<HashSet<_>>();
+    let overridden_dependency_member_spans = dependency_member_tokens
+        .iter()
+        .map(|token| (token.span.start, token.span.end))
+        .collect::<HashSet<_>>();
 
     tokens.retain(|token| {
-        token.kind != ql_analysis::SymbolKind::Import
-            || !overridden_import_spans.contains(&(token.span.start, token.span.end))
+        let span = (token.span.start, token.span.end);
+        (token.kind != ql_analysis::SymbolKind::Import || !overridden_import_spans.contains(&span))
+            && !overridden_dependency_member_spans.contains(&span)
     });
     tokens.extend(package.dependency_semantic_tokens_in_source(source));
+    tokens.retain(|token| {
+        !overridden_dependency_member_spans.contains(&(token.span.start, token.span.end))
+    });
+    tokens.extend(dependency_member_tokens);
     tokens.extend(dependency_import_root_tokens);
     tokens.extend(workspace_import_root_tokens);
     sort_and_dedup_semantic_tokens(&mut tokens);
@@ -1982,6 +2040,16 @@ fn semantic_tokens_for_workspace_dependency_fallback_with_open_docs(
     open_docs: &OpenDocuments,
 ) -> SemanticTokensResult {
     let mut tokens = package.dependency_fallback_semantic_tokens_in_source(source);
+    let dependency_member_tokens =
+        dependency_member_semantic_tokens_with_open_docs(source, None, package, open_docs);
+    let overridden_dependency_member_spans = dependency_member_tokens
+        .iter()
+        .map(|token| (token.span.start, token.span.end))
+        .collect::<HashSet<_>>();
+    tokens.retain(|token| {
+        !overridden_dependency_member_spans.contains(&(token.span.start, token.span.end))
+    });
+    tokens.extend(dependency_member_tokens);
     tokens.extend(
         workspace_import_semantic_tokens_in_broken_source_with_open_docs(
             uri, source, package, open_docs,
@@ -6101,6 +6169,7 @@ mod tests {
         workspace_source_references_for_import_with_open_docs,
         workspace_source_references_for_root_symbol_with_open_docs,
         workspace_source_struct_field_completions, workspace_source_type_definition_for_dependency,
+        workspace_source_type_definition_for_dependency_with_open_docs,
         workspace_source_type_definition_for_import,
         workspace_source_type_definition_for_import_in_broken_source,
         workspace_source_type_definition_for_import_with_open_docs,
@@ -23632,6 +23701,326 @@ pub fn build() -> Counter {
         };
         assert!(markup.value.contains("fn pulse(self) -> Int"));
         assert!(!markup.value.contains("fn ping(self) -> Int"));
+    }
+
+    #[test]
+    fn workspace_dependency_member_type_definitions_prefer_open_local_dependency_members() {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-member-type-definitions");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+
+pub fn main() -> Int {
+    let current = build()
+    return current.extra.id + current.pulse().id
+}
+"#,
+        );
+        let alpha_source_path = temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int
+}
+
+pub fn build() -> Counter
+"#,
+        );
+
+        let open_alpha_source = r#"
+package demo.shared.alpha
+
+pub struct Extra {
+    id: Int,
+}
+
+pub struct Counter {
+    value: Int,
+    extra: Extra,
+}
+
+impl Counter {
+    pub fn pulse(self) -> Extra {
+        return self.extra
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1, extra: Extra { id: 2 } }
+}
+"#;
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let alpha_uri =
+            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
+        let open_docs =
+            file_open_documents(vec![(alpha_uri.clone(), open_alpha_source.to_owned())]);
+
+        for (needle, occurrence) in [("extra", 1usize), ("pulse", 1usize)] {
+            let position = offset_to_position(&source, nth_offset(&source, needle, occurrence) + 1);
+            assert_eq!(
+                workspace_source_type_definition_for_dependency(
+                    &uri,
+                    &source,
+                    Some(&analysis),
+                    &package,
+                    position,
+                ),
+                None,
+                "disk-only type definition should miss unsaved dependency member {needle}",
+            );
+
+            let type_definition = workspace_source_type_definition_for_dependency_with_open_docs(
+                &uri,
+                &source,
+                Some(&analysis),
+                &package,
+                &open_docs,
+                position,
+            )
+            .expect("dependency member type definition should use open dependency source");
+            let GotoTypeDefinitionResponse::Scalar(location) = type_definition else {
+                panic!(
+                    "dependency member type definition should resolve to a scalar source location"
+                )
+            };
+            assert_eq!(location.uri, alpha_uri);
+            assert_eq!(
+                location.range.start,
+                offset_to_position(open_alpha_source, nth_offset(open_alpha_source, "Extra", 1)),
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_dependency_member_semantic_tokens_prefer_open_local_dependency_members() {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-member-semantic-tokens");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+
+pub fn main() -> Int {
+    let current = build()
+    return current.extra.id + current.pulse().id
+}
+"#,
+        );
+        let alpha_source_path = temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int
+}
+
+pub fn build() -> Counter
+"#,
+        );
+
+        let open_alpha_source = r#"
+package demo.shared.alpha
+
+pub struct Extra {
+    id: Int,
+}
+
+pub struct Counter {
+    value: Int,
+    extra: Extra,
+}
+
+impl Counter {
+    pub fn pulse(self) -> Extra {
+        return self.extra
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1, extra: Extra { id: 2 } }
+}
+"#;
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let alpha_uri =
+            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
+
+        let SemanticTokensResult::Tokens(disk_tokens) =
+            semantic_tokens_for_workspace_package_analysis(&uri, &source, &analysis, &package)
+        else {
+            panic!("expected full semantic tokens")
+        };
+        let disk_decoded = decode_semantic_tokens(&disk_tokens.data);
+
+        let SemanticTokensResult::Tokens(tokens) =
+            semantic_tokens_for_workspace_package_analysis_with_open_docs(
+                &uri,
+                &source,
+                &analysis,
+                &package,
+                &file_open_documents(vec![
+                    (uri.clone(), source.clone()),
+                    (alpha_uri, open_alpha_source.to_owned()),
+                ]),
+            )
+        else {
+            panic!("expected full semantic tokens")
+        };
+        let decoded = decode_semantic_tokens(&tokens.data);
+        let legend = semantic_tokens_legend();
+        let property_type = legend
+            .token_types
+            .iter()
+            .position(|token_type| *token_type == SemanticTokenType::PROPERTY)
+            .expect("property legend entry should exist") as u32;
+        let method_type = legend
+            .token_types
+            .iter()
+            .position(|token_type| *token_type == SemanticTokenType::METHOD)
+            .expect("method legend entry should exist") as u32;
+
+        for (needle, occurrence, token_type) in [
+            ("extra", 1usize, property_type),
+            ("pulse", 1usize, method_type),
+        ] {
+            let span = Span::new(
+                nth_offset(&source, needle, occurrence),
+                nth_offset(&source, needle, occurrence) + needle.len(),
+            );
+            let range = span_to_range(&source, span);
+            let token = (
+                range.start.line,
+                range.start.character,
+                range.end.character - range.start.character,
+                token_type,
+            );
+            assert!(
+                !disk_decoded.contains(&token),
+                "disk-only semantic tokens should miss unsaved dependency member {needle}",
+            );
+            assert!(
+                decoded.contains(&token),
+                "open-doc semantic tokens should include dependency member {needle}",
+            );
+        }
     }
 
     #[test]
