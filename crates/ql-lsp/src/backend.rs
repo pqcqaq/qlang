@@ -2879,6 +2879,262 @@ fn broken_source_import_token_matches_reference_context(tokens: &[Token], index:
     ) || matches!(prev_kind, Some(TokenKind::Colon | TokenKind::Arrow))
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BrokenSourceImplBlockSite {
+    location: Location,
+    trait_name: Option<String>,
+    target_name: String,
+    method_spans: Vec<(String, Span)>,
+}
+
+fn broken_source_visible_local_names_for_target(
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    target: &DependencyDefinitionTarget,
+) -> HashSet<String> {
+    let mut names = HashSet::new();
+    if canonicalize_or_clone(package.manifest().manifest_path.as_path())
+        == canonicalize_or_clone(&target.manifest_path)
+    {
+        names.insert(target.name.clone());
+    }
+
+    let (tokens, _) = lex(source);
+    for binding in broken_source_import_bindings_in_tokens(&tokens) {
+        if binding.imported_name == target.name {
+            names.insert(binding.local_name);
+        }
+    }
+
+    names
+}
+
+fn token_index_after_balanced_braces_in_tokens(
+    tokens: &[Token],
+    open_index: usize,
+) -> Option<usize> {
+    if tokens.get(open_index).map(|token| token.kind) != Some(TokenKind::LBrace) {
+        return None;
+    }
+
+    let mut depth = 1usize;
+    let mut index = open_index + 1;
+    while index < tokens.len() {
+        match tokens[index].kind {
+            TokenKind::LBrace => depth += 1,
+            TokenKind::RBrace => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(index + 1);
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+
+    None
+}
+
+fn broken_source_path_last_ident_token(tokens: &[Token], index: usize) -> Option<(&Token, usize)> {
+    let mut index = index;
+    let mut last = tokens.get(index)?;
+    if last.kind != TokenKind::Ident {
+        return None;
+    }
+    index += 1;
+
+    while tokens.get(index).map(|token| token.kind) == Some(TokenKind::Dot)
+        && tokens.get(index + 1).map(|token| token.kind) == Some(TokenKind::Ident)
+    {
+        last = tokens.get(index + 1)?;
+        index += 2;
+    }
+
+    Some((last, index))
+}
+
+fn broken_source_impl_method_name_spans_in_tokens(
+    tokens: &[Token],
+    start_index: usize,
+    end_index: usize,
+) -> Vec<(String, Span)> {
+    let mut method_spans = Vec::new();
+    let mut brace_depth = 0usize;
+    let mut index = start_index;
+
+    while index < end_index {
+        match tokens[index].kind {
+            TokenKind::LBrace => brace_depth += 1,
+            TokenKind::RBrace => brace_depth = brace_depth.saturating_sub(1),
+            TokenKind::Fn if brace_depth == 0 => {
+                if let Some(method_token) = tokens.get(index + 1)
+                    && method_token.kind == TokenKind::Ident
+                {
+                    method_spans.push((method_token.text.clone(), method_token.span));
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+
+    method_spans
+}
+
+fn broken_source_impl_block_site_in_tokens(
+    uri: &Url,
+    source: &str,
+    tokens: &[Token],
+    index: usize,
+) -> Option<(BrokenSourceImplBlockSite, usize)> {
+    let token = tokens.get(index)?;
+    let (trait_name, target_name, open_index) = match token.kind {
+        TokenKind::Impl => {
+            let (first_name, next_index) = broken_source_path_last_ident_token(tokens, index + 1)?;
+            if tokens.get(next_index).map(|token| token.kind) == Some(TokenKind::For) {
+                let (target_name, after_target_index) =
+                    broken_source_path_last_ident_token(tokens, next_index + 1)?;
+                (
+                    Some(first_name.text.clone()),
+                    target_name.text.clone(),
+                    after_target_index,
+                )
+            } else {
+                (None, first_name.text.clone(), next_index)
+            }
+        }
+        TokenKind::Extend => {
+            let (target_name, next_index) = broken_source_path_last_ident_token(tokens, index + 1)?;
+            (None, target_name.text.clone(), next_index)
+        }
+        _ => return None,
+    };
+
+    if tokens.get(open_index).map(|token| token.kind) != Some(TokenKind::LBrace) {
+        return None;
+    }
+
+    let close_index = token_index_after_balanced_braces_in_tokens(tokens, open_index);
+    let method_end_index = close_index
+        .map(|close_index| close_index.saturating_sub(1))
+        .unwrap_or(tokens.len());
+    let block_end_offset = close_index
+        .and_then(|close_index| close_index.checked_sub(1))
+        .and_then(|close_token_index| tokens.get(close_token_index))
+        .map(|token| token.span.end)
+        .unwrap_or(source.len());
+
+    Some((
+        BrokenSourceImplBlockSite {
+            location: Location::new(
+                uri.clone(),
+                span_to_range(source, Span::new(token.span.start, block_end_offset)),
+            ),
+            trait_name,
+            target_name,
+            method_spans: broken_source_impl_method_name_spans_in_tokens(
+                tokens,
+                open_index + 1,
+                method_end_index,
+            ),
+        },
+        close_index.unwrap_or(tokens.len()),
+    ))
+}
+
+fn broken_source_impl_block_sites_in_source(
+    uri: &Url,
+    source: &str,
+) -> Vec<BrokenSourceImplBlockSite> {
+    let (tokens, _) = lex(source);
+    let mut sites = Vec::new();
+    let mut brace_depth = 0usize;
+    let mut index = 0usize;
+
+    while index < tokens.len() {
+        match tokens[index].kind {
+            TokenKind::LBrace => brace_depth += 1,
+            TokenKind::RBrace => brace_depth = brace_depth.saturating_sub(1),
+            TokenKind::Impl | TokenKind::Extend if brace_depth == 0 => {
+                if let Some((site, next_index)) =
+                    broken_source_impl_block_site_in_tokens(uri, source, &tokens, index)
+                {
+                    sites.push(site);
+                    index = next_index;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+
+    sites
+}
+
+fn broken_source_struct_or_enum_implementation_locations_in_source(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    target: &DependencyDefinitionTarget,
+) -> Vec<Location> {
+    if !matches!(
+        target.kind,
+        ql_analysis::SymbolKind::Struct | ql_analysis::SymbolKind::Enum
+    ) || canonicalize_or_clone(package.manifest().manifest_path.as_path())
+        != canonicalize_or_clone(&target.manifest_path)
+    {
+        return Vec::new();
+    }
+
+    let local_names = broken_source_visible_local_names_for_target(source, package, target);
+    if local_names.is_empty() {
+        return Vec::new();
+    }
+
+    broken_source_impl_block_sites_in_source(uri, source)
+        .into_iter()
+        .filter(|site| site.trait_name.is_none() && local_names.contains(&site.target_name))
+        .map(|site| site.location)
+        .collect()
+}
+
+fn broken_source_trait_method_implementation_sites_in_source(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    target: &DependencyDefinitionTarget,
+    method_name: &str,
+) -> Vec<WorkspaceMethodDefinitionSite> {
+    let local_names = broken_source_visible_local_names_for_target(source, package, target);
+    if local_names.is_empty() {
+        return Vec::new();
+    }
+
+    broken_source_impl_block_sites_in_source(uri, source)
+        .into_iter()
+        .filter(|site| {
+            site.trait_name
+                .as_ref()
+                .is_some_and(|trait_name| local_names.contains(trait_name))
+        })
+        .flat_map(|site| {
+            site.method_spans
+                .into_iter()
+                .filter(move |(name, _)| name == method_name)
+                .map(move |(name, span)| WorkspaceMethodDefinitionSite {
+                    location: Location::new(uri.clone(), span_to_range(source, span)),
+                    definition_target: ql_analysis::DefinitionTarget {
+                        kind: ql_analysis::SymbolKind::Method,
+                        name,
+                        span,
+                    },
+                })
+        })
+        .collect()
+}
+
 fn extend_workspace_dependency_definition_matches(
     package: &ql_analysis::PackageAnalysis,
     current_path: Option<&Path>,
@@ -3712,10 +3968,33 @@ fn workspace_trait_method_implementation_sites_with_open_docs(
     let mut sites = Vec::new();
 
     for module in package.modules() {
-        let (uri, source, analysis) = if let Some((open_uri, open_source, open_analysis)) =
-            open_document_snapshot(open_docs, module.path())
+        let canonical_module_path = canonicalize_or_clone(module.path());
+        let (uri, source, analysis) = if let Some((open_uri, open_source)) =
+            open_docs.get(&canonical_module_path)
         {
-            (open_uri, open_source, open_analysis)
+            if let Ok(open_analysis) = analyze_source(open_source) {
+                (open_uri.clone(), open_source.clone(), open_analysis)
+            } else {
+                let mut module_sites = broken_source_trait_method_implementation_sites_in_source(
+                    open_uri,
+                    open_source,
+                    package,
+                    target,
+                    method_name,
+                );
+                module_sites.sort_by_key(|site| {
+                    (
+                        site.location.range.start.line,
+                        site.location.range.start.character,
+                        site.location.range.end.line,
+                        site.location.range.end.character,
+                    )
+                });
+                module_sites
+                    .dedup_by(|left, right| same_location_anchor(&left.location, &right.location));
+                sites.extend(module_sites);
+                continue;
+            }
         } else {
             let Ok(uri) = Url::from_file_path(module.path()) else {
                 continue;
@@ -3957,19 +4236,40 @@ fn extend_workspace_dependency_implementation_locations_with_open_docs(
     }
 
     for module in package.modules() {
-        let (uri, source, analysis) = if let Some((open_uri, open_source, open_analysis)) =
-            open_document_snapshot(open_docs, module.path())
-        {
-            (open_uri, open_source, open_analysis)
-        } else {
-            let Ok(uri) = Url::from_file_path(module.path()) else {
-                continue;
+        let canonical_module_path = canonicalize_or_clone(module.path());
+        let (uri, source, analysis) =
+            if let Some((open_uri, open_source)) = open_docs.get(&canonical_module_path) {
+                if let Ok(open_analysis) = analyze_source(open_source) {
+                    (open_uri.clone(), open_source.clone(), open_analysis)
+                } else {
+                    let mut module_locations =
+                        broken_source_struct_or_enum_implementation_locations_in_source(
+                            open_uri,
+                            open_source,
+                            package,
+                            target,
+                        );
+                    module_locations.sort_by_key(|location| {
+                        (
+                            location.range.start.line,
+                            location.range.start.character,
+                            location.range.end.line,
+                            location.range.end.character,
+                        )
+                    });
+                    module_locations.dedup_by(|left, right| same_location_anchor(left, right));
+                    locations.extend(module_locations);
+                    continue;
+                }
+            } else {
+                let Ok(uri) = Url::from_file_path(module.path()) else {
+                    continue;
+                };
+                let Ok(source) = fs::read_to_string(module.path()) else {
+                    continue;
+                };
+                (uri, source.replace("\r\n", "\n"), module.analysis().clone())
             };
-            let Ok(source) = fs::read_to_string(module.path()) else {
-                continue;
-            };
-            (uri, source.replace("\r\n", "\n"), module.analysis().clone())
-        };
 
         let mut module_locations = analysis
             .ast()
@@ -8861,6 +9161,133 @@ extend Config {
     }
 
     #[test]
+    fn workspace_type_import_implementation_uses_broken_open_workspace_source_and_new_impl_blocks()
+    {
+        let temp = TempDir::new("ql-lsp-workspace-type-import-implementation-broken-open-docs");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(value: Config) -> Config {
+    return value
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let open_core_source = r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    fn build(self) -> Int {
+        return self.value
+    }
+}
+
+extend Config {
+    fn label(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn broken() -> Int {
+    return Config {
+"#
+        .to_owned();
+
+        assert!(analyze_source(&open_core_source).is_err());
+
+        let implementation = workspace_source_implementation_for_dependency_with_open_docs(
+            &source,
+            Some(&analysis),
+            &package,
+            &file_open_documents(vec![(core_uri.clone(), open_core_source.clone())]),
+            offset_to_position(&source, nth_offset(&source, "Config", 2)),
+        )
+        .expect("workspace import implementation should use broken open workspace source");
+
+        let GotoDefinitionResponse::Array(locations) = implementation else {
+            panic!("workspace import implementation should resolve to many locations")
+        };
+        assert_eq!(locations.len(), 2);
+        assert!(locations.iter().all(|location| location.uri == core_uri));
+        assert_eq!(
+            locations[0].range.start,
+            offset_to_position(
+                &open_core_source,
+                nth_offset(&open_core_source, "impl Config", 1)
+            ),
+        );
+        assert_eq!(
+            locations[1].range.start,
+            offset_to_position(
+                &open_core_source,
+                nth_offset(&open_core_source, "extend Config", 1)
+            ),
+        );
+    }
+
+    #[test]
     fn workspace_trait_method_implementation_prefers_open_workspace_source_and_new_impl_methods() {
         let temp = TempDir::new("ql-lsp-workspace-trait-method-implementation-open-docs");
         let core_source_path = temp.write(
@@ -8970,6 +9397,119 @@ impl Runner for AppWorker {
 
         let GotoDefinitionResponse::Scalar(location) = implementation else {
             panic!("single open-doc trait method implementation should resolve to one location")
+        };
+        assert_eq!(location.uri, app_uri);
+        assert_eq!(
+            location.range.start,
+            offset_to_position(&open_app_source, nth_offset(&open_app_source, "run", 1)),
+        );
+    }
+
+    #[test]
+    fn workspace_trait_method_implementation_uses_broken_open_workspace_source_and_new_impl_methods()
+     {
+        let temp = TempDir::new("ql-lsp-workspace-trait-method-implementation-broken-open-docs");
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+        let app_source_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let analysis = analyze_source(&source).expect("core source should analyze");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        let app_uri =
+            Url::from_file_path(&app_source_path).expect("app path should convert to URI");
+        let open_app_source = r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+
+pub fn broken() -> Int {
+    return AppWorker {
+"#
+        .to_owned();
+
+        assert!(analyze_source(&open_app_source).is_err());
+
+        let implementation = workspace_source_trait_method_implementation_with_open_docs(
+            &core_uri,
+            &source,
+            &analysis,
+            &package,
+            &file_open_documents(vec![(app_uri.clone(), open_app_source.clone())]),
+            offset_to_position(&source, nth_offset(&source, "run", 1)),
+        )
+        .expect("open broken workspace source should provide trait method implementations");
+
+        let GotoDefinitionResponse::Scalar(location) = implementation else {
+            panic!(
+                "single broken open-doc trait method implementation should resolve to one location"
+            )
         };
         assert_eq!(location.uri, app_uri);
         assert_eq!(
