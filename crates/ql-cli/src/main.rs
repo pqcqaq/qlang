@@ -892,6 +892,7 @@ fn run() -> Result<(), u8> {
                     let remaining = args.collect::<Vec<_>>();
                     let mut path = None;
                     let mut package_name = None;
+                    let mut remove_all = false;
                     let mut index = 0;
 
                     while index < remaining.len() {
@@ -911,6 +912,9 @@ fn run() -> Result<(), u8> {
                                     return Err(1);
                                 }
                                 package_name = Some(value.clone());
+                            }
+                            "--all" => {
+                                remove_all = true;
                             }
                             other if other.starts_with('-') => {
                                 eprintln!(
@@ -942,7 +946,7 @@ fn run() -> Result<(), u8> {
                     let path = path
                         .or_else(|| env::current_dir().ok())
                         .unwrap_or_else(|| PathBuf::from("."));
-                    project_remove_dependency_path(&path, &package_name)
+                    project_remove_dependency_path(&path, &package_name, remove_all)
                 }
                 other => {
                     eprintln!("error: unknown `ql project` subcommand `{other}`");
@@ -10494,10 +10498,18 @@ fn project_add_dependency_path(path: &Path, package_name: &str) -> Result<(), u8
     Ok(())
 }
 
-fn project_remove_dependency_path(path: &Path, package_name: &str) -> Result<(), u8> {
+fn project_remove_dependency_path(
+    path: &Path,
+    package_name: &str,
+    remove_all: bool,
+) -> Result<(), u8> {
     if let Err(message) = validate_project_package_name(package_name) {
         eprintln!("error: `ql project remove-dependency` {message}");
         return Err(1);
+    }
+
+    if remove_all {
+        return project_remove_dependency_from_all_workspace_members(path, package_name);
     }
 
     let package_manifest = resolve_project_package_manifest(path).map_err(|message| {
@@ -10546,6 +10558,62 @@ fn project_remove_dependency_path(path: &Path, package_name: &str) -> Result<(),
         "updated: {}",
         normalize_path(&package_manifest.manifest_path)
     );
+    Ok(())
+}
+
+fn project_remove_dependency_from_all_workspace_members(
+    path: &Path,
+    package_name: &str,
+) -> Result<(), u8> {
+    let workspace_manifest = resolve_project_workspace_manifest(path).map_err(|message| {
+        eprintln!("error: `ql project remove-dependency` {message}");
+        1
+    })?;
+    let dependency_entries =
+        find_workspace_member_entries_by_package_name(&workspace_manifest, package_name);
+    if dependency_entries.is_empty() {
+        eprintln!(
+            "error: `ql project remove-dependency` workspace manifest `{}` does not contain package `{package_name}`",
+            normalize_path(&workspace_manifest.manifest_path)
+        );
+        return Err(1);
+    }
+    if dependency_entries.len() > 1 {
+        let matching_members = dependency_entries
+            .iter()
+            .map(|(member, _)| member.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!(
+            "error: `ql project remove-dependency` workspace manifest `{}` contains multiple members for package `{package_name}`: {matching_members}",
+            normalize_path(&workspace_manifest.manifest_path)
+        );
+        return Err(1);
+    }
+
+    let member_manifest_path = &dependency_entries[0].1;
+    let dependents = find_workspace_member_dependents(&workspace_manifest, member_manifest_path)
+        .map_err(|message| {
+            eprintln!("error: `ql project remove-dependency` {message}");
+            1
+        })?;
+    if dependents.is_empty() {
+        eprintln!(
+            "error: `ql project remove-dependency` workspace package `{package_name}` does not have any dependent members to update in workspace manifest `{}`",
+            normalize_path(&workspace_manifest.manifest_path)
+        );
+        return Err(1);
+    }
+
+    let updated_dependency_manifests =
+        detach_workspace_member_dependents(package_name, member_manifest_path, &dependents)
+            .map_err(|message| {
+                eprintln!("error: `ql project remove-dependency` {message}");
+                1
+            })?;
+    for manifest_path in updated_dependency_manifests {
+        println!("updated: {}", normalize_path(&manifest_path));
+    }
     Ok(())
 }
 
@@ -14058,7 +14126,7 @@ fn print_usage() {
     eprintln!("  ql project add [file-or-dir] --name <package> [--dependency <package> ...]");
     eprintln!("  ql project remove [file-or-dir] --name <package> [--cascade]");
     eprintln!("  ql project add-dependency [file-or-dir] --name <package>");
-    eprintln!("  ql project remove-dependency [file-or-dir] --name <package>");
+    eprintln!("  ql project remove-dependency [file-or-dir] --name <package> [--all]");
     eprintln!("  ql project emit-interface [file-or-dir] [-o <output>] [--changed-only] [--check]");
     eprintln!("  ql ffi header <file> [--surface exports|imports|both] [-o <output>]");
     eprintln!("  ql fmt <file> [--write]");

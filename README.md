@@ -15,7 +15,7 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - `ql build --list` / `ql run --list` 已可直接列出当前 package / workspace 下的 build targets；workspace member 目录或源码路径也会回到外层 workspace 视角；`--json` 复用 `ql.project.targets.v1`，`ql run --list` 只展示 runnable targets。
 - `ql project add` 已能向现有 workspace 增量加入 `packages/<name>` member scaffold，并可在创建时直接写入 workspace 内本地依赖到 `[dependencies]`。
 - `ql project remove` 已能按 package 名把现有 member 从 `[workspace].members` 里安全摘除；若仍被其他 workspace member 依赖会先拒绝删除，也可用 `--cascade` 自动清理依赖边后继续移除，并保留磁盘上的包目录，便于渐进式重构。
-- `ql project add-dependency` / `remove-dependency` 已能直接维护已有 workspace member 的本地依赖；`remove-dependency` 现在也会兼容清理旧的 `[references].packages` 入口，不必再手改 `qlang.toml`。
+- `ql project add-dependency` / `remove-dependency` 已能直接维护已有 workspace member 的本地依赖；`remove-dependency` 现在也会兼容清理旧的 `[references].packages` 入口，并支持 `--all` 按 package 名一次性清理所有 dependents，不必再手改 `qlang.toml`。
 - `ql project dependents` 已能直接查询某个 workspace package 当前被哪些 members 依赖，便于清理依赖边或定位删除阻塞。
 - `ql check` / `ql build` / `ql run` / `ql test` 与 `ql project targets` / `graph` / `lock` 已提供第一版 `--json` 机器输出；`ql run --json` 当前输出 `ql.run.v1`，`ql project lock --json` 当前输出 `ql.project.lock.result.v1`。
 - `ql check` 现在也会在 workspace member 目录或源码路径入口上恢复外层 workspace 语义，不再悄悄退回单 package 检查。
@@ -62,6 +62,7 @@ cargo run -p ql-cli -- project remove demo-workspace --name tools
 cargo run -p ql-cli -- project remove demo-workspace --name core --cascade
 cargo run -p ql-cli -- project add-dependency demo-workspace/packages/app --name core
 cargo run -p ql-cli -- project remove-dependency demo-workspace/packages/app --name core
+cargo run -p ql-cli -- project remove-dependency demo-workspace --name core --all
 cargo run -p ql-cli -- project dependents demo-workspace --name core
 cargo run -p ql-cli -- check path/to/workspace/packages/app
 cargo run -p ql-cli -- check path/to/workspace/packages/app/src/lib.ql
