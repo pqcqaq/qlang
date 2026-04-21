@@ -3952,13 +3952,17 @@ fn extend_workspace_dependency_implementation_locations_with_open_docs(
 
 fn workspace_source_implementation_for_dependency_with_open_docs(
     source: &str,
-    analysis: &Analysis,
+    analysis: Option<&Analysis>,
     package: &ql_analysis::PackageAnalysis,
     open_docs: &OpenDocuments,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<GotoImplementationResponse> {
-    let offset = position_to_offset(source, position)?;
-    let target = package.dependency_type_definition_at(analysis, offset)?;
+    let target = if let Some(analysis) = analysis {
+        let offset = position_to_offset(source, position)?;
+        package.dependency_type_definition_at(analysis, offset)?
+    } else {
+        dependency_type_definition_target_at(source, None, package, position)?
+    };
     let mut locations = Vec::new();
 
     for candidate_manifest_path in
@@ -4005,29 +4009,20 @@ fn workspace_source_implementation_for_dependency_with_open_docs(
 fn workspace_source_method_implementation_for_dependency_with_open_docs(
     uri: &Url,
     source: &str,
-    analysis: &Analysis,
+    analysis: Option<&Analysis>,
     package: &ql_analysis::PackageAnalysis,
     open_docs: &OpenDocuments,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<GotoImplementationResponse> {
     let target = dependency_definition_target_with_open_docs_at(
-        source,
-        Some(analysis),
-        package,
-        open_docs,
-        position,
+        source, analysis, package, open_docs, position,
     )?;
     if target.kind != ql_analysis::SymbolKind::Method {
         return None;
     }
 
     workspace_source_location_for_dependency_target_with_open_docs(
-        uri,
-        source,
-        Some(analysis),
-        package,
-        open_docs,
-        &target,
+        uri, source, analysis, package, open_docs, &target,
     )
     .map(GotoImplementationResponse::Scalar)
 }
@@ -6975,34 +6970,51 @@ impl LanguageServer for Backend {
         let Some(source) = self.documents.get(&uri).await else {
             return Ok(None);
         };
-
-        let Ok(analysis) = analyze_source(&source) else {
-            return Ok(None);
-        };
         if let Some(package) = self.package_analysis_for_uri(&uri) {
             let open_docs = self.open_file_documents().await;
-            if let Some(implementation) =
-                workspace_source_trait_method_implementation_with_open_docs(
-                    &uri, &source, &analysis, &package, &open_docs, position,
-                )
+            let analysis = analyze_source(&source).ok();
+            if let Some(analysis) = analysis.as_ref()
+                && let Some(implementation) =
+                    workspace_source_trait_method_implementation_with_open_docs(
+                        &uri, &source, analysis, &package, &open_docs, position,
+                    )
             {
                 return Ok(Some(implementation));
             }
             if let Some(implementation) =
                 workspace_source_method_implementation_for_dependency_with_open_docs(
-                    &uri, &source, &analysis, &package, &open_docs, position,
+                    &uri,
+                    &source,
+                    analysis.as_ref(),
+                    &package,
+                    &open_docs,
+                    position,
                 )
             {
                 return Ok(Some(implementation));
             }
             if let Some(implementation) =
                 workspace_source_implementation_for_dependency_with_open_docs(
-                    &source, &analysis, &package, &open_docs, position,
+                    &source,
+                    analysis.as_ref(),
+                    &package,
+                    &open_docs,
+                    position,
                 )
             {
                 return Ok(Some(implementation));
             }
+            let Some(analysis) = analysis else {
+                return Ok(None);
+            };
+            return Ok(implementation_for_analysis(
+                &uri, &source, &analysis, position,
+            ));
         }
+
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
         Ok(implementation_for_analysis(
             &uri, &source, &analysis, position,
         ))
@@ -7862,7 +7874,7 @@ pub struct Config {
 
         let implementation = workspace_source_implementation_for_dependency_with_open_docs(
             &source,
-            &analysis,
+            Some(&analysis),
             &package,
             &file_open_documents(vec![]),
             offset_to_position(&source, nth_offset(&source, "Config", 2)),
@@ -8020,7 +8032,7 @@ pub trait Runner {
 
         let implementation = workspace_source_implementation_for_dependency_with_open_docs(
             &source,
-            &analysis,
+            Some(&analysis),
             &package,
             &file_open_documents(vec![]),
             offset_to_position(&source, nth_offset(&source, "Runner", 2)),
@@ -8284,7 +8296,7 @@ extend Config {
 
         let implementation = workspace_source_implementation_for_dependency_with_open_docs(
             &source,
-            &analysis,
+            Some(&analysis),
             &package,
             &file_open_documents(vec![(core_uri.clone(), open_core_source.clone())]),
             offset_to_position(&source, nth_offset(&source, "Config", 2)),
@@ -27683,7 +27695,7 @@ pub fn build() -> Counter {
             workspace_source_method_implementation_for_dependency_with_open_docs(
                 &uri,
                 &source,
-                &analysis,
+                Some(&analysis),
                 &package,
                 &open_docs,
                 pulse_position,
@@ -28347,6 +28359,21 @@ pub fn build() -> Counter {
                         == offset_to_position(&source, nth_offset(&source, "ping", 1))
             }),
             "references should include broken-source local method occurrence",
+        );
+
+        assert_eq!(
+            workspace_source_method_implementation_for_dependency_with_open_docs(
+                &uri,
+                &source,
+                None,
+                &package,
+                &open_docs,
+                ping_position,
+            ),
+            Some(GotoImplementationResponse::Scalar(Location::new(
+                alpha_uri.clone(),
+                span_to_range(open_alpha_source, nth_span(open_alpha_source, "ping", 1)),
+            ))),
         );
 
         let highlights = fallback_document_highlights_for_package_at_with_open_docs(
