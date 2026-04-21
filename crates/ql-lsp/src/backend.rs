@@ -3567,6 +3567,13 @@ fn implementation_target_matches_dependency_type_expr(
 struct TraitMethodImplementationQuery {
     trait_target: DependencyDefinitionTarget,
     method_name: String,
+    method_span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WorkspaceMethodDefinitionSite {
+    location: Location,
+    definition_target: ql_analysis::DefinitionTarget,
 }
 
 fn trait_method_implementation_query_for_source(
@@ -3600,20 +3607,22 @@ fn trait_method_implementation_query_for_source(
                 span: item.span,
             },
             method_name: method.name.clone(),
+            method_span: method.name_span,
         })
     })
 }
 
-fn extend_workspace_trait_method_implementation_locations_with_open_docs(
+fn workspace_trait_method_implementation_sites_with_open_docs(
     package: &ql_analysis::PackageAnalysis,
     open_docs: &OpenDocuments,
     target: &DependencyDefinitionTarget,
     method_name: &str,
-    locations: &mut Vec<Location>,
-) {
+) -> Vec<WorkspaceMethodDefinitionSite> {
     if target.kind != ql_analysis::SymbolKind::Trait {
-        return;
+        return Vec::new();
     }
+
+    let mut sites = Vec::new();
 
     for module in package.modules() {
         let (uri, source, analysis) = if let Some((open_uri, open_source, open_analysis)) =
@@ -3630,7 +3639,7 @@ fn extend_workspace_trait_method_implementation_locations_with_open_docs(
             (uri, source.replace("\r\n", "\n"), module.analysis().clone())
         };
 
-        let mut module_locations = analysis
+        let mut module_sites = analysis
             .ast()
             .items
             .iter()
@@ -3651,8 +3660,16 @@ fn extend_workspace_trait_method_implementation_locations_with_open_docs(
                             .methods
                             .iter()
                             .filter(|method| method.name == method_name)
-                            .map(|method| {
-                                Location::new(uri.clone(), span_to_range(&source, method.name_span))
+                            .map(|method| WorkspaceMethodDefinitionSite {
+                                location: Location::new(
+                                    uri.clone(),
+                                    span_to_range(&source, method.name_span),
+                                ),
+                                definition_target: ql_analysis::DefinitionTarget {
+                                    kind: ql_analysis::SymbolKind::Method,
+                                    name: method.name.clone(),
+                                    span: method.name_span,
+                                },
                             })
                             .collect::<Vec<_>>()
                     })
@@ -3660,17 +3677,121 @@ fn extend_workspace_trait_method_implementation_locations_with_open_docs(
             .flatten()
             .collect::<Vec<_>>();
 
-        module_locations.sort_by_key(|location| {
+        module_sites.sort_by_key(|site| {
             (
-                location.range.start.line,
-                location.range.start.character,
-                location.range.end.line,
-                location.range.end.character,
+                site.location.range.start.line,
+                site.location.range.start.character,
+                site.location.range.end.line,
+                site.location.range.end.character,
             )
         });
-        module_locations.dedup_by(|left, right| same_location_anchor(left, right));
-        locations.extend(module_locations);
+        module_sites.dedup_by(|left, right| same_location_anchor(&left.location, &right.location));
+        sites.extend(module_sites);
     }
+
+    sites
+}
+
+fn extend_workspace_trait_method_implementation_locations_with_open_docs(
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    target: &DependencyDefinitionTarget,
+    method_name: &str,
+    locations: &mut Vec<Location>,
+) {
+    locations.extend(
+        workspace_trait_method_implementation_sites_with_open_docs(
+            package,
+            open_docs,
+            target,
+            method_name,
+        )
+        .into_iter()
+        .map(|site| site.location),
+    );
+}
+
+fn workspace_source_trait_method_references_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+    include_declaration: bool,
+) -> Option<Vec<Location>> {
+    let current_path = uri.to_file_path().ok()?;
+    let query = trait_method_implementation_query_for_source(
+        &current_path,
+        source,
+        analysis,
+        package,
+        position,
+    )?;
+    let source_definition = Location::new(uri.clone(), span_to_range(source, query.method_span));
+    let mut locations = Vec::new();
+
+    if let Some(mut source_locations) =
+        same_file_references_for_source_location_with_open_docs(&source_definition, open_docs)
+    {
+        if !include_declaration {
+            source_locations.retain(|location| !same_location_anchor(location, &source_definition));
+        }
+        merge_unique_reference_locations(&mut locations, source_locations);
+    }
+
+    for candidate_manifest_path in
+        visible_manifest_paths_for_package(package.manifest().manifest_path.as_path())
+    {
+        let Some(candidate_package) = package_analysis_for_path(&candidate_manifest_path) else {
+            continue;
+        };
+        let implementation_sites = workspace_trait_method_implementation_sites_with_open_docs(
+            &candidate_package,
+            open_docs,
+            &query.trait_target,
+            &query.method_name,
+        );
+
+        for implementation_site in implementation_sites {
+            if let Some(mut same_file_locations) =
+                same_file_references_for_source_location_with_open_docs(
+                    &implementation_site.location,
+                    open_docs,
+                )
+            {
+                if !include_declaration {
+                    same_file_locations.retain(|location| {
+                        !same_location_anchor(location, &implementation_site.location)
+                    });
+                }
+                merge_unique_reference_locations(&mut locations, same_file_locations);
+            }
+
+            let implementation_path = implementation_site.location.uri.to_file_path().ok();
+            merge_unique_reference_locations(
+                &mut locations,
+                workspace_visible_source_references_for_definition_with_open_docs(
+                    package,
+                    implementation_path.as_deref(),
+                    open_docs,
+                    &implementation_site.definition_target,
+                    &implementation_site.location,
+                    include_declaration,
+                ),
+            );
+        }
+    }
+
+    if locations.is_empty() {
+        return None;
+    }
+
+    if include_declaration {
+        normalize_reference_locations_with_definition(&mut locations, &source_definition);
+    }
+
+    Some(locations)
 }
 
 fn workspace_source_trait_method_implementation_with_open_docs(
@@ -6171,6 +6292,17 @@ fn workspace_source_references_for_root_symbol_with_open_docs(
     if !occurrence_matches_definition_target(analysis, offset, &definition_target) {
         return None;
     }
+    if let Some(locations) = workspace_source_trait_method_references_with_open_docs(
+        uri,
+        source,
+        analysis,
+        package,
+        open_docs,
+        position,
+        include_declaration,
+    ) {
+        return Some(locations);
+    }
 
     let source_definition =
         Location::new(uri.clone(), span_to_range(source, definition_target.span));
@@ -7405,6 +7537,7 @@ mod tests {
         workspace_source_references_for_root_symbol_with_open_docs,
         workspace_source_struct_field_completions,
         workspace_source_trait_method_implementation_with_open_docs,
+        workspace_source_trait_method_references_with_open_docs,
         workspace_source_type_definition_for_dependency,
         workspace_source_type_definition_for_dependency_with_open_docs,
         workspace_source_type_definition_for_import,
@@ -8256,6 +8389,265 @@ impl Runner for AppWorker {
             location.range.start,
             offset_to_position(&open_app_source, nth_offset(&open_app_source, "run", 1)),
         );
+    }
+
+    #[test]
+    fn workspace_trait_method_references_include_workspace_consumer_impl_methods() {
+        let temp = TempDir::new("ql-lsp-workspace-trait-method-references-consumers");
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+        let app_source_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+"#,
+        );
+        let tools_source_path = temp.write(
+            "workspace/packages/tools/src/lib.ql",
+            r#"
+package demo.tools
+
+use demo.core.Runner
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn run(self) -> Int {
+        return 2
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core", "packages/tools"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/tools/qlang.toml",
+            r#"
+[package]
+name = "tools"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+
+        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let core_analysis = analyze_source(&core_source).expect("core source should analyze");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+
+        let references = workspace_source_trait_method_references_with_open_docs(
+            &core_uri,
+            &core_source,
+            &core_analysis,
+            &package,
+            &file_open_documents(vec![]),
+            offset_to_position(&core_source, nth_offset(&core_source, "run", 1)),
+            true,
+        )
+        .expect("workspace trait method references should exist");
+
+        assert_eq!(references.len(), 3);
+        assert!(references.contains(&Location::new(
+            core_uri,
+            span_to_range(&core_source, nth_span(&core_source, "run", 1)),
+        )));
+
+        let app_source = fs::read_to_string(&app_source_path).expect("app source should read");
+        let app_uri =
+            Url::from_file_path(&app_source_path).expect("app path should convert to URI");
+        assert!(references.contains(&Location::new(
+            app_uri,
+            span_to_range(&app_source, nth_span(&app_source, "run", 1)),
+        )));
+
+        let tools_source =
+            fs::read_to_string(&tools_source_path).expect("tools source should read");
+        let tools_uri =
+            Url::from_file_path(&tools_source_path).expect("tools path should convert to URI");
+        assert!(references.contains(&Location::new(
+            tools_uri,
+            span_to_range(&tools_source, nth_span(&tools_source, "run", 1)),
+        )));
+    }
+
+    #[test]
+    fn workspace_trait_method_references_prefer_open_workspace_source_and_new_impl_methods() {
+        let temp = TempDir::new("ql-lsp-workspace-trait-method-references-open-docs");
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+        let app_source_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+
+        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let core_analysis = analyze_source(&core_source).expect("core source should analyze");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        let app_uri =
+            Url::from_file_path(&app_source_path).expect("app path should convert to URI");
+        let open_app_source = r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+"#
+        .to_owned();
+
+        let disk_references = workspace_source_trait_method_references_with_open_docs(
+            &core_uri,
+            &core_source,
+            &core_analysis,
+            &package,
+            &file_open_documents(vec![]),
+            offset_to_position(&core_source, nth_offset(&core_source, "run", 1)),
+            true,
+        )
+        .expect("disk references should still include the declaration");
+        assert_eq!(disk_references.len(), 1);
+        assert_eq!(
+            disk_references[0].range.start,
+            offset_to_position(&core_source, nth_offset(&core_source, "run", 1)),
+        );
+
+        let references = workspace_source_trait_method_references_with_open_docs(
+            &core_uri,
+            &core_source,
+            &core_analysis,
+            &package,
+            &file_open_documents(vec![(app_uri.clone(), open_app_source.clone())]),
+            offset_to_position(&core_source, nth_offset(&core_source, "run", 1)),
+            true,
+        )
+        .expect("open workspace source should provide trait method references");
+
+        assert_eq!(references.len(), 2);
+        assert!(references.contains(&Location::new(
+            core_uri,
+            span_to_range(&core_source, nth_span(&core_source, "run", 1)),
+        )));
+        assert!(references.contains(&Location::new(
+            app_uri,
+            span_to_range(&open_app_source, nth_span(&open_app_source, "run", 1)),
+        )));
     }
 
     fn offset_to_position(source: &str, offset: usize) -> Position {
