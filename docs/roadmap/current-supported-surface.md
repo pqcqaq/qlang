@@ -66,6 +66,7 @@
   - package-aware semantic tokens
 - healthy workspace 下，source-preferred dependency definition / typeDefinition / references / current-document `documentHighlight` / method completion 现在会直接读取已打开但未落盘的本地依赖源码，而不是只看磁盘文件。
 - healthy workspace 下，workspace import `hover/definition/declaration/typeDefinition` 现在也会读取已打开但未落盘的导出 workspace 源码，不再要求先保存文件才能看到正确导航结果。
+- healthy workspace 下，workspace import `documentHighlight` 现在也会读取已打开但未落盘的导出 workspace 源码；当前文件 import/use 高亮不再落回磁盘旧版本。
 - healthy workspace 下，workspace import references 现在同时覆盖 value import 和 analyzed-source type import 的 alias/use；当前文件、已打开但未落盘的导出源码，以及同 workspace 其他 consumer 文件的 import/use 都会一起回收。
 - workspace root `function / const / static / struct / enum / trait / type alias` 现在也补上了 references 聚合：无论从源码定义点还是同文件使用点发起，都会保留当前文件内引用，并联动返回 workspace 中对应 import alias/use 位置；这条 import/use 聚合会读取 open docs；对当前 package 可见的 broken consumers，也会保守补回 import/use。
 - healthy source 下，workspace root import/use 的 `prepareRename` 现在也会读取已打开但未落盘的导出 workspace 源码，不再要求先保存文件。

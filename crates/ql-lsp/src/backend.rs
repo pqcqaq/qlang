@@ -3243,10 +3243,25 @@ fn workspace_import_document_highlights(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<Vec<DocumentHighlight>> {
+    let open_docs = OpenDocuments::new();
+    workspace_import_document_highlights_with_open_docs(
+        uri, source, analysis, package, &open_docs, position,
+    )
+}
+
+fn workspace_import_document_highlights_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Vec<DocumentHighlight>> {
     let offset = position_to_offset(source, position)?;
     let (binding, _) = analysis.import_binding_at(offset)?;
-    let locations =
-        workspace_source_references_for_import(uri, source, analysis, package, position, true)?;
+    let locations = workspace_source_references_for_import_with_open_docs(
+        uri, source, analysis, package, open_docs, position, true,
+    )?;
     let mut highlights = document_highlights_from_locations(uri, locations).unwrap_or_default();
     let definition_range = span_to_range(source, binding.definition_span);
     if !highlights
@@ -5431,9 +5446,9 @@ impl LanguageServer for Backend {
                     &uri, &source, &package, position, &open_docs,
                 ));
             };
-            if let Some(highlights) =
-                workspace_import_document_highlights(&uri, &source, &analysis, &package, position)
-            {
+            if let Some(highlights) = workspace_import_document_highlights_with_open_docs(
+                &uri, &source, &analysis, &package, &open_docs, position,
+            ) {
                 return Ok(Some(highlights));
             }
             if let Some(highlights) = workspace_dependency_document_highlights_with_open_docs(
@@ -5790,7 +5805,8 @@ mod tests {
         semantic_tokens_for_workspace_dependency_fallback,
         semantic_tokens_for_workspace_package_analysis, workspace_dependency_document_highlights,
         workspace_dependency_reference_locations_with_open_docs,
-        workspace_import_document_highlights, workspace_source_definition_for_dependency,
+        workspace_import_document_highlights, workspace_import_document_highlights_with_open_docs,
+        workspace_source_definition_for_dependency,
         workspace_source_definition_for_dependency_with_open_docs,
         workspace_source_definition_for_import,
         workspace_source_definition_for_import_in_broken_source,
@@ -24083,6 +24099,128 @@ pub fn exported(value: Int) -> Int
         let expected = vec![
             offset_to_position(&source, nth_offset(&source, "run", 1)),
             offset_to_position(&source, nth_offset(&source, "run", 2)),
+        ];
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn workspace_import_document_highlights_prefer_open_workspace_source() {
+        let temp = TempDir::new("ql-lsp-document-highlight-package-import-open-docs");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.measure as run
+
+pub fn main() -> Int {
+    let first = run(1)
+    let second = run(first)
+    return second
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn measure(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        let open_core_source = r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+
+pub fn measure(value: Int) -> Int {
+    return value
+}
+"#
+        .to_owned();
+
+        assert_eq!(
+            workspace_import_document_highlights(
+                &uri,
+                &source,
+                &analysis,
+                &package,
+                offset_to_position(&source, nth_offset(&source, "run", 2)),
+            ),
+            None,
+            "disk-only document highlight should miss unsaved workspace source",
+        );
+
+        let highlights = workspace_import_document_highlights_with_open_docs(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            &file_open_documents(vec![
+                (uri.clone(), source.clone()),
+                (core_uri, open_core_source),
+            ]),
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        )
+        .expect("package-aware document highlight should use open workspace source");
+
+        let actual = highlights
+            .into_iter()
+            .map(|highlight| highlight.range.start)
+            .collect::<Vec<_>>();
+        let expected = vec![
+            offset_to_position(&source, nth_offset(&source, "run", 1)),
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+            offset_to_position(&source, nth_offset(&source, "run", 3)),
         ];
 
         assert_eq!(actual, expected);
