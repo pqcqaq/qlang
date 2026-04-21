@@ -4114,6 +4114,32 @@ fn workspace_source_method_implementation_for_dependency_with_open_docs(
     .map(GotoImplementationResponse::Scalar)
 }
 
+fn workspace_source_method_implementation_for_local_source_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoImplementationResponse> {
+    let target = local_source_dependency_target_with_analysis(
+        uri, source, analysis, package, open_docs, position,
+    )?;
+    if target.kind != ql_analysis::SymbolKind::Method {
+        return None;
+    }
+
+    workspace_source_location_for_dependency_target_with_open_docs(
+        uri,
+        source,
+        Some(analysis),
+        package,
+        open_docs,
+        &target,
+    )
+    .map(GotoImplementationResponse::Scalar)
+}
+
 fn workspace_source_definition_for_dependency(
     uri: &Url,
     source: &str,
@@ -7075,6 +7101,14 @@ impl LanguageServer for Backend {
             {
                 return Ok(Some(implementation));
             }
+            if let Some(analysis) = analysis.as_ref()
+                && let Some(implementation) =
+                    workspace_source_method_implementation_for_local_source_with_open_docs(
+                        &uri, &source, analysis, &package, &open_docs, position,
+                    )
+            {
+                return Ok(Some(implementation));
+            }
             if let Some(implementation) =
                 workspace_source_method_implementation_for_dependency_with_open_docs(
                     &uri,
@@ -7670,6 +7704,7 @@ mod tests {
         workspace_source_member_field_completions, workspace_source_method_completions,
         workspace_source_method_completions_with_open_docs,
         workspace_source_method_implementation_for_dependency_with_open_docs,
+        workspace_source_method_implementation_for_local_source_with_open_docs,
         workspace_source_references_for_dependency,
         workspace_source_references_for_dependency_in_broken_source,
         workspace_source_references_for_dependency_in_broken_source_with_open_docs,
@@ -8304,6 +8339,143 @@ pub trait Runner {
         assert!(implementation_paths.contains(
             &fs::canonicalize(&tools_source_path).expect("tools source path should canonicalize")
         ));
+    }
+
+    #[test]
+    fn workspace_root_method_use_implementation_resolves_to_source_definition() {
+        let temp = TempDir::new("ql-lsp-workspace-root-method-use-implementation");
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn read(config: Config) -> Int {
+    return config.get()
+}
+"#,
+        );
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(config: Config) -> Int {
+    return config.get()
+}
+"#,
+        );
+        let jobs_source_path = temp.write(
+            "workspace/packages/jobs/src/lib.ql",
+            r#"
+package demo.jobs
+
+use demo.core.Config
+
+pub fn run(config: Config) -> Int {
+    return config.get()
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core", "packages/jobs"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/jobs/qlang.toml",
+            r#"
+[package]
+name = "jobs"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let analysis = analyze_source(&source).expect("core source should analyze");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let jobs_source = fs::read_to_string(&jobs_source_path).expect("jobs source should read");
+        let jobs_uri =
+            Url::from_file_path(&jobs_source_path).expect("jobs path should convert to URI");
+        let open_docs = file_open_documents(vec![
+            (core_uri.clone(), source.clone()),
+            (app_uri, app_source),
+            (jobs_uri, jobs_source),
+        ]);
+
+        let implementation =
+            workspace_source_method_implementation_for_local_source_with_open_docs(
+                &core_uri,
+                &source,
+                &analysis,
+                &package,
+                &open_docs,
+                offset_to_position(&source, nth_offset(&source, "get", 2)),
+            )
+            .expect("workspace root method implementation should exist");
+
+        assert_eq!(
+            implementation,
+            GotoImplementationResponse::Scalar(Location::new(
+                core_uri,
+                span_to_range(&source, nth_span(&source, "get", 1)),
+            )),
+        );
     }
 
     #[test]

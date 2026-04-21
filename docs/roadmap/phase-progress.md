@@ -61,7 +61,7 @@
 - 同名本地依赖的 type / enum / enum member、method / trait method / extend method `workspace/symbol` 现在也有 open-documents 与 `workspace_roots` 回归保护；`[dependencies]` 本地路径依赖入口也已锁住“源码优先返回当前依赖，同时保留兄弟依赖 `.qi` 符号”这条组合场景。
 - source-preferred dependency definition / typeDefinition / references / current-document `documentHighlight` / completion 现在也按 manifest 身份区分同名本地依赖；真实项目里不会再把 navigation、高亮、completion 或 references 解析到另一个同名依赖实例。
 - 这一轮把 `qlsp` 的 `textDocument/formatting` 也补上了；VSCode 现在可直接通过 `Format Document` 调 `qfmt` 做整文档格式化。当前仅对可成功解析的源码返回编辑，parse-error 文档会保守跳过并给 warning。
-- 这一轮继续把 `qlsp` 的 `textDocument/implementation` 往前推；VSCode 现在除了 same-file trait/type surface，还补上了 same-file 已唯一解析的 receiver method call，以及能回到打开中本地源码的 source-backed dependency method call。workspace / 本地路径依赖 source-preferred 导航下的 `struct / enum / trait` 继续聚合当前包、可见 workspace members 与本地依赖源码里的实现块；trait method definition 继续聚合匹配的 `impl` method；已唯一解析的具体 method call 会直接回到真实方法定义。workspace / 本地依赖路径继续优先读取 parseable open docs；更宽的全局 implementation index 继续后置。
+- 这一轮继续把 `qlsp` 的 `textDocument/implementation` 往前推；VSCode 现在除了 same-file trait/type surface、same-file 已唯一解析的 receiver method call，以及能回到打开中本地源码的 source-backed dependency method call，还补上了 workspace root/source-backed concrete method call 直接回到真实方法定义。workspace / 本地路径依赖 source-preferred 导航下的 `struct / enum / trait` 继续聚合当前包、可见 workspace members 与本地依赖源码里的实现块；trait method definition 继续聚合匹配的 `impl` method。workspace / 本地依赖路径继续优先读取 parseable open docs；更宽的全局 implementation index 继续后置。
 - 这一轮顺手把 workspace root `Find References` 也补到了 trait method definition；从导出源码里的 trait method 发起时，VSCode 现在会把可见 workspace members / 本地依赖源码里的匹配 impl methods 一起聚合进来，并优先读取 parseable open docs。
 - broken-source 下，workspace import `hover/definition/typeDefinition`、direct imported-result member hover / completion / query / `documentHighlight`、dependency struct field label completion、dependency semantic tokens fallback、dependency enum variant 的 `completion/definition/typeDefinition/references/documentHighlight` fallback 已补齐到源码优先路径；workspace import references / query、dependency references / current-document `documentHighlight` / method completion 也已补上 open unsaved workspace member / local dependency source 合同；其中 import references 在补回 healthy workspace consumers 时也会读取这些 consumer 的 open docs；这一轮又补齐了 workspace root import/use `prepareRename` 与 workspace import alias rename 的 open-doc 路径。
 - 同名本地依赖在这条 broken-source 路径上继续按 manifest 身份区分；`build().ping()` / `build().value`、dependency struct field label completion，以及 enum variant query / completion 都不会再串到兄弟依赖实例。
@@ -80,7 +80,7 @@
 
 ## 下一轮
 
-- LSP：继续把 `textDocument/implementation` 从已完成的 trait/type surface、workspace root/source-backed type definition surface、trait method definition、concrete method call surface，扩到更多 workspace root/source-backed concrete member call surface。
+- LSP：继续把 `textDocument/implementation` 从已完成的 trait/type surface、workspace root/source-backed type definition surface、workspace root/source-backed concrete method call、trait method definition、concrete method call surface，扩到更稳的多文件 / broken-source member 导航面。
 - build/backend：继续优先补真实项目里高频的 direct local dependency value/type/member 调用面，而不是扩新语法。
 - 文档：入口页继续只保留结论、边界和最近 checkpoint，不再追加流水账。
 
