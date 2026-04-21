@@ -5900,11 +5900,14 @@ fn local_source_dependency_target_with_analysis(
         };
 
         for source_path in source_paths {
+            let canonical_source_path = canonicalize_or_clone(&source_path);
             let (candidate_uri, candidate_source, owned_analysis) =
-                if let Some((open_uri, open_source, open_analysis)) =
-                    open_document_snapshot(open_docs, &source_path)
-                {
-                    (open_uri, open_source, Some(open_analysis))
+                if let Some((open_uri, open_source)) = open_docs.get(&canonical_source_path) {
+                    (
+                        open_uri.clone(),
+                        open_source.clone(),
+                        analyze_source(open_source).ok(),
+                    )
                 } else {
                     let Ok(candidate_uri) = Url::from_file_path(&source_path) else {
                         continue;
@@ -5917,8 +5920,7 @@ fn local_source_dependency_target_with_analysis(
                         .modules()
                         .iter()
                         .find(|module| {
-                            canonicalize_or_clone(module.path())
-                                == canonicalize_or_clone(&source_path)
+                            canonicalize_or_clone(module.path()) == canonical_source_path
                         })
                         .map(|module| module.analysis().clone())
                         .or_else(|| analyze_source(&candidate_source).ok());
@@ -8474,6 +8476,126 @@ impl Config {
             GotoImplementationResponse::Scalar(Location::new(
                 core_uri,
                 span_to_range(&source, nth_span(&source, "get", 1)),
+            )),
+        );
+    }
+
+    #[test]
+    fn workspace_root_method_implementation_uses_broken_open_workspace_consumers() {
+        let temp =
+            TempDir::new("ql-lsp-workspace-root-method-implementation-broken-open-consumers");
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn pulse(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn read(config: Config) -> Int {
+    return config.pulse()
+}
+"#,
+        );
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(config: Config) -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn pulse(self) -> Int
+}
+"#,
+        );
+
+        let open_app_source = r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(config: Config) -> Int {
+    return config.pulse(
+"#;
+
+        let source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let analysis = analyze_source(&source).expect("core source should analyze");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let open_docs = file_open_documents(vec![
+            (core_uri.clone(), source.clone()),
+            (app_uri, open_app_source.to_owned()),
+        ]);
+
+        let implementation =
+            workspace_source_method_implementation_for_local_source_with_open_docs(
+                &core_uri,
+                &source,
+                &analysis,
+                &package,
+                &open_docs,
+                offset_to_position(&source, nth_offset(&source, "pulse", 2)),
+            )
+            .expect("workspace root method implementation should use broken open consumers");
+
+        assert_eq!(
+            implementation,
+            GotoImplementationResponse::Scalar(Location::new(
+                core_uri,
+                span_to_range(&source, nth_span(&source, "pulse", 1)),
             )),
         );
     }
