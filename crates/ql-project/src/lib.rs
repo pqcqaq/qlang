@@ -1658,10 +1658,55 @@ pub fn render_manifest_with_added_local_dependency(
         .ok_or_else(|| {
             "package manifest must declare `[dependencies]` as a TOML table".to_owned()
         })?;
+    if dependencies.contains_key(dependency_name) {
+        return Err(format!(
+            "package manifest already declares local dependency `{dependency_name}`"
+        ));
+    }
     dependencies.insert(
         dependency_name.to_owned(),
         Value::String(dependency_path.to_owned()),
     );
+
+    let mut rendered = toml::to_string(&value)
+        .map_err(|error| format!("failed to render package manifest: {error}"))?;
+    if !rendered.ends_with('\n') {
+        rendered.push('\n');
+    }
+    Ok(rendered)
+}
+
+pub fn render_manifest_with_removed_local_dependency(
+    source: &str,
+    dependency_name: &str,
+) -> Result<String, String> {
+    let mut value = toml::from_str::<Value>(source)
+        .map_err(|error| format!("failed to parse package manifest: {error}"))?;
+    let Some(root) = value.as_table_mut() else {
+        return Err("package manifest must be a TOML table".to_owned());
+    };
+    if root.get("package").and_then(Value::as_table).is_none() {
+        return Err("package manifest must declare `[package]`".to_owned());
+    }
+
+    let dependencies = root
+        .get_mut("dependencies")
+        .ok_or_else(|| {
+            format!("package manifest does not declare local dependency `{dependency_name}`")
+        })?
+        .as_table_mut()
+        .ok_or_else(|| {
+            "package manifest must declare `[dependencies]` as a TOML table".to_owned()
+        })?;
+    if dependencies.remove(dependency_name).is_none() {
+        return Err(format!(
+            "package manifest does not declare local dependency `{dependency_name}`"
+        ));
+    }
+    let remove_dependencies_table = dependencies.is_empty();
+    if remove_dependencies_table {
+        root.remove("dependencies");
+    }
 
     let mut rendered = toml::to_string(&value)
         .map_err(|error| format!("failed to render package manifest: {error}"))?;

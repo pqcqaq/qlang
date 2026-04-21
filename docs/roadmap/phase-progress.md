@@ -23,6 +23,7 @@
 - package/workspace 基础能力已落地：`ql project init`、`add`、`targets`、`graph`、`lock`、`emit-interface`。
 - `ql project add` 现在也可在创建 member 时直接写入 workspace 内本地依赖；真实 workspace 已不再只能“先手写 manifest 再接依赖图”。
 - `ql project remove` 现在可按 package 名把 member 从 workspace manifest 里安全摘除，同时保留磁盘上的包目录；真实项目里 workspace 成员已形成 `init/add/remove` 的保守闭环。
+- `ql project add-dependency` / `remove-dependency` 现在也可直接维护已有 workspace member 的本地 `[dependencies]`；创建后补依赖和移除依赖都不必再手改 manifest。
 - project-aware `ql build` / `ql run` / `ql test` 已可在 package/workspace 根目录工作。
 - `ql check` 现在也会在 workspace member 目录或源码路径入口上恢复外层 workspace 视角；真实项目里不再出现 `build/run/graph/lock` 是 workspace-aware、但 `check` 静默退回单 member package 的不一致。
 - `ql build` / `ql run` 现在也可直接从 project 源码 target 路径进入 project-aware 流程；package 内源码路径和 workspace member 源码路径都不再掉回裸单文件输出语义。

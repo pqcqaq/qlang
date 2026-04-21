@@ -27,7 +27,8 @@ use ql_project::{
     discover_package_build_targets, discover_workspace_build_targets,
     interface_artifact_stale_reasons, interface_artifact_status, interface_artifact_status_detail,
     load_interface_artifact, load_project_manifest, load_reference_manifests, package_name,
-    package_source_root, project_lockfile_path, render_module_interface,
+    package_source_root, project_lockfile_path, render_manifest_with_added_local_dependency,
+    render_manifest_with_removed_local_dependency, render_module_interface,
     render_project_graph_resolved, render_project_graph_resolved_json, render_project_lockfile,
 };
 use ql_runtime::{collect_runtime_hook_signatures, collect_runtime_hooks};
@@ -770,6 +771,116 @@ fn run() -> Result<(), u8> {
                         .or_else(|| env::current_dir().ok())
                         .unwrap_or_else(|| PathBuf::from("."));
                     project_remove_path(&path, &package_name)
+                }
+                "add-dependency" => {
+                    let remaining = args.collect::<Vec<_>>();
+                    let mut path = None;
+                    let mut package_name = None;
+                    let mut index = 0;
+
+                    while index < remaining.len() {
+                        match remaining[index].as_str() {
+                            "--name" => {
+                                index += 1;
+                                let Some(value) = remaining.get(index) else {
+                                    eprintln!(
+                                        "error: `ql project add-dependency --name` expects a package name"
+                                    );
+                                    return Err(1);
+                                };
+                                if package_name.is_some() {
+                                    eprintln!(
+                                        "error: `ql project add-dependency` received `--name` more than once"
+                                    );
+                                    return Err(1);
+                                }
+                                package_name = Some(value.clone());
+                            }
+                            other if other.starts_with('-') => {
+                                eprintln!(
+                                    "error: unknown `ql project add-dependency` option `{other}`"
+                                );
+                                return Err(1);
+                            }
+                            other => {
+                                if path.is_some() {
+                                    eprintln!(
+                                        "error: unknown `ql project add-dependency` argument `{other}`"
+                                    );
+                                    return Err(1);
+                                }
+                                path = Some(PathBuf::from(other));
+                            }
+                        }
+
+                        index += 1;
+                    }
+
+                    let Some(package_name) = package_name else {
+                        eprintln!("error: `ql project add-dependency` requires `--name <package>`");
+                        return Err(1);
+                    };
+
+                    let path = path
+                        .or_else(|| env::current_dir().ok())
+                        .unwrap_or_else(|| PathBuf::from("."));
+                    project_add_dependency_path(&path, &package_name)
+                }
+                "remove-dependency" => {
+                    let remaining = args.collect::<Vec<_>>();
+                    let mut path = None;
+                    let mut package_name = None;
+                    let mut index = 0;
+
+                    while index < remaining.len() {
+                        match remaining[index].as_str() {
+                            "--name" => {
+                                index += 1;
+                                let Some(value) = remaining.get(index) else {
+                                    eprintln!(
+                                        "error: `ql project remove-dependency --name` expects a package name"
+                                    );
+                                    return Err(1);
+                                };
+                                if package_name.is_some() {
+                                    eprintln!(
+                                        "error: `ql project remove-dependency` received `--name` more than once"
+                                    );
+                                    return Err(1);
+                                }
+                                package_name = Some(value.clone());
+                            }
+                            other if other.starts_with('-') => {
+                                eprintln!(
+                                    "error: unknown `ql project remove-dependency` option `{other}`"
+                                );
+                                return Err(1);
+                            }
+                            other => {
+                                if path.is_some() {
+                                    eprintln!(
+                                        "error: unknown `ql project remove-dependency` argument `{other}`"
+                                    );
+                                    return Err(1);
+                                }
+                                path = Some(PathBuf::from(other));
+                            }
+                        }
+
+                        index += 1;
+                    }
+
+                    let Some(package_name) = package_name else {
+                        eprintln!(
+                            "error: `ql project remove-dependency` requires `--name <package>`"
+                        );
+                        return Err(1);
+                    };
+
+                    let path = path
+                        .or_else(|| env::current_dir().ok())
+                        .unwrap_or_else(|| PathBuf::from("."));
+                    project_remove_dependency_path(&path, &package_name)
                 }
                 other => {
                     eprintln!("error: unknown `ql project` subcommand `{other}`");
@@ -10261,6 +10372,104 @@ fn project_remove_path(path: &Path, package_name: &str) -> Result<(), u8> {
     Ok(())
 }
 
+fn project_add_dependency_path(path: &Path, package_name: &str) -> Result<(), u8> {
+    if let Err(message) = validate_project_package_name(package_name) {
+        eprintln!("error: `ql project add-dependency` {message}");
+        return Err(1);
+    }
+
+    let package_manifest = resolve_project_package_manifest(path).map_err(|message| {
+        eprintln!("error: `ql project add-dependency` {message}");
+        1
+    })?;
+    let workspace_manifest = resolve_project_workspace_manifest(path).map_err(|message| {
+        eprintln!("error: `ql project add-dependency` {message}");
+        1
+    })?;
+    let dependency_entry = resolve_project_existing_dependency_entry(
+        &workspace_manifest,
+        &package_manifest,
+        package_name,
+    )
+    .map_err(|message| {
+        eprintln!("error: `ql project add-dependency` {message}");
+        1
+    })?;
+    let package_manifest_source =
+        fs::read_to_string(&package_manifest.manifest_path).map_err(|error| {
+            eprintln!(
+                "error: `ql project add-dependency` failed to read `{}`: {error}",
+                normalize_path(&package_manifest.manifest_path)
+            );
+            1
+        })?;
+    let updated_package_manifest = render_manifest_with_added_local_dependency(
+        &package_manifest_source,
+        &dependency_entry.0,
+        &dependency_entry.1,
+    )
+    .map_err(|message| {
+        eprintln!("error: `ql project add-dependency` {message}");
+        1
+    })?;
+    fs::write(&package_manifest.manifest_path, updated_package_manifest).map_err(|error| {
+        eprintln!(
+            "error: `ql project add-dependency` failed to write `{}`: {error}",
+            normalize_path(&package_manifest.manifest_path)
+        );
+        1
+    })?;
+
+    println!(
+        "updated: {}",
+        normalize_path(&package_manifest.manifest_path)
+    );
+    Ok(())
+}
+
+fn project_remove_dependency_path(path: &Path, package_name: &str) -> Result<(), u8> {
+    if let Err(message) = validate_project_package_name(package_name) {
+        eprintln!("error: `ql project remove-dependency` {message}");
+        return Err(1);
+    }
+
+    let package_manifest = resolve_project_package_manifest(path).map_err(|message| {
+        eprintln!("error: `ql project remove-dependency` {message}");
+        1
+    })?;
+    resolve_project_workspace_manifest(path).map_err(|message| {
+        eprintln!("error: `ql project remove-dependency` {message}");
+        1
+    })?;
+    let package_manifest_source =
+        fs::read_to_string(&package_manifest.manifest_path).map_err(|error| {
+            eprintln!(
+                "error: `ql project remove-dependency` failed to read `{}`: {error}",
+                normalize_path(&package_manifest.manifest_path)
+            );
+            1
+        })?;
+    let updated_package_manifest =
+        render_manifest_with_removed_local_dependency(&package_manifest_source, package_name)
+            .map_err(|message| {
+                eprintln!("error: `ql project remove-dependency` {message}");
+                1
+            })?;
+    fs::write(&package_manifest.manifest_path, updated_package_manifest).map_err(|error| {
+        eprintln!(
+            "error: `ql project remove-dependency` failed to write `{}`: {error}",
+            normalize_path(&package_manifest.manifest_path)
+        );
+        1
+    })?;
+
+    println!(
+        "updated: {}",
+        normalize_path(&package_manifest.manifest_path)
+    );
+    Ok(())
+}
+
 fn project_init_package_name(
     target_root: &Path,
     workspace: bool,
@@ -10341,6 +10550,19 @@ fn resolve_project_workspace_manifest(path: &Path) -> Result<ql_project::Project
     }
 
     Ok(workspace_manifest)
+}
+
+fn resolve_project_package_manifest(path: &Path) -> Result<ql_project::ProjectManifest, String> {
+    let manifest = load_project_manifest(path)
+        .map_err(|error| project_workspace_manifest_error(path, &error))?;
+    if manifest.package.is_none() {
+        return Err(format!(
+            "requires an existing package manifest; `{}` resolves to workspace manifest `{}`",
+            normalize_path(path),
+            normalize_path(&manifest.manifest_path)
+        ));
+    }
+    Ok(manifest)
 }
 
 fn project_workspace_manifest_error(path: &Path, error: &ql_project::ProjectError) -> String {
@@ -10550,6 +10772,50 @@ fn remove_workspace_project_member(
             .parent()
             .unwrap_or(Path::new("."))
             .to_path_buf(),
+    ))
+}
+
+fn resolve_project_existing_dependency_entry(
+    workspace_manifest: &ql_project::ProjectManifest,
+    package_manifest: &ql_project::ProjectManifest,
+    dependency_name: &str,
+) -> Result<(String, String), String> {
+    let member_package_name = package_name(package_manifest)
+        .map_err(|error| format!("failed to resolve current package name: {error}"))?;
+    if dependency_name == member_package_name {
+        return Err(format!(
+            "does not accept self dependency `{dependency_name}` for package `{member_package_name}`"
+        ));
+    }
+
+    let dependency_entries =
+        find_workspace_member_entries_by_package_name(workspace_manifest, dependency_name);
+    if dependency_entries.is_empty() {
+        return Err(format!(
+            "workspace manifest `{}` does not contain package `{dependency_name}`",
+            normalize_path(&workspace_manifest.manifest_path)
+        ));
+    }
+    if dependency_entries.len() > 1 {
+        let matching_members = dependency_entries
+            .iter()
+            .map(|(member, _)| member.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "workspace manifest `{}` contains multiple members for package `{dependency_name}`: {matching_members}",
+            normalize_path(&workspace_manifest.manifest_path)
+        ));
+    }
+
+    let member_root = package_manifest
+        .manifest_path
+        .parent()
+        .unwrap_or(Path::new("."));
+    let dependency_root = dependency_entries[0].1.parent().unwrap_or(Path::new("."));
+    Ok((
+        dependency_name.to_owned(),
+        relative_path_from(member_root, dependency_root),
     ))
 }
 
@@ -13461,6 +13727,8 @@ fn print_usage() {
     eprintln!("  ql project init [dir] [--workspace] [--name <package>]");
     eprintln!("  ql project add [file-or-dir] --name <package> [--dependency <package> ...]");
     eprintln!("  ql project remove [file-or-dir] --name <package>");
+    eprintln!("  ql project add-dependency [file-or-dir] --name <package>");
+    eprintln!("  ql project remove-dependency [file-or-dir] --name <package>");
     eprintln!("  ql project emit-interface [file-or-dir] [-o <output>] [--changed-only] [--check]");
     eprintln!("  ql ffi header <file> [--surface exports|imports|both] [-o <output>]");
     eprintln!("  ql fmt <file> [--write]");
