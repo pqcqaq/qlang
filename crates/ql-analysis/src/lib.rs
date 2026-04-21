@@ -10,7 +10,7 @@ use ql_borrowck::{
     BorrowckResult, analyze_module as analyze_borrowck, render_result as render_borrowck_result,
 };
 use ql_diagnostics::{Diagnostic, Label, render_diagnostics};
-use ql_hir::{ExprId, LocalId, PatternId, lower_module};
+use ql_hir::{ExprId, ItemId, ItemKind as HirItemKind, LocalId, PatternId, lower_module};
 use ql_lexer::{Token, TokenKind, is_keyword, is_valid_identifier, lex};
 use ql_mir::{
     MirModule, lower_module_with_typeck as lower_mir_with_typeck,
@@ -22,7 +22,7 @@ use ql_project::{
     collect_package_sources, default_interface_path, load_interface_artifact,
     load_project_manifest, load_reference_manifests,
 };
-use ql_resolve::{ImportBinding, ResolutionMap, resolve_module};
+use ql_resolve::{ImportBinding, ResolutionMap, TypeResolution, resolve_module};
 use ql_span::Span;
 use ql_typeck::{Ty, TypeckResult, analyze_module as analyze_types};
 use query::QueryIndex;
@@ -75,6 +75,11 @@ pub struct DependencySymbol {
     pub kind: SymbolKind,
     pub name: String,
     pub detail: String,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImplementationTarget {
     pub span: Span,
 }
 
@@ -3570,6 +3575,43 @@ impl Analysis {
         self.index.type_definition_at(offset)
     }
 
+    /// Return same-file implementation sites for the symbol covering `offset`.
+    ///
+    /// This currently stays conservative on purpose:
+    /// - type implementation queries return same-file `impl` / `extend` block spans
+    /// - trait implementation queries return same-file `impl Trait for ...` block spans
+    /// - trait-method implementation queries return matching same-file impl method definition spans
+    /// - method call sites that already resolve to concrete impl/extend methods still use
+    ///   `definition_at`
+    pub fn implementations_at(&self, offset: usize) -> Option<Vec<ImplementationTarget>> {
+        let definition = self.definition_at(offset)?;
+
+        let mut targets = match definition.kind {
+            SymbolKind::Struct | SymbolKind::Enum => {
+                let item_id = self.same_file_item_id_for_definition(&definition)?;
+                self.implementation_targets_for_type_item(item_id)
+            }
+            SymbolKind::Trait => {
+                let item_id = self.same_file_item_id_for_definition(&definition)?;
+                self.implementation_targets_for_trait_item(item_id)
+            }
+            SymbolKind::Method => {
+                let (trait_item_id, method_name) =
+                    self.same_file_trait_method_for_definition_span(definition.span)?;
+                self.implementation_targets_for_trait_method(trait_item_id, &method_name)
+            }
+            _ => Vec::new(),
+        };
+
+        if targets.is_empty() {
+            return None;
+        }
+
+        targets.sort_by_key(|target| (target.span.start, target.span.end));
+        targets.dedup_by_key(|target| (target.span.start, target.span.end));
+        Some(targets)
+    }
+
     /// Return every indexed occurrence for the symbol covering `offset` within the current file.
     pub fn references_at(&self, offset: usize) -> Option<Vec<ReferenceTarget>> {
         self.index.references_at(offset)
@@ -3643,6 +3685,122 @@ impl Analysis {
 
     pub fn render_borrowck(&self) -> String {
         render_borrowck_result(&self.borrowck, &self.mir)
+    }
+
+    fn same_file_item_id_for_definition(&self, definition: &DefinitionTarget) -> Option<ItemId> {
+        self.hir.items.iter().copied().find(|&item_id| {
+            match (&self.hir.item(item_id).kind, definition.kind) {
+                (HirItemKind::Struct(struct_decl), SymbolKind::Struct) => {
+                    struct_decl.name_span == definition.span
+                }
+                (HirItemKind::Enum(enum_decl), SymbolKind::Enum) => {
+                    enum_decl.name_span == definition.span
+                }
+                (HirItemKind::Trait(trait_decl), SymbolKind::Trait) => {
+                    trait_decl.name_span == definition.span
+                }
+                _ => false,
+            }
+        })
+    }
+
+    fn same_file_trait_method_for_definition_span(&self, span: Span) -> Option<(ItemId, String)> {
+        self.hir.items.iter().copied().find_map(|item_id| {
+            let HirItemKind::Trait(trait_decl) = &self.hir.item(item_id).kind else {
+                return None;
+            };
+            trait_decl
+                .methods
+                .iter()
+                .find(|method| method.name_span == span)
+                .map(|method| (item_id, method.name.clone()))
+        })
+    }
+
+    fn implementation_targets_for_type_item(&self, item_id: ItemId) -> Vec<ImplementationTarget> {
+        let mut targets = Vec::new();
+
+        for &candidate_item_id in &self.hir.items {
+            match &self.hir.item(candidate_item_id).kind {
+                HirItemKind::Impl(impl_block)
+                    if self.type_item_for_type_id(impl_block.target) == Some(item_id) =>
+                {
+                    targets.push(ImplementationTarget {
+                        span: self.hir.item(candidate_item_id).span,
+                    });
+                }
+                HirItemKind::Extend(extend_block)
+                    if self.type_item_for_type_id(extend_block.target) == Some(item_id) =>
+                {
+                    targets.push(ImplementationTarget {
+                        span: self.hir.item(candidate_item_id).span,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        targets
+    }
+
+    fn implementation_targets_for_trait_item(&self, item_id: ItemId) -> Vec<ImplementationTarget> {
+        let mut targets = Vec::new();
+
+        for &candidate_item_id in &self.hir.items {
+            let HirItemKind::Impl(impl_block) = &self.hir.item(candidate_item_id).kind else {
+                continue;
+            };
+            if impl_block
+                .trait_ty
+                .and_then(|trait_ty| self.type_item_for_type_id(trait_ty))
+                == Some(item_id)
+            {
+                targets.push(ImplementationTarget {
+                    span: self.hir.item(candidate_item_id).span,
+                });
+            }
+        }
+
+        targets
+    }
+
+    fn implementation_targets_for_trait_method(
+        &self,
+        trait_item_id: ItemId,
+        method_name: &str,
+    ) -> Vec<ImplementationTarget> {
+        let mut targets = Vec::new();
+
+        for &candidate_item_id in &self.hir.items {
+            let HirItemKind::Impl(impl_block) = &self.hir.item(candidate_item_id).kind else {
+                continue;
+            };
+            if impl_block
+                .trait_ty
+                .and_then(|trait_ty| self.type_item_for_type_id(trait_ty))
+                != Some(trait_item_id)
+            {
+                continue;
+            }
+            targets.extend(
+                impl_block
+                    .methods
+                    .iter()
+                    .filter(|method| method.name == method_name)
+                    .map(|method| ImplementationTarget {
+                        span: method.name_span,
+                    }),
+            );
+        }
+
+        targets
+    }
+
+    fn type_item_for_type_id(&self, type_id: ql_hir::TypeId) -> Option<ItemId> {
+        match self.resolution.type_resolution(type_id) {
+            Some(TypeResolution::Item(item_id)) => Some(*item_id),
+            _ => None,
+        }
     }
 }
 

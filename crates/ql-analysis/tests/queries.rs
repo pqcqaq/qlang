@@ -3290,6 +3290,119 @@ fn build(account: Account, user_id: UserId, alias: IdAlias) -> Mode {
 }
 
 #[test]
+fn implementation_queries_follow_same_file_trait_and_type_surfaces() {
+    let source = r#"
+struct Account {
+    id: Int,
+}
+
+struct Admin {
+    id: Int,
+}
+
+trait Taggable {
+    fn mode(self) -> Int
+}
+
+impl Taggable for Account {
+    fn mode(self) -> Int {
+        return self.id
+    }
+}
+
+impl Taggable for Admin {
+    fn mode(self) -> Int {
+        return self.id
+    }
+}
+
+impl Account {
+    fn label(self) -> Int {
+        return self.id
+    }
+}
+
+extend Account {
+    fn extra(self) -> Int {
+        return self.id
+    }
+}
+
+fn build(account: Account, admin: Admin) -> Int {
+    return account.mode() + admin.mode()
+}
+"#;
+
+    let analysis = analyzed(source);
+    let trait_use = source
+        .find("impl Taggable")
+        .map(|offset| offset + "impl ".len())
+        .expect("trait use should exist");
+    let struct_use = source
+        .find("account: Account")
+        .map(|offset| offset + "account: ".len())
+        .expect("struct use should exist");
+    let trait_method_use = source
+        .find("fn mode(self) -> Int")
+        .map(|offset| offset + "fn ".len())
+        .expect("trait method definition should exist");
+
+    assert_eq!(
+        analysis.implementations_at(trait_use),
+        Some(vec![
+            ql_analysis::ImplementationTarget {
+                span: Span::new(
+                    source.find("impl Taggable for Account").unwrap(),
+                    source.find("}\n\nimpl Taggable for Admin").unwrap() + 1,
+                ),
+            },
+            ql_analysis::ImplementationTarget {
+                span: Span::new(
+                    source.find("impl Taggable for Admin").unwrap(),
+                    source.find("}\n\nimpl Account").unwrap() + 1,
+                ),
+            },
+        ])
+    );
+
+    assert_eq!(
+        analysis.implementations_at(struct_use),
+        Some(vec![
+            ql_analysis::ImplementationTarget {
+                span: Span::new(
+                    source.find("impl Taggable for Account").unwrap(),
+                    source.find("}\n\nimpl Taggable for Admin").unwrap() + 1,
+                ),
+            },
+            ql_analysis::ImplementationTarget {
+                span: Span::new(
+                    source.find("impl Account").unwrap(),
+                    source.find("}\n\nextend Account").unwrap() + 1,
+                ),
+            },
+            ql_analysis::ImplementationTarget {
+                span: Span::new(
+                    source.find("extend Account").unwrap(),
+                    source.find("}\n\nfn build").unwrap() + 1,
+                ),
+            },
+        ])
+    );
+
+    assert_eq!(
+        analysis.implementations_at(trait_method_use),
+        Some(vec![
+            ql_analysis::ImplementationTarget {
+                span: nth_span(source, "mode", 2),
+            },
+            ql_analysis::ImplementationTarget {
+                span: nth_span(source, "mode", 3),
+            },
+        ])
+    );
+}
+
+#[test]
 fn rename_queries_follow_variant_symbols_through_import_alias_paths() {
     let source = r#"
 use Command as Cmd

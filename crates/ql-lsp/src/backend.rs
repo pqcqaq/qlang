@@ -18,8 +18,8 @@ use ql_span::Span;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::{Error, Result};
 use tower_lsp::lsp_types::request::{
-    GotoDeclarationParams, GotoDeclarationResponse, GotoTypeDefinitionParams,
-    GotoTypeDefinitionResponse,
+    GotoDeclarationParams, GotoDeclarationResponse, GotoImplementationParams,
+    GotoImplementationResponse, GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
 };
 use tower_lsp::lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
@@ -27,14 +27,15 @@ use tower_lsp::lsp_types::{
     DeclarationCapability, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentFormattingParams, DocumentHighlight,
     DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
-    GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability, InitializeParams,
-    InitializeResult, InitializedParams, Location, MessageType, NumberOrString, OneOf,
-    PrepareRenameResponse, ReferenceParams, RenameOptions, RenameParams, SemanticTokensFullOptions,
-    SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
-    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SymbolInformation,
-    SymbolKind as LspSymbolKind, TextDocumentPositionParams, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, TypeDefinitionProviderCapability, Url,
-    WorkspaceEdit, WorkspaceSymbolParams,
+    GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
+    ImplementationProviderCapability, InitializeParams, InitializeResult, InitializedParams,
+    Location, MessageType, NumberOrString, OneOf, PrepareRenameResponse, ReferenceParams,
+    RenameOptions, RenameParams, SemanticTokensFullOptions, SemanticTokensOptions,
+    SemanticTokensParams, SemanticTokensResult, SemanticTokensServerCapabilities,
+    ServerCapabilities, ServerInfo, SymbolInformation, SymbolKind as LspSymbolKind,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextEdit, TypeDefinitionProviderCapability, Url, WorkspaceEdit,
+    WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -51,8 +52,8 @@ use crate::bridge::{
     definition_for_package_analysis, diagnostics_to_lsp, document_symbol_kind,
     document_symbols_for_analysis, hover_for_dependency_imports, hover_for_dependency_methods,
     hover_for_dependency_struct_fields, hover_for_dependency_values, hover_for_dependency_variants,
-    hover_for_package_analysis, position_to_offset, prepare_rename_for_analysis,
-    prepare_rename_for_dependency_imports, references_for_analysis,
+    hover_for_package_analysis, implementation_for_analysis, position_to_offset,
+    prepare_rename_for_analysis, prepare_rename_for_dependency_imports, references_for_analysis,
     references_for_dependency_imports, references_for_dependency_methods,
     references_for_dependency_struct_fields, references_for_dependency_values,
     references_for_dependency_variants, references_for_package_analysis, rename_for_analysis,
@@ -6113,6 +6114,7 @@ impl LanguageServer for Backend {
                 definition_provider: Some(OneOf::Left(true)),
                 declaration_provider: Some(DeclarationCapability::Simple(true)),
                 type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
+                implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
                 references_provider: Some(OneOf::Left(true)),
                 document_highlight_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
@@ -6429,6 +6431,24 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         Ok(type_definition_for_analysis(
+            &uri, &source, &analysis, position,
+        ))
+    }
+
+    async fn goto_implementation(
+        &self,
+        params: GotoImplementationParams,
+    ) -> Result<Option<GotoImplementationResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
+        Ok(implementation_for_analysis(
             &uri, &source, &analysis, position,
         ))
     }
@@ -7004,7 +7024,7 @@ mod tests {
         workspace_source_variant_completions, workspace_symbols_for_documents,
         workspace_symbols_for_documents_and_roots,
     };
-    use crate::bridge::{semantic_tokens_legend, span_to_range};
+    use crate::bridge::{implementation_for_analysis, semantic_tokens_legend, span_to_range};
     use ql_analysis::{RenameError, SymbolKind as AnalysisSymbolKind, analyze_source};
     use ql_diagnostics::UNRESOLVED_VALUE_CODE;
     use ql_span::Span;
@@ -7062,6 +7082,11 @@ mod tests {
             .expect("needle occurrence should exist")
     }
 
+    fn nth_span(source: &str, needle: &str, occurrence: usize) -> Span {
+        let start = nth_offset(source, needle, occurrence);
+        Span::new(start, start + needle.len())
+    }
+
     #[test]
     fn document_formatting_edits_replace_entire_document_when_qfmt_changes_source() {
         let source = "fn main()->Int{return 1}\n";
@@ -7099,6 +7124,96 @@ mod tests {
         assert!(
             error.contains("expected parameter name"),
             "unexpected formatting parse detail: {error}"
+        );
+    }
+
+    #[test]
+    fn implementation_for_analysis_returns_scalar_for_trait_implementations() {
+        let source = r#"
+trait Runner {
+    fn run(self) -> Int
+}
+
+struct Worker {}
+
+impl Runner for Worker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+"#;
+        let analysis = analyze_source(source).expect("analysis should succeed");
+        let uri = Url::parse("file:///test.ql").expect("uri should parse");
+
+        let implementation = implementation_for_analysis(
+            &uri,
+            source,
+            &analysis,
+            offset_to_position(source, nth_offset(source, "Runner", 1)),
+        )
+        .expect("trait implementation should exist");
+
+        let GotoDefinitionResponse::Scalar(location) = implementation else {
+            panic!("single trait implementation should resolve to one location")
+        };
+        assert_eq!(location.uri, uri);
+        assert_eq!(
+            location.range,
+            span_to_range(
+                source,
+                Span::new(
+                    nth_offset(source, "impl Runner for Worker", 1),
+                    source.rfind('}').expect("impl block should close") + 1,
+                ),
+            )
+        );
+    }
+
+    #[test]
+    fn implementation_for_analysis_returns_array_for_trait_method_implementations() {
+        let source = r#"
+trait Runner {
+    fn run(self) -> Int
+}
+
+struct Worker {}
+struct Helper {}
+
+impl Runner for Worker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+
+impl Runner for Helper {
+    fn run(self) -> Int {
+        return 2
+    }
+}
+"#;
+        let analysis = analyze_source(source).expect("analysis should succeed");
+        let uri = Url::parse("file:///test.ql").expect("uri should parse");
+
+        let implementation = implementation_for_analysis(
+            &uri,
+            source,
+            &analysis,
+            offset_to_position(source, nth_offset(source, "run", 1)),
+        )
+        .expect("trait method implementations should exist");
+
+        let GotoDefinitionResponse::Array(locations) = implementation else {
+            panic!("multiple trait method implementations should resolve to many locations")
+        };
+        assert_eq!(
+            locations,
+            vec![
+                Location::new(
+                    uri.clone(),
+                    span_to_range(source, nth_span(source, "run", 2))
+                ),
+                Location::new(uri, span_to_range(source, nth_span(source, "run", 3))),
+            ]
         );
     }
 

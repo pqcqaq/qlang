@@ -14,6 +14,7 @@
 - diagnostics
 - hover
 - definition / declaration / typeDefinition
+- implementation
 - references
 - documentHighlight
 - completion
@@ -29,6 +30,7 @@
 - workspace/source-preferred navigation 已经落地，但还不是完整的 workspace-wide index。
 - codeAction 当前只覆盖两类 quick fix：`unresolved value/type` 时补 `use ...`，以及显式 `use demo.xxx...` 指向未声明的 sibling workspace member 时补当前 package `qlang.toml` 的本地依赖；若 unresolved symbol 的候选本身就来自未声明的 sibling workspace member，则会同时补 import 和依赖。不含 match 分支补齐等更宽 refactor。
 - 格式化当前只支持 parseable source 的整文档 `Format Document`；底层直接调用 `qfmt`，暂不支持 range formatting / on-type formatting。
+- `Go to Implementation` 当前只覆盖 same-file trait/type surface：trait/type 返回当前文件里的 `impl` / `extend` block，trait method 返回匹配 impl method；暂不支持 workspace/dependency 级 implementation graph。
 - rename 已开放 same-file，以及一批 source-backed dependency / workspace root 的保守 workspace rename；其余符号仍未开放更广 cross-file rename。
 - parse-error 下只保留保守子集；当前已锁住的 rename slice 包括 `config.child()?.leaf().value` 这类 question-unwrapped method-result member field。
 - 插件内置了最小 TextMate grammar fallback，但更细粒度高亮仍主要依赖 `qlsp` 的 semantic tokens。

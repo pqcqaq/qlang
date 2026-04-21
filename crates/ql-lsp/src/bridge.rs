@@ -11,7 +11,9 @@ use ql_diagnostics::{
     Diagnostic as CompilerDiagnostic, DiagnosticSeverity as CompilerSeverity, Label,
 };
 use ql_span::Span;
-use tower_lsp::lsp_types::request::{GotoDeclarationResponse, GotoTypeDefinitionResponse};
+use tower_lsp::lsp_types::request::{
+    GotoDeclarationResponse, GotoImplementationResponse, GotoTypeDefinitionResponse,
+};
 use tower_lsp::lsp_types::{
     CompletionItem as LspCompletionItem, CompletionItemKind, CompletionResponse,
     CompletionTextEdit, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
@@ -365,6 +367,31 @@ pub fn type_definition_for_analysis(
         uri.clone(),
         span_to_range(source, target.span),
     )))
+}
+
+pub fn implementation_for_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    position: Position,
+) -> Option<GotoImplementationResponse> {
+    let offset = position_to_offset(source, position)?;
+    let targets = analysis.implementations_at(offset)?;
+    let locations = targets
+        .into_iter()
+        .map(|target| Location::new(uri.clone(), span_to_range(source, target.span)))
+        .collect::<Vec<_>>();
+
+    if locations.len() == 1 {
+        Some(GotoImplementationResponse::Scalar(
+            locations
+                .into_iter()
+                .next()
+                .expect("single location exists"),
+        ))
+    } else {
+        Some(GotoImplementationResponse::Array(locations))
+    }
 }
 
 pub fn definition_for_package_analysis(
