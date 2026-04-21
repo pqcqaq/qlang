@@ -532,6 +532,7 @@ version = "0.1.0"
 dependencies = [
  "ql-analysis",
  "ql-diagnostics",
+ "ql-fmt",
  "ql-lexer",
  "ql-project",
  "ql-span",

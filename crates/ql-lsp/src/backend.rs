@@ -8,6 +8,7 @@ use ql_analysis::{
     analyze_package_with_available_dependencies, analyze_source,
 };
 use ql_diagnostics::{UNRESOLVED_TYPE_CODE, UNRESOLVED_VALUE_CODE};
+use ql_fmt::format_source;
 use ql_lexer::{Token, TokenKind, is_keyword, is_valid_identifier, lex};
 use ql_project::{
     collect_package_sources, load_project_manifest, package_name as manifest_package_name,
@@ -24,15 +25,16 @@ use tower_lsp::lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, CompletionOptions, CompletionParams, CompletionResponse,
     DeclarationCapability, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams,
-    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
-    HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams, Location,
-    MessageType, NumberOrString, OneOf, PrepareRenameResponse, ReferenceParams, RenameOptions,
-    RenameParams, SemanticTokensFullOptions, SemanticTokensOptions, SemanticTokensParams,
-    SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo,
-    SymbolInformation, SymbolKind as LspSymbolKind, TextDocumentPositionParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit,
-    TypeDefinitionProviderCapability, Url, WorkspaceEdit, WorkspaceSymbolParams,
+    DidOpenTextDocumentParams, DocumentFormattingParams, DocumentHighlight,
+    DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability, InitializeParams,
+    InitializeResult, InitializedParams, Location, MessageType, NumberOrString, OneOf,
+    PrepareRenameResponse, ReferenceParams, RenameOptions, RenameParams, SemanticTokensFullOptions,
+    SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
+    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SymbolInformation,
+    SymbolKind as LspSymbolKind, TextDocumentPositionParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, TypeDefinitionProviderCapability, Url,
+    WorkspaceEdit, WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -117,6 +119,31 @@ fn file_open_documents(documents: Vec<(Url, String)>) -> OpenDocuments {
         open_docs.insert(canonicalize_or_clone(&path), (uri, source));
     }
     open_docs
+}
+
+fn document_formatting_edits(source: &str) -> std::result::Result<Vec<TextEdit>, String> {
+    let formatted = format_source(source).map_err(|errors| {
+        let Some(error) = errors.first() else {
+            return "qlang: document formatting skipped because the document has parse errors"
+                .to_owned();
+        };
+        let range = span_to_range(source, error.span);
+        format!(
+            "qlang: document formatting skipped because the document has parse errors at {}:{}: {}",
+            range.start.line + 1,
+            range.start.character + 1,
+            error.message
+        )
+    })?;
+
+    if formatted == source {
+        return Ok(Vec::new());
+    }
+
+    Ok(vec![TextEdit::new(
+        span_to_range(source, Span::new(0, source.len())),
+        formatted,
+    )])
 }
 
 fn configure_workspace_roots(params: &InitializeParams) -> Vec<PathBuf> {
@@ -6092,6 +6119,7 @@ impl LanguageServer for Backend {
                 workspace_symbol_provider: Some(OneOf::Left(true)),
                 completion_provider: Some(completion_options()),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+                document_formatting_provider: Some(OneOf::Left(true)),
                 semantic_tokens_provider: Some(
                     SemanticTokensServerCapabilities::SemanticTokensOptions(
                         SemanticTokensOptions {
@@ -6637,6 +6665,21 @@ impl LanguageServer for Backend {
         Ok((!actions.is_empty()).then_some(actions))
     }
 
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let uri = params.text_document.uri;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+
+        match document_formatting_edits(&source) {
+            Ok(edits) => Ok(Some(edits)),
+            Err(message) => {
+                self.client.log_message(MessageType::WARNING, message).await;
+                Ok(None)
+            }
+        }
+    }
+
     async fn document_symbol(
         &self,
         params: DocumentSymbolParams,
@@ -6905,8 +6948,8 @@ mod tests {
         GotoTypeDefinitionResponse, auto_import_code_actions_for_source,
         completion_for_dependency_member_fields, completion_for_dependency_methods,
         completion_for_dependency_struct_fields, completion_for_dependency_variants,
-        completion_options, dependency_definition_target_at, document_highlights_for_analysis_at,
-        fallback_document_highlights_for_package_at,
+        completion_options, dependency_definition_target_at, document_formatting_edits,
+        document_highlights_for_analysis_at, fallback_document_highlights_for_package_at,
         fallback_document_highlights_for_package_at_with_open_docs, file_open_documents,
         import_missing_dependency_code_actions_for_position,
         local_source_dependency_target_with_analysis, package_analysis_for_path,
@@ -7017,6 +7060,46 @@ mod tests {
             .nth(occurrence.saturating_sub(1))
             .map(|(start, _)| start)
             .expect("needle occurrence should exist")
+    }
+
+    #[test]
+    fn document_formatting_edits_replace_entire_document_when_qfmt_changes_source() {
+        let source = "fn main()->Int{return 1}\n";
+        let edits = document_formatting_edits(source).expect("formatting should succeed");
+
+        assert_eq!(
+            edits,
+            vec![TextEdit::new(
+                Range::new(Position::new(0, 0), Position::new(1, 0)),
+                "fn main() -> Int {\n    return 1\n}\n".to_owned(),
+            )]
+        );
+    }
+
+    #[test]
+    fn document_formatting_edits_return_empty_when_source_is_already_formatted() {
+        let source = "fn main() -> Int {\n    return 1\n}\n";
+
+        assert!(
+            document_formatting_edits(source)
+                .expect("formatting should succeed")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn document_formatting_edits_report_parse_errors_without_returning_edits() {
+        let source = "fn main( {\n";
+        let error = document_formatting_edits(source).expect_err("formatting should fail");
+
+        assert!(
+            error.contains("document formatting skipped because the document has parse errors"),
+            "unexpected formatting error: {error}"
+        );
+        assert!(
+            error.contains("expected parameter name"),
+            "unexpected formatting parse detail: {error}"
+        );
     }
 
     fn offset_to_position(source: &str, offset: usize) -> Position {

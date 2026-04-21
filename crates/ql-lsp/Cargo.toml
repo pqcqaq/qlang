@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 ql-analysis.workspace = true
 ql-diagnostics.workspace = true
+ql-fmt.workspace = true
 ql-lexer.workspace = true
 ql-project.workspace = true
 ql-span.workspace = true
