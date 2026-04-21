@@ -3576,6 +3576,93 @@ struct WorkspaceMethodDefinitionSite {
     definition_target: ql_analysis::DefinitionTarget,
 }
 
+fn root_implementation_target_for_source(
+    current_path: &Path,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<DependencyDefinitionTarget> {
+    let offset = position_to_offset(source, position)?;
+    let definition_target = analysis.definition_at(offset)?;
+    if !matches!(
+        definition_target.kind,
+        ql_analysis::SymbolKind::Struct
+            | ql_analysis::SymbolKind::Enum
+            | ql_analysis::SymbolKind::Trait
+    ) || !occurrence_matches_definition_target(analysis, offset, &definition_target)
+    {
+        return None;
+    }
+
+    let source_path = package_source_path_for_module(package, current_path)?;
+    let package_name = manifest_package_name(package.manifest()).ok()?.to_owned();
+
+    Some(DependencyDefinitionTarget {
+        package_name,
+        manifest_path: package.manifest().manifest_path.clone(),
+        source_path,
+        kind: definition_target.kind,
+        name: definition_target.name,
+        path: current_path.to_path_buf(),
+        span: definition_target.span,
+    })
+}
+
+fn workspace_source_root_implementation_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoImplementationResponse> {
+    let current_path = uri.to_file_path().ok()?;
+    let target =
+        root_implementation_target_for_source(&current_path, source, analysis, package, position)?;
+    let mut locations = Vec::new();
+
+    for candidate_manifest_path in
+        visible_manifest_paths_for_package(package.manifest().manifest_path.as_path())
+    {
+        let Some(candidate_package) = package_analysis_for_path(&candidate_manifest_path) else {
+            continue;
+        };
+        extend_workspace_dependency_implementation_locations_with_open_docs(
+            &candidate_package,
+            open_docs,
+            &target,
+            &mut locations,
+        );
+    }
+
+    if locations.is_empty() {
+        return None;
+    }
+
+    locations.sort_by_key(|location| {
+        (
+            location.uri.to_string(),
+            location.range.start.line,
+            location.range.start.character,
+            location.range.end.line,
+            location.range.end.character,
+        )
+    });
+    locations.dedup_by(|left, right| same_location_anchor(left, right));
+
+    if locations.len() == 1 {
+        Some(GotoImplementationResponse::Scalar(
+            locations
+                .into_iter()
+                .next()
+                .expect("single location exists"),
+        ))
+    } else {
+        Some(GotoImplementationResponse::Array(locations))
+    }
+}
+
 fn trait_method_implementation_query_for_source(
     current_path: &Path,
     source: &str,
@@ -6974,6 +7061,13 @@ impl LanguageServer for Backend {
             let open_docs = self.open_file_documents().await;
             let analysis = analyze_source(&source).ok();
             if let Some(analysis) = analysis.as_ref()
+                && let Some(implementation) = workspace_source_root_implementation_with_open_docs(
+                    &uri, &source, analysis, &package, &open_docs, position,
+                )
+            {
+                return Ok(Some(implementation));
+            }
+            if let Some(analysis) = analysis.as_ref()
                 && let Some(implementation) =
                     workspace_source_trait_method_implementation_with_open_docs(
                         &uri, &source, analysis, &package, &open_docs, position,
@@ -7585,6 +7679,7 @@ mod tests {
         workspace_source_references_for_import_in_broken_source_with_open_docs,
         workspace_source_references_for_import_with_open_docs,
         workspace_source_references_for_root_symbol_with_open_docs,
+        workspace_source_root_implementation_with_open_docs,
         workspace_source_struct_field_completions,
         workspace_source_trait_method_implementation_with_open_docs,
         workspace_source_trait_method_references_with_open_docs,
@@ -8041,6 +8136,153 @@ pub trait Runner {
 
         let GotoDefinitionResponse::Array(locations) = implementation else {
             panic!("workspace trait implementation should resolve to many locations")
+        };
+        assert_eq!(locations.len(), 2);
+        let implementation_paths = locations
+            .iter()
+            .map(|location| {
+                fs::canonicalize(
+                    location
+                        .uri
+                        .to_file_path()
+                        .expect("implementation URI should convert to a file path"),
+                )
+                .expect("implementation path should canonicalize")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            implementation_paths
+                .contains(&fs::canonicalize(&app_path).expect("app path should canonicalize"))
+        );
+        assert!(implementation_paths.contains(
+            &fs::canonicalize(&tools_source_path).expect("tools source path should canonicalize")
+        ));
+    }
+
+    #[test]
+    fn workspace_root_trait_implementation_includes_workspace_consumer_impls() {
+        let temp = TempDir::new("ql-lsp-workspace-root-trait-implementation-consumers");
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+"#,
+        );
+        let tools_source_path = temp.write(
+            "workspace/packages/tools/src/lib.ql",
+            r#"
+package demo.tools
+
+use demo.core.Runner
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn run(self) -> Int {
+        return 2
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core", "packages/tools"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/tools/qlang.toml",
+            r#"
+[package]
+name = "tools"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let analysis = analyze_source(&source).expect("core source should analyze");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let tools_source =
+            fs::read_to_string(&tools_source_path).expect("tools source should read");
+        let tools_uri = Url::from_file_path(&tools_source_path)
+            .expect("tools source path should convert to URI");
+        let open_docs = file_open_documents(vec![
+            (core_uri.clone(), source.clone()),
+            (app_uri, app_source),
+            (tools_uri, tools_source),
+        ]);
+
+        let implementation = workspace_source_root_implementation_with_open_docs(
+            &core_uri,
+            &source,
+            &analysis,
+            &package,
+            &open_docs,
+            offset_to_position(&source, nth_offset(&source, "Runner", 1)),
+        )
+        .expect("workspace root trait implementation should exist");
+
+        let GotoDefinitionResponse::Array(locations) = implementation else {
+            panic!("workspace root trait implementation should resolve to many locations")
         };
         assert_eq!(locations.len(), 2);
         let implementation_paths = locations
