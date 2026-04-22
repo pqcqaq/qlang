@@ -98,7 +98,7 @@
 
 ## 下一轮（已排定）
 
-- LSP：继续把 `textDocument/implementation` 从 trait/type surface、workspace root/source-backed type definition surface、workspace root/source-backed concrete method call、trait method definition、已唯一解析的 concrete method call，扩到当前 buffer broken concrete method call implementation 导航面；更宽的 implementation index 继续后置。
+- LSP：继续把 `textDocument/implementation` 从 trait/type surface、workspace root/source-backed type definition surface、workspace root/source-backed concrete method call、trait method definition、已唯一解析的 concrete method call、broken current-buffer concrete method call surface，扩到更宽的 implementation index；更广的全局聚合继续后置。
 - backend：继续扩 direct local dependency 下真实项目高频的 public value/type/member 调用面，优先补会直接阻断 workspace `build/run/test` 的路径。
 - 文档：继续只保留入口结论、支持边界和最近 checkpoint；不再追加长流水账。
 

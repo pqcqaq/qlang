@@ -43,6 +43,7 @@
         workspace_source_member_field_completions, workspace_source_method_completions,
         workspace_source_method_completions_with_open_docs,
         workspace_source_method_implementation_for_dependency_with_open_docs,
+        workspace_source_method_implementation_for_local_source_in_broken_source_with_open_docs,
         workspace_source_method_implementation_for_local_source_with_open_docs,
         workspace_source_references_for_dependency,
         workspace_source_references_for_dependency_in_broken_source,
@@ -1324,6 +1325,179 @@ pub fn main(config: Config) -> Int {
                 core_uri,
                 span_to_range(&source, nth_span(&source, "pulse", 1)),
             )),
+        );
+    }
+
+    #[test]
+    fn workspace_root_method_implementation_in_broken_current_source_uses_local_fallback() {
+        let temp = TempDir::new("ql-lsp-workspace-root-method-implementation-broken-current");
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn pulse(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn read(config: Config) -> Int {
+    return config.pulse()
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn pulse(self) -> Int
+}
+"#,
+        );
+
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        let open_core_source = r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn pulse(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn read(config: Config) -> Int {
+    return config.pulse(
+"#
+        .to_owned();
+
+        assert!(analyze_source(&open_core_source).is_err());
+
+        let implementation =
+            workspace_source_method_implementation_for_local_source_in_broken_source_with_open_docs(
+                &core_uri,
+                &open_core_source,
+                offset_to_position(&open_core_source, nth_offset(&open_core_source, "pulse", 2)),
+            )
+            .expect("broken current root method call should resolve with a local fallback");
+
+        assert_eq!(
+            implementation,
+            GotoImplementationResponse::Scalar(Location::new(
+                core_uri,
+                span_to_range(&open_core_source, nth_span(&open_core_source, "pulse", 1)),
+            )),
+        );
+    }
+
+    #[test]
+    fn workspace_root_method_implementation_in_broken_current_source_stays_none_when_ambiguous() {
+        let temp = TempDir::new("ql-lsp-workspace-root-method-implementation-broken-ambiguous");
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+pub struct Other {
+    value: Int,
+}
+
+impl Config {
+    pub fn pulse(self) -> Int {
+        return self.value
+    }
+}
+
+impl Other {
+    pub fn pulse(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn read(config: Config) -> Int {
+    return config.pulse()
+}
+"#,
+        );
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        let open_core_source = r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+pub struct Other {
+    value: Int,
+}
+
+impl Config {
+    pub fn pulse(self) -> Int {
+        return self.value
+    }
+}
+
+impl Other {
+    pub fn pulse(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn read(config: Config) -> Int {
+    return config.pulse(
+"#
+        .to_owned();
+
+        assert!(analyze_source(&open_core_source).is_err());
+
+        let implementation =
+            workspace_source_method_implementation_for_local_source_in_broken_source_with_open_docs(
+                &core_uri,
+                &open_core_source,
+                offset_to_position(&open_core_source, nth_offset(&open_core_source, "pulse", 3)),
+            );
+
+        assert!(
+            implementation.is_none(),
+            "ambiguous broken current method calls should not guess an implementation",
         );
     }
 

@@ -3278,6 +3278,39 @@ fn broken_source_trait_method_implementation_sites_in_source(
         .collect()
 }
 
+fn broken_source_method_definition_locations_in_source(
+    uri: &Url,
+    source: &str,
+    method_name: &str,
+) -> Vec<Location> {
+    broken_source_impl_block_sites_in_source(uri, source)
+        .into_iter()
+        .flat_map(|site| {
+            site.method_spans
+                .into_iter()
+                .filter(move |(name, _)| name == method_name)
+                .map(move |(_, span)| Location::new(uri.clone(), span_to_range(source, span)))
+        })
+        .collect()
+}
+
+fn broken_source_definition_locations_in_source(
+    uri: &Url,
+    source: &str,
+    target: &DependencyDefinitionTarget,
+) -> Vec<Location> {
+    match target.kind {
+        ql_analysis::SymbolKind::Struct
+        | ql_analysis::SymbolKind::Enum
+        | ql_analysis::SymbolKind::Trait => broken_source_root_definition_sites_in_source(source)
+            .into_iter()
+            .filter(|site| site.kind == target.kind && site.name == target.name)
+            .map(|site| Location::new(uri.clone(), span_to_range(source, site.span)))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 fn extend_workspace_dependency_definition_matches(
     package: &ql_analysis::PackageAnalysis,
     current_path: Option<&Path>,
@@ -3333,17 +3366,29 @@ fn extend_workspace_dependency_definition_matches_with_open_docs(
             let Some(module_source) = current_source else {
                 continue;
             };
-            let Some(module_analysis) = current_analysis else {
-                continue;
-            };
-            for symbol in module_analysis.document_symbols() {
-                if symbol.name != target.name || symbol.kind != target.kind {
-                    continue;
+            if let Some(module_analysis) = current_analysis {
+                for symbol in module_analysis.document_symbols() {
+                    if symbol.name != target.name || symbol.kind != target.kind {
+                        continue;
+                    }
+                    matches.push(Location::new(
+                        uri.clone(),
+                        span_to_range(module_source, symbol.span),
+                    ));
                 }
-                matches.push(Location::new(
-                    uri.clone(),
-                    span_to_range(module_source, symbol.span),
-                ));
+            } else {
+                let mut module_locations =
+                    broken_source_definition_locations_in_source(&uri, module_source, target);
+                module_locations.sort_by_key(|location| {
+                    (
+                        location.range.start.line,
+                        location.range.start.character,
+                        location.range.end.line,
+                        location.range.end.character,
+                    )
+                });
+                module_locations.dedup_by(|left, right| same_location_anchor(left, right));
+                matches.extend(module_locations);
             }
             continue;
         }
@@ -4653,6 +4698,47 @@ fn workspace_source_method_implementation_for_local_source_with_open_docs(
         &target,
     )
     .map(GotoImplementationResponse::Scalar)
+}
+
+fn broken_source_method_call_name_at(
+    source: &str,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<String> {
+    let offset = position_to_offset(source, position)?;
+    let (tokens, _) = lex(source);
+    let (index, token) = tokens.iter().enumerate().find(|(_, token)| {
+        token.kind == TokenKind::Ident && offset_hits_span(offset, token.span)
+    })?;
+    if tokens.get(index.checked_sub(1)?).map(|token| token.kind) != Some(TokenKind::Dot)
+        || tokens.get(index + 1).map(|token| token.kind) != Some(TokenKind::LParen)
+    {
+        return None;
+    }
+
+    Some(token.text.clone())
+}
+
+fn workspace_source_method_implementation_for_local_source_in_broken_source_with_open_docs(
+    uri: &Url,
+    source: &str,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoImplementationResponse> {
+    let method_name = broken_source_method_call_name_at(source, position)?;
+    let mut locations =
+        broken_source_method_definition_locations_in_source(uri, source, &method_name);
+    locations.sort_by_key(|location| {
+        (
+            location.range.start.line,
+            location.range.start.character,
+            location.range.end.line,
+            location.range.end.character,
+        )
+    });
+    locations.dedup_by(|left, right| same_location_anchor(left, right));
+    (locations.len() == 1).then(|| {
+        implementation_response_from_locations(locations)
+            .expect("single broken-source method implementation exists")
+    })
 }
 
 fn workspace_source_definition_for_dependency(
@@ -7675,6 +7761,14 @@ impl LanguageServer for Backend {
                     &open_docs,
                     position,
                 )
+            {
+                return Ok(Some(implementation));
+            }
+            if analysis.is_none()
+                && let Some(implementation) =
+                    workspace_source_method_implementation_for_local_source_in_broken_source_with_open_docs(
+                        &uri, &source, position,
+                    )
             {
                 return Ok(Some(implementation));
             }
