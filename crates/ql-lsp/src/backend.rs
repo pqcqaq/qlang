@@ -2887,6 +2887,20 @@ struct BrokenSourceImplBlockSite {
     method_spans: Vec<(String, Span)>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BrokenSourceRootDefinitionSite {
+    kind: ql_analysis::SymbolKind,
+    name: String,
+    span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BrokenSourceTraitDeclSite {
+    trait_name: String,
+    trait_span: Span,
+    method_spans: Vec<(String, Span)>,
+}
+
 fn broken_source_visible_local_names_for_target(
     source: &str,
     package: &ql_analysis::PackageAnalysis,
@@ -2980,6 +2994,126 @@ fn broken_source_impl_method_name_spans_in_tokens(
     }
 
     method_spans
+}
+
+fn broken_source_root_definition_site_in_tokens(
+    tokens: &[Token],
+    index: usize,
+) -> Option<(BrokenSourceRootDefinitionSite, usize)> {
+    let mut index = index;
+    if tokens.get(index).map(|token| token.kind) == Some(TokenKind::Pub) {
+        index += 1;
+    }
+
+    let kind = match tokens.get(index).map(|token| token.kind) {
+        Some(TokenKind::Struct) => ql_analysis::SymbolKind::Struct,
+        Some(TokenKind::Enum) => ql_analysis::SymbolKind::Enum,
+        Some(TokenKind::Trait) => ql_analysis::SymbolKind::Trait,
+        _ => return None,
+    };
+    let name = broken_source_import_ident_token(tokens, index + 1)?;
+
+    Some((
+        BrokenSourceRootDefinitionSite {
+            kind,
+            name: name.text.clone(),
+            span: name.span,
+        },
+        index + 2,
+    ))
+}
+
+fn broken_source_root_definition_sites_in_source(
+    source: &str,
+) -> Vec<BrokenSourceRootDefinitionSite> {
+    let (tokens, _) = lex(source);
+    let mut sites = Vec::new();
+    let mut brace_depth = 0usize;
+    let mut index = 0usize;
+
+    while index < tokens.len() {
+        match tokens[index].kind {
+            TokenKind::LBrace => brace_depth += 1,
+            TokenKind::RBrace => brace_depth = brace_depth.saturating_sub(1),
+            TokenKind::Pub | TokenKind::Struct | TokenKind::Enum | TokenKind::Trait
+                if brace_depth == 0 =>
+            {
+                if let Some((site, next_index)) =
+                    broken_source_root_definition_site_in_tokens(&tokens, index)
+                {
+                    sites.push(site);
+                    index = next_index;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+
+    sites
+}
+
+fn broken_source_trait_decl_site_in_tokens(
+    tokens: &[Token],
+    index: usize,
+) -> Option<(BrokenSourceTraitDeclSite, usize)> {
+    let mut index = index;
+    if tokens.get(index).map(|token| token.kind) == Some(TokenKind::Pub) {
+        index += 1;
+    }
+    if tokens.get(index).map(|token| token.kind) != Some(TokenKind::Trait) {
+        return None;
+    }
+
+    let trait_name = broken_source_import_ident_token(tokens, index + 1)?;
+    let open_index = ((index + 2)..tokens.len()).find(|candidate| {
+        tokens.get(*candidate).map(|token| token.kind) == Some(TokenKind::LBrace)
+    })?;
+    let close_index = token_index_after_balanced_braces_in_tokens(tokens, open_index);
+    let method_end_index = close_index
+        .map(|close_index| close_index.saturating_sub(1))
+        .unwrap_or(tokens.len());
+
+    Some((
+        BrokenSourceTraitDeclSite {
+            trait_name: trait_name.text.clone(),
+            trait_span: trait_name.span,
+            method_spans: broken_source_impl_method_name_spans_in_tokens(
+                tokens,
+                open_index + 1,
+                method_end_index,
+            ),
+        },
+        close_index.unwrap_or(tokens.len()),
+    ))
+}
+
+fn broken_source_trait_decl_sites_in_source(source: &str) -> Vec<BrokenSourceTraitDeclSite> {
+    let (tokens, _) = lex(source);
+    let mut sites = Vec::new();
+    let mut brace_depth = 0usize;
+    let mut index = 0usize;
+
+    while index < tokens.len() {
+        match tokens[index].kind {
+            TokenKind::LBrace => brace_depth += 1,
+            TokenKind::RBrace => brace_depth = brace_depth.saturating_sub(1),
+            TokenKind::Pub | TokenKind::Trait if brace_depth == 0 => {
+                if let Some((site, next_index)) =
+                    broken_source_trait_decl_site_in_tokens(&tokens, index)
+                {
+                    sites.push(site);
+                    index = next_index;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+
+    sites
 }
 
 fn broken_source_impl_block_site_in_tokens(
@@ -3874,6 +4008,30 @@ fn root_implementation_target_for_source(
     })
 }
 
+fn broken_source_root_implementation_target_for_source(
+    current_path: &Path,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<DependencyDefinitionTarget> {
+    let offset = position_to_offset(source, position)?;
+    let definition_target = broken_source_root_definition_sites_in_source(source)
+        .into_iter()
+        .find(|site| offset_hits_span(offset, site.span))?;
+    let source_path = package_source_path_for_module(package, current_path)?;
+    let package_name = manifest_package_name(package.manifest()).ok()?.to_owned();
+
+    Some(DependencyDefinitionTarget {
+        package_name,
+        manifest_path: package.manifest().manifest_path.clone(),
+        source_path,
+        kind: definition_target.kind,
+        name: definition_target.name,
+        path: current_path.to_path_buf(),
+        span: definition_target.span,
+    })
+}
+
 fn workspace_source_root_implementation_with_open_docs(
     uri: &Url,
     source: &str,
@@ -3885,47 +4043,29 @@ fn workspace_source_root_implementation_with_open_docs(
     let current_path = uri.to_file_path().ok()?;
     let target =
         root_implementation_target_for_source(&current_path, source, analysis, package, position)?;
-    let mut locations = Vec::new();
+    implementation_response_from_locations(workspace_implementation_locations_with_open_docs(
+        package, open_docs, &target,
+    ))
+}
 
-    for candidate_manifest_path in
-        visible_manifest_paths_for_package(package.manifest().manifest_path.as_path())
-    {
-        let Some(candidate_package) = package_analysis_for_path(&candidate_manifest_path) else {
-            continue;
-        };
-        extend_workspace_dependency_implementation_locations_with_open_docs(
-            &candidate_package,
-            open_docs,
-            &target,
-            &mut locations,
-        );
-    }
+fn workspace_source_root_implementation_in_broken_source_with_open_docs(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoImplementationResponse> {
+    let current_path = uri.to_file_path().ok()?;
+    let target = broken_source_root_implementation_target_for_source(
+        &current_path,
+        source,
+        package,
+        position,
+    )?;
 
-    if locations.is_empty() {
-        return None;
-    }
-
-    locations.sort_by_key(|location| {
-        (
-            location.uri.to_string(),
-            location.range.start.line,
-            location.range.start.character,
-            location.range.end.line,
-            location.range.end.character,
-        )
-    });
-    locations.dedup_by(|left, right| same_location_anchor(left, right));
-
-    if locations.len() == 1 {
-        Some(GotoImplementationResponse::Scalar(
-            locations
-                .into_iter()
-                .next()
-                .expect("single location exists"),
-        ))
-    } else {
-        Some(GotoImplementationResponse::Array(locations))
-    }
+    implementation_response_from_locations(workspace_implementation_locations_with_open_docs(
+        package, open_docs, &target,
+    ))
 }
 
 fn trait_method_implementation_query_for_source(
@@ -3962,6 +4102,40 @@ fn trait_method_implementation_query_for_source(
             method_span: method.name_span,
         })
     })
+}
+
+fn broken_source_trait_method_implementation_query_for_source(
+    current_path: &Path,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<TraitMethodImplementationQuery> {
+    let offset = position_to_offset(source, position)?;
+    let source_path = package_source_path_for_module(package, current_path)?;
+    let package_name = manifest_package_name(package.manifest()).ok()?.to_owned();
+
+    broken_source_trait_decl_sites_in_source(source)
+        .into_iter()
+        .find_map(|site| {
+            let (method_name, method_span) = site
+                .method_spans
+                .into_iter()
+                .find(|(_, span)| offset_hits_span(offset, *span))?;
+
+            Some(TraitMethodImplementationQuery {
+                trait_target: DependencyDefinitionTarget {
+                    package_name: package_name.clone(),
+                    manifest_path: package.manifest().manifest_path.clone(),
+                    source_path: source_path.clone(),
+                    kind: ql_analysis::SymbolKind::Trait,
+                    name: site.trait_name,
+                    path: current_path.to_path_buf(),
+                    span: site.trait_span,
+                },
+                method_name,
+                method_span,
+            })
+        })
 }
 
 fn workspace_trait_method_implementation_sites_with_open_docs(
@@ -4185,48 +4359,39 @@ fn workspace_source_trait_method_implementation_with_open_docs(
         package,
         position,
     )?;
-    let mut locations = Vec::new();
-
-    for candidate_manifest_path in
-        visible_manifest_paths_for_package(package.manifest().manifest_path.as_path())
-    {
-        let Some(candidate_package) = package_analysis_for_path(&candidate_manifest_path) else {
-            continue;
-        };
-        extend_workspace_trait_method_implementation_locations_with_open_docs(
-            &candidate_package,
+    implementation_response_from_locations(
+        workspace_trait_method_implementation_locations_with_open_docs(
+            package,
             open_docs,
             &query.trait_target,
             &query.method_name,
-            &mut locations,
-        );
-    }
+        ),
+    )
+}
 
-    if locations.is_empty() {
-        return None;
-    }
+fn workspace_source_trait_method_implementation_in_broken_source_with_open_docs(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoImplementationResponse> {
+    let current_path = uri.to_file_path().ok()?;
+    let query = broken_source_trait_method_implementation_query_for_source(
+        &current_path,
+        source,
+        package,
+        position,
+    )?;
 
-    locations.sort_by_key(|location| {
-        (
-            location.uri.to_string(),
-            location.range.start.line,
-            location.range.start.character,
-            location.range.end.line,
-            location.range.end.character,
-        )
-    });
-    locations.dedup_by(|left, right| same_location_anchor(left, right));
-
-    if locations.len() == 1 {
-        Some(GotoImplementationResponse::Scalar(
-            locations
-                .into_iter()
-                .next()
-                .expect("single location exists"),
-        ))
-    } else {
-        Some(GotoImplementationResponse::Array(locations))
-    }
+    implementation_response_from_locations(
+        workspace_trait_method_implementation_locations_with_open_docs(
+            package,
+            open_docs,
+            &query.trait_target,
+            &query.method_name,
+        ),
+    )
 }
 
 fn extend_workspace_dependency_implementation_locations_with_open_docs(
@@ -4345,35 +4510,9 @@ fn extend_workspace_dependency_implementation_locations_with_open_docs(
     }
 }
 
-fn workspace_source_implementation_for_dependency_with_open_docs(
-    source: &str,
-    analysis: Option<&Analysis>,
-    package: &ql_analysis::PackageAnalysis,
-    open_docs: &OpenDocuments,
-    position: tower_lsp::lsp_types::Position,
+fn implementation_response_from_locations(
+    mut locations: Vec<Location>,
 ) -> Option<GotoImplementationResponse> {
-    let target = if let Some(analysis) = analysis {
-        let offset = position_to_offset(source, position)?;
-        package.dependency_type_definition_at(analysis, offset)?
-    } else {
-        dependency_type_definition_target_at(source, None, package, position)?
-    };
-    let mut locations = Vec::new();
-
-    for candidate_manifest_path in
-        visible_manifest_paths_for_package(package.manifest().manifest_path.as_path())
-    {
-        let Some(candidate_package) = package_analysis_for_path(&candidate_manifest_path) else {
-            continue;
-        };
-        extend_workspace_dependency_implementation_locations_with_open_docs(
-            &candidate_package,
-            open_docs,
-            &target,
-            &mut locations,
-        );
-    }
-
     if locations.is_empty() {
         return None;
     }
@@ -4399,6 +4538,74 @@ fn workspace_source_implementation_for_dependency_with_open_docs(
     } else {
         Some(GotoImplementationResponse::Array(locations))
     }
+}
+
+fn workspace_implementation_locations_with_open_docs(
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    target: &DependencyDefinitionTarget,
+) -> Vec<Location> {
+    let mut locations = Vec::new();
+
+    for candidate_manifest_path in
+        visible_manifest_paths_for_package(package.manifest().manifest_path.as_path())
+    {
+        let Some(candidate_package) = package_analysis_for_path(&candidate_manifest_path) else {
+            continue;
+        };
+        extend_workspace_dependency_implementation_locations_with_open_docs(
+            &candidate_package,
+            open_docs,
+            target,
+            &mut locations,
+        );
+    }
+
+    locations
+}
+
+fn workspace_trait_method_implementation_locations_with_open_docs(
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    target: &DependencyDefinitionTarget,
+    method_name: &str,
+) -> Vec<Location> {
+    let mut locations = Vec::new();
+
+    for candidate_manifest_path in
+        visible_manifest_paths_for_package(package.manifest().manifest_path.as_path())
+    {
+        let Some(candidate_package) = package_analysis_for_path(&candidate_manifest_path) else {
+            continue;
+        };
+        extend_workspace_trait_method_implementation_locations_with_open_docs(
+            &candidate_package,
+            open_docs,
+            target,
+            method_name,
+            &mut locations,
+        );
+    }
+
+    locations
+}
+
+fn workspace_source_implementation_for_dependency_with_open_docs(
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoImplementationResponse> {
+    let target = if let Some(analysis) = analysis {
+        let offset = position_to_offset(source, position)?;
+        package.dependency_type_definition_at(analysis, offset)?
+    } else {
+        dependency_type_definition_target_at(source, None, package, position)?
+    };
+    implementation_response_from_locations(workspace_implementation_locations_with_open_docs(
+        package, open_docs, &target,
+    ))
 }
 
 fn workspace_source_method_implementation_for_dependency_with_open_docs(
@@ -7416,10 +7623,26 @@ impl LanguageServer for Backend {
             {
                 return Ok(Some(implementation));
             }
+            if analysis.is_none()
+                && let Some(implementation) =
+                    workspace_source_root_implementation_in_broken_source_with_open_docs(
+                        &uri, &source, &package, &open_docs, position,
+                    )
+            {
+                return Ok(Some(implementation));
+            }
             if let Some(analysis) = analysis.as_ref()
                 && let Some(implementation) =
                     workspace_source_trait_method_implementation_with_open_docs(
                         &uri, &source, analysis, &package, &open_docs, position,
+                    )
+            {
+                return Ok(Some(implementation));
+            }
+            if analysis.is_none()
+                && let Some(implementation) =
+                    workspace_source_trait_method_implementation_in_broken_source_with_open_docs(
+                        &uri, &source, &package, &open_docs, position,
                     )
             {
                 return Ok(Some(implementation));

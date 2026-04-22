@@ -53,8 +53,10 @@
         workspace_source_references_for_import_in_broken_source_with_open_docs,
         workspace_source_references_for_import_with_open_docs,
         workspace_source_references_for_root_symbol_with_open_docs,
+        workspace_source_root_implementation_in_broken_source_with_open_docs,
         workspace_source_root_implementation_with_open_docs,
         workspace_source_struct_field_completions,
+        workspace_source_trait_method_implementation_in_broken_source_with_open_docs,
         workspace_source_trait_method_implementation_with_open_docs,
         workspace_source_trait_method_references_with_open_docs,
         workspace_source_type_definition_for_dependency,
@@ -831,6 +833,115 @@ pub trait Runner {
         assert!(implementation_paths.contains(
             &fs::canonicalize(&tools_source_path).expect("tools source path should canonicalize")
         ));
+    }
+
+    #[test]
+    fn workspace_root_trait_implementation_in_broken_current_source_still_uses_workspace_impls() {
+        let temp = TempDir::new("ql-lsp-workspace-root-trait-implementation-broken-current");
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let app_source = fs::read_to_string(&app_path)
+            .expect("app source should read")
+            .replace("\r\n", "\n");
+        let open_core_source = r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+
+pub fn broken() -> Int {
+    return 0
+"#
+        .to_owned();
+
+        assert!(analyze_source(&open_core_source).is_err());
+
+        let implementation = workspace_source_root_implementation_in_broken_source_with_open_docs(
+            &core_uri,
+            &open_core_source,
+            &package,
+            &file_open_documents(vec![(core_uri.clone(), open_core_source.clone())]),
+            offset_to_position(&open_core_source, nth_offset(&open_core_source, "Runner", 1)),
+        )
+        .expect("broken current root source should still provide implementation locations");
+
+        let GotoDefinitionResponse::Scalar(location) = implementation else {
+            panic!("single broken current root implementation should resolve to one location")
+        };
+        assert_eq!(location.uri, app_uri);
+        assert_eq!(
+            location.range.start,
+            offset_to_position(&app_source, nth_offset(&app_source, "impl Runner for AppWorker", 1)),
+        );
     }
 
     #[test]
@@ -1735,6 +1846,118 @@ impl Runner for AppWorker {
         assert_eq!(
             location.range.start,
             offset_to_position(&open_app_source, nth_offset(&open_app_source, "run", 1)),
+        );
+    }
+
+    #[test]
+    fn workspace_trait_method_implementation_in_broken_current_source_still_uses_workspace_impl_methods()
+     {
+        let temp = TempDir::new("ql-lsp-workspace-trait-method-implementation-broken-current");
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+        let app_source_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        let app_uri =
+            Url::from_file_path(&app_source_path).expect("app path should convert to URI");
+        let app_source = fs::read_to_string(&app_source_path)
+            .expect("app source should read")
+            .replace("\r\n", "\n");
+        let open_core_source = r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+
+pub fn broken() -> Int {
+    return 0
+"#
+        .to_owned();
+
+        assert!(analyze_source(&open_core_source).is_err());
+
+        let implementation =
+            workspace_source_trait_method_implementation_in_broken_source_with_open_docs(
+                &core_uri,
+                &open_core_source,
+                &package,
+                &file_open_documents(vec![(core_uri.clone(), open_core_source.clone())]),
+                offset_to_position(&open_core_source, nth_offset(&open_core_source, "run", 1)),
+            )
+            .expect("broken current trait source should still provide impl method locations");
+
+        let GotoDefinitionResponse::Scalar(location) = implementation else {
+            panic!("single broken current trait method implementation should resolve to one location")
+        };
+        assert_eq!(location.uri, app_uri);
+        assert_eq!(
+            location.range.start,
+            offset_to_position(&app_source, nth_offset(&app_source, "run", 1)),
         );
     }
 
