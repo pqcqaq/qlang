@@ -1,6 +1,6 @@
 # 当前支持基线
 
-> 最后同步：2026-04-21
+> 最后同步：2026-04-22
 
 这页只记录今天真实可依赖的能力边界。
 
@@ -25,6 +25,7 @@
 ### CLI 与项目工作流
 
 - 已实现：`ql check`、`ql fmt`、`ql mir`、`ql ownership`、`ql runtime`、`ql build`、`ql run`、`ql test`、`ql project`、`ql ffi`。
+- `ql` 与 `qlsp` 现在都已提供 `--version` / `-V` / `version`，可直接校验当前安装的产物版本。
 - `ql project init` 已能生成最小 package / workspace 脚手架，并附带 `src/lib.ql`、`src/main.ql`、`tests/smoke.ql`。
 - `ql project add` 已能向现有 workspace 增量加入 `packages/<name>` member scaffold，并可在创建时直接写入 workspace 内本地依赖到 `[dependencies]`；`--existing` 也可把现有 package 或已移出的 member 重新纳入 workspace。
 - `ql project remove` 已能按 package 名把现有 member 从 `[workspace].members` 里摘除；若仍被其他 workspace member 依赖会先拒绝删除，也支持 `--cascade` 自动清理这些 members 指向目标包的本地依赖边，并保留原包目录，先支持安全退出 dependency graph，再由用户决定是否清理文件。
@@ -87,6 +88,7 @@
 - `workspace/symbol` 对 workspace 外本地路径依赖在源码可用时会优先返回源码里的 value / method / trait / extend symbols；源码不可用时仍回退到 `.qi`。这条行为现在也覆盖 `workspace_roots` / 无打开文档入口；同名本地依赖也不会再因为 source-preferred 排除而误丢另一个依赖的 `.qi` 符号。
 - 同名本地依赖的 type / enum / enum member、method / trait method / extend method 组合场景现在也有显式回归保护；`[dependencies]` 本地路径依赖在 open document 和 `workspace_roots` 入口上也都锁住了“源码优先 + 兄弟依赖 `.qi` 保留”这条 `workspace/symbol` 合同。
 - `qlsp` 现在会声明 `.` completion trigger，VSCode 中输入成员访问和点分 dependency 路径时可直接自动触发补全。
+- VSCode 扩展现在会读取 LSP `serverInfo.version`；若扩展版本与 `qlsp` 版本不一致，会直接给出 warning，避免 repo 开发产物和安装产物混用时静默漂移。
 - `textDocument/formatting` 已落地：当前复用 `ql fmt` 背后的格式化实现提供整文档格式化；仅在源码可成功解析时返回编辑，parse-error 文档会保守跳过并记录 warning。
 - `textDocument/implementation` 已覆盖 same-file trait/type surface、same-file 已唯一解析的 receiver method call、workspace root source-backed `struct / enum / trait` 定义点、workspace root source-backed concrete method call、workspace / 本地路径依赖 source-preferred 导航下的 `struct / enum / trait`、trait method definition，以及能回到打开中本地源码的 source-backed dependency method call。same-file trait/type 返回本文件里的 `impl` / `extend` block，具体 method call 返回唯一解析到的真实方法定义；workspace root/source-preferred trait/type 会聚合当前包、可见 workspace members 与本地依赖源码里的 `impl` / `extend` / trait `impl` block，trait method definition 也会聚合匹配的 `impl` method；workspace root source-backed concrete method call 与 source-backed dependency method call 会直接回到真实方法定义；workspace / 本地依赖路径继续优先读取 parseable open docs。当前 consumer 处于 broken-source / parse-error 时，source-backed dependency method call、依赖这些 open consumers 反查出来的 workspace root concrete method call，以及 broken open 源码里的 source-backed `impl` / `extend` block 与 trait impl method 聚合，也会继续保守回到真实源码，而不是退回磁盘旧内容。更宽的全局 implementation index 仍未做。
 - workspace root `Find References` 现在也补到了 trait method definition：从导出源码 trait method 发起时，会聚合可见 workspace members / 本地依赖源码里的匹配 impl methods，并优先读取 parseable open docs。
@@ -104,6 +106,7 @@
 - 普通跨包 Qlang free function / member / const 的完整 dependency-aware backend
 - escaping / higher-order dependency method values、超出当前不可变局部 alias direct-call slice 的 dependency receiver method codegen
 - registry / version solving / publish workflow
+- 预编译 release / VSCode Marketplace 分发
 - 更广义的 cross-file rename / workspace edits（超出 source-backed dependency `method / field / enum variant`）
 - 更宽的 project-scale references / refactor、补齐 `match` 分支等更完整 code actions / inlay hints
 - 超出当前保守 slice 的广义 parse-error member 语义

@@ -98,6 +98,22 @@ function serverExecutable(context: vscode.ExtensionContext): Executable {
   );
 }
 
+function extensionVersion(context: vscode.ExtensionContext): string {
+  const version = context.extension.packageJSON?.version;
+  return typeof version === "string" && version.trim() ? version.trim() : "unknown";
+}
+
+function serverReportedVersion(client: LanguageClient): string | undefined {
+  const version = client.initializeResult?.serverInfo?.version;
+  return typeof version === "string" && version.trim() ? version.trim() : undefined;
+}
+
+function serverLocation(executable: Executable): string {
+  return path.isAbsolute(executable.command)
+    ? executable.command
+    : `${executable.command} (from PATH)`;
+}
+
 function clientOptions(): LanguageClientOptions {
   return {
     documentSelector: [{ scheme: "file", language: "qlang" }],
@@ -136,6 +152,35 @@ async function showStartError(
   }
 }
 
+async function warnVersionMismatch(
+  context: vscode.ExtensionContext,
+  nextClient: LanguageClient,
+  executable: Executable
+): Promise<void> {
+  const expectedVersion = extensionVersion(context);
+  const actualVersion = serverReportedVersion(nextClient);
+  if (!actualVersion || actualVersion === expectedVersion) {
+    return;
+  }
+
+  const selection = await vscode.window.showWarningMessage(
+    `qlang: extension ${expectedVersion} is connected to qlsp ${actualVersion} at ${serverLocation(
+      executable
+    )}. Rebuild or install matching artifacts, or point qlang.server.path at the matching qlsp binary.`,
+    "Open Extension README",
+    "Open Settings"
+  );
+
+  if (selection === "Open Extension README") {
+    await openExtensionReadme(context);
+  } else if (selection === "Open Settings") {
+    await vscode.commands.executeCommand(
+      "workbench.action.openSettings",
+      "@ext:qlang.qlang qlang"
+    );
+  }
+}
+
 async function startClient(context: vscode.ExtensionContext): Promise<void> {
   if (client) {
     return;
@@ -155,6 +200,7 @@ async function startClient(context: vscode.ExtensionContext): Promise<void> {
 
   try {
     await nextClient.start();
+    await warnVersionMismatch(context, nextClient, executable);
     client = nextClient;
   } catch (error) {
     await showStartError(context, error);

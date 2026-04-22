@@ -2,14 +2,15 @@
 
 This extension is the repository-local VS Code client for Qlang.
 
-It does two things:
+It stays intentionally thin:
 
 - registers the `qlang` language for `.ql` files
 - starts the existing `qlsp` language server over stdio
+- warns when the extension version and `qlsp` server version do not match
 
-The extension does not ship its own compiler or semantic engine. It is a thin client over [`crates/ql-lsp`](../../../crates/ql-lsp).
+The semantic contract still comes from [`crates/ql-lsp`](../../../crates/ql-lsp) and the repo tests.
 
-## Prerequisites
+## Repository Development Mode
 
 Build the language server first:
 
@@ -17,16 +18,7 @@ Build the language server first:
 cargo build -p ql-lsp
 ```
 
-By default the extension tries these server locations in order:
-
-1. `qlang.server.path` from VS Code settings
-2. `<repo>/target/debug/qlsp`
-3. `<repo>/target/release/qlsp`
-4. `qlsp` from `PATH`
-
-## Development
-
-Install dependencies and compile the extension:
+Then build the extension:
 
 ```powershell
 cd editors/vscode/qlang
@@ -34,11 +26,20 @@ npm install
 npm run compile
 ```
 
-Then open `editors/vscode/qlang` in VS Code and run the `Run qlang` launch configuration.
+Open `editors/vscode/qlang` in VS Code and run the `Run qlang` launch configuration.
 
-## Package VSIX
+By default the extension tries these server locations in order:
 
-Build a distributable VSIX from the extension directory:
+1. `qlang.server.path`
+2. `<repo>/target/debug/qlsp`
+3. `<repo>/target/release/qlsp`
+4. `qlsp` from `PATH`
+
+## Installed Usage Mode
+
+There is no prebuilt release flow or Marketplace publish flow yet. Installed usage still means building matching artifacts from the same source checkout.
+
+Package a VSIX from the extension directory:
 
 ```powershell
 cd editors/vscode/qlang
@@ -49,13 +50,28 @@ npm run package:vsix
 The package is written to:
 
 ```text
-editors/vscode/qlang/dist/qlang.vsix
+editors/vscode/qlang/dist/qlang-<package.json version>.vsix
 ```
 
-You can install it in VS Code with:
+Install it with:
 
 - `Extensions: Install from VSIX...`
-- or `code --install-extension editors/vscode/qlang/dist/qlang.vsix`
+- or `code --install-extension editors/vscode/qlang/dist/qlang-<package.json version>.vsix`
+
+## Version Matching
+
+Use matching `ql` / `qlsp` / VSIX artifacts from the same checkout.
+
+Check the server version directly:
+
+```powershell
+qlsp --version
+```
+
+At startup the extension reads LSP `serverInfo.version`.
+
+- matching versions continue normally
+- mismatched versions trigger a warning and point you to the README or `qlang.server.path`
 
 ## Settings
 
@@ -66,18 +82,8 @@ Changing either setting restarts the client.
 
 ## Current Scope
 
-This extension intentionally stays thin:
-
 - no bundled `qlsp` binary
-- local VSIX packaging flow exists, but Marketplace publish flow is not added yet
+- no Marketplace publish flow
 - ships a minimal TextMate grammar fallback for base syntax coloring
 
-The current editor surface follows whatever `qlsp` already exposes: diagnostics, hover, definition, declaration, type definition, implementation, references, document highlight, completion, document formatting, document symbols, workspace symbols, semantic tokens, unresolved-symbol and missing-workspace-dependency code actions, and conservative rename support.
-
-That does not mean all of those surfaces are already project-grade.
-
-- The most reliable path today is still diagnostics plus conservative same-file semantics.
-- Workspace-root-driven symbol search is now wired up, and package/workspace imports prefer workspace source definitions when a unique source target exists.
-- Current-document occurrence highlighting now also reuses the same-file and package-aware references surface through `textDocument/documentHighlight`.
-- Workspace-scale navigation and highlighting are still incomplete beyond that conservative slice.
-- Semantic highlighting quality still depends on `qlsp`; the fallback grammar only guarantees basic syntax coloring.
+The reliable editor surface is still conservative: diagnostics, same-file semantics, and the source-backed workspace/dependency slices already covered by `qlsp`.

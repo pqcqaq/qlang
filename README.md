@@ -44,12 +44,36 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 ## 先看哪些文档
 
 - [当前支持基线](./docs/roadmap/current-supported-surface.md)
+- [安装与版本配套](./docs/getting-started/install.md)
 - [开发计划](./docs/roadmap/development-plan.md)
 - [阶段总览](./docs/roadmap/phase-progress.md)
 - [编译器入门](./docs/getting-started/compiler-primer.md)
 - [VSCode 插件](./docs/getting-started/vscode-extension.md)
 
 如果文档与实现或测试冲突，以 `crates/*` 和回归测试为准，再回头修正文档。
+
+## 安装与版本配套
+
+当前还没有预编译 release 或 VSCode Marketplace 分发。
+
+如果要“安装使用”，仍然需要从同一份源码 checkout 构建一套匹配版本的 `ql`、`qlsp` 和 VSIX：
+
+```powershell
+cargo install --path crates/ql-cli
+cargo install --path crates/ql-lsp
+cd editors/vscode/qlang
+npm install
+npm run package:vsix
+```
+
+安装后先确认版本：
+
+```powershell
+ql --version
+qlsp --version
+```
+
+VSCode 扩展会在连接到版本不匹配的 `qlsp` 时直接给出 warning；如果机器上同时存在多套 `qlsp`，建议显式设置 `qlang.server.path`。
 
 ## 仓库结构
 
@@ -65,6 +89,8 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 
 ```bash
 cargo test
+cargo run -p ql-cli -- --version
+cargo run -p ql-lsp -- --version
 cargo run -p ql-cli -- check fixtures/parser/pass/basic.ql
 cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit llvm-ir
 cargo run -p ql-cli -- project init demo-workspace --workspace --name app
@@ -115,6 +141,8 @@ cargo run -p ql-cli -- test demo-workspace --target packages/app/tests/smoke.ql
 
 仓库内已包含最小 VSCode 插件工程：`editors/vscode/qlang`。
 
+仓库开发模式：
+
 ```powershell
 cargo build -p ql-lsp
 cd editors/vscode/qlang
@@ -130,7 +158,15 @@ npm run package:vsix
 
 安装插件后可直接在 VSCode 使用 `Format Document`。这条能力由 `qlsp` 复用 `ql fmt` 背后的格式化实现提供，当前只做整文档格式化；若源码存在 parse error，会跳过格式化并给出 warning。
 
+VSIX 当前会输出到：
+
+```text
+editors/vscode/qlang/dist/qlang-<package.json version>.vsix
+```
+
 同一套 `qlsp` 现在也支持 `Go to Implementation`。same-file trait/type surface 会跳到当前文件里的 `impl` / `extend` block；same-file 已唯一解析的 receiver method call、workspace root source-backed concrete method call，以及能回到打开中本地源码的 source-backed dependency method call 会直接回到真实方法定义；workspace root source-backed `struct / enum / trait` 定义点，以及 workspace / 本地路径依赖 source-preferred 导航下的 `struct / enum / trait`，都会聚合当前包、可见 workspace members 与本地依赖源码里的实现块；trait method definition 也会回到匹配的方法定义。workspace / 本地依赖两条路径继续优先读取 parseable open docs；当前 consumer 处于 broken-source / parse-error 时，source-backed dependency method call、依赖这些 open consumers 反查出来的 workspace root concrete method call，以及 broken open 源码里的 source-backed `impl` / `extend` block 与 trait impl method 聚合，也会继续保守回到真实源码，而不是退回磁盘旧内容。当前还没做更宽的全局 implementation index。
+
+扩展启动后会读取 `qlsp` 的 `serverInfo.version`；如果扩展版本和 `qlsp` 版本不一致，会直接给出 warning，避免 repo 开发产物和安装产物混用时静默漂移。
 
 ## 文档开发
 

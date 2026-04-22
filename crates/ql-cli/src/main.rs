@@ -37,6 +37,9 @@ use ql_span::locate;
 use serde_json::{Value as JsonValue, json};
 use toml::Value as TomlValue;
 
+const CLI_NAME: &str = "ql";
+const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -50,6 +53,17 @@ fn run() -> Result<(), u8> {
         print_usage();
         return Err(1);
     };
+
+    if is_version_command(&command) {
+        if let Some(extra) = args.next() {
+            eprintln!(
+                "error: `ql {command}` does not accept additional argument `{extra}`"
+            );
+            return Err(1);
+        }
+        println!("{}", version_text(CLI_NAME));
+        return Ok(());
+    }
 
     match command.as_str() {
         "check" => {
@@ -15197,9 +15211,19 @@ fn print_package_analysis_error(error: &PackageAnalysisError) {
     }
 }
 
+fn is_version_command(command: &str) -> bool {
+    matches!(command, "--version" | "-V" | "version")
+}
+
+fn version_text(binary_name: &str) -> String {
+    format!("{binary_name} {CLI_VERSION}")
+}
+
 fn print_usage() {
-    eprintln!("Qlang CLI");
+    eprintln!("Qlang CLI {}", CLI_VERSION);
     eprintln!("usage:");
+    eprintln!("  ql --version");
+    eprintln!("  ql version");
     eprintln!("  ql check <file-or-dir> [--sync-interfaces] [--json]");
     eprintln!(
         "  ql build <file-or-dir> [--emit llvm-ir|asm|obj|exe|dylib|staticlib] [--profile debug|release|--release] [--package <name>] [--lib|--bin <name>|--target <path>] [--list] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>] [--json]"

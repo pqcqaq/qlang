@@ -28,6 +28,10 @@ export default defineConfig({
         text: "入门",
         items: [
           {
+            text: "安装与版本配套",
+            link: "/getting-started/install"
+          },
+          {
             text: "编译器、术语与生态入门",
             link: "/getting-started/compiler-primer"
           },

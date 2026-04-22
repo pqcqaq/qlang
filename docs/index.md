@@ -14,6 +14,8 @@ hero:
       link: /roadmap/development-plan
 
 features:
+  - title: 安装方式
+    details: 当前只有 source build + local VSIX 这一路径；还没有预编译 release 或 Marketplace 分发。
   - title: 当前重点
     details: package/workspace、`.qi`、local dependencies、project-aware build/run/test、dependency-backed LSP。
   - title: 当前边界
@@ -32,10 +34,11 @@ features:
 ## 建议阅读顺序
 
 1. [当前支持基线](/roadmap/current-supported-surface)
-2. [开发计划](/roadmap/development-plan)
-3. [阶段总览](/roadmap/phase-progress)
-4. [编译器入门](/getting-started/compiler-primer)
-5. [VSCode 插件](/getting-started/vscode-extension)
+2. [安装与版本配套](/getting-started/install)
+3. [开发计划](/roadmap/development-plan)
+4. [阶段总览](/roadmap/phase-progress)
+5. [编译器入门](/getting-started/compiler-primer)
+6. [VSCode 插件](/getting-started/vscode-extension)
 
 ## 开发文档约定
 

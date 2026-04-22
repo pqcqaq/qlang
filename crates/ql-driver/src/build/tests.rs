@@ -2640,16 +2640,17 @@ fn score(value: Int) -> Int {
 async fn main() -> Int {
     let flag = true
     var task = worker()
-    if flag {
+    let result = if flag {
         let running = spawn task
         task = fresh_worker()
         let first = await running
-        return score(first)
+        score(first)
     } else {
         task = fresh_worker()
+        let final_value = await task
+        score(final_value)
     }
-    let final_value = await task
-    return score(final_value)
+    return result
 }
 "#,
         );
@@ -2703,16 +2704,17 @@ fn score(value: Wrap) -> Int {
 async fn main() -> Int {
     let flag = true
     var task = worker()
-    if flag {
+    let result = if flag {
         let running = spawn task
         task = fresh_worker()
         let first = await running
-        return score(first)
+        score(first)
     } else {
         task = fresh_worker()
+        let final_value = await task
+        score(final_value)
     }
-    let final_value = await task
-    return score(final_value)
+    return result
 }
 "#,
         );
@@ -2766,16 +2768,17 @@ fn score(value: Wrap) -> Int {
 async fn main() -> Int {
     let flag = true
     var task = worker()
-    if flag {
+    let result = if flag {
         task = fresh_worker()
+        let final_value = await task
+        score(final_value)
     } else {
         let running = spawn task
         task = fresh_worker()
         let first = await running
-        return score(first)
+        score(first)
     }
-    let final_value = await task
-    return score(final_value)
+    return result
 }
 "#,
         );
@@ -17305,7 +17308,7 @@ async fn helper() -> Wrap {
     }
 
     #[test]
-    fn build_file_surfaces_async_and_generic_codegen_diagnostics() {
+    fn build_file_surfaces_generic_codegen_diagnostics_for_async_main() {
         let dir = TestDir::new("ql-driver-async-generic-unsupported");
         let source = dir.write(
             "async_generic_main.ql",
@@ -17325,9 +17328,12 @@ async fn main[T]() -> Int {
             diagnostic.message
                 == "LLVM IR backend foundation does not support generic functions yet"
         }));
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message == "LLVM IR backend foundation does not support `async fn` yet"
-        }));
+        assert!(
+            diagnostics.iter().all(|diagnostic| {
+                diagnostic.message != "LLVM IR backend foundation does not support `async fn` yet"
+            }),
+            "async main LLVM IR builds are now supported; only the generic rejection should remain"
+        );
     }
 
     #[test]
@@ -18248,13 +18254,10 @@ fn main() -> Int {
         let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
         assert_eq!(artifact.path, output);
+        assert!(rendered.contains("define i64 @ql_1_main()"));
         assert!(rendered.matches("_match_guard0").count() >= 3);
-        assert!(rendered.contains("alloca { i64, i64 }"));
-        assert!(rendered.contains("alloca { i64 }"));
-        assert!(rendered.contains("alloca [3 x i64]"));
-        assert!(rendered.contains("getelementptr inbounds { i64, i64 }"));
-        assert!(rendered.contains("getelementptr inbounds { i64 }"));
-        assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
+        assert!(rendered.matches("icmp eq i64").count() >= 3);
+        assert!(rendered.contains("add i64 %"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 

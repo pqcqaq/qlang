@@ -2,7 +2,7 @@
   "name": "qlang",
   "displayName": "qlang",
   "description": "VS Code language support for Qlang via qlsp.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "qlang",
   "license": "MIT",
   "repository": {
@@ -47,7 +47,7 @@
         "qlang.server.path": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Absolute path or workspace-relative path to the `qlsp` executable. Leave empty to auto-detect `target/debug/qlsp`, `target/release/qlsp`, then fall back to `qlsp` on PATH."
+          "markdownDescription": "Absolute path or workspace-relative path to a version-matched `qlsp` executable. Leave empty to prefer repo-local `target/debug/qlsp`, then `target/release/qlsp`, and finally fall back to `qlsp` on PATH."
         },
         "qlang.server.args": {
           "type": "array",
@@ -64,7 +64,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -w -p ./",
     "prepublishOnly": "npm run compile",
-    "package:vsix": "npm run compile && node -e \"require('fs').mkdirSync('dist',{recursive:true})\" && npx @vscode/vsce package --out dist/qlang.vsix"
+    "package:vsix": "npm run compile && node -e \"const fs=require('fs'); const cp=require('child_process'); const pkg=require('./package.json'); fs.mkdirSync('dist',{recursive:true}); const out=`dist/qlang-${pkg.version}.vsix`; const result=cp.spawnSync('npx',['@vscode/vsce','package','--out',out],{stdio:'inherit',shell:process.platform==='win32'}); process.exit(result.status ?? 1);\""
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"

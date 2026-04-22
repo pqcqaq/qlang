@@ -12,7 +12,8 @@
         ProjectTargetSelector, analyze_semantics, analyze_source, build_path, collect_ql_files,
         dependency_public_struct_method_bridge_candidates,
         dependency_public_type_bridge_candidates, dependency_public_type_bridge_order,
-        parse_source, render_mir_path, render_ownership_path, render_runtime_requirements,
+        is_version_command, parse_source, render_mir_path, render_ownership_path,
+        render_runtime_requirements, version_text,
     };
 
     struct TestDir {
@@ -60,6 +61,22 @@
                     .replace('\\', "/")
             })
             .collect()
+    }
+
+    #[test]
+    fn version_text_includes_workspace_package_version() {
+        assert_eq!(
+            version_text("ql"),
+            format!("ql {}", env!("CARGO_PKG_VERSION"))
+        );
+    }
+
+    #[test]
+    fn version_command_recognizes_global_aliases() {
+        for command in ["--version", "-V", "version"] {
+            assert!(is_version_command(command), "expected {command} to be recognized");
+        }
+        assert!(!is_version_command("check"));
     }
 
     #[test]
