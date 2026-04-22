@@ -338,13 +338,6 @@ pub fn read(config: Cfg) -> Int {
                     ),
                     replacement: "selected".to_owned(),
                 },
-                RenameEdit {
-                    span: Span::new(
-                        nth_offset(source, "current", 4),
-                        nth_offset(source, "current", 4) + "current".len(),
-                    ),
-                    replacement: "selected".to_owned(),
-                },
             ],
         }))
     );
@@ -435,13 +428,6 @@ pub fn read(config: Cfg) -> Int {
                     span: Span::new(
                         nth_offset(source, "current", 3),
                         nth_offset(source, "current", 3) + "current".len(),
-                    ),
-                    replacement: "selected".to_owned(),
-                },
-                RenameEdit {
-                    span: Span::new(
-                        nth_offset(source, "current", 4),
-                        nth_offset(source, "current", 4) + "current".len(),
                     ),
                     replacement: "selected".to_owned(),
                 },

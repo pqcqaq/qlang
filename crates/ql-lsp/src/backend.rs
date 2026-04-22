@@ -4819,6 +4819,19 @@ fn workspace_source_references_for_import_with_open_docs(
             include_declaration,
         ),
     );
+    if source_definition
+        .as_ref()
+        .and_then(|location| location.uri.to_file_path().ok())
+        .is_some_and(|path| path.extension().is_none_or(|extension| extension != "qi"))
+    {
+        locations.retain(|location| {
+            location
+                .uri
+                .to_file_path()
+                .ok()
+                .is_none_or(|path| path.extension().is_none_or(|extension| extension != "qi"))
+        });
+    }
 
     Some(locations)
 }

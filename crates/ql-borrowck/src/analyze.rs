@@ -4,9 +4,9 @@ use ql_ast::{BinaryOp, ReceiverKind, UnaryOp, parse_i64_literal, parse_usize_lit
 use ql_diagnostics::{Diagnostic, Label};
 use ql_hir::{self as hir, Function, ItemKind, Param};
 use ql_mir::{
-    BasicBlockId, BodyOwner, CleanupId, CleanupKind, ClosureId, Constant, LocalId as MirLocalId,
-    LocalOrigin, MirBody, MirModule, Operand, Place, ProjectionElem, Rvalue, StatementKind,
-    TerminatorKind,
+    BasicBlockId, BodyOwner, CallArgument, CleanupId, CleanupKind, ClosureId, Constant,
+    LocalId as MirLocalId, LocalOrigin, MirBody, MirModule, Operand, Place, ProjectionElem,
+    Rvalue, StatementKind, TerminatorKind,
 };
 use ql_resolve::{ResolutionMap, ValueResolution};
 use ql_typeck::{MemberTarget, MethodTarget, Ty, TypeckResult, lower_type};
@@ -652,6 +652,7 @@ impl<'a> BodyAnalyzer<'a> {
                 let pending_consume = self.classify_move_receiver_operand(
                     states,
                     callee,
+                    args,
                     span,
                     reporter.as_deref_mut(),
                 );
@@ -824,27 +825,55 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         states: &[LocalState],
         callee: &Operand,
+        args: &[CallArgument],
         span: ql_span::Span,
         reporter: Option<&mut Reporter>,
     ) -> Option<(MirLocalId, MoveReason)> {
-        let Operand::Place(place) = callee else {
-            return None;
-        };
-        // P3.2 intentionally only models direct-local receivers. Projection-sensitive
-        // consumption needs a later place-aware analysis instead of ad hoc rules here.
-        let Some(ProjectionElem::Field(method_name)) = place.projections.last() else {
-            return None;
-        };
-        if place.projections.len() != 1 {
-            return None;
+        match callee {
+            Operand::Place(place) => {
+                // P3.2 intentionally only models direct-local receivers. Projection-sensitive
+                // consumption needs a later place-aware analysis instead of ad hoc rules here.
+                let Some(ProjectionElem::Field(method_name)) = place.projections.last() else {
+                    return None;
+                };
+                if place.projections.len() != 1 {
+                    return None;
+                }
+
+                let receiver_ty = self.local_ty(place.base)?;
+                let reason = self.unique_move_receiver_reason(&receiver_ty, method_name)?;
+
+                self.check_moved_use(states, place.base, &[], UseSite::normal(span), reporter);
+
+                Some((place.base, reason))
+            }
+            Operand::Constant(Constant::Function { function, .. }) => {
+                let function = self.hir.function(*function);
+                let Some(Param::Receiver(receiver)) = function.params.first() else {
+                    return None;
+                };
+                if receiver.kind != ReceiverKind::Move {
+                    return None;
+                }
+
+                let Operand::Place(place) = &args.first()?.value else {
+                    return None;
+                };
+                if !place.projections.is_empty() {
+                    return None;
+                }
+
+                self.check_moved_use(states, place.base, &[], UseSite::normal(span), reporter);
+
+                Some((
+                    place.base,
+                    MoveReason::MoveSelfMethod {
+                        method_name: function.name.clone(),
+                    },
+                ))
+            }
+            Operand::Constant(_) => None,
         }
-
-        let receiver_ty = self.local_ty(place.base)?;
-        let reason = self.unique_move_receiver_reason(&receiver_ty, method_name)?;
-
-        self.check_moved_use(states, place.base, &[], UseSite::normal(span), reporter);
-
-        Some((place.base, reason))
     }
 
     fn classify_task_handle_unary_operand_with_refinements(
