@@ -72,7 +72,7 @@ This extension intentionally stays thin:
 - local VSIX packaging flow exists, but Marketplace publish flow is not added yet
 - ships a minimal TextMate grammar fallback for base syntax coloring
 
-The current editor surface follows whatever `qlsp` already exposes: diagnostics, hover, definition, declaration, type definition, references, document highlight, completion, document symbols, workspace symbols, semantic tokens, and conservative rename support.
+The current editor surface follows whatever `qlsp` already exposes: diagnostics, hover, definition, declaration, type definition, implementation, references, document highlight, completion, document formatting, document symbols, workspace symbols, semantic tokens, unresolved-symbol and missing-workspace-dependency code actions, and conservative rename support.
 
 That does not mean all of those surfaces are already project-grade.
 
