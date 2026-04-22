@@ -534,6 +534,159 @@ pub trait Runner {
     }
 
     #[test]
+    fn workspace_trait_import_implementation_uses_broken_open_workspace_source_and_new_impl_blocks()
+    {
+        let temp = TempDir::new("ql-lsp-workspace-trait-import-implementation-broken-open-docs");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+"#,
+        );
+        let tools_source_path = temp.write(
+            "workspace/packages/tools/src/lib.ql",
+            r#"
+package demo.tools
+
+pub fn ready() -> Int {
+    return 1
+}
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core", "packages/tools"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/tools/qlang.toml",
+            r#"
+[package]
+name = "tools"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let app_uri =
+            Url::from_file_path(&app_path).expect("app source path should convert to URI");
+        let tools_uri = Url::from_file_path(&tools_source_path)
+            .expect("tools source path should convert to URI");
+        let open_tools_source = r#"
+package demo.tools
+
+use demo.core.Runner
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn run(self) -> Int {
+        return 2
+    }
+}
+
+pub fn broken() -> Int {
+    return ToolWorker {
+"#
+        .to_owned();
+
+        assert!(analyze_source(&open_tools_source).is_err());
+        let disk_only = workspace_source_implementation_for_dependency_with_open_docs(
+            &source,
+            Some(&analysis),
+            &package,
+            &file_open_documents(vec![]),
+            offset_to_position(&source, nth_offset(&source, "Runner", 2)),
+        )
+        .expect("workspace trait implementation should exist");
+        let GotoDefinitionResponse::Scalar(location) = disk_only else {
+            panic!("disk-only workspace trait implementation should resolve to one location")
+        };
+        assert_eq!(location.uri, app_uri);
+
+        let implementation = workspace_source_implementation_for_dependency_with_open_docs(
+            &source,
+            Some(&analysis),
+            &package,
+            &file_open_documents(vec![(tools_uri.clone(), open_tools_source.clone())]),
+            offset_to_position(&source, nth_offset(&source, "Runner", 2)),
+        )
+        .expect("workspace trait implementation should use broken open workspace source");
+
+        let GotoDefinitionResponse::Array(locations) = implementation else {
+            panic!("broken open-doc trait implementation should resolve to many locations")
+        };
+        assert_eq!(locations.len(), 2);
+        assert_eq!(locations[0].uri, app_uri);
+        assert_eq!(locations[1].uri, tools_uri);
+        assert_eq!(
+            locations[1].range.start,
+            offset_to_position(
+                &open_tools_source,
+                nth_offset(&open_tools_source, "impl Runner for ToolWorker", 1),
+            ),
+        );
+    }
+
+    #[test]
     fn workspace_root_trait_implementation_includes_workspace_consumer_impls() {
         let temp = TempDir::new("ql-lsp-workspace-root-trait-implementation-consumers");
         let core_source_path = temp.write(
@@ -678,6 +831,132 @@ pub trait Runner {
         assert!(implementation_paths.contains(
             &fs::canonicalize(&tools_source_path).expect("tools source path should canonicalize")
         ));
+    }
+
+    #[test]
+    fn workspace_root_trait_implementation_uses_broken_open_workspace_source_and_new_impl_blocks()
+    {
+        let temp =
+            TempDir::new("ql-lsp-workspace-root-trait-implementation-broken-open-docs");
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let analysis = analyze_source(&source).expect("core source should analyze");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let open_app_source = r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+
+pub fn broken() -> Int {
+    return AppWorker {
+"#
+        .to_owned();
+
+        assert!(analyze_source(&open_app_source).is_err());
+        assert_eq!(
+            workspace_source_root_implementation_with_open_docs(
+                &core_uri,
+                &source,
+                &analysis,
+                &package,
+                &file_open_documents(vec![]),
+                offset_to_position(&source, nth_offset(&source, "Runner", 1)),
+            ),
+            None,
+            "disk-only implementation search should miss unsaved broken workspace impl blocks",
+        );
+
+        let implementation = workspace_source_root_implementation_with_open_docs(
+            &core_uri,
+            &source,
+            &analysis,
+            &package,
+            &file_open_documents(vec![(app_uri.clone(), open_app_source.clone())]),
+            offset_to_position(&source, nth_offset(&source, "Runner", 1)),
+        )
+        .expect("broken open workspace source should provide root trait impl blocks");
+
+        let GotoDefinitionResponse::Scalar(location) = implementation else {
+            panic!("single broken open-doc root trait implementation should resolve to one location")
+        };
+        assert_eq!(location.uri, app_uri);
+        assert_eq!(
+            location.range.start,
+            offset_to_position(
+                &open_app_source,
+                nth_offset(&open_app_source, "impl Runner for AppWorker", 1),
+            ),
+        );
     }
 
     #[test]
@@ -1275,6 +1554,10 @@ pub struct Config {
     value: Int,
 }
 
+pub trait Runner {
+    fn run(self) -> Int
+}
+
 impl Config {
     fn build(self) -> Int {
         return self.value
@@ -1283,6 +1566,12 @@ impl Config {
 
 extend Config {
     fn label(self) -> Int {
+        return self.value
+    }
+}
+
+impl Runner for Config {
+    fn run(self) -> Int {
         return self.value
     }
 }
@@ -1306,7 +1595,7 @@ pub fn broken() -> Int {
         let GotoDefinitionResponse::Array(locations) = implementation else {
             panic!("workspace import implementation should resolve to many locations")
         };
-        assert_eq!(locations.len(), 2);
+        assert_eq!(locations.len(), 3);
         assert!(locations.iter().all(|location| location.uri == core_uri));
         assert_eq!(
             locations[0].range.start,
@@ -1320,6 +1609,13 @@ pub fn broken() -> Int {
             offset_to_position(
                 &open_core_source,
                 nth_offset(&open_core_source, "extend Config", 1)
+            ),
+        );
+        assert_eq!(
+            locations[2].range.start,
+            offset_to_position(
+                &open_core_source,
+                nth_offset(&open_core_source, "impl Runner for Config", 1)
             ),
         );
     }

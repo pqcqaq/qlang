@@ -3073,7 +3073,7 @@ fn broken_source_impl_block_sites_in_source(
     sites
 }
 
-fn broken_source_struct_or_enum_implementation_locations_in_source(
+fn broken_source_implementation_locations_in_source(
     uri: &Url,
     source: &str,
     package: &ql_analysis::PackageAnalysis,
@@ -3081,10 +3081,10 @@ fn broken_source_struct_or_enum_implementation_locations_in_source(
 ) -> Vec<Location> {
     if !matches!(
         target.kind,
-        ql_analysis::SymbolKind::Struct | ql_analysis::SymbolKind::Enum
-    ) || canonicalize_or_clone(package.manifest().manifest_path.as_path())
-        != canonicalize_or_clone(&target.manifest_path)
-    {
+        ql_analysis::SymbolKind::Struct
+            | ql_analysis::SymbolKind::Enum
+            | ql_analysis::SymbolKind::Trait
+    ) {
         return Vec::new();
     }
 
@@ -3095,7 +3095,16 @@ fn broken_source_struct_or_enum_implementation_locations_in_source(
 
     broken_source_impl_block_sites_in_source(uri, source)
         .into_iter()
-        .filter(|site| site.trait_name.is_none() && local_names.contains(&site.target_name))
+        .filter(|site| match target.kind {
+            ql_analysis::SymbolKind::Struct | ql_analysis::SymbolKind::Enum => {
+                local_names.contains(&site.target_name)
+            }
+            ql_analysis::SymbolKind::Trait => site
+                .trait_name
+                .as_ref()
+                .is_some_and(|trait_name| local_names.contains(trait_name)),
+            _ => false,
+        })
         .map(|site| site.location)
         .collect()
 }
@@ -4242,13 +4251,12 @@ fn extend_workspace_dependency_implementation_locations_with_open_docs(
                 if let Ok(open_analysis) = analyze_source(open_source) {
                     (open_uri.clone(), open_source.clone(), open_analysis)
                 } else {
-                    let mut module_locations =
-                        broken_source_struct_or_enum_implementation_locations_in_source(
-                            open_uri,
-                            open_source,
-                            package,
-                            target,
-                        );
+                    let mut module_locations = broken_source_implementation_locations_in_source(
+                        open_uri,
+                        open_source,
+                        package,
+                        target,
+                    );
                     module_locations.sort_by_key(|location| {
                         (
                             location.range.start.line,
