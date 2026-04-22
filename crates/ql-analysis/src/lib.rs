@@ -6696,7 +6696,7 @@ fn dependency_import_token_matches_broken_source_reference_context(
             (
                 SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Trait | SymbolKind::TypeAlias,
                 Some(TokenKind::Comma | TokenKind::RParen | TokenKind::Eq)
-            )
+            ) | (SymbolKind::Trait, Some(TokenKind::For))
         )
 }
 

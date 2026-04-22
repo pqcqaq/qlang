@@ -70,6 +70,7 @@
 - 这一轮继续把 `textDocument/implementation` 的 broken-source 保守面补上了：当前 consumer 处于 parse-error 时，source-backed dependency method call 仍会继续优先读取 open docs，并回到真实方法定义；当前 active root/source 自身处于 parse-error 时，从 root `struct / enum / trait` 定义点与 trait method definition 发起 implementation 也不再直接失效。
 - 这一轮继续把 `textDocument/implementation` 往 workspace root/source-backed 定义点补了一步：从导出源码里的 `struct / enum / trait` 定义点发起时，现也会聚合可见 workspace members 的 `impl` / `extend` / trait `impl` block，而不再只停在 same-file。
 - 这一轮把 broken current-buffer concrete method call `implementation` 也补齐了：当前 active root/source 自身处于 parse-error 时，会先尝试 source-backed dependency method 路径；若无法建立这条依赖回路，则只在同文件存在唯一候选方法定义时保守回到真实源码，避免同名本地方法歧义时误跳。
+- 这一轮又把 broken current consumer 的 dependency trait `implementation` 补到了 `impl Trait for ...` header：broken-source 下的 trait import/query 现在会把 header 里的 trait 名当作有效引用上下文，workspace import definition 与 source-preferred dependency implementation 都不会再在这里静默失效。
 - parse-error 下，workspace root `function / const / static / struct / enum / trait / type alias` 的 import/use references 现在也会补回当前 package 可见的 workspace members / 本地路径依赖里的其他 broken consumers；broken-source root import references 不再只看当前文件和 healthy consumers。
 - parse-error 下，workspace root `function / const / static / struct / enum / trait / type alias` 现在也允许从当前 consumer 的 import/use 发起 rename（包含 alias import/use）；当前保守联动范围是当前 broken 文件、当前 package 其他源码文件、当前 package 可见的 workspace members / 本地路径依赖里的其他 consumer 源码，以及导出包源码；alias import 仍只更新导入路径。
 

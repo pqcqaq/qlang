@@ -2875,6 +2875,7 @@ fn broken_source_import_token_matches_reference_context(tokens: &[Token], index:
                 | TokenKind::LBrace
                 | TokenKind::Dot
                 | TokenKind::Question
+                | TokenKind::For
         )
     ) || matches!(prev_kind, Some(TokenKind::Colon | TokenKind::Arrow))
 }
