@@ -25,3 +25,7 @@ ql-resolve.workspace = true
 ql-span.workspace = true
 tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "sync"] }
 tower-lsp = "0.20"
+
+[dev-dependencies]
+serde_json = "1"
+tower = "0.4"
