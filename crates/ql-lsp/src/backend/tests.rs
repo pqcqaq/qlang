@@ -2680,37 +2680,21 @@ impl Runner for ToolWorker {
         )));
     }
 
-    #[test]
-    fn workspace_type_import_implementation_prefers_open_workspace_source_and_new_impl_blocks() {
-        let temp = TempDir::new("ql-lsp-workspace-type-import-implementation-open-docs");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
-            r#"
-package demo.app
-
-use demo.core.Config
-
-pub fn main(value: Config) -> Config {
-    return value
-}
-"#,
-        );
-        let core_source_path = temp.write(
-            "workspace/packages/core/src/lib.ql",
-            r#"
-package demo.core
-
-pub struct Config {
-    value: Int,
-}
-
-impl Config {
-    fn build(self) -> Int {
-        return self.value
+    struct WorkspaceTypeImportImplementationFixture {
+        _temp: TempDir,
+        app_source: String,
+        package: ql_analysis::PackageAnalysis,
+        core_uri: Url,
     }
-}
-"#,
-        );
+
+    fn setup_workspace_type_import_implementation_fixture(
+        prefix: &str,
+        app_source: &str,
+        core_source: &str,
+    ) -> WorkspaceTypeImportImplementationFixture {
+        let temp = TempDir::new(prefix);
+        let app_path = temp.write("workspace/packages/app/src/main.ql", app_source);
+        let core_source_path = temp.write("workspace/packages/core/src/lib.ql", core_source);
         temp.write(
             "workspace/qlang.toml",
             r#"
@@ -2750,12 +2734,49 @@ pub struct Config {
 "#,
         );
 
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        let analysis = analyze_source(&source).expect("app source should analyze");
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
         let package =
             package_analysis_for_path(&app_path).expect("package analysis should succeed");
         let core_uri =
             Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+
+        WorkspaceTypeImportImplementationFixture {
+            _temp: temp,
+            app_source,
+            package,
+            core_uri,
+        }
+    }
+
+    #[test]
+    fn workspace_type_import_implementation_prefers_open_workspace_source_and_new_impl_blocks() {
+        let fixture = setup_workspace_type_import_implementation_fixture(
+            "ql-lsp-workspace-type-import-implementation-open-docs",
+            r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(value: Config) -> Config {
+    return value
+}
+"#,
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    fn build(self) -> Int {
+        return self.value
+    }
+}
+"#,
+        );
+        let analysis =
+            analyze_source(&fixture.app_source).expect("app source should analyze");
         let open_core_source = r#"
 package demo.core
 
@@ -2782,11 +2803,14 @@ extend Config {
         .to_owned();
 
         let implementation = workspace_source_implementation_for_dependency_with_open_docs(
-            &source,
+            &fixture.app_source,
             Some(&analysis),
-            &package,
-            &file_open_documents(vec![(core_uri.clone(), open_core_source.clone())]),
-            offset_to_position(&source, nth_offset(&source, "Config", 2)),
+            &fixture.package,
+            &file_open_documents(vec![(
+                fixture.core_uri.clone(),
+                open_core_source.clone(),
+            )]),
+            offset_to_position(&fixture.app_source, nth_offset(&fixture.app_source, "Config", 2)),
         )
         .expect("workspace import implementation should exist");
 
@@ -2794,7 +2818,9 @@ extend Config {
             panic!("workspace import implementation should resolve to many locations")
         };
         assert_eq!(locations.len(), 2);
-        assert!(locations.iter().all(|location| location.uri == core_uri));
+        assert!(locations
+            .iter()
+            .all(|location| location.uri == fixture.core_uri));
         assert_eq!(
             locations[0].range.start,
             offset_to_position(
@@ -2814,9 +2840,8 @@ extend Config {
     #[test]
     fn workspace_type_import_implementation_uses_broken_open_workspace_source_and_new_impl_blocks()
     {
-        let temp = TempDir::new("ql-lsp-workspace-type-import-implementation-broken-open-docs");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_workspace_type_import_implementation_fixture(
+            "ql-lsp-workspace-type-import-implementation-broken-open-docs",
             r#"
 package demo.app
 
@@ -2826,9 +2851,6 @@ pub fn main(value: Config) -> Config {
     return value
 }
 "#,
-        );
-        let core_source_path = temp.write(
-            "workspace/packages/core/src/lib.ql",
             r#"
 package demo.core
 
@@ -2837,51 +2859,8 @@ pub struct Config {
 }
 "#,
         );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app", "packages/core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/core.qi",
-            r#"
-// qlang interface v1
-// package: core
-
-// source: src/lib.ql
-package demo.core
-
-pub struct Config {
-    value: Int,
-}
-"#,
-        );
-
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        let analysis = analyze_source(&source).expect("app source should analyze");
-        let package =
-            package_analysis_for_path(&app_path).expect("package analysis should succeed");
-        let core_uri =
-            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let analysis =
+            analyze_source(&fixture.app_source).expect("app source should analyze");
         let open_core_source = r#"
 package demo.core
 
@@ -2919,11 +2898,14 @@ pub fn broken() -> Int {
         assert!(analyze_source(&open_core_source).is_err());
 
         let implementation = workspace_source_implementation_for_dependency_with_open_docs(
-            &source,
+            &fixture.app_source,
             Some(&analysis),
-            &package,
-            &file_open_documents(vec![(core_uri.clone(), open_core_source.clone())]),
-            offset_to_position(&source, nth_offset(&source, "Config", 2)),
+            &fixture.package,
+            &file_open_documents(vec![(
+                fixture.core_uri.clone(),
+                open_core_source.clone(),
+            )]),
+            offset_to_position(&fixture.app_source, nth_offset(&fixture.app_source, "Config", 2)),
         )
         .expect("workspace import implementation should use broken open workspace source");
 
@@ -2931,7 +2913,9 @@ pub fn broken() -> Int {
             panic!("workspace import implementation should resolve to many locations")
         };
         assert_eq!(locations.len(), 3);
-        assert!(locations.iter().all(|location| location.uri == core_uri));
+        assert!(locations
+            .iter()
+            .all(|location| location.uri == fixture.core_uri));
         assert_eq!(
             locations[0].range.start,
             offset_to_position(
