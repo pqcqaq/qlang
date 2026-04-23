@@ -246,6 +246,80 @@ pub trait Runner {
     }
 }
 
+struct WorkspaceTypeImportFixture {
+    _temp: TempDir,
+    app_source: String,
+    app_uri: Url,
+    core_source: String,
+    core_uri: Url,
+}
+
+fn setup_workspace_type_import_fixture(
+    prefix: &str,
+    core_source: &str,
+) -> WorkspaceTypeImportFixture {
+    let temp = TempDir::new(prefix);
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(value: Config) -> Config {
+    return value
+}
+"#,
+    );
+    let core_path = temp.write("workspace/packages/core/src/lib.ql", core_source);
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+    );
+
+    WorkspaceTypeImportFixture {
+        _temp: temp,
+        app_source: fs::read_to_string(&app_path).expect("app source should read"),
+        app_uri: Url::from_file_path(&app_path).expect("app path should convert to URI"),
+        core_source: fs::read_to_string(&core_path).expect("core source should read"),
+        core_uri: Url::from_file_path(&core_path).expect("core path should convert to URI"),
+    }
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn implementation_request_uses_open_local_dependency_member_types() {
     let temp = TempDir::new("ql-lsp-implementation-request-open-member-types");
@@ -1036,6 +1110,164 @@ extend Config {
                 location.range.start == offset_to_position(&source, nth_offset(&source, marker, 1))
             }),
             "same-file type implementations should include {marker}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_returns_array_for_workspace_type_import_surface() {
+    let fixture = setup_workspace_type_import_fixture(
+        "ql-lsp-implementation-request-workspace-type-import-surface",
+        r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    fn build(self) -> Int {
+        return self.value
+    }
+}
+
+extend Config {
+    fn label(self) -> Int {
+        return self.value
+    }
+}
+"#,
+    );
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        fixture.app_source.clone(),
+    )
+    .await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        offset_to_position(
+            &fixture.app_source,
+            nth_offset(&fixture.app_source, "Config", 2),
+        ),
+    )
+    .await
+    .expect("workspace type import implementation should exist");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("workspace type import surface should resolve to many implementation blocks")
+    };
+    assert_eq!(locations.len(), 2);
+    assert!(
+        locations
+            .iter()
+            .all(|location| location.uri == fixture.core_uri),
+        "all workspace type implementations should point at workspace source",
+    );
+    for marker in ["impl Config", "extend Config"] {
+        assert!(
+            locations.iter().any(|location| {
+                location.range.start
+                    == offset_to_position(
+                        &fixture.core_source,
+                        nth_offset(&fixture.core_source, marker, 1),
+                    )
+            }),
+            "workspace type implementations should include {marker}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_prefers_open_workspace_source_for_workspace_type_import_surface() {
+    let fixture = setup_workspace_type_import_fixture(
+        "ql-lsp-implementation-request-open-workspace-type-import-surface",
+        r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    fn build(self) -> Int {
+        return self.value
+    }
+}
+"#,
+    );
+    let open_core_source = r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn helper() -> Int {
+    return 0
+}
+
+impl Config {
+    fn build(self) -> Int {
+        return self.value
+    }
+}
+
+extend Config {
+    fn label(self) -> Int {
+        return self.value
+    }
+}
+"#
+    .to_owned();
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        open_core_source.clone(),
+    )
+    .await;
+    did_open_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        fixture.app_source.clone(),
+    )
+    .await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        offset_to_position(
+            &fixture.app_source,
+            nth_offset(&fixture.app_source, "Config", 2),
+        ),
+    )
+    .await
+    .expect("workspace type import implementation should use open workspace source");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("workspace type import surface should resolve to many implementation blocks")
+    };
+    assert_eq!(locations.len(), 2);
+    assert!(
+        locations
+            .iter()
+            .all(|location| location.uri == fixture.core_uri),
+        "all open workspace type implementations should stay in the open source",
+    );
+    for marker in ["impl Config", "extend Config"] {
+        assert!(
+            locations.iter().any(|location| {
+                location.range.start
+                    == offset_to_position(
+                        &open_core_source,
+                        nth_offset(&open_core_source, marker, 1),
+                    )
+            }),
+            "open workspace type implementations should include {marker}",
         );
     }
 }
