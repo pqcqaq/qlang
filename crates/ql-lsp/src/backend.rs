@@ -2916,7 +2916,17 @@ fn broken_source_visible_local_names_for_target(
 
     let (tokens, _) = lex(source);
     for binding in broken_source_import_bindings_in_tokens(&tokens) {
-        if binding.imported_name == target.name {
+        if binding.imported_name != target.name {
+            continue;
+        }
+        let Some(resolved_target) =
+            package.dependency_type_definition_in_source_at(source, binding.definition_span.start)
+        else {
+            continue;
+        };
+        if same_dependency_definition_target(&resolved_target, target)
+            || same_dependency_definition_source_identity(&resolved_target, target)
+        {
             names.insert(binding.local_name);
         }
     }
