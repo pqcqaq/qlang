@@ -568,6 +568,181 @@ pub fn build() -> Counter {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_uses_open_local_dependency_member_types_in_broken_source() {
+    let temp = TempDir::new("ql-lsp-implementation-request-open-member-types-broken-source");
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+
+pub fn main() -> Int {
+    let current = build()
+    return current.extra.id + current.pulse().id
+"#,
+    );
+    let alpha_source_path = temp.write(
+        "workspace/vendor/alpha/src/lib.ql",
+        r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int
+}
+
+pub fn build() -> Counter
+"#,
+    );
+
+    let open_alpha_source = r#"
+package demo.shared.alpha
+
+pub struct Extra {
+    id: Int,
+}
+
+impl Extra {
+    pub fn read(self) -> Int {
+        return self.id
+    }
+}
+
+extend Extra {
+    pub fn bonus(self) -> Int {
+        return self.id + 1
+    }
+}
+
+pub struct Counter {
+    value: Int,
+    extra: Extra,
+}
+
+impl Counter {
+    pub fn pulse(self) -> Extra {
+        return self.extra
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1, extra: Extra { id: 2 } }
+}
+"#
+    .to_owned();
+    let source = fs::read_to_string(&app_path).expect("app source should read");
+    assert!(
+        ql_analysis::analyze_source(&source).is_err(),
+        "current source should stay broken for this regression",
+    );
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let alpha_uri =
+        Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, app_uri.clone(), source.clone()).await;
+
+    for (needle, occurrence) in [("extra", 1usize), ("pulse", 1usize)] {
+        let disk_only = goto_implementation_via_request(
+            &mut service,
+            app_uri.clone(),
+            offset_to_position(&source, nth_offset(&source, needle, occurrence) + 1),
+        )
+        .await;
+        assert_eq!(
+            disk_only, None,
+            "disk-only broken-source implementation should miss unsaved dependency member type {needle}",
+        );
+    }
+
+    did_open_via_request(&mut service, alpha_uri.clone(), open_alpha_source.clone()).await;
+    for (needle, occurrence) in [("extra", 1usize), ("pulse", 1usize)] {
+        let implementation = goto_implementation_via_request(
+            &mut service,
+            app_uri.clone(),
+            offset_to_position(&source, nth_offset(&source, needle, occurrence) + 1),
+        )
+        .await
+        .expect("broken-source dependency member type implementation should use open source");
+        let GotoImplementationResponse::Array(locations) = implementation else {
+            panic!(
+                "broken-source dependency member type implementation should resolve to impl block locations: {implementation:?}"
+            )
+        };
+        assert_eq!(locations.len(), 2);
+        assert!(
+            locations.iter().all(|location| location.uri == alpha_uri),
+            "implementation should stay in the open dependency source",
+        );
+        for marker in ["impl Extra", "extend Extra"] {
+            assert!(
+                locations.iter().any(|location| {
+                    location.range.start
+                        == offset_to_position(
+                            &open_alpha_source,
+                            nth_offset(&open_alpha_source, marker, 1),
+                        )
+                }),
+                "broken-source dependency member type implementation should include {marker} for {needle}",
+            );
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_returns_array_for_workspace_dependency_trait_method_call() {
     let temp =
         TempDir::new("ql-lsp-implementation-request-workspace-dependency-trait-method-call");
