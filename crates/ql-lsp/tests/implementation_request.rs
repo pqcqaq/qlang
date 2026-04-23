@@ -4618,6 +4618,77 @@ async fn implementation_request_returns_array_for_workspace_root_trait_surface()
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_prefers_open_workspace_source_for_root_trait_method_definition()
+{
+    let fixture = setup_workspace_root_trait_single_consumer_fixture(
+        "ql-lsp-implementation-request-open-root-trait-method-definition",
+        r#"
+package demo.app
+
+struct AppWorker {}
+"#,
+    );
+    let open_app_source = r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+"#
+    .to_owned();
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        fixture.core_source.clone(),
+    )
+    .await;
+
+    let disk_only = goto_implementation_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        offset_to_position(
+            &fixture.core_source,
+            nth_offset(&fixture.core_source, "run", 1),
+        ),
+    )
+    .await;
+    assert_eq!(disk_only, None);
+
+    did_open_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        open_app_source.clone(),
+    )
+    .await;
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        offset_to_position(
+            &fixture.core_source,
+            nth_offset(&fixture.core_source, "run", 1),
+        ),
+    )
+    .await
+    .expect("open workspace source should provide root trait method implementation");
+    let GotoImplementationResponse::Scalar(location) = implementation else {
+        panic!("single open root trait method should resolve to one implementation")
+    };
+    assert_eq!(location.uri, fixture.app_uri);
+    assert_eq!(
+        location.range.start,
+        offset_to_position(&open_app_source, nth_offset(&open_app_source, "run", 1)),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_uses_broken_open_workspace_source_for_root_trait_method_definition()
 {
     let fixture = setup_workspace_root_trait_single_consumer_fixture(
