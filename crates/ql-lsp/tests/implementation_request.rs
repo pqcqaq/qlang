@@ -320,6 +320,78 @@ pub struct Config {
     }
 }
 
+struct WorkspaceRootTraitSingleConsumerFixture {
+    _temp: TempDir,
+    core_source: String,
+    core_uri: Url,
+    app_source: String,
+    app_uri: Url,
+}
+
+fn setup_workspace_root_trait_single_consumer_fixture(
+    prefix: &str,
+    app_source: &str,
+) -> WorkspaceRootTraitSingleConsumerFixture {
+    let temp = TempDir::new(prefix);
+    let core_path = temp.write(
+        "workspace/packages/core/src/lib.ql",
+        r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+    );
+    let app_path = temp.write("workspace/packages/app/src/main.ql", app_source);
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+    );
+
+    WorkspaceRootTraitSingleConsumerFixture {
+        _temp: temp,
+        core_source: fs::read_to_string(&core_path).expect("core source should read"),
+        core_uri: Url::from_file_path(&core_path).expect("core path should convert to URI"),
+        app_source: fs::read_to_string(&app_path).expect("app source should read"),
+        app_uri: Url::from_file_path(&app_path).expect("app path should convert to URI"),
+    }
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn implementation_request_uses_open_local_dependency_member_types() {
     let temp = TempDir::new("ql-lsp-implementation-request-open-member-types");
@@ -1742,6 +1814,151 @@ pub fn broken() -> Int {
                     )
         }),
         "workspace trait implementations should include the broken open workspace implementation",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_uses_workspace_impls_for_broken_current_root_trait_surface() {
+    let fixture = setup_workspace_root_trait_single_consumer_fixture(
+        "ql-lsp-implementation-request-broken-current-root-trait",
+        r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+"#,
+    );
+    let open_core_source = r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+
+pub fn broken() -> Int {
+    return 0
+"#
+    .to_owned();
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        open_core_source.clone(),
+    )
+    .await;
+    did_open_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        fixture.app_source.clone(),
+    )
+    .await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        offset_to_position(
+            &open_core_source,
+            nth_offset(&open_core_source, "Runner", 1),
+        ),
+    )
+    .await
+    .expect("broken current root trait implementation should exist");
+    let GotoImplementationResponse::Scalar(location) = implementation else {
+        panic!("single broken current root trait surface should resolve to one implementation")
+    };
+    assert_eq!(location.uri, fixture.app_uri);
+    assert_eq!(
+        location.range.start,
+        offset_to_position(
+            &fixture.app_source,
+            nth_offset(&fixture.app_source, "impl Runner for AppWorker", 1)
+        ),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_uses_broken_open_workspace_source_for_root_trait_surface() {
+    let fixture = setup_workspace_root_trait_single_consumer_fixture(
+        "ql-lsp-implementation-request-broken-open-root-trait",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 0
+}
+"#,
+    );
+    let open_app_source = r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+
+pub fn broken() -> Int {
+    return AppWorker {
+"#
+    .to_owned();
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        fixture.core_source.clone(),
+    )
+    .await;
+
+    let disk_only = goto_implementation_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        offset_to_position(
+            &fixture.core_source,
+            nth_offset(&fixture.core_source, "Runner", 1),
+        ),
+    )
+    .await;
+    assert_eq!(disk_only, None);
+
+    did_open_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        open_app_source.clone(),
+    )
+    .await;
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        offset_to_position(
+            &fixture.core_source,
+            nth_offset(&fixture.core_source, "Runner", 1),
+        ),
+    )
+    .await
+    .expect("broken open workspace source should provide root trait implementation");
+    let GotoImplementationResponse::Scalar(location) = implementation else {
+        panic!("single broken open root trait surface should resolve to one implementation")
+    };
+    assert_eq!(location.uri, fixture.app_uri);
+    assert_eq!(
+        location.range.start,
+        offset_to_position(
+            &open_app_source,
+            nth_offset(&open_app_source, "impl Runner for AppWorker", 1)
+        ),
     );
 }
 
