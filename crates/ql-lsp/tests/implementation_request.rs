@@ -1378,6 +1378,88 @@ pub fn broken() -> Int {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_uses_workspace_source_for_broken_current_workspace_type_import() {
+    let fixture = setup_workspace_type_import_fixture(
+        "ql-lsp-implementation-request-broken-current-workspace-type-import",
+        r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    fn build(self) -> Int {
+        return self.value
+    }
+}
+
+extend Config {
+    fn label(self) -> Int {
+        return self.value
+    }
+}
+"#,
+    );
+    let broken_app_source = r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(value: Config) -> Config {
+    return Config {
+"#
+    .to_owned();
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        fixture.core_source.clone(),
+    )
+    .await;
+    did_open_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        broken_app_source.clone(),
+    )
+    .await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        offset_to_position(
+            &broken_app_source,
+            nth_offset(&broken_app_source, "Config", 2),
+        ),
+    )
+    .await
+    .expect("broken current workspace type import implementation should exist");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("broken current workspace type import should resolve to many implementations")
+    };
+    assert_eq!(locations.len(), 2);
+    assert!(
+        locations
+            .iter()
+            .all(|location| location.uri == fixture.core_uri),
+        "all broken current workspace type implementations should point at workspace source",
+    );
+    for marker in ["impl Config", "extend Config"] {
+        assert!(
+            locations.iter().any(|location| {
+                location.range.start
+                    == offset_to_position(
+                        &fixture.core_source,
+                        nth_offset(&fixture.core_source, marker, 1),
+                    )
+            }),
+            "broken current workspace type implementations should include {marker}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_returns_array_for_workspace_trait_import_surface() {
     let fixture =
         setup_workspace_root_runner_fixture("ql-lsp-implementation-request-workspace-trait-import");
