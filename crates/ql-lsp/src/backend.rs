@@ -6057,6 +6057,83 @@ fn workspace_source_method_implementation_for_local_source_in_broken_source_with
     })
 }
 
+fn workspace_source_implementation_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoImplementationResponse> {
+    if let Some(analysis) = analysis {
+        return workspace_source_root_implementation_with_open_docs(
+            uri, source, analysis, package, open_docs, position,
+        )
+        .or_else(|| {
+            workspace_source_trait_method_implementation_with_open_docs(
+                uri, source, analysis, package, open_docs, position,
+            )
+        })
+        .or_else(|| {
+            workspace_source_implementation_for_dependency_with_open_docs(
+                source,
+                Some(analysis),
+                package,
+                open_docs,
+                position,
+            )
+        })
+        .or_else(|| {
+            workspace_source_method_implementation_for_local_source_with_open_docs(
+                uri, source, analysis, package, open_docs, position,
+            )
+        })
+        .or_else(|| {
+            workspace_source_method_implementation_for_dependency_with_open_docs(
+                uri,
+                source,
+                Some(analysis),
+                package,
+                open_docs,
+                position,
+            )
+        });
+    }
+
+    workspace_source_root_implementation_in_broken_source_with_open_docs(
+        uri, source, package, open_docs, position,
+    )
+    .or_else(|| {
+        workspace_source_trait_method_implementation_in_broken_source_with_open_docs(
+            uri, source, package, open_docs, position,
+        )
+    })
+    .or_else(|| {
+        workspace_source_implementation_for_dependency_with_open_docs(
+            source,
+            None,
+            package,
+            open_docs,
+            position,
+        )
+    })
+    .or_else(|| {
+        workspace_source_method_implementation_for_dependency_with_open_docs(
+            uri, source, None, package, open_docs, position,
+        )
+    })
+    .or_else(|| {
+        workspace_source_method_implementation_for_broken_source_with_open_docs(
+            uri, source, package, open_docs, position,
+        )
+    })
+    .or_else(|| {
+        workspace_source_method_implementation_for_local_source_in_broken_source_with_open_docs(
+            uri, source, position,
+        )
+    })
+}
+
 fn workspace_source_definition_for_dependency(
     uri: &Url,
     source: &str,
@@ -9018,95 +9095,14 @@ impl LanguageServer for Backend {
         if let Some(package) = self.package_analysis_for_uri(&uri) {
             let open_docs = self.open_file_documents().await;
             let analysis = analyze_source(&source).ok();
-            if let Some(analysis) = analysis.as_ref()
-                && let Some(implementation) = workspace_source_root_implementation_with_open_docs(
-                    &uri, &source, analysis, &package, &open_docs, position,
-                )
-            {
-                return Ok(Some(implementation));
-            }
-            if analysis.is_none()
-                && let Some(implementation) =
-                    workspace_source_root_implementation_in_broken_source_with_open_docs(
-                        &uri, &source, &package, &open_docs, position,
-                    )
-            {
-                return Ok(Some(implementation));
-            }
-            if let Some(analysis) = analysis.as_ref()
-                && let Some(implementation) =
-                    workspace_source_trait_method_implementation_with_open_docs(
-                        &uri, &source, analysis, &package, &open_docs, position,
-                    )
-            {
-                return Ok(Some(implementation));
-            }
-            if analysis.is_none()
-                && let Some(implementation) =
-                    workspace_source_trait_method_implementation_in_broken_source_with_open_docs(
-                        &uri, &source, &package, &open_docs, position,
-                    )
-            {
-                return Ok(Some(implementation));
-            }
-            if let Some(analysis) = analysis.as_ref()
-                && let Some(implementation) =
-                    workspace_source_implementation_for_dependency_with_open_docs(
-                        &source,
-                        Some(analysis),
-                        &package,
-                        &open_docs,
-                        position,
-                    )
-            {
-                return Ok(Some(implementation));
-            }
-            if analysis.is_none()
-                && let Some(implementation) =
-                    workspace_source_implementation_for_dependency_with_open_docs(
-                        &source,
-                        analysis.as_ref(),
-                        &package,
-                        &open_docs,
-                        position,
-                    )
-            {
-                return Ok(Some(implementation));
-            }
-            if let Some(analysis) = analysis.as_ref()
-                && let Some(implementation) =
-                    workspace_source_method_implementation_for_local_source_with_open_docs(
-                        &uri, &source, analysis, &package, &open_docs, position,
-                    )
-            {
-                return Ok(Some(implementation));
-            }
-            if let Some(implementation) =
-                workspace_source_method_implementation_for_dependency_with_open_docs(
-                    &uri,
-                    &source,
-                    analysis.as_ref(),
-                    &package,
-                    &open_docs,
-                    position,
-                )
-            {
-                return Ok(Some(implementation));
-            }
-            if analysis.is_none()
-                && let Some(implementation) =
-                    workspace_source_method_implementation_for_broken_source_with_open_docs(
-                        &uri, &source, &package, &open_docs, position,
-                    )
-            {
-                return Ok(Some(implementation));
-            }
-            if analysis.is_none()
-                && let Some(implementation) =
-                    workspace_source_method_implementation_for_local_source_in_broken_source_with_open_docs(
-                        &uri, &source, position,
-                    )
-            {
+            if let Some(implementation) = workspace_source_implementation_with_open_docs(
+                &uri,
+                &source,
+                analysis.as_ref(),
+                &package,
+                &open_docs,
+                position,
+            ) {
                 return Ok(Some(implementation));
             }
             let Some(analysis) = analysis else {
