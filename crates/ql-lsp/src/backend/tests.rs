@@ -2498,9 +2498,23 @@ pub fn call(runner: Runner) -> Int {
         )));
     }
 
-    #[test]
-    fn workspace_trait_method_implementation_includes_workspace_consumer_impl_methods() {
-        let temp = TempDir::new("ql-lsp-workspace-trait-method-implementation-consumers");
+    struct WorkspaceTraitMethodImplementationFixture {
+        _temp: TempDir,
+        core_source: String,
+        core_uri: Url,
+        package: ql_analysis::PackageAnalysis,
+        app_source: String,
+        app_uri: Url,
+        tools_source: Option<String>,
+        tools_uri: Option<Url>,
+    }
+
+    fn setup_workspace_trait_method_implementation_fixture(
+        prefix: &str,
+        app_source: &str,
+        tools_source: Option<&str>,
+    ) -> WorkspaceTraitMethodImplementationFixture {
+        let temp = TempDir::new(prefix);
         let core_source_path = temp.write(
             "workspace/packages/core/src/lib.ql",
             r#"
@@ -2511,44 +2525,23 @@ pub trait Runner {
 }
 "#,
         );
-        let app_source_path = temp.write(
-            "workspace/packages/app/src/main.ql",
-            r#"
-package demo.app
+        let app_source_path = temp.write("workspace/packages/app/src/main.ql", app_source);
+        let tools_source_path = tools_source
+            .map(|source| temp.write("workspace/packages/tools/src/lib.ql", source));
 
-use demo.core.Runner
-
-struct AppWorker {}
-
-impl Runner for AppWorker {
-    fn run(self) -> Int {
-        return 1
-    }
-}
-"#,
-        );
-        let tools_source_path = temp.write(
-            "workspace/packages/tools/src/lib.ql",
-            r#"
-package demo.tools
-
-use demo.core.Runner
-
-struct ToolWorker {}
-
-impl Runner for ToolWorker {
-    fn run(self) -> Int {
-        return 2
-    }
-}
-"#,
-        );
         temp.write(
             "workspace/qlang.toml",
-            r#"
+            if tools_source_path.is_some() {
+                r#"
 [workspace]
 members = ["packages/app", "packages/core", "packages/tools"]
-"#,
+"#
+            } else {
+                r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#
+            },
         );
         temp.write(
             "workspace/packages/app/qlang.toml",
@@ -2560,16 +2553,18 @@ name = "app"
 packages = ["../core"]
 "#,
         );
-        temp.write(
-            "workspace/packages/tools/qlang.toml",
-            r#"
+        if tools_source_path.is_some() {
+            temp.write(
+                "workspace/packages/tools/qlang.toml",
+                r#"
 [package]
 name = "tools"
 
 [references]
 packages = ["../core"]
 "#,
-        );
+            );
+        }
         temp.write(
             "workspace/packages/core/qlang.toml",
             r#"
@@ -2592,19 +2587,75 @@ pub trait Runner {
 "#,
         );
 
-        let source = fs::read_to_string(&core_source_path).expect("core source should read");
-        let analysis = analyze_source(&source).expect("core source should analyze");
+        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
         let package =
             package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
-        let uri = Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        let app_source = fs::read_to_string(&app_source_path).expect("app source should read");
+        let app_uri =
+            Url::from_file_path(&app_source_path).expect("app path should convert to URI");
+        let tools_source = tools_source_path
+            .as_ref()
+            .map(|path| fs::read_to_string(path).expect("tools source should read"));
+        let tools_uri = tools_source_path
+            .map(|path| Url::from_file_path(path).expect("tools path should convert to URI"));
+
+        WorkspaceTraitMethodImplementationFixture {
+            _temp: temp,
+            core_source,
+            core_uri,
+            package,
+            app_source,
+            app_uri,
+            tools_source,
+            tools_uri,
+        }
+    }
+
+    #[test]
+    fn workspace_trait_method_implementation_includes_workspace_consumer_impl_methods() {
+        let fixture = setup_workspace_trait_method_implementation_fixture(
+            "ql-lsp-workspace-trait-method-implementation-consumers",
+            r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+"#,
+            Some(
+                r#"
+package demo.tools
+
+use demo.core.Runner
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn run(self) -> Int {
+        return 2
+    }
+}
+"#,
+            ),
+        );
+        let analysis =
+            analyze_source(&fixture.core_source).expect("core source should analyze");
 
         let implementation = workspace_source_trait_method_implementation_with_open_docs(
-            &uri,
-            &source,
+            &fixture.core_uri,
+            &fixture.core_source,
             &analysis,
-            &package,
+            &fixture.package,
             &file_open_documents(vec![]),
-            offset_to_position(&source, nth_offset(&source, "run", 1)),
+            offset_to_position(&fixture.core_source, nth_offset(&fixture.core_source, "run", 1)),
         )
         .expect("workspace trait method implementation should exist");
 
@@ -2613,17 +2664,19 @@ pub trait Runner {
         };
         assert_eq!(locations.len(), 2);
 
-        let app_source = fs::read_to_string(&app_source_path).expect("app source should read");
-        let tools_source =
-            fs::read_to_string(&tools_source_path).expect("tools source should read");
-
         assert!(locations.contains(&Location::new(
-            Url::from_file_path(&app_source_path).expect("app path should convert to URI"),
-            span_to_range(&app_source, nth_span(&app_source, "run", 1)),
+            fixture.app_uri.clone(),
+            span_to_range(&fixture.app_source, nth_span(&fixture.app_source, "run", 1)),
         )));
+
+        let tools_source = fixture
+            .tools_source
+            .as_ref()
+            .expect("tools source should exist");
+        let tools_uri = fixture.tools_uri.clone().expect("tools URI should exist");
         assert!(locations.contains(&Location::new(
-            Url::from_file_path(&tools_source_path).expect("tools path should convert to URI"),
-            span_to_range(&tools_source, nth_span(&tools_source, "run", 1)),
+            tools_uri,
+            span_to_range(tools_source, nth_span(tools_source, "run", 1)),
         )));
     }
 
@@ -2904,19 +2957,8 @@ pub fn broken() -> Int {
 
     #[test]
     fn workspace_trait_method_implementation_prefers_open_workspace_source_and_new_impl_methods() {
-        let temp = TempDir::new("ql-lsp-workspace-trait-method-implementation-open-docs");
-        let core_source_path = temp.write(
-            "workspace/packages/core/src/lib.ql",
-            r#"
-package demo.core
-
-pub trait Runner {
-    fn run(self) -> Int
-}
-"#,
-        );
-        let app_source_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_workspace_trait_method_implementation_fixture(
+            "ql-lsp-workspace-trait-method-implementation-open-docs",
             r#"
 package demo.app
 
@@ -2924,54 +2966,10 @@ use demo.core.Runner
 
 struct AppWorker {}
 "#,
+            None,
         );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app", "packages/core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/core.qi",
-            r#"
-// qlang interface v1
-// package: core
-
-// source: src/lib.ql
-package demo.core
-
-pub trait Runner {
-    fn run(self) -> Int
-}
-"#,
-        );
-
-        let source = fs::read_to_string(&core_source_path).expect("core source should read");
-        let analysis = analyze_source(&source).expect("core source should analyze");
-        let package =
-            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
-        let core_uri =
-            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
-        let app_uri =
-            Url::from_file_path(&app_source_path).expect("app path should convert to URI");
+        let analysis =
+            analyze_source(&fixture.core_source).expect("core source should analyze");
         let open_app_source = r#"
 package demo.app
 
@@ -2989,31 +2987,34 @@ impl Runner for AppWorker {
 
         assert_eq!(
             workspace_source_trait_method_implementation_with_open_docs(
-                &core_uri,
-                &source,
+                &fixture.core_uri,
+                &fixture.core_source,
                 &analysis,
-                &package,
+                &fixture.package,
                 &file_open_documents(vec![]),
-                offset_to_position(&source, nth_offset(&source, "run", 1)),
+                offset_to_position(&fixture.core_source, nth_offset(&fixture.core_source, "run", 1)),
             ),
             None,
             "disk-only implementation search should miss unsaved workspace impl methods",
         );
 
         let implementation = workspace_source_trait_method_implementation_with_open_docs(
-            &core_uri,
-            &source,
+            &fixture.core_uri,
+            &fixture.core_source,
             &analysis,
-            &package,
-            &file_open_documents(vec![(app_uri.clone(), open_app_source.clone())]),
-            offset_to_position(&source, nth_offset(&source, "run", 1)),
+            &fixture.package,
+            &file_open_documents(vec![(
+                fixture.app_uri.clone(),
+                open_app_source.clone(),
+            )]),
+            offset_to_position(&fixture.core_source, nth_offset(&fixture.core_source, "run", 1)),
         )
         .expect("open workspace source should provide trait method implementations");
 
         let GotoDefinitionResponse::Scalar(location) = implementation else {
             panic!("single open-doc trait method implementation should resolve to one location")
         };
-        assert_eq!(location.uri, app_uri);
+        assert_eq!(location.uri, fixture.app_uri);
         assert_eq!(
             location.range.start,
             offset_to_position(&open_app_source, nth_offset(&open_app_source, "run", 1)),
@@ -3023,19 +3024,8 @@ impl Runner for AppWorker {
     #[test]
     fn workspace_trait_method_implementation_in_broken_current_source_still_uses_workspace_impl_methods()
      {
-        let temp = TempDir::new("ql-lsp-workspace-trait-method-implementation-broken-current");
-        let core_source_path = temp.write(
-            "workspace/packages/core/src/lib.ql",
-            r#"
-package demo.core
-
-pub trait Runner {
-    fn run(self) -> Int
-}
-"#,
-        );
-        let app_source_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_workspace_trait_method_implementation_fixture(
+            "ql-lsp-workspace-trait-method-implementation-broken-current",
             r#"
 package demo.app
 
@@ -3049,55 +3039,9 @@ impl Runner for AppWorker {
     }
 }
 "#,
+            None,
         );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app", "packages/core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/core.qi",
-            r#"
-// qlang interface v1
-// package: core
-
-// source: src/lib.ql
-package demo.core
-
-pub trait Runner {
-    fn run(self) -> Int
-}
-"#,
-        );
-
-        let package =
-            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
-        let core_uri =
-            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
-        let app_uri =
-            Url::from_file_path(&app_source_path).expect("app path should convert to URI");
-        let app_source = fs::read_to_string(&app_source_path)
-            .expect("app source should read")
-            .replace("\r\n", "\n");
+        let app_source = fixture.app_source.replace("\r\n", "\n");
         let open_core_source = r#"
 package demo.core
 
@@ -3114,10 +3058,13 @@ pub fn broken() -> Int {
 
         let implementation =
             workspace_source_trait_method_implementation_in_broken_source_with_open_docs(
-                &core_uri,
+                &fixture.core_uri,
                 &open_core_source,
-                &package,
-                &file_open_documents(vec![(core_uri.clone(), open_core_source.clone())]),
+                &fixture.package,
+                &file_open_documents(vec![(
+                    fixture.core_uri.clone(),
+                    open_core_source.clone(),
+                )]),
                 offset_to_position(&open_core_source, nth_offset(&open_core_source, "run", 1)),
             )
             .expect("broken current trait source should still provide impl method locations");
@@ -3125,7 +3072,7 @@ pub fn broken() -> Int {
         let GotoDefinitionResponse::Scalar(location) = implementation else {
             panic!("single broken current trait method implementation should resolve to one location")
         };
-        assert_eq!(location.uri, app_uri);
+        assert_eq!(location.uri, fixture.app_uri);
         assert_eq!(
             location.range.start,
             offset_to_position(&app_source, nth_offset(&app_source, "run", 1)),
@@ -3135,19 +3082,8 @@ pub fn broken() -> Int {
     #[test]
     fn workspace_trait_method_implementation_uses_broken_open_workspace_source_and_new_impl_methods()
      {
-        let temp = TempDir::new("ql-lsp-workspace-trait-method-implementation-broken-open-docs");
-        let core_source_path = temp.write(
-            "workspace/packages/core/src/lib.ql",
-            r#"
-package demo.core
-
-pub trait Runner {
-    fn run(self) -> Int
-}
-"#,
-        );
-        let app_source_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_workspace_trait_method_implementation_fixture(
+            "ql-lsp-workspace-trait-method-implementation-broken-open-docs",
             r#"
 package demo.app
 
@@ -3155,54 +3091,10 @@ use demo.core.Runner
 
 struct AppWorker {}
 "#,
+            None,
         );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app", "packages/core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/core.qi",
-            r#"
-// qlang interface v1
-// package: core
-
-// source: src/lib.ql
-package demo.core
-
-pub trait Runner {
-    fn run(self) -> Int
-}
-"#,
-        );
-
-        let source = fs::read_to_string(&core_source_path).expect("core source should read");
-        let analysis = analyze_source(&source).expect("core source should analyze");
-        let package =
-            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
-        let core_uri =
-            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
-        let app_uri =
-            Url::from_file_path(&app_source_path).expect("app path should convert to URI");
+        let analysis =
+            analyze_source(&fixture.core_source).expect("core source should analyze");
         let open_app_source = r#"
 package demo.app
 
@@ -3224,12 +3116,15 @@ pub fn broken() -> Int {
         assert!(analyze_source(&open_app_source).is_err());
 
         let implementation = workspace_source_trait_method_implementation_with_open_docs(
-            &core_uri,
-            &source,
+            &fixture.core_uri,
+            &fixture.core_source,
             &analysis,
-            &package,
-            &file_open_documents(vec![(app_uri.clone(), open_app_source.clone())]),
-            offset_to_position(&source, nth_offset(&source, "run", 1)),
+            &fixture.package,
+            &file_open_documents(vec![(
+                fixture.app_uri.clone(),
+                open_app_source.clone(),
+            )]),
+            offset_to_position(&fixture.core_source, nth_offset(&fixture.core_source, "run", 1)),
         )
         .expect("open broken workspace source should provide trait method implementations");
 
@@ -3238,7 +3133,7 @@ pub fn broken() -> Int {
                 "single broken open-doc trait method implementation should resolve to one location"
             )
         };
-        assert_eq!(location.uri, app_uri);
+        assert_eq!(location.uri, fixture.app_uri);
         assert_eq!(
             location.range.start,
             offset_to_position(&open_app_source, nth_offset(&open_app_source, "run", 1)),
