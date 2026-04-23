@@ -2196,7 +2196,7 @@ use demo.shared.beta.build as other
 pub fn main() -> Int {
     let current = build()
     let next = other()
-    return current.extra.id + next.extra.flag
+    return current.extra.id + current.pulse().id + next.pulse().flag
 "#,
     );
     let alpha_source_path = temp.write(
@@ -2236,6 +2236,12 @@ extend Extra {
 
 pub struct Counter {
     extra: Extra,
+}
+
+impl Counter {
+    pub fn pulse(self) -> Extra {
+        return self.extra
+    }
 }
 
 pub fn build() -> Counter {
@@ -2316,6 +2322,10 @@ pub struct Counter {
     extra: Extra,
 }
 
+impl Counter {
+    pub fn pulse(self) -> Extra
+}
+
 pub fn build() -> Counter
 "#,
     );
@@ -2344,6 +2354,12 @@ pub struct Counter {
     extra: Extra,
 }
 
+impl Counter {
+    pub fn pulse(self) -> Extra {
+        return self.extra
+    }
+}
+
 pub fn build() -> Counter {
     return Counter { value: 1, extra: Extra { id: 2 } }
 }
@@ -2369,34 +2385,38 @@ pub fn build() -> Counter {
     initialize_service(&mut service).await;
     did_open_via_request(&mut service, app_uri.clone(), source.clone()).await;
 
-    let implementation = goto_implementation_via_request(
-        &mut service,
-        app_uri,
-        offset_to_position(&source, nth_offset(&source, "extra", 1) + 1),
-    )
-    .await
-    .expect("broken-source dependency member type implementation should exist");
-    let GotoImplementationResponse::Array(locations) = implementation else {
-        panic!(
-            "broken-source dependency member type implementation should resolve to impl block locations: {implementation:?}"
+    for (needle, occurrence) in [("extra", 1usize), ("pulse", 1usize)] {
+        let implementation = goto_implementation_via_request(
+            &mut service,
+            app_uri.clone(),
+            offset_to_position(&source, nth_offset(&source, needle, occurrence) + 1),
         )
-    };
-    assert_eq!(locations.len(), 2);
-    assert!(
-        locations.iter().all(|location| location.uri == alpha_uri),
-        "implementation should stay in the matching alpha dependency source",
-    );
-    for marker in ["impl Extra", "extend Extra"] {
+        .await
+        .unwrap_or_else(|| {
+            panic!("broken-source dependency member type implementation should exist for {needle}")
+        });
+        let GotoImplementationResponse::Array(locations) = implementation else {
+            panic!(
+                "broken-source dependency member type implementation should resolve to impl block locations: {implementation:?}"
+            )
+        };
+        assert_eq!(locations.len(), 2);
         assert!(
-            locations.iter().any(|location| {
-                location.range.start
-                    == offset_to_position(
-                        &open_alpha_source,
-                        nth_offset(&open_alpha_source, marker, 1),
-                    )
-            }),
-            "implementation should include alpha {marker}",
+            locations.iter().all(|location| location.uri == alpha_uri),
+            "implementation should stay in the matching alpha dependency source for {needle}",
         );
+        for marker in ["impl Extra", "extend Extra"] {
+            assert!(
+                locations.iter().any(|location| {
+                    location.range.start
+                        == offset_to_position(
+                            &open_alpha_source,
+                            nth_offset(&open_alpha_source, marker, 1),
+                        )
+                }),
+                "implementation should include alpha {marker} for {needle}",
+            );
+        }
     }
 }
 
