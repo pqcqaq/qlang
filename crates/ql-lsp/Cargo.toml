@@ -18,8 +18,10 @@ ql-ast.workspace = true
 ql-analysis.workspace = true
 ql-diagnostics.workspace = true
 ql-fmt.workspace = true
+ql-hir.workspace = true
 ql-lexer.workspace = true
 ql-project.workspace = true
+ql-resolve.workspace = true
 ql-span.workspace = true
 tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "sync"] }
 tower-lsp = "0.20"

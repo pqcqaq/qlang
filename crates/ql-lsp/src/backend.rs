@@ -4184,6 +4184,535 @@ fn broken_source_trait_method_implementation_query_for_source(
         })
 }
 
+fn local_trait_definition_target_for_item(
+    current_path: &Path,
+    package: &ql_analysis::PackageAnalysis,
+    analysis: &Analysis,
+    item_id: ql_hir::ItemId,
+) -> Option<DependencyDefinitionTarget> {
+    let ql_hir::ItemKind::Trait(trait_decl) = &analysis.hir().item(item_id).kind else {
+        return None;
+    };
+    let source_path = package_source_path_for_module(package, current_path)?;
+    let package_name = manifest_package_name(package.manifest()).ok()?.to_owned();
+
+    Some(DependencyDefinitionTarget {
+        package_name,
+        manifest_path: package.manifest().manifest_path.clone(),
+        source_path,
+        kind: ql_analysis::SymbolKind::Trait,
+        name: trait_decl.name.clone(),
+        path: current_path.to_path_buf(),
+        span: analysis.hir().item(item_id).span,
+    })
+}
+
+fn trait_method_call_implementation_query_for_type_id(
+    current_path: &Path,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    type_id: ql_hir::TypeId,
+    method_name: &str,
+    method_span: Span,
+) -> Option<TraitMethodImplementationQuery> {
+    let trait_target = match analysis.resolution().type_resolution(type_id)? {
+        ql_resolve::TypeResolution::Item(item_id) => {
+            local_trait_definition_target_for_item(current_path, package, analysis, *item_id)?
+        }
+        ql_resolve::TypeResolution::Import(_) => package
+            .dependency_type_definition_at(analysis, analysis.hir().ty(type_id).span.start)
+            .or_else(|| {
+                package
+                    .dependency_type_definition_in_source_at(source, analysis.hir().ty(type_id).span.start)
+            })?,
+        ql_resolve::TypeResolution::Generic(_) | ql_resolve::TypeResolution::Builtin(_) => {
+            return None;
+        }
+    };
+    if trait_target.kind != ql_analysis::SymbolKind::Trait {
+        return None;
+    }
+
+    Some(TraitMethodImplementationQuery {
+        trait_target,
+        method_name: method_name.to_owned(),
+        method_span,
+    })
+}
+
+fn trait_method_call_receiver_type_id(
+    analysis: &Analysis,
+    function: &ql_hir::Function,
+    object: ql_hir::ExprId,
+) -> Option<ql_hir::TypeId> {
+    match analysis.resolution().expr_resolution(object)? {
+        ql_resolve::ValueResolution::Local(local_id) => analysis.hir().local(*local_id).ty,
+        ql_resolve::ValueResolution::Param(binding) => match function.params.get(binding.index)? {
+            ql_hir::Param::Regular(param) => Some(param.ty),
+            ql_hir::Param::Receiver(_) => None,
+        },
+        ql_resolve::ValueResolution::SelfValue
+        | ql_resolve::ValueResolution::Function(_)
+        | ql_resolve::ValueResolution::Item(_)
+        | ql_resolve::ValueResolution::Import(_) => None,
+    }
+}
+
+fn trait_method_call_implementation_query_for_member(
+    current_path: &Path,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    function: &ql_hir::Function,
+    object: ql_hir::ExprId,
+    method_name: &str,
+    method_span: Span,
+) -> Option<TraitMethodImplementationQuery> {
+    let type_id = trait_method_call_receiver_type_id(analysis, function, object)?;
+    trait_method_call_implementation_query_for_type_id(
+        current_path,
+        source,
+        analysis,
+        package,
+        type_id,
+        method_name,
+        method_span,
+    )
+}
+
+fn trait_method_call_implementation_query_in_expr(
+    current_path: &Path,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    function: &ql_hir::Function,
+    expr_id: ql_hir::ExprId,
+    offset: usize,
+) -> Option<TraitMethodImplementationQuery> {
+    match &analysis.hir().expr(expr_id).kind {
+        ql_hir::ExprKind::Tuple(items) | ql_hir::ExprKind::Array(items) => items.iter().find_map(
+            |item| {
+                trait_method_call_implementation_query_in_expr(
+                    current_path,
+                    source,
+                    analysis,
+                    package,
+                    function,
+                    *item,
+                    offset,
+                )
+            },
+        ),
+        ql_hir::ExprKind::Block(block) | ql_hir::ExprKind::Unsafe(block) => {
+            trait_method_call_implementation_query_in_block(
+                current_path,
+                source,
+                analysis,
+                package,
+                function,
+                *block,
+                offset,
+            )
+        }
+        ql_hir::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => trait_method_call_implementation_query_in_expr(
+            current_path,
+            source,
+            analysis,
+            package,
+            function,
+            *condition,
+            offset,
+        )
+        .or_else(|| {
+            trait_method_call_implementation_query_in_block(
+                current_path,
+                source,
+                analysis,
+                package,
+                function,
+                *then_branch,
+                offset,
+            )
+        })
+        .or_else(|| {
+            else_branch.and_then(|expr| {
+                trait_method_call_implementation_query_in_expr(
+                    current_path,
+                    source,
+                    analysis,
+                    package,
+                    function,
+                    expr,
+                    offset,
+                )
+            })
+        }),
+        ql_hir::ExprKind::Match { value, arms } => trait_method_call_implementation_query_in_expr(
+            current_path,
+            source,
+            analysis,
+            package,
+            function,
+            *value,
+            offset,
+        )
+        .or_else(|| {
+            arms.iter().find_map(|arm| {
+                arm.guard
+                    .and_then(|guard| {
+                        trait_method_call_implementation_query_in_expr(
+                            current_path,
+                            source,
+                            analysis,
+                            package,
+                            function,
+                            guard,
+                            offset,
+                        )
+                    })
+                    .or_else(|| {
+                        trait_method_call_implementation_query_in_expr(
+                            current_path,
+                            source,
+                            analysis,
+                            package,
+                            function,
+                            arm.body,
+                            offset,
+                        )
+                    })
+            })
+        }),
+        ql_hir::ExprKind::Closure { body, .. } => {
+            trait_method_call_implementation_query_in_expr(
+                current_path,
+                source,
+                analysis,
+                package,
+                function,
+                *body,
+                offset,
+            )
+        }
+        ql_hir::ExprKind::Call { callee, args } => {
+            if let ql_hir::ExprKind::Member {
+                object,
+                field,
+                field_span,
+            } = &analysis.hir().expr(*callee).kind
+                && field_span.contains(offset)
+            {
+                return trait_method_call_implementation_query_for_member(
+                    current_path,
+                    source,
+                    analysis,
+                    package,
+                    function,
+                    *object,
+                    field,
+                    *field_span,
+                );
+            }
+
+            trait_method_call_implementation_query_in_expr(
+                current_path,
+                source,
+                analysis,
+                package,
+                function,
+                *callee,
+                offset,
+            )
+            .or_else(|| {
+                args.iter().find_map(|arg| match arg {
+                    ql_hir::CallArg::Positional(expr) => {
+                        trait_method_call_implementation_query_in_expr(
+                            current_path,
+                            source,
+                            analysis,
+                            package,
+                            function,
+                            *expr,
+                            offset,
+                        )
+                    }
+                    ql_hir::CallArg::Named { value, .. } => {
+                        trait_method_call_implementation_query_in_expr(
+                            current_path,
+                            source,
+                            analysis,
+                            package,
+                            function,
+                            *value,
+                            offset,
+                        )
+                    }
+                })
+            })
+        }
+        ql_hir::ExprKind::Member { object, .. } | ql_hir::ExprKind::Question(object) => {
+            trait_method_call_implementation_query_in_expr(
+                current_path,
+                source,
+                analysis,
+                package,
+                function,
+                *object,
+                offset,
+            )
+        }
+        ql_hir::ExprKind::Bracket { target, items } => {
+            trait_method_call_implementation_query_in_expr(
+                current_path,
+                source,
+                analysis,
+                package,
+                function,
+                *target,
+                offset,
+            )
+            .or_else(|| {
+                items.iter().find_map(|item| {
+                    trait_method_call_implementation_query_in_expr(
+                        current_path,
+                        source,
+                        analysis,
+                        package,
+                        function,
+                        *item,
+                        offset,
+                    )
+                })
+            })
+        }
+        ql_hir::ExprKind::StructLiteral { fields, .. } => fields.iter().find_map(|field| {
+            trait_method_call_implementation_query_in_expr(
+                current_path,
+                source,
+                analysis,
+                package,
+                function,
+                field.value,
+                offset,
+            )
+        }),
+        ql_hir::ExprKind::Binary { left, right, .. } => {
+            trait_method_call_implementation_query_in_expr(
+                current_path,
+                source,
+                analysis,
+                package,
+                function,
+                *left,
+                offset,
+            )
+            .or_else(|| {
+                trait_method_call_implementation_query_in_expr(
+                    current_path,
+                    source,
+                    analysis,
+                    package,
+                    function,
+                    *right,
+                    offset,
+                )
+            })
+        }
+        ql_hir::ExprKind::Unary { expr, .. } => trait_method_call_implementation_query_in_expr(
+            current_path,
+            source,
+            analysis,
+            package,
+            function,
+            *expr,
+            offset,
+        ),
+        ql_hir::ExprKind::Name(_)
+        | ql_hir::ExprKind::Integer(_)
+        | ql_hir::ExprKind::String { .. }
+        | ql_hir::ExprKind::Bool(_)
+        | ql_hir::ExprKind::NoneLiteral => None,
+    }
+}
+
+fn trait_method_call_implementation_query_in_stmt(
+    current_path: &Path,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    function: &ql_hir::Function,
+    stmt_id: ql_hir::StmtId,
+    offset: usize,
+) -> Option<TraitMethodImplementationQuery> {
+    match &analysis.hir().stmt(stmt_id).kind {
+        ql_hir::StmtKind::Let { value, .. }
+        | ql_hir::StmtKind::Return(Some(value))
+        | ql_hir::StmtKind::Defer(value)
+        | ql_hir::StmtKind::Expr { expr: value, .. } => {
+            trait_method_call_implementation_query_in_expr(
+                current_path,
+                source,
+                analysis,
+                package,
+                function,
+                *value,
+                offset,
+            )
+        }
+        ql_hir::StmtKind::While { condition, body } => {
+            trait_method_call_implementation_query_in_expr(
+                current_path,
+                source,
+                analysis,
+                package,
+                function,
+                *condition,
+                offset,
+            )
+            .or_else(|| {
+                trait_method_call_implementation_query_in_block(
+                    current_path,
+                    source,
+                    analysis,
+                    package,
+                    function,
+                    *body,
+                    offset,
+                )
+            })
+        }
+        ql_hir::StmtKind::Loop { body } => trait_method_call_implementation_query_in_block(
+            current_path,
+            source,
+            analysis,
+            package,
+            function,
+            *body,
+            offset,
+        ),
+        ql_hir::StmtKind::For { iterable, body, .. } => {
+            trait_method_call_implementation_query_in_expr(
+                current_path,
+                source,
+                analysis,
+                package,
+                function,
+                *iterable,
+                offset,
+            )
+            .or_else(|| {
+                trait_method_call_implementation_query_in_block(
+                    current_path,
+                    source,
+                    analysis,
+                    package,
+                    function,
+                    *body,
+                    offset,
+                )
+            })
+        }
+        ql_hir::StmtKind::Return(None)
+        | ql_hir::StmtKind::Break
+        | ql_hir::StmtKind::Continue => None,
+    }
+}
+
+fn trait_method_call_implementation_query_in_block(
+    current_path: &Path,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    function: &ql_hir::Function,
+    block_id: ql_hir::BlockId,
+    offset: usize,
+) -> Option<TraitMethodImplementationQuery> {
+    let block = analysis.hir().block(block_id);
+    block
+        .statements
+        .iter()
+        .find_map(|stmt_id| {
+            trait_method_call_implementation_query_in_stmt(
+                current_path,
+                source,
+                analysis,
+                package,
+                function,
+                *stmt_id,
+                offset,
+            )
+        })
+        .or_else(|| {
+            block.tail.and_then(|expr| {
+                trait_method_call_implementation_query_in_expr(
+                    current_path,
+                    source,
+                    analysis,
+                    package,
+                    function,
+                    expr,
+                    offset,
+                )
+            })
+        })
+}
+
+fn trait_method_call_implementation_query_for_source(
+    current_path: &Path,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<TraitMethodImplementationQuery> {
+    let offset = position_to_offset(source, position)?;
+
+    analysis.hir().items.iter().find_map(|item_id| match &analysis.hir().item(*item_id).kind {
+        ql_hir::ItemKind::Function(function) => function.body.and_then(|body| {
+            trait_method_call_implementation_query_in_block(
+                current_path,
+                source,
+                analysis,
+                package,
+                function,
+                body,
+                offset,
+            )
+        }),
+        ql_hir::ItemKind::Impl(impl_block) => impl_block.methods.iter().find_map(|method| {
+            method.body.and_then(|body| {
+                trait_method_call_implementation_query_in_block(
+                    current_path,
+                    source,
+                    analysis,
+                    package,
+                    method,
+                    body,
+                    offset,
+                )
+            })
+        }),
+        ql_hir::ItemKind::Extend(extend_block) => extend_block.methods.iter().find_map(|method| {
+            method.body.and_then(|body| {
+                trait_method_call_implementation_query_in_block(
+                    current_path,
+                    source,
+                    analysis,
+                    package,
+                    method,
+                    body,
+                    offset,
+                )
+            })
+        }),
+        _ => None,
+    })
+}
+
 fn workspace_trait_method_implementation_sites_with_open_docs(
     package: &ql_analysis::PackageAnalysis,
     open_docs: &OpenDocuments,
@@ -4662,6 +5191,25 @@ fn workspace_source_method_implementation_for_dependency_with_open_docs(
     open_docs: &OpenDocuments,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<GotoImplementationResponse> {
+    if let Some(analysis) = analysis
+        && let Some(query) = trait_method_call_implementation_query_for_source(
+            &uri.to_file_path().ok()?,
+            source,
+            analysis,
+            package,
+            position,
+        )
+    {
+        return implementation_response_from_locations(
+            workspace_trait_method_implementation_locations_with_open_docs(
+                package,
+                open_docs,
+                &query.trait_target,
+                &query.method_name,
+            ),
+        );
+    }
+
     let target = dependency_definition_target_with_open_docs_at(
         source, analysis, package, open_docs, position,
     )?;
@@ -4683,9 +5231,29 @@ fn workspace_source_method_implementation_for_local_source_with_open_docs(
     open_docs: &OpenDocuments,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<GotoImplementationResponse> {
-    let target = local_source_dependency_target_with_analysis(
+    let current_path = uri.to_file_path().ok()?;
+    if let Some(query) = trait_method_call_implementation_query_for_source(
+        &current_path,
+        source,
+        analysis,
+        package,
+        position,
+    ) {
+        return implementation_response_from_locations(
+            workspace_trait_method_implementation_locations_with_open_docs(
+                package,
+                open_docs,
+                &query.trait_target,
+                &query.method_name,
+            ),
+        );
+    }
+
+    let Some(target) = local_source_dependency_target_with_analysis(
         uri, source, analysis, package, open_docs, position,
-    )?;
+    ) else {
+        return implementation_for_analysis(uri, source, analysis, position);
+    };
     if target.kind != ql_analysis::SymbolKind::Method {
         return None;
     }
