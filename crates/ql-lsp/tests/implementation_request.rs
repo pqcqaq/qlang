@@ -1963,6 +1963,187 @@ pub fn broken() -> Int {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_uses_workspace_impls_for_broken_current_root_trait_surface_aggregation(
+) {
+    let fixture = setup_workspace_root_runner_fixture(
+        "ql-lsp-implementation-request-broken-current-root-trait-aggregation",
+    );
+    let open_core_source = r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+
+pub fn broken() -> Int {
+    return 0
+"#
+    .to_owned();
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        open_core_source.clone(),
+    )
+    .await;
+    did_open_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        fixture.app_source.clone(),
+    )
+    .await;
+    did_open_via_request(
+        &mut service,
+        fixture.tools_uri.clone(),
+        fixture.tools_source.clone(),
+    )
+    .await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        offset_to_position(
+            &open_core_source,
+            nth_offset(&open_core_source, "Runner", 1),
+        ),
+    )
+    .await
+    .expect("broken current root trait implementations should exist");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("broken current root trait surface should aggregate many implementation blocks")
+    };
+    assert_eq!(locations.len(), 2);
+    for (uri, source, marker) in [
+        (
+            fixture.app_uri.clone(),
+            fixture.app_source.as_str(),
+            "impl Runner for AppWorker",
+        ),
+        (
+            fixture.tools_uri.clone(),
+            fixture.tools_source.as_str(),
+            "impl Runner for ToolWorker",
+        ),
+    ] {
+        assert!(
+            locations.iter().any(|location| {
+                location.uri == uri
+                    && location.range.start
+                        == offset_to_position(source, nth_offset(source, marker, 1))
+            }),
+            "broken current root trait implementations should include {marker}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_uses_broken_open_workspace_sources_for_root_trait_surface_aggregation(
+) {
+    let fixture = setup_workspace_root_runner_fixture(
+        "ql-lsp-implementation-request-broken-open-root-trait-aggregation",
+    );
+    let open_app_source = r#"
+package demo.app
+
+use demo.core.Runner
+
+pub fn tag() -> Int {
+    return 10
+}
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+
+pub fn broken() -> Int {
+    return AppWorker {
+"#
+    .to_owned();
+    let open_tools_source = r#"
+package demo.tools
+
+use demo.core.Runner
+
+pub fn tag() -> Int {
+    return 20
+}
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn run(self) -> Int {
+        return 2
+    }
+}
+
+pub fn broken() -> Int {
+    return ToolWorker {
+"#
+    .to_owned();
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        fixture.core_source.clone(),
+    )
+    .await;
+    did_open_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        open_app_source.clone(),
+    )
+    .await;
+    did_open_via_request(
+        &mut service,
+        fixture.tools_uri.clone(),
+        open_tools_source.clone(),
+    )
+    .await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        offset_to_position(
+            &fixture.core_source,
+            nth_offset(&fixture.core_source, "Runner", 1),
+        ),
+    )
+    .await
+    .expect("broken open workspace sources should provide root trait implementations");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("broken open root trait surface should aggregate many implementation blocks")
+    };
+    assert_eq!(locations.len(), 2);
+    for (uri, source, marker) in [
+        (
+            fixture.app_uri.clone(),
+            open_app_source.as_str(),
+            "impl Runner for AppWorker",
+        ),
+        (
+            fixture.tools_uri.clone(),
+            open_tools_source.as_str(),
+            "impl Runner for ToolWorker",
+        ),
+    ] {
+        assert!(
+            locations.iter().any(|location| {
+                location.uri == uri
+                    && location.range.start
+                        == offset_to_position(source, nth_offset(source, marker, 1))
+            }),
+            "broken open root trait implementations should include {marker}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_returns_array_for_workspace_root_trait_surface() {
     let fixture =
         setup_workspace_root_runner_fixture("ql-lsp-implementation-request-workspace-root-trait");
@@ -2161,6 +2342,168 @@ pub fn broken() -> Int {
             nth_offset(&fixture.app_source, "run", 1)
         ),
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_uses_broken_open_workspace_sources_for_root_trait_method_definition_aggregation(
+) {
+    let fixture = setup_workspace_root_runner_fixture(
+        "ql-lsp-implementation-request-broken-open-root-trait-method-definition-aggregation",
+    );
+    let open_app_source = r#"
+package demo.app
+
+use demo.core.Runner
+
+pub fn tag() -> Int {
+    return 10
+}
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+
+pub fn broken() -> Int {
+    return AppWorker {
+"#
+    .to_owned();
+    let open_tools_source = r#"
+package demo.tools
+
+use demo.core.Runner
+
+pub fn tag() -> Int {
+    return 20
+}
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn run(self) -> Int {
+        return 2
+    }
+}
+
+pub fn broken() -> Int {
+    return ToolWorker {
+"#
+    .to_owned();
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        fixture.core_source.clone(),
+    )
+    .await;
+    did_open_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        open_app_source.clone(),
+    )
+    .await;
+    did_open_via_request(
+        &mut service,
+        fixture.tools_uri.clone(),
+        open_tools_source.clone(),
+    )
+    .await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        offset_to_position(
+            &fixture.core_source,
+            nth_offset(&fixture.core_source, "run", 1),
+        ),
+    )
+    .await
+    .expect("broken open workspace sources should provide root trait method implementations");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("broken open root trait method definition should aggregate many implementations")
+    };
+    assert_eq!(locations.len(), 2);
+    for (uri, source) in [
+        (fixture.app_uri.clone(), open_app_source.as_str()),
+        (fixture.tools_uri.clone(), open_tools_source.as_str()),
+    ] {
+        assert!(
+            locations.iter().any(|location| {
+                location.uri == uri
+                    && location.range.start
+                        == offset_to_position(source, nth_offset(source, "run", 1))
+            }),
+            "broken open root trait method implementations should include {uri}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_uses_workspace_impls_for_broken_current_root_trait_method_definition_aggregation(
+) {
+    let fixture = setup_workspace_root_runner_fixture(
+        "ql-lsp-implementation-request-broken-current-root-trait-method-definition-aggregation",
+    );
+    let open_core_source = r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+
+pub fn broken() -> Int {
+    return 0
+"#
+    .to_owned();
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        open_core_source.clone(),
+    )
+    .await;
+    did_open_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        fixture.app_source.clone(),
+    )
+    .await;
+    did_open_via_request(
+        &mut service,
+        fixture.tools_uri.clone(),
+        fixture.tools_source.clone(),
+    )
+    .await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        offset_to_position(&open_core_source, nth_offset(&open_core_source, "run", 1)),
+    )
+    .await
+    .expect("broken current root trait method implementations should exist");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("broken current root trait method definition should aggregate many implementations")
+    };
+    assert_eq!(locations.len(), 2);
+    for (uri, source) in [
+        (fixture.app_uri.clone(), fixture.app_source.as_str()),
+        (fixture.tools_uri.clone(), fixture.tools_source.as_str()),
+    ] {
+        assert!(
+            locations.iter().any(|location| {
+                location.uri == uri
+                    && location.range.start
+                        == offset_to_position(source, nth_offset(source, "run", 1))
+            }),
+            "broken current root trait method implementations should include {uri}",
+        );
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
