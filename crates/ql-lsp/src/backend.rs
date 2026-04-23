@@ -5416,24 +5416,14 @@ fn workspace_source_method_implementation_for_broken_source_with_open_docs(
 ) -> Option<GotoImplementationResponse> {
     let (repaired_source, repaired_analysis, inserted_position) =
         repaired_analysis_for_broken_method_call(source, position)?;
-    let implementation = workspace_source_method_implementation_for_local_source_with_open_docs(
+    let implementation = workspace_source_method_implementation_for_dependency_with_open_docs(
         uri,
         &repaired_source,
-        &repaired_analysis,
+        Some(&repaired_analysis),
         package,
         open_docs,
         position,
-    )
-    .or_else(|| {
-        workspace_source_method_implementation_for_dependency_with_open_docs(
-            uri,
-            &repaired_source,
-            Some(&repaired_analysis),
-            package,
-            open_docs,
-            position,
-        )
-    })?;
+    )?;
 
     Some(map_implementation_response_after_repaired_method_call_insert(
         uri,
