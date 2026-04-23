@@ -3420,6 +3420,97 @@ pub fn read(config: Config) -> Int {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_returns_scalar_for_workspace_root_concrete_trait_method_call() {
+    let temp =
+        TempDir::new("ql-lsp-implementation-request-workspace-root-concrete-trait-method-call");
+    let core_path = temp.write(
+        "workspace/packages/core/src/lib.ql",
+        r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+
+pub struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+
+pub fn call(worker: AppWorker) -> Int {
+    return worker.run()
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+
+pub struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int
+}
+"#,
+    );
+
+    let core_source = fs::read_to_string(&core_path).expect("core source should read");
+    let core_uri = Url::from_file_path(&core_path).expect("core path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, core_uri.clone(), core_source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        core_uri.clone(),
+        offset_to_position(
+            &core_source,
+            nth_offset_in_context(&core_source, "run", "worker.run()", 1),
+        ),
+    )
+    .await
+    .expect("workspace root concrete trait method implementation should exist");
+    let GotoImplementationResponse::Scalar(Location { uri, range }) = implementation else {
+        panic!("workspace root concrete trait method call should resolve to one implementation")
+    };
+    assert_eq!(uri, core_uri);
+    assert_eq!(
+        range.start,
+        offset_to_position(
+            &core_source,
+            nth_offset_in_context(&core_source, "run", "fn run(self)", 2),
+        ),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_uses_workspace_impls_for_broken_current_root_trait_surface() {
     let fixture = setup_workspace_root_trait_single_consumer_fixture(
         "ql-lsp-implementation-request-broken-current-root-trait",
