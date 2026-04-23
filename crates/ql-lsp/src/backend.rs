@@ -5180,6 +5180,21 @@ fn workspace_source_implementation_for_dependency_with_open_docs(
     ))
 }
 
+fn method_definition_location_at(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Location> {
+    let offset = position_to_offset(source, position)?;
+    let definition = analysis.definition_at(offset)?;
+    if definition.kind != ql_analysis::SymbolKind::Method || !definition.span.contains(offset) {
+        return None;
+    }
+
+    Some(Location::new(uri.clone(), span_to_range(source, definition.span)))
+}
+
 fn workspace_source_method_implementation_for_dependency_with_open_docs(
     uri: &Url,
     source: &str,
@@ -5214,10 +5229,20 @@ fn workspace_source_method_implementation_for_dependency_with_open_docs(
         return None;
     }
 
-    workspace_source_location_for_dependency_target_with_open_docs(
+    let source_definition = analysis.and_then(|analysis| {
+        method_definition_location_at(uri, source, analysis, position)
+    });
+    let implementation = workspace_source_location_for_dependency_target_with_open_docs(
         uri, source, analysis, package, open_docs, &target,
-    )
-    .map(GotoImplementationResponse::Scalar)
+    )?;
+    if source_definition
+        .as_ref()
+        .is_some_and(|source_definition| same_location_anchor(&implementation, source_definition))
+    {
+        return None;
+    }
+
+    Some(GotoImplementationResponse::Scalar(implementation))
 }
 
 fn workspace_source_method_implementation_for_local_source_with_open_docs(
@@ -5255,15 +5280,23 @@ fn workspace_source_method_implementation_for_local_source_with_open_docs(
         return None;
     }
 
-    workspace_source_location_for_dependency_target_with_open_docs(
+    let source_definition = method_definition_location_at(uri, source, analysis, position);
+    let implementation = workspace_source_location_for_dependency_target_with_open_docs(
         uri,
         source,
         Some(analysis),
         package,
         open_docs,
         &target,
-    )
-    .map(GotoImplementationResponse::Scalar)
+    )?;
+    if source_definition
+        .as_ref()
+        .is_some_and(|source_definition| same_location_anchor(&implementation, source_definition))
+    {
+        return None;
+    }
+
+    Some(GotoImplementationResponse::Scalar(implementation))
 }
 
 fn broken_source_method_call_name_at(

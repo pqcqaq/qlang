@@ -279,6 +279,37 @@ impl Runner for Helper {
     }
 
     #[test]
+    fn implementation_for_analysis_returns_none_on_method_definition_site() {
+        let source = r#"
+struct Config {
+    value: Int,
+}
+
+impl Config {
+    fn get(self) -> Int {
+        return self.value
+    }
+}
+
+fn read(config: Config) -> Int {
+    return config.get()
+}
+"#;
+        let analysis = analyze_source(source).expect("analysis should succeed");
+        let uri = Url::parse("file:///test.ql").expect("uri should parse");
+
+        assert_eq!(
+            implementation_for_analysis(
+                &uri,
+                source,
+                &analysis,
+                offset_to_position(source, nth_offset(source, "get", 1)),
+            ),
+            None,
+        );
+    }
+
+    #[test]
     fn workspace_type_import_implementation_prefers_workspace_member_source_over_interface_artifact()
      {
         let temp = TempDir::new("ql-lsp-workspace-type-import-implementation");
@@ -1665,6 +1696,137 @@ impl Config {
                 core_uri,
                 span_to_range(&source, nth_span(&source, "get", 1)),
             )),
+        );
+    }
+
+    #[test]
+    fn workspace_root_method_implementation_returns_none_on_definition_site_even_with_workspace_consumers()
+     {
+        let temp = TempDir::new("ql-lsp-workspace-root-method-definition-implementation");
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn read(config: Config) -> Int {
+    return config.get()
+}
+"#,
+        );
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(config: Config) -> Int {
+    return config.get()
+}
+"#,
+        );
+        let jobs_source_path = temp.write(
+            "workspace/packages/jobs/src/lib.ql",
+            r#"
+package demo.jobs
+
+use demo.core.Config
+
+pub fn run(config: Config) -> Int {
+    return config.get()
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core", "packages/jobs"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/jobs/qlang.toml",
+            r#"
+[package]
+name = "jobs"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let analysis = analyze_source(&source).expect("core source should analyze");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let jobs_source = fs::read_to_string(&jobs_source_path).expect("jobs source should read");
+        let jobs_uri =
+            Url::from_file_path(&jobs_source_path).expect("jobs path should convert to URI");
+        let open_docs = file_open_documents(vec![
+            (core_uri.clone(), source.clone()),
+            (app_uri, app_source),
+            (jobs_uri, jobs_source),
+        ]);
+
+        assert_eq!(
+            workspace_source_method_implementation_for_local_source_with_open_docs(
+                &core_uri,
+                &source,
+                &analysis,
+                &package,
+                &open_docs,
+                offset_to_position(&source, nth_offset(&source, "get", 1)),
+            ),
+            None,
         );
     }
 
