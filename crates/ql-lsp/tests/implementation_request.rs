@@ -2742,6 +2742,131 @@ impl Config {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_returns_none_for_workspace_root_method_definition_site() {
+    let temp = TempDir::new("qlsp-implementation-request-workspace-root-method-definition-site");
+    let core_path = temp.write(
+        "workspace/packages/core/src/lib.ql",
+        r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn read(config: Config) -> Int {
+    return config.get()
+}
+"#,
+    );
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(config: Config) -> Int {
+    return config.get()
+}
+"#,
+    );
+    let jobs_path = temp.write(
+        "workspace/packages/jobs/src/lib.ql",
+        r#"
+package demo.jobs
+
+use demo.core.Config
+
+pub fn run(config: Config) -> Int {
+    return config.get()
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core", "packages/jobs"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/jobs/qlang.toml",
+        r#"
+[package]
+name = "jobs"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+
+    let core_source = fs::read_to_string(&core_path).expect("core source should read");
+    let core_uri = Url::from_file_path(&core_path).expect("core path should convert to URI");
+    let app_source = fs::read_to_string(&app_path).expect("app source should read");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let jobs_source = fs::read_to_string(&jobs_path).expect("jobs source should read");
+    let jobs_uri = Url::from_file_path(&jobs_path).expect("jobs path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, core_uri.clone(), core_source.clone()).await;
+    did_open_via_request(&mut service, app_uri, app_source).await;
+    did_open_via_request(&mut service, jobs_uri, jobs_source).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        core_uri,
+        offset_to_position(
+            &core_source,
+            nth_offset_in_context(&core_source, "get", "pub fn get(self)", 1),
+        ),
+    )
+    .await;
+    assert_eq!(implementation, None);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_uses_workspace_impls_for_broken_current_root_trait_surface() {
     let fixture = setup_workspace_root_trait_single_consumer_fixture(
         "ql-lsp-implementation-request-broken-current-root-trait",
