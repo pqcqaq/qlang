@@ -23974,22 +23974,20 @@ pub fn build() -> Counter {
         assert_eq!(items[0].detail.as_deref(), Some("fn pulse(self) -> Int"));
     }
 
-    #[test]
-    fn same_named_local_dependency_member_document_highlights_prefer_matching_dependency_source() {
-        let temp = TempDir::new("ql-lsp-same-named-local-dependency-member-document-highlights");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
-            r#"
-package demo.app
+    struct SameNamedLocalDependencyMemberFixture {
+        _temp: TempDir,
+        app_source: String,
+        app_uri: Url,
+        package: ql_analysis::PackageAnalysis,
+        alpha_source: String,
+    }
 
-use demo.shared.alpha.build as build
-use demo.shared.beta.build as other
-
-pub fn main() -> Int {
-    return build().ping() + build().value + build().ping() + build().value + other().ping() + other().value
-}
-"#,
-        );
+    fn setup_same_named_local_dependency_member_fixture(
+        prefix: &str,
+        app_source: &str,
+    ) -> SameNamedLocalDependencyMemberFixture {
+        let temp = TempDir::new(prefix);
+        let app_path = temp.write("workspace/packages/app/src/main.ql", app_source);
         let alpha_source_path = temp.write(
             "workspace/vendor/alpha/src/lib.ql",
             r#"
@@ -24103,20 +24101,49 @@ impl Config {
 "#,
         );
 
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        let analysis = analyze_source(&source).expect("app source should analyze");
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
         let package =
             package_analysis_for_path(&app_path).expect("package analysis should succeed");
-        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
         let alpha_source =
             fs::read_to_string(&alpha_source_path).expect("alpha source should read");
 
+        SameNamedLocalDependencyMemberFixture {
+            _temp: temp,
+            app_source,
+            app_uri,
+            package,
+            alpha_source,
+        }
+    }
+
+    #[test]
+    fn same_named_local_dependency_member_document_highlights_prefer_matching_dependency_source() {
+        let fixture = setup_same_named_local_dependency_member_fixture(
+            "ql-lsp-same-named-local-dependency-member-document-highlights",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+use demo.shared.beta.build as other
+
+pub fn main() -> Int {
+    return build().ping() + build().value + build().ping() + build().value + other().ping() + other().value
+}
+"#,
+        );
+        let source = &fixture.app_source;
+        let analysis = analyze_source(source).expect("app source should analyze");
+        let package = &fixture.package;
+        let uri = &fixture.app_uri;
+        let alpha_source = &fixture.alpha_source;
+
         let method_highlights = workspace_dependency_document_highlights(
-            &uri,
-            &source,
+            uri,
+            source,
             &analysis,
-            &package,
-            offset_to_position(&source, nth_offset(&source, "ping", 1)),
+            package,
+            offset_to_position(source, nth_offset(source, "ping", 1)),
         )
         .expect("same-named dependency method document highlight should exist");
         let method_actual = method_highlights
@@ -24124,17 +24151,17 @@ impl Config {
             .map(|highlight| highlight.range.start)
             .collect::<Vec<_>>();
         let method_expected = vec![
-            offset_to_position(&source, nth_offset(&source, "ping", 1)),
-            offset_to_position(&source, nth_offset(&source, "ping", 2)),
+            offset_to_position(source, nth_offset(source, "ping", 1)),
+            offset_to_position(source, nth_offset(source, "ping", 2)),
         ];
         assert_eq!(method_actual, method_expected);
 
         let field_highlights = workspace_dependency_document_highlights(
-            &uri,
-            &source,
+            uri,
+            source,
             &analysis,
-            &package,
-            offset_to_position(&source, nth_offset(&source, "value", 1)),
+            package,
+            offset_to_position(source, nth_offset(source, "value", 1)),
         )
         .expect("same-named dependency field document highlight should exist");
         let field_actual = field_highlights
@@ -24142,20 +24169,18 @@ impl Config {
             .map(|highlight| highlight.range.start)
             .collect::<Vec<_>>();
         let field_expected = vec![
-            offset_to_position(&source, nth_offset(&source, "value", 1)),
-            offset_to_position(&source, nth_offset(&source, "value", 2)),
+            offset_to_position(source, nth_offset(source, "value", 1)),
+            offset_to_position(source, nth_offset(source, "value", 2)),
         ];
         assert_eq!(field_actual, field_expected);
 
         assert!(
-            !method_expected.contains(&offset_to_position(&source, nth_offset(&source, "ping", 3))),
+            !method_expected.contains(&offset_to_position(source, nth_offset(source, "ping", 3))),
             "alpha highlights should not include beta member occurrence",
         );
         assert!(
-            !field_expected.contains(&offset_to_position(
-                &source,
-                nth_offset(&source, "value", 3)
-            )),
+            !field_expected
+                .contains(&offset_to_position(source, nth_offset(source, "value", 3))),
             "alpha highlights should not include beta field occurrence",
         );
         assert!(
@@ -24167,11 +24192,8 @@ impl Config {
     #[test]
     fn same_named_local_dependency_broken_source_member_document_highlights_prefer_matching_dependency_source()
      {
-        let temp = TempDir::new(
+        let fixture = setup_same_named_local_dependency_member_fixture(
             "ql-lsp-same-named-local-dependency-broken-source-member-document-highlights",
-        );
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
             r#"
 package demo.app
 
@@ -24182,132 +24204,17 @@ pub fn main() -> Int {
     return build().ping() + build().value + build().ping() + build().value + other().ping() + other().value
 "#,
         );
-        let alpha_source_path = temp.write(
-            "workspace/vendor/alpha/src/lib.ql",
-            r#"
-package demo.shared.alpha
-
-pub struct Config {
-    value: Int,
-}
-
-pub fn build() -> Config {
-    return Config { value: 1 }
-}
-
-impl Config {
-    pub fn ping(self) -> Int {
-        return self.value
-    }
-}
-"#,
-        );
-        temp.write(
-            "workspace/vendor/beta/src/lib.ql",
-            r#"
-package demo.shared.beta
-
-pub struct Config {
-    value: Bool,
-}
-
-pub fn build() -> Config {
-    return Config { value: true }
-}
-
-impl Config {
-    pub fn ping(self) -> Bool {
-        return self.value
-    }
-}
-"#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[dependencies]
-alpha = { path = "../../vendor/alpha" }
-beta = { path = "../../vendor/beta" }
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/beta/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/core.qi",
-            r#"
-// qlang interface v1
-// package: core
-
-// source: src/lib.ql
-package demo.shared.alpha
-
-pub struct Config {
-    value: Int,
-}
-
-pub fn build() -> Config
-
-impl Config {
-    pub fn ping(self) -> Int
-}
-"#,
-        );
-        temp.write(
-            "workspace/vendor/beta/core.qi",
-            r#"
-// qlang interface v1
-// package: core
-
-// source: src/lib.ql
-package demo.shared.beta
-
-pub struct Config {
-    value: Bool,
-}
-
-pub fn build() -> Config
-
-impl Config {
-    pub fn ping(self) -> Bool
-}
-"#,
-        );
-
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        assert!(analyze_source(&source).is_err());
-        let package = package_analysis_for_path(&app_path)
-            .expect("package analysis should survive parse errors");
-        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
-        let alpha_source =
-            fs::read_to_string(&alpha_source_path).expect("alpha source should read");
+        let source = &fixture.app_source;
+        assert!(analyze_source(source).is_err());
+        let package = &fixture.package;
+        let uri = &fixture.app_uri;
+        let alpha_source = &fixture.alpha_source;
 
         let method_highlights = fallback_document_highlights_for_package_at(
-            &uri,
-            &source,
-            &package,
-            offset_to_position(&source, nth_offset(&source, "ping", 1)),
+            uri,
+            source,
+            package,
+            offset_to_position(source, nth_offset(source, "ping", 1)),
         )
         .expect("broken-source same-named dependency method document highlight should exist");
         let method_actual = method_highlights
@@ -24315,16 +24222,16 @@ impl Config {
             .map(|highlight| highlight.range.start)
             .collect::<Vec<_>>();
         let method_expected = vec![
-            offset_to_position(&source, nth_offset(&source, "ping", 1)),
-            offset_to_position(&source, nth_offset(&source, "ping", 2)),
+            offset_to_position(source, nth_offset(source, "ping", 1)),
+            offset_to_position(source, nth_offset(source, "ping", 2)),
         ];
         assert_eq!(method_actual, method_expected);
 
         let field_highlights = fallback_document_highlights_for_package_at(
-            &uri,
-            &source,
-            &package,
-            offset_to_position(&source, nth_offset(&source, "value", 1)),
+            uri,
+            source,
+            package,
+            offset_to_position(source, nth_offset(source, "value", 1)),
         )
         .expect("broken-source same-named dependency field document highlight should exist");
         let field_actual = field_highlights
@@ -24332,20 +24239,18 @@ impl Config {
             .map(|highlight| highlight.range.start)
             .collect::<Vec<_>>();
         let field_expected = vec![
-            offset_to_position(&source, nth_offset(&source, "value", 1)),
-            offset_to_position(&source, nth_offset(&source, "value", 2)),
+            offset_to_position(source, nth_offset(source, "value", 1)),
+            offset_to_position(source, nth_offset(source, "value", 2)),
         ];
         assert_eq!(field_actual, field_expected);
 
         assert!(
-            !method_expected.contains(&offset_to_position(&source, nth_offset(&source, "ping", 3))),
+            !method_expected.contains(&offset_to_position(source, nth_offset(source, "ping", 3))),
             "alpha highlights should not include beta member occurrence",
         );
         assert!(
-            !field_expected.contains(&offset_to_position(
-                &source,
-                nth_offset(&source, "value", 3)
-            )),
+            !field_expected
+                .contains(&offset_to_position(source, nth_offset(source, "value", 3))),
             "alpha highlights should not include beta field occurrence",
         );
         assert!(
