@@ -3261,6 +3261,113 @@ fn broken_source_public_struct_method_return_type_span_in_source(
     None
 }
 
+fn broken_source_public_struct_method_name_span_in_source(
+    source: &str,
+    struct_name: &str,
+    method_name: &str,
+) -> Option<Span> {
+    let (tokens, _) = lex(source);
+    let mut brace_depth = 0usize;
+    let mut index = 0usize;
+
+    while index < tokens.len() {
+        match tokens[index].kind {
+            TokenKind::LBrace => brace_depth += 1,
+            TokenKind::RBrace => brace_depth = brace_depth.saturating_sub(1),
+            TokenKind::Impl | TokenKind::Extend if brace_depth == 0 => {
+                let token = &tokens[index];
+                let (target_name, open_index) = match token.kind {
+                    TokenKind::Impl => {
+                        let Some((_, next_index)) =
+                            broken_source_path_last_ident_token(&tokens, index + 1)
+                        else {
+                            index += 1;
+                            continue;
+                        };
+                        let (target_name, after_target_index) =
+                            if tokens.get(next_index).map(|token| token.kind) == Some(TokenKind::For)
+                            {
+                                let Some((target_name, after_target_index)) =
+                                    broken_source_path_last_ident_token(&tokens, next_index + 1)
+                                else {
+                                    index += 1;
+                                    continue;
+                                };
+                                (target_name.text.clone(), after_target_index)
+                            } else {
+                                let Some((target_name, after_target_index)) =
+                                    broken_source_path_last_ident_token(&tokens, index + 1)
+                                else {
+                                    index += 1;
+                                    continue;
+                                };
+                                (target_name.text.clone(), after_target_index)
+                            };
+                        (target_name, after_target_index)
+                    }
+                    TokenKind::Extend => {
+                        let Some((target_name, after_target_index)) =
+                            broken_source_path_last_ident_token(&tokens, index + 1)
+                        else {
+                            index += 1;
+                            continue;
+                        };
+                        (target_name.text.clone(), after_target_index)
+                    }
+                    _ => unreachable!(),
+                };
+                if target_name != struct_name {
+                    index += 1;
+                    continue;
+                }
+                if tokens.get(open_index).map(|token| token.kind) != Some(TokenKind::LBrace) {
+                    index += 1;
+                    continue;
+                }
+                let close_index =
+                    token_index_after_balanced_braces_in_tokens(&tokens, open_index)
+                        .unwrap_or(tokens.len());
+                let mut method_index = open_index + 1;
+                let mut nested_depth = 0usize;
+                while method_index < close_index.saturating_sub(1) {
+                    match tokens[method_index].kind {
+                        TokenKind::LBrace => nested_depth += 1,
+                        TokenKind::RBrace => nested_depth = nested_depth.saturating_sub(1),
+                        TokenKind::Pub | TokenKind::Fn if nested_depth == 0 => {
+                            let fn_index = if tokens[method_index].kind == TokenKind::Pub {
+                                method_index + 1
+                            } else {
+                                method_index
+                            };
+                            if tokens.get(fn_index).map(|token| token.kind) != Some(TokenKind::Fn) {
+                                method_index += 1;
+                                continue;
+                            }
+                            let Some(method_token) =
+                                broken_source_import_ident_token(&tokens, fn_index + 1)
+                            else {
+                                method_index += 1;
+                                continue;
+                            };
+                            if method_token.text == method_name {
+                                return Some(method_token.span);
+                            }
+                        }
+                        _ => {}
+                    }
+                    method_index += 1;
+                }
+                index = close_index;
+                continue;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+
+    None
+}
+
 fn broken_source_impl_method_name_spans_in_tokens(
     tokens: &[Token],
     start_index: usize,
@@ -3600,6 +3707,9 @@ fn broken_source_definition_locations_in_source(
             .filter(|site| site.kind == target.kind && site.name == target.name)
             .map(|site| Location::new(uri.clone(), span_to_range(source, site.span)))
             .collect(),
+        ql_analysis::SymbolKind::Method => {
+            broken_source_method_definition_locations_in_source(uri, source, &target.name)
+        }
         _ => Vec::new(),
     }
 }
@@ -3686,6 +3796,7 @@ fn extend_workspace_dependency_definition_matches_with_open_docs(
             continue;
         }
 
+        let canonical_module_path = canonicalize_or_clone(module_path);
         if let Some((uri, source, analysis)) = open_document_snapshot(open_docs, module_path) {
             for symbol in analysis.document_symbols() {
                 if symbol.name != target.name || symbol.kind != target.kind {
@@ -3696,6 +3807,21 @@ fn extend_workspace_dependency_definition_matches_with_open_docs(
                     span_to_range(&source, symbol.span),
                 ));
             }
+            continue;
+        }
+        if let Some((open_uri, open_source)) = open_docs.get(&canonical_module_path) {
+            let mut module_locations =
+                broken_source_definition_locations_in_source(open_uri, open_source, target);
+            module_locations.sort_by_key(|location| {
+                (
+                    location.range.start.line,
+                    location.range.start.character,
+                    location.range.end.line,
+                    location.range.end.character,
+                )
+            });
+            module_locations.dedup_by(|left, right| same_location_anchor(left, right));
+            matches.extend(module_locations);
             continue;
         }
 
@@ -3851,6 +3977,59 @@ fn workspace_source_dependency_type_target_from_broken_open_docs(
     None
 }
 
+fn workspace_source_dependency_method_target_from_broken_open_docs(
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    target_manifest_path: &Path,
+    target_source_path: &str,
+    struct_name: &str,
+    method_name: &str,
+) -> Option<DependencyDefinitionTarget> {
+    for candidate_manifest_path in
+        source_preferred_manifest_paths_for_package(package.manifest().manifest_path.as_path())
+    {
+        let Some(candidate_package) = package_analysis_for_path(&candidate_manifest_path) else {
+            continue;
+        };
+        if canonicalize_or_clone(candidate_package.manifest().manifest_path.as_path())
+            != canonicalize_or_clone(target_manifest_path)
+        {
+            continue;
+        }
+        let Some((module_path, open_source)) = open_docs.iter().find_map(|(path, (_, open_source))| {
+            candidate_package.modules().iter().find_map(|module| {
+                (canonicalize_or_clone(module.path()) == canonicalize_or_clone(path)
+                    && package_module_matches_dependency_source_path(
+                        &candidate_package,
+                        module.path(),
+                        target_source_path,
+                    ))
+                .then_some((module.path(), open_source.as_str()))
+            })
+        }) else {
+            continue;
+        };
+        let Some(span) = broken_source_public_struct_method_name_span_in_source(
+            open_source,
+            struct_name,
+            method_name,
+        ) else {
+            continue;
+        };
+        return Some(DependencyDefinitionTarget {
+            package_name: manifest_package_name(candidate_package.manifest()).ok()?.to_owned(),
+            manifest_path: candidate_package.manifest().manifest_path.clone(),
+            source_path: target_source_path.to_owned(),
+            kind: ql_analysis::SymbolKind::Method,
+            name: method_name.to_owned(),
+            path: module_path.to_path_buf(),
+            span,
+        });
+    }
+
+    None
+}
+
 fn dependency_method_definition_target_with_open_docs(
     source: &str,
     package: &ql_analysis::PackageAnalysis,
@@ -3880,6 +4059,16 @@ fn dependency_method_definition_target_with_open_docs(
             )
         },
     )
+    .or_else(|| {
+        workspace_source_dependency_method_target_from_broken_open_docs(
+            package,
+            open_docs,
+            target.manifest_path.as_path(),
+            &target.source_path,
+            &target.struct_name,
+            &token.text,
+        )
+    })
 }
 
 fn dependency_struct_field_definition_target_with_open_docs(

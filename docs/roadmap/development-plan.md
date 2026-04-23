@@ -98,7 +98,7 @@
 
 ## 下一轮（已排定）
 
-- LSP：继续把 `textDocument/implementation` 从已完成的 trait/type surface、workspace root/source-backed type definition surface、workspace root/source-backed concrete / trait-typed method call、source-backed dependency concrete / trait-typed method call、dependency non-import type-driven positions、trait method definition，以及 broken current-buffer concrete / trait-typed method call / broken-source open dependency member-type surface，扩到更宽的 implementation index；更广的全局聚合继续后置。
+- LSP：`textDocument/implementation` 的已完成基线已明显超出这里最初记录，当前准确支持面以 `current-supported-surface.md` 为准；下一轮继续扩更宽的 implementation index，并优先收口 request/helper 尚未完全对齐的边界，同时开始整理 `goto_implementation` 的分发分支，避免继续补丁化。
 - backend：继续扩 direct local dependency 下真实项目高频的 public value/type/member 调用面，优先补会直接阻断 workspace `build/run/test` 的路径。
 - 文档：继续只保留入口结论、支持边界和最近 checkpoint；不再追加长流水账。
 
