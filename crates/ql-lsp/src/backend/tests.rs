@@ -23052,22 +23052,19 @@ pub fn build() -> Counter {
         }
     }
 
-    #[test]
-    fn workspace_dependency_member_type_implementation_prefers_open_local_dependency_members() {
-        let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-member-implementation");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
-            r#"
-package demo.app
+    struct WorkspaceDependencyMemberTypeImplementationFixture {
+        _temp: TempDir,
+        app_source: String,
+        package: ql_analysis::PackageAnalysis,
+        alpha_uri: Url,
+    }
 
-use demo.shared.alpha.build as build
-
-pub fn main() -> Int {
-    let current = build()
-    return current.extra.id + current.pulse().id
-}
-"#,
-        );
+    fn setup_workspace_dependency_member_type_implementation_fixture(
+        prefix: &str,
+        app_source: &str,
+    ) -> WorkspaceDependencyMemberTypeImplementationFixture {
+        let temp = TempDir::new(prefix);
+        let app_path = temp.write("workspace/packages/app/src/main.ql", app_source);
         let alpha_source_path = temp.write(
             "workspace/vendor/alpha/src/lib.ql",
             r#"
@@ -23133,6 +23130,35 @@ pub fn build() -> Counter
 "#,
         );
 
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let alpha_uri =
+            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
+
+        WorkspaceDependencyMemberTypeImplementationFixture {
+            _temp: temp,
+            app_source,
+            package,
+            alpha_uri,
+        }
+    }
+
+    #[test]
+    fn workspace_dependency_member_type_implementation_prefers_open_local_dependency_members() {
+        let fixture = setup_workspace_dependency_member_type_implementation_fixture(
+            "ql-lsp-workspace-dependency-open-doc-member-implementation",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+
+pub fn main() -> Int {
+    let current = build()
+    return current.extra.id + current.pulse().id
+}
+"#,
+        );
         let open_alpha_source = r#"
 package demo.shared.alpha
 
@@ -23167,22 +23193,23 @@ pub fn build() -> Counter {
     return Counter { value: 1, extra: Extra { id: 2 } }
 }
 "#;
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        let analysis = analyze_source(&source).expect("app source should analyze");
-        let package =
-            package_analysis_for_path(&app_path).expect("package analysis should succeed");
-        let alpha_uri =
-            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
-        let open_docs =
-            file_open_documents(vec![(alpha_uri.clone(), open_alpha_source.to_owned())]);
+        let analysis =
+            analyze_source(&fixture.app_source).expect("app source should analyze");
+        let open_docs = file_open_documents(vec![(
+            fixture.alpha_uri.clone(),
+            open_alpha_source.to_owned(),
+        )]);
 
         for (needle, occurrence) in [("extra", 1usize), ("pulse", 1usize)] {
-            let position = offset_to_position(&source, nth_offset(&source, needle, occurrence) + 1);
+            let position = offset_to_position(
+                &fixture.app_source,
+                nth_offset(&fixture.app_source, needle, occurrence) + 1,
+            );
             assert_eq!(
                 workspace_source_implementation_for_dependency_with_open_docs(
-                    &source,
+                    &fixture.app_source,
                     Some(&analysis),
-                    &package,
+                    &fixture.package,
                     &file_open_documents(vec![]),
                     position,
                 ),
@@ -23191,9 +23218,9 @@ pub fn build() -> Counter {
             );
 
             let implementation = workspace_source_implementation_for_dependency_with_open_docs(
-                &source,
+                &fixture.app_source,
                 Some(&analysis),
-                &package,
+                &fixture.package,
                 &open_docs,
                 position,
             )
@@ -23205,7 +23232,9 @@ pub fn build() -> Counter {
             };
             assert_eq!(locations.len(), 2);
             assert!(
-                locations.iter().all(|location| location.uri == alpha_uri),
+                locations
+                    .iter()
+                    .all(|location| location.uri == fixture.alpha_uri),
                 "implementation should stay in the open dependency source",
             );
             for marker in ["impl Extra", "extend Extra"] {
@@ -23761,10 +23790,8 @@ pub fn build() -> Counter {
     #[test]
     fn workspace_dependency_member_type_implementation_in_broken_source_prefers_open_local_dependency_members(
     ) {
-        let temp =
-            TempDir::new("ql-lsp-workspace-dependency-open-doc-member-implementation-broken");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_workspace_dependency_member_type_implementation_fixture(
+            "ql-lsp-workspace-dependency-open-doc-member-implementation-broken",
             r#"
 package demo.app
 
@@ -23775,71 +23802,6 @@ pub fn main() -> Int {
     return current.extra.id + current.pulse().id
 "#,
         );
-        let alpha_source_path = temp.write(
-            "workspace/vendor/alpha/src/lib.ql",
-            r#"
-package demo.shared.alpha
-
-pub struct Counter {
-    value: Int,
-}
-
-impl Counter {
-    pub fn ping(self) -> Int {
-        return self.value
-    }
-}
-
-pub fn build() -> Counter {
-    return Counter { value: 1 }
-}
-"#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[dependencies]
-alpha = { path = "../../vendor/alpha" }
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/core.qi",
-            r#"
-// qlang interface v1
-// package: core
-
-// source: src/lib.ql
-package demo.shared.alpha
-
-pub struct Counter {
-    value: Int,
-}
-
-impl Counter {
-    pub fn ping(self) -> Int
-}
-
-pub fn build() -> Counter
-"#,
-        );
-
         let open_alpha_source = r#"
 package demo.shared.alpha
 
@@ -23874,22 +23836,22 @@ pub fn build() -> Counter {
     return Counter { value: 1, extra: Extra { id: 2 } }
 }
 "#;
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        assert!(analyze_source(&source).is_err());
-        let package =
-            package_analysis_for_path(&app_path).expect("package analysis should succeed");
-        let alpha_uri =
-            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
-        let open_docs =
-            file_open_documents(vec![(alpha_uri.clone(), open_alpha_source.to_owned())]);
+        assert!(analyze_source(&fixture.app_source).is_err());
+        let open_docs = file_open_documents(vec![(
+            fixture.alpha_uri.clone(),
+            open_alpha_source.to_owned(),
+        )]);
 
         for (needle, occurrence) in [("extra", 1usize), ("pulse", 1usize)] {
-            let position = offset_to_position(&source, nth_offset(&source, needle, occurrence) + 1);
+            let position = offset_to_position(
+                &fixture.app_source,
+                nth_offset(&fixture.app_source, needle, occurrence) + 1,
+            );
             assert_eq!(
                 workspace_source_implementation_for_dependency_with_open_docs(
-                    &source,
+                    &fixture.app_source,
                     None,
-                    &package,
+                    &fixture.package,
                     &file_open_documents(vec![]),
                     position,
                 ),
@@ -23898,9 +23860,9 @@ pub fn build() -> Counter {
             );
 
             let implementation = workspace_source_implementation_for_dependency_with_open_docs(
-                &source,
+                &fixture.app_source,
                 None,
-                &package,
+                &fixture.package,
                 &open_docs,
                 position,
             )
@@ -23912,7 +23874,9 @@ pub fn build() -> Counter {
             };
             assert_eq!(locations.len(), 2);
             assert!(
-                locations.iter().all(|location| location.uri == alpha_uri),
+                locations
+                    .iter()
+                    .all(|location| location.uri == fixture.alpha_uri),
                 "implementation should stay in the open dependency source",
             );
             for marker in ["impl Extra", "extend Extra"] {
