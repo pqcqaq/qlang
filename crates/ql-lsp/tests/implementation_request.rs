@@ -1510,6 +1510,174 @@ impl Runner for ToolWorker {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_prefers_matching_same_named_dependency_type_in_open_consumer() {
+    let temp = TempDir::new("ql-lsp-implementation-request-open-same-named-local-dependency");
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.shared.alpha.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    return 0
+}
+"#,
+    );
+    let task_path = temp.write(
+        "workspace/packages/app/src/task.ql",
+        r#"
+package demo.app
+
+pub fn task() -> Int {
+    return 0
+}
+"#,
+    );
+    let alpha_source_path = temp.write(
+        "workspace/vendor/alpha/src/lib.ql",
+        r#"
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/src/lib.ql",
+        r#"
+package demo.shared.beta
+
+pub struct Config {
+    value: Bool,
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub struct Config {
+    value: Bool,
+}
+"#,
+    );
+
+    let open_task_source = r#"
+package demo.app
+
+use demo.shared.alpha.Config as Cfg
+use demo.shared.beta.Config as OtherCfg
+
+extend Cfg {
+    fn alpha(self) -> Int {
+        return 1
+    }
+}
+
+extend OtherCfg {
+    fn beta(self) -> Bool {
+        return true
+    }
+}
+
+pub fn task() -> Int {
+    return 0
+}
+"#
+    .to_owned();
+    let source = fs::read_to_string(&app_path).expect("app source should read");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, task_uri.clone(), open_task_source.clone()).await;
+    did_open_via_request(&mut service, app_uri.clone(), source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        app_uri,
+        offset_to_position(&source, nth_offset(&source, "Cfg", 2)),
+    )
+    .await
+    .expect("matching open dependency implementation should exist");
+    let GotoImplementationResponse::Scalar(Location { uri, range }) = implementation else {
+        panic!("matching open dependency implementation should stay scalar")
+    };
+    assert_eq!(uri, task_uri);
+    assert_eq!(
+        range.start,
+        offset_to_position(
+            &open_task_source,
+            nth_offset(&open_task_source, "extend Cfg", 1)
+        ),
+    );
+    assert_ne!(
+        uri.to_file_path()
+            .expect("implementation URI should convert to file path")
+            .canonicalize()
+            .expect("implementation path should canonicalize"),
+        alpha_source_path
+            .canonicalize()
+            .expect("alpha source path should canonicalize"),
+        "implementation should come from the open consumer, not dependency source",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_filters_same_named_local_dependency_in_broken_open_consumer() {
     let temp = TempDir::new("ql-lsp-implementation-request-broken-same-named-local-dependency");
     let app_path = temp.write(
