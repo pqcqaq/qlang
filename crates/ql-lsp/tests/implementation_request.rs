@@ -532,6 +532,7 @@ impl Config {
         ("built", 2usize, &["impl Config", "extend Config"][..]),
         ("Retry", 1usize, &["impl Command"][..]),
         ("child", 2usize, &["impl Config", "extend Config"][..]),
+        ("clone_self", 1usize, &["impl Config", "extend Config"][..]),
     ] {
         let implementation = goto_implementation_via_request(
             &mut service,
@@ -704,34 +705,36 @@ pub fn build() -> Counter {
     initialize_service(&mut service).await;
     did_open_via_request(&mut service, app_uri.clone(), source.clone()).await;
 
-    let implementation = goto_implementation_via_request(
-        &mut service,
-        app_uri,
-        offset_to_position(&source, nth_offset(&source, "extra", 1) + 1),
-    )
-    .await
-    .expect("dependency field type implementation should exist");
-    let GotoImplementationResponse::Array(locations) = implementation else {
-        panic!(
-            "dependency field type implementation should resolve to impl block locations: {implementation:?}"
+    for (needle, occurrence) in [("extra", 1usize), ("pulse", 1usize)] {
+        let implementation = goto_implementation_via_request(
+            &mut service,
+            app_uri.clone(),
+            offset_to_position(&source, nth_offset(&source, needle, occurrence) + 1),
         )
-    };
-    assert_eq!(locations.len(), 2);
-    assert!(
-        locations.iter().all(|location| location.uri == alpha_uri),
-        "implementation should stay in the open dependency source",
-    );
-    for marker in ["impl Extra", "extend Extra"] {
+        .await
+        .unwrap_or_else(|| panic!("dependency member type implementation should exist for {needle}"));
+        let GotoImplementationResponse::Array(locations) = implementation else {
+            panic!(
+                "dependency member type implementation should resolve to impl block locations: {implementation:?}"
+            )
+        };
+        assert_eq!(locations.len(), 2);
         assert!(
-            locations.iter().any(|location| {
-                location.range.start
-                    == offset_to_position(
-                        &open_alpha_source,
-                        nth_offset(&open_alpha_source, marker, 1),
-                    )
-            }),
-            "implementation should include {marker}",
+            locations.iter().all(|location| location.uri == alpha_uri),
+            "implementation should stay in the open dependency source",
         );
+        for marker in ["impl Extra", "extend Extra"] {
+            assert!(
+                locations.iter().any(|location| {
+                    location.range.start
+                        == offset_to_position(
+                            &open_alpha_source,
+                            nth_offset(&open_alpha_source, marker, 1),
+                        )
+                }),
+                "implementation should include {marker} for {needle}",
+            );
+        }
     }
 }
 

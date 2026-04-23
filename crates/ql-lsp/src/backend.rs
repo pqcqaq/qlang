@@ -8449,8 +8449,12 @@ impl LanguageServer for Backend {
             }
             if let Some(analysis) = analysis.as_ref()
                 && let Some(implementation) =
-                    workspace_source_method_implementation_for_local_source_with_open_docs(
-                        &uri, &source, analysis, &package, &open_docs, position,
+                    workspace_source_implementation_for_dependency_with_open_docs(
+                        &source,
+                        Some(analysis),
+                        &package,
+                        &open_docs,
+                        position,
                     )
             {
                 return Ok(Some(implementation));
@@ -8467,6 +8471,14 @@ impl LanguageServer for Backend {
             {
                 return Ok(Some(implementation));
             }
+            if let Some(analysis) = analysis.as_ref()
+                && let Some(implementation) =
+                    workspace_source_method_implementation_for_local_source_with_open_docs(
+                        &uri, &source, analysis, &package, &open_docs, position,
+                    )
+            {
+                return Ok(Some(implementation));
+            }
             if let Some(implementation) =
                 workspace_source_method_implementation_for_dependency_with_open_docs(
                     &uri,
@@ -8476,18 +8488,6 @@ impl LanguageServer for Backend {
                     &open_docs,
                     position,
                 )
-            {
-                return Ok(Some(implementation));
-            }
-            if analysis.is_some()
-                && let Some(implementation) =
-                    workspace_source_implementation_for_dependency_with_open_docs(
-                        &source,
-                        analysis.as_ref(),
-                        &package,
-                        &open_docs,
-                        position,
-                    )
             {
                 return Ok(Some(implementation));
             }
