@@ -110,6 +110,17 @@ async fn did_open_via_request(service: &mut LspService<Backend>, uri: Url, text:
     assert_eq!(response, None);
 }
 
+async fn initialized_service_with_open_documents(
+    documents: Vec<(Url, String)>,
+) -> LspService<Backend> {
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    for (uri, text) in documents {
+        did_open_via_request(&mut service, uri, text).await;
+    }
+    service
+}
+
 async fn goto_implementation_via_request(
     service: &mut LspService<Backend>,
     uri: Url,
@@ -1478,9 +1489,11 @@ impl Runner for BotWorker {
         .as_ref()
         .expect("bots URI should exist for aggregation fixture");
 
-    let (mut service, _) = LspService::new(Backend::new);
-    initialize_service(&mut service).await;
-    did_open_via_request(&mut service, fixture.app_uri.clone(), fixture.app_source.clone()).await;
+    let mut service = initialized_service_with_open_documents(vec![(
+        fixture.app_uri.clone(),
+        fixture.app_source.clone(),
+    )])
+    .await;
 
     let implementation = goto_implementation_via_request(
         &mut service,
@@ -1556,9 +1569,11 @@ impl Runner for ToolWorker {
 "#
     .to_owned();
 
-    let (mut service, _) = LspService::new(Backend::new);
-    initialize_service(&mut service).await;
-    did_open_via_request(&mut service, fixture.app_uri.clone(), fixture.app_source.clone()).await;
+    let mut service = initialized_service_with_open_documents(vec![(
+        fixture.app_uri.clone(),
+        fixture.app_source.clone(),
+    )])
+    .await;
 
     let disk_only = goto_implementation_via_request(
         &mut service,
@@ -1646,9 +1661,11 @@ pub fn broken() -> Int {
         "open workspace impl source should stay broken for this regression",
     );
 
-    let (mut service, _) = LspService::new(Backend::new);
-    initialize_service(&mut service).await;
-    did_open_via_request(&mut service, fixture.app_uri.clone(), fixture.app_source.clone()).await;
+    let mut service = initialized_service_with_open_documents(vec![(
+        fixture.app_uri.clone(),
+        fixture.app_source.clone(),
+    )])
+    .await;
 
     let disk_only = goto_implementation_via_request(
         &mut service,
@@ -1733,9 +1750,11 @@ impl Runner for ToolWorker {
         "current source should stay broken for this regression",
     );
 
-    let (mut service, _) = LspService::new(Backend::new);
-    initialize_service(&mut service).await;
-    did_open_via_request(&mut service, fixture.app_uri.clone(), fixture.app_source.clone()).await;
+    let mut service = initialized_service_with_open_documents(vec![(
+        fixture.app_uri.clone(),
+        fixture.app_source.clone(),
+    )])
+    .await;
 
     let disk_only = goto_implementation_via_request(
         &mut service,
