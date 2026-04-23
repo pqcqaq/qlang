@@ -4744,42 +4744,55 @@ fn workspace_trait_method_implementation_sites_with_open_docs(
 
     let mut sites = Vec::new();
 
-    for module in package.modules() {
-        let canonical_module_path = canonicalize_or_clone(module.path());
-        let (uri, source, analysis) = if let Some((open_uri, open_source)) =
-            open_docs.get(&canonical_module_path)
+    let Ok(source_paths) = collect_package_sources(package.manifest()) else {
+        return Vec::new();
+    };
+
+    for source_path in source_paths {
+        let canonical_source_path = canonicalize_or_clone(&source_path);
+        let (uri, source, analysis) = if let Some((open_uri, open_source, open_analysis)) =
+            open_document_snapshot(open_docs, &source_path)
         {
-            if let Ok(open_analysis) = analyze_source(open_source) {
-                (open_uri.clone(), open_source.clone(), open_analysis)
-            } else {
-                let mut module_sites = broken_source_trait_method_implementation_sites_in_source(
-                    open_uri,
-                    open_source,
-                    package,
-                    target,
-                    method_name,
-                );
-                module_sites.sort_by_key(|site| {
-                    (
-                        site.location.range.start.line,
-                        site.location.range.start.character,
-                        site.location.range.end.line,
-                        site.location.range.end.character,
-                    )
-                });
-                module_sites
-                    .dedup_by(|left, right| same_location_anchor(&left.location, &right.location));
-                sites.extend(module_sites);
-                continue;
-            }
+            (open_uri, open_source, open_analysis)
+        } else if let Some((open_uri, open_source)) = open_docs.get(&canonical_source_path) {
+            let mut module_sites = broken_source_trait_method_implementation_sites_in_source(
+                open_uri,
+                open_source,
+                package,
+                target,
+                method_name,
+            );
+            module_sites.sort_by_key(|site| {
+                (
+                    site.location.range.start.line,
+                    site.location.range.start.character,
+                    site.location.range.end.line,
+                    site.location.range.end.character,
+                )
+            });
+            module_sites.dedup_by(|left, right| same_location_anchor(&left.location, &right.location));
+            sites.extend(module_sites);
+            continue;
         } else {
-            let Ok(uri) = Url::from_file_path(module.path()) else {
+            let Ok(uri) = Url::from_file_path(&source_path) else {
                 continue;
             };
-            let Ok(source) = fs::read_to_string(module.path()) else {
+            let Ok(source) = fs::read_to_string(&source_path) else {
                 continue;
             };
-            (uri, source.replace("\r\n", "\n"), module.analysis().clone())
+            let source = source.replace("\r\n", "\n");
+            let analysis = package
+                .modules()
+                .iter()
+                .find(|module| {
+                    canonicalize_or_clone(module.path()) == canonical_source_path
+                })
+                .map(|module| module.analysis().clone())
+                .or_else(|| analyze_source(&source).ok());
+            let Some(analysis) = analysis else {
+                continue;
+            };
+            (uri, source, analysis)
         };
 
         let mut module_sites = analysis
