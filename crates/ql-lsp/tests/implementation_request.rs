@@ -53,6 +53,14 @@ fn nth_offset(source: &str, needle: &str, occurrence: usize) -> usize {
         .expect("needle occurrence should exist")
 }
 
+fn nth_offset_in_context(source: &str, needle: &str, context: &str, occurrence: usize) -> usize {
+    let context_start = nth_offset(source, context, occurrence);
+    let relative = source[context_start..]
+        .find(needle)
+        .expect("needle should exist inside context");
+    context_start + relative
+}
+
 fn offset_to_position(source: &str, offset: usize) -> Position {
     let prefix = &source[..offset];
     let line = prefix.bytes().filter(|byte| *byte == b'\n').count() as u32;
@@ -692,18 +700,8 @@ pub fn broken() -> Int {
     let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
 
     let (mut service, _) = LspService::new(Backend::new);
-    service
-        .inner()
-        .did_open(DidOpenTextDocumentParams {
-            text_document: TextDocumentItem {
-                uri: task_uri.clone(),
-                language_id: "ql".to_owned(),
-                version: 1,
-                text: open_task_source.clone(),
-            },
-        })
-        .await;
     initialize_service(&mut service).await;
+    did_open_via_request(&mut service, task_uri.clone(), open_task_source.clone()).await;
     did_open_via_request(&mut service, app_uri.clone(), source.clone()).await;
 
     let implementation = goto_implementation_via_request(
@@ -722,6 +720,179 @@ pub fn broken() -> Int {
         offset_to_position(
             &open_task_source,
             nth_offset(&open_task_source, "extend Cfg", 1)
+        ),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_prefers_matching_same_named_dependency_trait_method_in_broken_open_consumer(
+) {
+    let temp = TempDir::new(
+        "ql-lsp-implementation-request-broken-open-same-named-dependency-trait-method",
+    );
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.shared.alpha.Runner
+
+pub fn main(runner: Runner) -> Int {
+    return runner.run()
+}
+"#,
+    );
+    let task_path = temp.write(
+        "workspace/packages/app/src/task.ql",
+        r#"
+package demo.app
+
+pub fn task() -> Int {
+    return 0
+}
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/src/lib.ql",
+        r#"
+package demo.shared.alpha
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/src/lib.ql",
+        r#"
+package demo.shared.beta
+
+pub trait Runner {
+    fn run(self) -> Bool
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub trait Runner {
+    fn run(self) -> Bool
+}
+"#,
+    );
+
+    let open_task_source = r#"
+package demo.app
+
+use demo.shared.alpha.Runner
+use demo.shared.beta.Runner as OtherRunner
+
+struct AlphaWorker {}
+struct BetaWorker {}
+
+impl Runner for AlphaWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+
+impl OtherRunner for BetaWorker {
+    fn run(self) -> Bool {
+        return true
+    }
+}
+
+pub fn broken() -> Int {
+    return AlphaWorker {
+"#
+    .to_owned();
+    let source = fs::read_to_string(&app_path).expect("app source should read");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    service
+        .inner()
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: task_uri.clone(),
+                language_id: "ql".to_owned(),
+                version: 1,
+                text: open_task_source.clone(),
+            },
+        })
+        .await;
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, app_uri.clone(), source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        app_uri,
+        offset_to_position(&source, nth_offset(&source, "run()", 1)),
+    )
+    .await
+    .expect("matching broken open trait method implementation should exist");
+    let GotoImplementationResponse::Scalar(Location { uri, range }) = implementation else {
+        panic!("matching broken open trait method implementation should stay scalar")
+    };
+    assert_eq!(uri, task_uri);
+    assert_eq!(
+        range.start,
+        offset_to_position(
+            &open_task_source,
+            nth_offset_in_context(&open_task_source, "run", "fn run(self) -> Int", 1),
         ),
     );
 }
