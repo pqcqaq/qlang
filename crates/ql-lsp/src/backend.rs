@@ -5172,12 +5172,9 @@ fn workspace_source_implementation_for_dependency_with_open_docs(
     open_docs: &OpenDocuments,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<GotoImplementationResponse> {
-    let target = if let Some(analysis) = analysis {
-        let offset = position_to_offset(source, position)?;
-        package.dependency_type_definition_at(analysis, offset)?
-    } else {
-        dependency_type_definition_target_at(source, None, package, position)?
-    };
+    let target = dependency_type_definition_target_with_open_docs_at(
+        source, analysis, package, open_docs, position,
+    )?;
     implementation_response_from_locations(workspace_implementation_locations_with_open_docs(
         package, open_docs, &target,
     ))

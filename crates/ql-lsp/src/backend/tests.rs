@@ -420,6 +420,183 @@ pub struct Config {
     }
 
     #[test]
+    fn workspace_dependency_non_import_positions_implementation_prefer_workspace_member_source_over_interface_artifact()
+    {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-source-implementation-positions");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Command as Cmd
+use demo.core.Config as Cfg
+use demo.core.Holder as Hold
+
+pub fn main(config: Cfg) -> Int {
+    let built = Cfg { value: 1, limit: 2 }
+    let holder = Hold { child: config.clone_self() }
+    let command = Cmd.Retry(1)
+    return holder.child.value + built.value + command.unwrap_or(0)
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+
+pub struct Holder {
+    child: Config,
+}
+
+impl Command {
+    pub fn unwrap_or(self, fallback: Int) -> Int {
+        match self {
+            Command.Retry(value) => value,
+        }
+    }
+}
+
+impl Config {
+    pub fn clone_self(self) -> Config {
+        return self
+    }
+}
+
+extend Config {
+    pub fn extra(self) -> Int {
+        return self.limit
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+
+pub struct Holder {
+    child: Config,
+}
+
+impl Command {
+    pub fn unwrap_or(self, fallback: Int) -> Int
+}
+
+impl Config {
+    pub fn clone_self(self) -> Config
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let core_source = fs::read_to_string(&core_source_path)
+            .expect("core source should read")
+            .replace("\r\n", "\n");
+        let expected_path =
+            fs::canonicalize(&core_source_path).expect("core source path should canonicalize");
+
+        for (needle, occurrence, expected_markers) in [
+            ("built", 2usize, &["impl Config", "extend Config"][..]),
+            ("Retry", 1usize, &["impl Command"][..]),
+            ("child", 2usize, &["impl Config", "extend Config"][..]),
+        ] {
+            let implementation = workspace_source_implementation_for_dependency_with_open_docs(
+                &source,
+                Some(&analysis),
+                &package,
+                &file_open_documents(vec![]),
+                offset_to_position(&source, nth_offset(&source, needle, occurrence)),
+            )
+            .unwrap_or_else(|| {
+                panic!("workspace dependency implementation should exist for {needle}")
+            });
+
+            let locations = match implementation {
+                GotoDefinitionResponse::Scalar(location) => vec![location],
+                GotoDefinitionResponse::Array(locations) => locations,
+                GotoDefinitionResponse::Link(_) => {
+                    panic!("workspace dependency implementation should resolve to locations")
+                }
+            };
+            assert_eq!(
+                locations.len(),
+                expected_markers.len(),
+                "workspace dependency implementation should return all source impl blocks for {needle}",
+            );
+            for location in &locations {
+                assert_eq!(
+                    location
+                        .uri
+                        .to_file_path()
+                        .expect("implementation URI should convert to a file path")
+                        .canonicalize()
+                        .expect("implementation path should canonicalize"),
+                    expected_path,
+                );
+            }
+            for marker in expected_markers {
+                assert!(
+                    locations.iter().any(|location| {
+                        location.range.start
+                            == offset_to_position(&core_source, nth_offset(&core_source, marker, 1))
+                    }),
+                    "workspace dependency implementation should include {marker} for {needle}",
+                );
+            }
+        }
+    }
+
+    #[test]
     fn workspace_trait_import_implementation_includes_workspace_consumer_impls() {
         let temp = TempDir::new("ql-lsp-workspace-trait-import-implementation-consumers");
         let app_path = temp.write(
