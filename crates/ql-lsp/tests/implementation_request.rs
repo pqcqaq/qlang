@@ -3656,6 +3656,136 @@ pub trait Runner {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_prefers_open_workspace_source_for_workspace_root_trait_method_call() {
+    let temp =
+        TempDir::new("ql-lsp-implementation-request-open-workspace-root-trait-method-call");
+    let core_path = temp.write(
+        "workspace/packages/core/src/lib.ql",
+        r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+
+pub fn call(runner: Runner) -> Int {
+    return runner.run()
+}
+"#,
+    );
+    let tools_path = temp.write(
+        "workspace/packages/tools/src/lib.ql",
+        r#"
+package demo.tools
+
+use demo.core.Runner
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn walk(self) -> Int {
+        return 2
+    }
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/core", "packages/tools"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tools/qlang.toml",
+        r#"
+[package]
+name = "tools"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+    );
+
+    let open_tools_source = r#"
+package demo.tools
+
+use demo.core.Runner
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn run(self) -> Int {
+        return 2
+    }
+}
+"#
+    .to_owned();
+    let core_source = fs::read_to_string(&core_path).expect("core source should read");
+    let core_uri = Url::from_file_path(&core_path).expect("core path should convert to URI");
+    let tools_uri = Url::from_file_path(&tools_path).expect("tools path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, core_uri.clone(), core_source.clone()).await;
+
+    let disk_only = goto_implementation_via_request(
+        &mut service,
+        core_uri.clone(),
+        offset_to_position(
+            &core_source,
+            nth_offset_in_context(&core_source, "run", "runner.run()", 1),
+        ),
+    )
+    .await;
+    assert_eq!(disk_only, None);
+
+    did_open_via_request(&mut service, tools_uri.clone(), open_tools_source.clone()).await;
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        core_uri.clone(),
+        offset_to_position(
+            &core_source,
+            nth_offset_in_context(&core_source, "run", "runner.run()", 1),
+        ),
+    )
+    .await
+    .expect("workspace root trait method call should use open workspace impl methods");
+    let GotoImplementationResponse::Scalar(Location { uri, range }) = implementation else {
+        panic!("single open-doc root trait method call should resolve to one implementation")
+    };
+    assert_eq!(uri, tools_uri);
+    assert_eq!(
+        range.start,
+        offset_to_position(
+            &open_tools_source,
+            nth_offset_in_context(&open_tools_source, "run", "fn run(self)", 1),
+        ),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_uses_workspace_impls_for_broken_current_root_trait_method_call() {
     let temp =
         TempDir::new("ql-lsp-implementation-request-broken-current-root-trait-method-call");
