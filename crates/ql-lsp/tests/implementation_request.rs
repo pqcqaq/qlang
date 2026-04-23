@@ -1273,6 +1273,111 @@ extend Config {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_uses_broken_open_workspace_source_for_workspace_type_import() {
+    let fixture = setup_workspace_type_import_fixture(
+        "ql-lsp-implementation-request-broken-open-workspace-type-import",
+        r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+    );
+    let open_core_source = r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+
+impl Config {
+    fn build(self) -> Int {
+        return self.value
+    }
+}
+
+extend Config {
+    fn label(self) -> Int {
+        return self.value
+    }
+}
+
+impl Runner for Config {
+    fn run(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn broken() -> Int {
+    return Config {
+"#
+    .to_owned();
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        fixture.app_source.clone(),
+    )
+    .await;
+
+    let disk_only = goto_implementation_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        offset_to_position(
+            &fixture.app_source,
+            nth_offset(&fixture.app_source, "Config", 2),
+        ),
+    )
+    .await;
+    assert_eq!(disk_only, None);
+
+    did_open_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        open_core_source.clone(),
+    )
+    .await;
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        offset_to_position(
+            &fixture.app_source,
+            nth_offset(&fixture.app_source, "Config", 2),
+        ),
+    )
+    .await
+    .expect("workspace type import implementation should use broken open workspace source");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("broken open workspace type import should resolve to many implementations")
+    };
+    assert_eq!(locations.len(), 3);
+    assert!(
+        locations
+            .iter()
+            .all(|location| location.uri == fixture.core_uri),
+        "all broken open workspace type implementations should stay in the open source",
+    );
+    for marker in ["impl Config", "extend Config", "impl Runner for Config"] {
+        assert!(
+            locations.iter().any(|location| {
+                location.range.start
+                    == offset_to_position(
+                        &open_core_source,
+                        nth_offset(&open_core_source, marker, 1),
+                    )
+            }),
+            "broken open workspace type implementations should include {marker}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_returns_array_for_workspace_trait_import_surface() {
     let fixture =
         setup_workspace_root_runner_fixture("ql-lsp-implementation-request-workspace-trait-import");
