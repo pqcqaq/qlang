@@ -766,3 +766,160 @@ fn read(config: Config) -> Int {
     .await;
     assert_eq!(implementation, None);
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_returns_scalar_for_same_file_trait_surface() {
+    let temp = TempDir::new("ql-lsp-implementation-request-same-file-trait-surface");
+    let source_path = temp.write(
+        "sample.ql",
+        r#"
+trait Runner {
+    fn run(self) -> Int
+}
+
+struct Worker {}
+
+impl Runner for Worker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+"#,
+    );
+    let source = fs::read_to_string(&source_path).expect("same-file source should read");
+    let uri = Url::from_file_path(&source_path).expect("source path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, uri.clone(), source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        uri.clone(),
+        offset_to_position(&source, nth_offset(&source, "Runner", 1)),
+    )
+    .await
+    .expect("same-file trait implementation should exist");
+    let GotoImplementationResponse::Scalar(location) = implementation else {
+        panic!("single same-file trait implementation should resolve to one location")
+    };
+    assert_eq!(location.uri, uri);
+    assert_eq!(
+        location.range.start,
+        offset_to_position(&source, nth_offset(&source, "impl Runner for Worker", 1)),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_returns_array_for_same_file_trait_method_definition() {
+    let temp = TempDir::new("ql-lsp-implementation-request-same-file-trait-method-array");
+    let source_path = temp.write(
+        "sample.ql",
+        r#"
+trait Runner {
+    fn run(self) -> Int
+}
+
+struct Worker {}
+struct Helper {}
+
+impl Runner for Worker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+
+impl Runner for Helper {
+    fn run(self) -> Int {
+        return 2
+    }
+}
+"#,
+    );
+    let source = fs::read_to_string(&source_path).expect("same-file source should read");
+    let uri = Url::from_file_path(&source_path).expect("source path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, uri.clone(), source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        uri.clone(),
+        offset_to_position(&source, nth_offset(&source, "run", 1)),
+    )
+    .await
+    .expect("same-file trait method implementations should exist");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("same-file trait method definition should resolve to many locations")
+    };
+    assert_eq!(locations.len(), 2);
+    assert!(
+        locations.iter().all(|location| location.uri == uri),
+        "all same-file trait method implementations should stay in the current file",
+    );
+    for occurrence in [2usize, 3usize] {
+        assert!(
+            locations.iter().any(|location| {
+                location.range.start
+                    == offset_to_position(&source, nth_offset(&source, "run", occurrence))
+            }),
+            "same-file trait method implementations should include run occurrence {occurrence}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_returns_array_for_same_file_type_surface() {
+    let temp = TempDir::new("ql-lsp-implementation-request-same-file-type-surface");
+    let source_path = temp.write(
+        "sample.ql",
+        r#"
+struct Config {
+    value: Int,
+}
+
+impl Config {
+    fn build(self) -> Int {
+        return self.value
+    }
+}
+
+extend Config {
+    fn label(self) -> Int {
+        return self.value
+    }
+}
+"#,
+    );
+    let source = fs::read_to_string(&source_path).expect("same-file source should read");
+    let uri = Url::from_file_path(&source_path).expect("source path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, uri.clone(), source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        uri.clone(),
+        offset_to_position(&source, nth_offset(&source, "Config", 1)),
+    )
+    .await
+    .expect("same-file type implementation should exist");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("same-file type surface should resolve to many implementation blocks")
+    };
+    assert_eq!(locations.len(), 2);
+    assert!(
+        locations.iter().all(|location| location.uri == uri),
+        "all same-file type implementations should stay in the current file",
+    );
+    for marker in ["impl Config", "extend Config"] {
+        assert!(
+            locations.iter().any(|location| {
+                location.range.start == offset_to_position(&source, nth_offset(&source, marker, 1))
+            }),
+            "same-file type implementations should include {marker}",
+        );
+    }
+}
