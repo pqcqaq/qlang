@@ -2867,6 +2867,122 @@ impl Config {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_uses_workspace_source_for_root_method_call_with_broken_open_consumers() {
+    let temp = TempDir::new("qlsp-implementation-request-broken-open-root-method-call");
+    let core_path = temp.write(
+        "workspace/packages/core/src/lib.ql",
+        r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn pulse(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn read(config: Config) -> Int {
+    return config.pulse()
+}
+"#,
+    );
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(config: Config) -> Int {
+    return 0
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn pulse(self) -> Int
+}
+"#,
+    );
+
+    let core_source = fs::read_to_string(&core_path).expect("core source should read");
+    let core_uri = Url::from_file_path(&core_path).expect("core path should convert to URI");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let open_app_source = r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(config: Config) -> Int {
+    return config.pulse(
+"#
+    .to_owned();
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, core_uri.clone(), core_source.clone()).await;
+    did_open_via_request(&mut service, app_uri, open_app_source).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        core_uri.clone(),
+        offset_to_position(&core_source, nth_offset(&core_source, "pulse()", 1)),
+    )
+    .await
+    .expect("workspace root method implementation should use broken open consumers");
+    let GotoImplementationResponse::Scalar(Location { uri, range }) = implementation else {
+        panic!("broken open workspace root method call should resolve to one implementation")
+    };
+    assert_eq!(uri, core_uri);
+    assert_eq!(
+        range.start,
+        offset_to_position(
+            &core_source,
+            nth_offset_in_context(&core_source, "pulse", "pub fn pulse(self)", 1),
+        ),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_uses_workspace_impls_for_broken_current_root_trait_surface() {
     let fixture = setup_workspace_root_trait_single_consumer_fixture(
         "ql-lsp-implementation-request-broken-current-root-trait",
