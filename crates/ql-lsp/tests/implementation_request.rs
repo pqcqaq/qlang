@@ -2285,6 +2285,172 @@ pub fn task() -> Int {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_prefers_matching_same_named_dependency_method_in_open_source() {
+    let temp = TempDir::new("ql-lsp-implementation-request-open-same-named-dependency-method");
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+use demo.shared.beta.build as other
+
+pub fn main() -> Int {
+    return build().ping()
+}
+
+pub fn beta_ping() -> Bool {
+    return other().ping()
+}
+"#,
+    );
+    let alpha_source_path = temp.write(
+        "workspace/vendor/alpha/src/lib.ql",
+        r#"
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn build() -> Config {
+    return Config { value: 1 }
+}
+
+impl Config {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/src/lib.ql",
+        r#"
+package demo.shared.beta
+
+pub struct Config {
+    value: Bool,
+}
+
+pub fn build() -> Config {
+    return Config { value: true }
+}
+
+impl Config {
+    pub fn ping(self) -> Bool {
+        return self.value
+    }
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn build() -> Config
+
+impl Config {
+    pub fn ping(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub struct Config {
+    value: Bool,
+}
+
+pub fn build() -> Config
+
+impl Config {
+    pub fn ping(self) -> Bool
+}
+"#,
+    );
+
+    let source = fs::read_to_string(&app_path).expect("app source should read");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let alpha_source = fs::read_to_string(&alpha_source_path).expect("alpha source should read");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, app_uri.clone(), source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        app_uri,
+        offset_to_position(&source, nth_offset(&source, "ping", 1) + 1),
+    )
+    .await
+    .expect("same-named dependency method implementation should exist");
+    let GotoImplementationResponse::Scalar(Location { uri, range }) = implementation else {
+        panic!("same-named dependency concrete method call should resolve to one implementation")
+    };
+    assert_eq!(
+        uri.to_file_path()
+            .expect("implementation URI should convert to file path")
+            .canonicalize()
+            .expect("implementation path should canonicalize"),
+        alpha_source_path
+            .canonicalize()
+            .expect("alpha source path should canonicalize"),
+    );
+    assert_eq!(
+        range.start,
+        offset_to_position(&alpha_source, nth_offset(&alpha_source, "ping", 1)),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_prefers_matching_same_named_dependency_member_types_in_open_source(
 ) {
     let temp =
@@ -3520,6 +3686,179 @@ pub fn broken() -> Int {
             &open_task_source,
             nth_offset_in_context(&open_task_source, "run", "fn run(self) -> Int", 1),
         ),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_prefers_matching_same_named_dependency_method_in_broken_source() {
+    let temp =
+        TempDir::new("ql-lsp-implementation-request-broken-same-named-dependency-method");
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+use demo.shared.beta.build as other
+
+pub fn main() -> Int {
+    return build().ping(
+}
+
+pub fn beta_ping() -> Bool {
+    return other().ping()
+}
+"#,
+    );
+    let alpha_source_path = temp.write(
+        "workspace/vendor/alpha/src/lib.ql",
+        r#"
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn build() -> Config {
+    return Config { value: 1 }
+}
+
+impl Config {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/src/lib.ql",
+        r#"
+package demo.shared.beta
+
+pub struct Config {
+    value: Bool,
+}
+
+pub fn build() -> Config {
+    return Config { value: true }
+}
+
+impl Config {
+    pub fn ping(self) -> Bool {
+        return self.value
+    }
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn build() -> Config
+
+impl Config {
+    pub fn ping(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub struct Config {
+    value: Bool,
+}
+
+pub fn build() -> Config
+
+impl Config {
+    pub fn ping(self) -> Bool
+}
+"#,
+    );
+
+    let broken_source = fs::read_to_string(&app_path).expect("app source should read");
+    assert!(
+        ql_analysis::analyze_source(&broken_source).is_err(),
+        "current source should stay broken for this regression",
+    );
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let alpha_source = fs::read_to_string(&alpha_source_path).expect("alpha source should read");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, app_uri.clone(), broken_source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        app_uri,
+        offset_to_position(&broken_source, nth_offset(&broken_source, "ping(", 1)),
+    )
+    .await
+    .expect("broken-source same-named dependency method implementation should exist");
+    let GotoImplementationResponse::Scalar(Location { uri, range }) = implementation else {
+        panic!(
+            "broken-source same-named dependency concrete method call should resolve to one implementation"
+        )
+    };
+    assert_eq!(
+        uri.to_file_path()
+            .expect("implementation URI should convert to file path")
+            .canonicalize()
+            .expect("implementation path should canonicalize"),
+        alpha_source_path
+            .canonicalize()
+            .expect("alpha source path should canonicalize"),
+    );
+    assert_eq!(
+        range.start,
+        offset_to_position(&alpha_source, nth_offset(&alpha_source, "ping", 1)),
     );
 }
 
