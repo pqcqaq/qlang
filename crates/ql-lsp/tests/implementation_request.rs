@@ -865,6 +865,154 @@ impl Runner for ToolWorker {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_uses_open_workspace_source_for_broken_current_dependency_trait_method_call(
+) {
+    let temp = TempDir::new(
+        "ql-lsp-implementation-request-broken-current-dependency-trait-method-call",
+    );
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.core.Runner
+
+pub fn main(runner: Runner) -> Int {
+    return runner.run(
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/src/lib.ql",
+        r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+    );
+    let tools_path = temp.write(
+        "workspace/packages/tools/src/lib.ql",
+        r#"
+package demo.tools
+
+use demo.core.Runner
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn walk(self) -> Int {
+        return 2
+    }
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core", "packages/tools"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tools/qlang.toml",
+        r#"
+[package]
+name = "tools"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+    );
+
+    let open_tools_source = r#"
+package demo.tools
+
+use demo.core.Runner
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn run(self) -> Int {
+        return 2
+    }
+}
+"#
+    .to_owned();
+    let app_source = fs::read_to_string(&app_path).expect("app source should read");
+    assert!(
+        ql_analysis::analyze_source(&app_source).is_err(),
+        "current source should stay broken for this regression",
+    );
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let tools_uri = Url::from_file_path(&tools_path).expect("tools path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, app_uri.clone(), app_source.clone()).await;
+
+    let disk_only = goto_implementation_via_request(
+        &mut service,
+        app_uri.clone(),
+        offset_to_position(&app_source, nth_offset(&app_source, "run(", 1)),
+    )
+    .await;
+    assert_eq!(disk_only, None);
+
+    did_open_via_request(&mut service, tools_uri.clone(), open_tools_source.clone()).await;
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        app_uri,
+        offset_to_position(&app_source, nth_offset(&app_source, "run(", 1)),
+    )
+    .await
+    .expect("broken dependency trait call should use open workspace impl methods");
+    let GotoImplementationResponse::Scalar(Location { uri, range }) = implementation else {
+        panic!("single broken dependency trait impl should resolve to one location")
+    };
+    assert_eq!(uri, tools_uri);
+    assert_eq!(
+        range.start,
+        offset_to_position(
+            &open_tools_source,
+            nth_offset_in_context(&open_tools_source, "run", "fn run(self)", 1),
+        ),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_filters_same_named_local_dependency_in_broken_open_consumer() {
     let temp = TempDir::new("ql-lsp-implementation-request-broken-same-named-local-dependency");
     let app_path = temp.write(
