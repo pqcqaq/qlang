@@ -2266,6 +2266,166 @@ pub fn broken() -> Int {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_prefers_matching_same_named_dependency_type_in_broken_current_source(
+) {
+    let temp =
+        TempDir::new("ql-lsp-implementation-request-broken-current-same-named-local-dependency");
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.shared.alpha.Config as Cfg
+use demo.shared.beta.Config as Peer
+
+pub fn main(current: Cfg, peer: Peer) -> Cfg {
+    return Cfg {
+"#,
+    );
+    let task_path = temp.write(
+        "workspace/packages/app/src/task.ql",
+        r#"
+package demo.app
+
+pub fn task() -> Int {
+    return 0
+}
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/src/lib.ql",
+        r#"
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/src/lib.ql",
+        r#"
+package demo.shared.beta
+
+pub struct Config {
+    value: Bool,
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub struct Config {
+    value: Bool,
+}
+"#,
+    );
+
+    let open_task_source = r#"
+package demo.app
+
+use demo.shared.alpha.Config as Cfg
+use demo.shared.beta.Config as Peer
+
+extend Cfg {
+    fn alpha(self) -> Int {
+        return 1
+    }
+}
+
+extend Peer {
+    fn beta(self) -> Bool {
+        return true
+    }
+}
+
+pub fn task() -> Int {
+    return 0
+}
+"#
+    .to_owned();
+    let broken_source = fs::read_to_string(&app_path).expect("app source should read");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, task_uri.clone(), open_task_source.clone()).await;
+    did_open_via_request(&mut service, app_uri.clone(), broken_source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        app_uri,
+        offset_to_position(&broken_source, nth_offset(&broken_source, "Cfg", 2)),
+    )
+    .await
+    .expect("matching broken current dependency implementation should exist");
+    let GotoImplementationResponse::Scalar(Location { uri, range }) = implementation else {
+        panic!("matching broken current dependency implementation should stay scalar")
+    };
+    assert_eq!(uri, task_uri);
+    assert_eq!(
+        range.start,
+        offset_to_position(
+            &open_task_source,
+            nth_offset(&open_task_source, "extend Cfg", 1)
+        ),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_prefers_matching_same_named_dependency_trait_method_in_broken_open_consumer(
 ) {
     let temp = TempDir::new(

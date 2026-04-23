@@ -3699,6 +3699,15 @@ fn dependency_type_definition_target_with_open_docs_at(
         })
 }
 
+fn broken_source_dependency_type_definition_target_at(
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<DependencyDefinitionTarget> {
+    let binding = broken_source_import_binding_at(source, position)?;
+    package.dependency_type_definition_in_source_at(source, binding.definition_span.start)
+}
+
 fn dependency_occurrence_span_at(
     source: &str,
     package: &ql_analysis::PackageAnalysis,
@@ -4993,41 +5002,55 @@ fn extend_workspace_dependency_implementation_locations_with_open_docs(
     ) {
         return;
     }
+    let Ok(source_paths) = collect_package_sources(package.manifest()) else {
+        return;
+    };
 
-    for module in package.modules() {
-        let canonical_module_path = canonicalize_or_clone(module.path());
-        let (uri, source, analysis) =
-            if let Some((open_uri, open_source)) = open_docs.get(&canonical_module_path) {
-                if let Ok(open_analysis) = analyze_source(open_source) {
-                    (open_uri.clone(), open_source.clone(), open_analysis)
-                } else {
-                    let mut module_locations = broken_source_implementation_locations_in_source(
-                        open_uri,
-                        open_source,
-                        package,
-                        target,
-                    );
-                    module_locations.sort_by_key(|location| {
-                        (
-                            location.range.start.line,
-                            location.range.start.character,
-                            location.range.end.line,
-                            location.range.end.character,
-                        )
-                    });
-                    module_locations.dedup_by(|left, right| same_location_anchor(left, right));
-                    locations.extend(module_locations);
-                    continue;
-                }
-            } else {
-                let Ok(uri) = Url::from_file_path(module.path()) else {
-                    continue;
-                };
-                let Ok(source) = fs::read_to_string(module.path()) else {
-                    continue;
-                };
-                (uri, source.replace("\r\n", "\n"), module.analysis().clone())
+    for source_path in source_paths {
+        let canonical_source_path = canonicalize_or_clone(&source_path);
+        let (uri, source, analysis) = if let Some((open_uri, open_source, open_analysis)) =
+            open_document_snapshot(open_docs, &source_path)
+        {
+            (open_uri, open_source, open_analysis)
+        } else if let Some((open_uri, open_source)) = open_docs.get(&canonical_source_path) {
+            let mut module_locations = broken_source_implementation_locations_in_source(
+                open_uri,
+                open_source,
+                package,
+                target,
+            );
+            module_locations.sort_by_key(|location| {
+                (
+                    location.range.start.line,
+                    location.range.start.character,
+                    location.range.end.line,
+                    location.range.end.character,
+                )
+            });
+            module_locations.dedup_by(|left, right| same_location_anchor(left, right));
+            locations.extend(module_locations);
+            continue;
+        } else {
+            let Ok(uri) = Url::from_file_path(&source_path) else {
+                continue;
             };
+            let Ok(source) = fs::read_to_string(&source_path) else {
+                continue;
+            };
+            let source = source.replace("\r\n", "\n");
+            let analysis = package
+                .modules()
+                .iter()
+                .find(|module| {
+                    canonicalize_or_clone(module.path()) == canonical_source_path
+                })
+                .map(|module| module.analysis().clone())
+                .or_else(|| analyze_source(&source).ok());
+            let Some(analysis) = analysis else {
+                continue;
+            };
+            (uri, source, analysis)
+        };
 
         let mut module_locations = analysis
             .ast()
@@ -5184,7 +5207,12 @@ fn workspace_source_implementation_for_dependency_with_open_docs(
 ) -> Option<GotoImplementationResponse> {
     let target = dependency_type_definition_target_with_open_docs_at(
         source, analysis, package, open_docs, position,
-    )?;
+    )
+    .or_else(|| {
+        analysis.is_none().then(|| {
+            broken_source_dependency_type_definition_target_at(source, package, position)
+        })?
+    })?;
     implementation_response_from_locations(workspace_implementation_locations_with_open_docs(
         package, open_docs, &target,
     ))
