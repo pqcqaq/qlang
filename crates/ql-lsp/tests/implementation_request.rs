@@ -6506,11 +6506,12 @@ pub trait Runner {
     let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
     let tools_uri = Url::from_file_path(&tools_path).expect("tools path should convert to URI");
 
-    let (mut service, _) = LspService::new(Backend::new);
-    initialize_service(&mut service).await;
-    did_open_via_request(&mut service, core_uri.clone(), core_source.clone()).await;
-    did_open_via_request(&mut service, app_uri.clone(), app_source.clone()).await;
-    did_open_via_request(&mut service, tools_uri.clone(), tools_source.clone()).await;
+    let mut service = initialized_service_with_open_documents(vec![
+        (core_uri.clone(), core_source.clone()),
+        (app_uri.clone(), app_source.clone()),
+        (tools_uri.clone(), tools_source.clone()),
+    ])
+    .await;
 
     let implementation = goto_implementation_via_request(
         &mut service,
@@ -6635,9 +6636,11 @@ impl Runner for ToolWorker {
     let core_uri = Url::from_file_path(&core_path).expect("core path should convert to URI");
     let tools_uri = Url::from_file_path(&tools_path).expect("tools path should convert to URI");
 
-    let (mut service, _) = LspService::new(Backend::new);
-    initialize_service(&mut service).await;
-    did_open_via_request(&mut service, core_uri.clone(), core_source.clone()).await;
+    let mut service = initialized_service_with_open_documents(vec![(
+        core_uri.clone(),
+        core_source.clone(),
+    )])
+    .await;
 
     let disk_only = goto_implementation_via_request(
         &mut service,
@@ -6768,9 +6771,11 @@ pub fn broken() -> Int {
     let core_uri = Url::from_file_path(&core_path).expect("core path should convert to URI");
     let tools_uri = Url::from_file_path(&tools_path).expect("tools path should convert to URI");
 
-    let (mut service, _) = LspService::new(Backend::new);
-    initialize_service(&mut service).await;
-    did_open_via_request(&mut service, core_uri.clone(), core_source.clone()).await;
+    let mut service = initialized_service_with_open_documents(vec![(
+        core_uri.clone(),
+        core_source.clone(),
+    )])
+    .await;
 
     let disk_only = goto_implementation_via_request(
         &mut service,
@@ -6929,11 +6934,12 @@ pub fn call(runner: Runner) -> Int {
     let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
     let tools_uri = Url::from_file_path(&tools_path).expect("tools path should convert to URI");
 
-    let (mut service, _) = LspService::new(Backend::new);
-    initialize_service(&mut service).await;
-    did_open_via_request(&mut service, core_uri.clone(), open_core_source.clone()).await;
-    did_open_via_request(&mut service, app_uri.clone(), app_source.clone()).await;
-    did_open_via_request(&mut service, tools_uri.clone(), tools_source.clone()).await;
+    let mut service = initialized_service_with_open_documents(vec![
+        (core_uri.clone(), open_core_source.clone()),
+        (app_uri.clone(), app_source.clone()),
+        (tools_uri.clone(), tools_source.clone()),
+    ])
+    .await;
 
     let implementation = goto_implementation_via_request(
         &mut service,
