@@ -2979,6 +2979,288 @@ fn broken_source_path_last_ident_token(tokens: &[Token], index: usize) -> Option
     Some((last, index))
 }
 
+fn broken_source_last_ident_span_in_tokens(
+    tokens: &[Token],
+    start_index: usize,
+    end_index: usize,
+) -> Option<Span> {
+    tokens
+        .get(start_index..end_index)?
+        .iter()
+        .filter(|token| token.kind == TokenKind::Ident)
+        .map(|token| token.span)
+        .last()
+}
+
+fn broken_source_public_struct_field_type_span_in_source(
+    source: &str,
+    struct_name: &str,
+    field_name: &str,
+) -> Option<Span> {
+    let (tokens, _) = lex(source);
+    let mut brace_depth = 0usize;
+    let mut index = 0usize;
+
+    while index < tokens.len() {
+        match tokens[index].kind {
+            TokenKind::LBrace => brace_depth += 1,
+            TokenKind::RBrace => brace_depth = brace_depth.saturating_sub(1),
+            TokenKind::Pub | TokenKind::Struct if brace_depth == 0 => {
+                let mut cursor = index;
+                if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::Pub) {
+                    cursor += 1;
+                }
+                if tokens.get(cursor).map(|token| token.kind) != Some(TokenKind::Struct) {
+                    index += 1;
+                    continue;
+                }
+                let Some(name_token) = broken_source_import_ident_token(&tokens, cursor + 1) else {
+                    index += 1;
+                    continue;
+                };
+                if name_token.text != struct_name {
+                    index += 1;
+                    continue;
+                }
+                let Some(open_index) = ((cursor + 2)..tokens.len())
+                    .find(|candidate| tokens[*candidate].kind == TokenKind::LBrace)
+                else {
+                    index += 1;
+                    continue;
+                };
+                let close_index =
+                    token_index_after_balanced_braces_in_tokens(&tokens, open_index)
+                        .unwrap_or(tokens.len());
+                let mut field_index = open_index + 1;
+                let mut nested_depth = 0usize;
+                while field_index < close_index.saturating_sub(1) {
+                    match tokens[field_index].kind {
+                        TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => {
+                            nested_depth += 1;
+                        }
+                        TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                            nested_depth = nested_depth.saturating_sub(1);
+                        }
+                        TokenKind::Ident
+                            if nested_depth == 0
+                                && tokens.get(field_index + 1).map(|token| token.kind)
+                                    == Some(TokenKind::Colon) =>
+                        {
+                            let field_token = &tokens[field_index];
+                            let type_start = field_index + 2;
+                            let mut type_end = close_index.saturating_sub(1);
+                            let mut type_depth = 0usize;
+                            let mut cursor = type_start;
+                            while cursor < close_index.saturating_sub(1) {
+                                match tokens[cursor].kind {
+                                    TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => {
+                                        type_depth += 1;
+                                    }
+                                    TokenKind::RParen
+                                    | TokenKind::RBracket
+                                    | TokenKind::RBrace => {
+                                        if type_depth == 0 {
+                                            type_end = cursor;
+                                            break;
+                                        }
+                                        type_depth = type_depth.saturating_sub(1);
+                                    }
+                                    TokenKind::Comma if type_depth == 0 => {
+                                        type_end = cursor;
+                                        break;
+                                    }
+                                    _ => {}
+                                }
+                                cursor += 1;
+                            }
+                            if field_token.text == field_name {
+                                return broken_source_last_ident_span_in_tokens(
+                                    &tokens, type_start, type_end,
+                                );
+                            }
+                            field_index = type_end;
+                            continue;
+                        }
+                        _ => {}
+                    }
+                    field_index += 1;
+                }
+                index = close_index;
+                continue;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+
+    None
+}
+
+fn broken_source_public_struct_method_return_type_span_in_source(
+    source: &str,
+    struct_name: &str,
+    method_name: &str,
+) -> Option<Span> {
+    let (tokens, _) = lex(source);
+    let mut brace_depth = 0usize;
+    let mut index = 0usize;
+
+    while index < tokens.len() {
+        match tokens[index].kind {
+            TokenKind::LBrace => brace_depth += 1,
+            TokenKind::RBrace => brace_depth = brace_depth.saturating_sub(1),
+            TokenKind::Impl | TokenKind::Extend if brace_depth == 0 => {
+                let token = &tokens[index];
+                let (target_name, open_index) = match token.kind {
+                    TokenKind::Impl => {
+                        let Some((_, next_index)) =
+                            broken_source_path_last_ident_token(&tokens, index + 1)
+                        else {
+                            index += 1;
+                            continue;
+                        };
+                        let (target_name, after_target_index) =
+                            if tokens.get(next_index).map(|token| token.kind) == Some(TokenKind::For)
+                            {
+                                let Some((target_name, after_target_index)) =
+                                    broken_source_path_last_ident_token(&tokens, next_index + 1)
+                                else {
+                                    index += 1;
+                                    continue;
+                                };
+                                (target_name.text.clone(), after_target_index)
+                            } else {
+                                let Some((target_name, after_target_index)) =
+                                    broken_source_path_last_ident_token(&tokens, index + 1)
+                                else {
+                                    index += 1;
+                                    continue;
+                                };
+                                (target_name.text.clone(), after_target_index)
+                            };
+                        (target_name, after_target_index)
+                    }
+                    TokenKind::Extend => {
+                        let Some((target_name, after_target_index)) =
+                            broken_source_path_last_ident_token(&tokens, index + 1)
+                        else {
+                            index += 1;
+                            continue;
+                        };
+                        (target_name.text.clone(), after_target_index)
+                    }
+                    _ => unreachable!(),
+                };
+                if target_name != struct_name {
+                    index += 1;
+                    continue;
+                }
+                if tokens.get(open_index).map(|token| token.kind) != Some(TokenKind::LBrace) {
+                    index += 1;
+                    continue;
+                }
+                let close_index =
+                    token_index_after_balanced_braces_in_tokens(&tokens, open_index)
+                        .unwrap_or(tokens.len());
+                let mut method_index = open_index + 1;
+                let mut nested_depth = 0usize;
+                while method_index < close_index.saturating_sub(1) {
+                    match tokens[method_index].kind {
+                        TokenKind::LBrace => nested_depth += 1,
+                        TokenKind::RBrace => nested_depth = nested_depth.saturating_sub(1),
+                        TokenKind::Pub | TokenKind::Fn if nested_depth == 0 => {
+                            let fn_index = if tokens[method_index].kind == TokenKind::Pub {
+                                method_index + 1
+                            } else {
+                                method_index
+                            };
+                            if tokens.get(fn_index).map(|token| token.kind) != Some(TokenKind::Fn) {
+                                method_index += 1;
+                                continue;
+                            }
+                            let Some(method_token) =
+                                broken_source_import_ident_token(&tokens, fn_index + 1)
+                            else {
+                                method_index += 1;
+                                continue;
+                            };
+                            if method_token.text != method_name {
+                                method_index += 1;
+                                continue;
+                            }
+                            let Some(params_open_index) =
+                                ((fn_index + 2)..close_index.saturating_sub(1))
+                                    .find(|candidate| tokens[*candidate].kind == TokenKind::LParen)
+                            else {
+                                return None;
+                            };
+                            let mut params_depth = 0usize;
+                            let mut after_params_index = None;
+                            let mut cursor = params_open_index;
+                            while cursor < close_index.saturating_sub(1) {
+                                match tokens[cursor].kind {
+                                    TokenKind::LParen => params_depth += 1,
+                                    TokenKind::RParen => {
+                                        params_depth = params_depth.saturating_sub(1);
+                                        if params_depth == 0 {
+                                            after_params_index = Some(cursor + 1);
+                                            break;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                cursor += 1;
+                            }
+                            let Some(type_start) = after_params_index.and_then(|cursor| {
+                                (tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::Arrow))
+                                    .then_some(cursor + 1)
+                            }) else {
+                                return None;
+                            };
+                            let mut type_end = close_index.saturating_sub(1);
+                            let mut type_depth = 0usize;
+                            let mut cursor = type_start;
+                            while cursor < close_index.saturating_sub(1) {
+                                match tokens[cursor].kind {
+                                    TokenKind::LParen | TokenKind::LBracket => type_depth += 1,
+                                    TokenKind::RParen | TokenKind::RBracket => {
+                                        type_depth = type_depth.saturating_sub(1);
+                                    }
+                                    TokenKind::LBrace if type_depth == 0 => {
+                                        type_end = cursor;
+                                        break;
+                                    }
+                                    TokenKind::LBrace => type_depth += 1,
+                                    TokenKind::RBrace => {
+                                        if type_depth == 0 {
+                                            type_end = cursor;
+                                            break;
+                                        }
+                                        type_depth = type_depth.saturating_sub(1);
+                                    }
+                                    _ => {}
+                                }
+                                cursor += 1;
+                            }
+                            return broken_source_last_ident_span_in_tokens(
+                                &tokens, type_start, type_end,
+                            );
+                        }
+                        _ => {}
+                    }
+                    method_index += 1;
+                }
+                index = close_index;
+                continue;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+
+    None
+}
+
 fn broken_source_impl_method_name_spans_in_tokens(
     tokens: &[Token],
     start_index: usize,
@@ -3509,6 +3791,66 @@ fn workspace_source_dependency_target_from_open_docs<T>(
     None
 }
 
+fn workspace_source_dependency_type_target_from_broken_open_docs(
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    target_manifest_path: &Path,
+    target_source_path: &str,
+    f: impl Fn(&str) -> Option<Span>,
+) -> Option<DependencyDefinitionTarget> {
+    for candidate_manifest_path in
+        source_preferred_manifest_paths_for_package(package.manifest().manifest_path.as_path())
+    {
+        let Some(candidate_package) = package_analysis_for_path(&candidate_manifest_path) else {
+            continue;
+        };
+        if canonicalize_or_clone(candidate_package.manifest().manifest_path.as_path())
+            != canonicalize_or_clone(target_manifest_path)
+        {
+            continue;
+        }
+        let Some((module_path, open_source)) = open_docs.iter().find_map(|(path, (_, open_source))| {
+            candidate_package.modules().iter().find_map(|module| {
+                (canonicalize_or_clone(module.path()) == canonicalize_or_clone(path)
+                    && package_module_matches_dependency_source_path(
+                        &candidate_package,
+                        module.path(),
+                        target_source_path,
+                    ))
+                .then_some((module.path(), open_source.as_str()))
+            })
+        }) else {
+            continue;
+        };
+        let Some(type_span) = f(open_source) else {
+            continue;
+        };
+        if let Some(target) =
+            candidate_package.dependency_type_definition_in_source_at(open_source, type_span.start)
+        {
+            return Some(target);
+        }
+        let type_name = open_source.get(type_span.start..type_span.end)?;
+        let Some(definition_site) = broken_source_root_definition_sites_in_source(open_source)
+            .into_iter()
+            .find(|site| site.name == type_name)
+        else {
+            continue;
+        };
+        let position = span_to_range(open_source, definition_site.span).start;
+        if let Some(target) = broken_source_root_implementation_target_for_source(
+            module_path,
+            open_source,
+            &candidate_package,
+            position,
+        ) {
+            return Some(target);
+        }
+    }
+
+    None
+}
+
 fn dependency_method_definition_target_with_open_docs(
     source: &str,
     package: &ql_analysis::PackageAnalysis,
@@ -3645,6 +3987,21 @@ fn dependency_method_type_definition_target_with_open_docs(
             )
         },
     )
+    .or_else(|| {
+        workspace_source_dependency_type_target_from_broken_open_docs(
+            package,
+            open_docs,
+            target.manifest_path.as_path(),
+            &target.source_path,
+            |open_source| {
+                broken_source_public_struct_method_return_type_span_in_source(
+                    open_source,
+                    &target.struct_name,
+                    &token.text,
+                )
+            },
+        )
+    })
 }
 
 fn dependency_struct_field_type_definition_target_with_open_docs(
@@ -3677,6 +4034,21 @@ fn dependency_struct_field_type_definition_target_with_open_docs(
             )
         },
     )
+    .or_else(|| {
+        workspace_source_dependency_type_target_from_broken_open_docs(
+            package,
+            open_docs,
+            target.manifest_path.as_path(),
+            &target.source_path,
+            |open_source| {
+                broken_source_public_struct_field_type_span_in_source(
+                    open_source,
+                    &target.struct_name,
+                    &token.text,
+                )
+            },
+        )
+    })
 }
 
 fn dependency_type_definition_target_with_open_docs_at(

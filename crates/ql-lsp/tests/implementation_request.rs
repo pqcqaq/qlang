@@ -3512,6 +3512,263 @@ pub fn build() -> Counter {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_prefers_matching_same_named_dependency_member_types_in_broken_open_source(
+) {
+    let temp = TempDir::new(
+        "ql-lsp-implementation-request-broken-open-same-named-dependency-member-types",
+    );
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+use demo.shared.beta.build as other
+
+pub fn main() -> Int {
+    let current = build()
+    return current.extra.id + current.pulse().id
+}
+
+pub fn beta_extra() -> Bool {
+    let next = other()
+    return next.extra.flag
+}
+"#,
+    );
+    let alpha_source_path = temp.write(
+        "workspace/vendor/alpha/src/lib.ql",
+        r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/src/lib.ql",
+        r#"
+package demo.shared.beta
+
+pub struct Extra {
+    flag: Bool,
+}
+
+impl Extra {
+    pub fn read(self) -> Bool {
+        return self.flag
+    }
+}
+
+extend Extra {
+    pub fn bonus(self) -> Bool {
+        return self.flag
+    }
+}
+
+pub struct Counter {
+    extra: Extra,
+}
+
+impl Counter {
+    pub fn pulse(self) -> Extra {
+        return self.extra
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { extra: Extra { flag: true } }
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int
+}
+
+pub fn build() -> Counter
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub struct Extra {
+    flag: Bool,
+}
+
+impl Extra {
+    pub fn read(self) -> Bool
+}
+
+extend Extra {
+    pub fn bonus(self) -> Bool
+}
+
+pub struct Counter {
+    extra: Extra,
+}
+
+impl Counter {
+    pub fn pulse(self) -> Extra
+}
+
+pub fn build() -> Counter
+"#,
+    );
+
+    let broken_open_alpha_source = r#"
+package demo.shared.alpha
+
+pub struct Extra {
+    id: Int,
+}
+
+impl Extra {
+    pub fn read(self) -> Int {
+        return self.id
+    }
+}
+
+extend Extra {
+    pub fn bonus(self) -> Int {
+        return self.id + 1
+    }
+}
+
+pub struct Counter {
+    value: Int,
+    extra: Extra,
+}
+
+impl Counter {
+    pub fn pulse(self) -> Extra {
+        return self.extra
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1, extra: Extra { id: 2 }
+"#
+    .to_owned();
+    let source = fs::read_to_string(&app_path).expect("app source should read");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let alpha_uri =
+        Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    service
+        .inner()
+        .did_open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: alpha_uri.clone(),
+                language_id: "ql".to_owned(),
+                version: 1,
+                text: broken_open_alpha_source.clone(),
+            },
+        })
+        .await;
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, app_uri.clone(), source.clone()).await;
+
+    for (needle, occurrence) in [("extra", 1usize), ("pulse", 1usize)] {
+        let implementation = goto_implementation_via_request(
+            &mut service,
+            app_uri.clone(),
+            offset_to_position(&source, nth_offset(&source, needle, occurrence) + 1),
+        )
+        .await
+        .unwrap_or_else(|| {
+            panic!(
+                "broken-open dependency member type implementation should exist for {needle}"
+            )
+        });
+        let GotoImplementationResponse::Array(locations) = implementation else {
+            panic!(
+                "broken-open dependency member type implementation should resolve to impl block locations: {implementation:?}"
+            )
+        };
+        assert_eq!(locations.len(), 2);
+        assert!(
+            locations.iter().all(|location| location.uri == alpha_uri),
+            "implementation should stay in the matching alpha dependency source for {needle}",
+        );
+        for marker in ["impl Extra", "extend Extra"] {
+            assert!(
+                locations.iter().any(|location| {
+                    location.range.start
+                        == offset_to_position(
+                            &broken_open_alpha_source,
+                            nth_offset(&broken_open_alpha_source, marker, 1),
+                        )
+                }),
+                "implementation should include alpha {marker} for {needle}",
+            );
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_prefers_matching_same_named_dependency_member_types_in_broken_source(
 ) {
     let temp =
