@@ -1460,6 +1460,74 @@ pub fn main(value: Config) -> Config {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_uses_workspace_source_for_broken_current_workspace_trait_import() {
+    let fixture = setup_workspace_root_runner_fixture(
+        "ql-lsp-implementation-request-broken-current-workspace-trait-import",
+    );
+    let broken_app_source = r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+
+pub fn broken() -> Int {
+    return AppWorker {
+"#
+    .to_owned();
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        broken_app_source.clone(),
+    )
+    .await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        offset_to_position(
+            &broken_app_source,
+            nth_offset(&broken_app_source, "Runner", 2),
+        ),
+    )
+    .await
+    .expect("broken current workspace trait import implementation should exist");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("broken current workspace trait import should resolve to many implementations")
+    };
+    assert_eq!(locations.len(), 2);
+    for (uri, source, marker) in [
+        (
+            fixture.app_uri.clone(),
+            broken_app_source.as_str(),
+            "impl Runner for AppWorker",
+        ),
+        (
+            fixture.tools_uri.clone(),
+            fixture.tools_source.as_str(),
+            "impl Runner for ToolWorker",
+        ),
+    ] {
+        assert!(
+            locations.iter().any(|location| {
+                location.uri == uri
+                    && location.range.start
+                        == offset_to_position(source, nth_offset(source, marker, 1))
+            }),
+            "broken current workspace trait implementations should include {marker}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_returns_array_for_workspace_trait_import_surface() {
     let fixture =
         setup_workspace_root_runner_fixture("ql-lsp-implementation-request-workspace-trait-import");
