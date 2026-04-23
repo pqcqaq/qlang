@@ -43,6 +43,7 @@
         workspace_source_member_field_completions, workspace_source_method_completions,
         workspace_source_method_completions_with_open_docs,
         workspace_source_method_implementation_for_dependency_with_open_docs,
+        workspace_source_method_implementation_for_broken_source_with_open_docs,
         workspace_source_method_implementation_for_local_source_in_broken_source_with_open_docs,
         workspace_source_method_implementation_for_local_source_with_open_docs,
         workspace_source_references_for_dependency,
@@ -2006,6 +2007,156 @@ pub fn read(config: Config) -> Int {
             implementation.is_none(),
             "ambiguous broken current method calls should not guess an implementation",
         );
+    }
+
+    #[test]
+    fn workspace_root_trait_method_call_implementation_in_broken_current_source_aggregates_workspace_impls(
+    ) {
+        let temp = TempDir::new("ql-lsp-workspace-root-trait-method-implementation-broken-current");
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+
+pub fn call(runner: Runner) -> Int {
+    return runner.run(
+}
+"#,
+        );
+        let app_source_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+"#,
+        );
+        let tools_source_path = temp.write(
+            "workspace/packages/tools/src/lib.ql",
+            r#"
+package demo.tools
+
+use demo.core.Runner
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn run(self) -> Int {
+        return 2
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core", "packages/tools"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/tools/qlang.toml",
+            r#"
+[package]
+name = "tools"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+
+        let open_core_source = r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+
+pub fn call(runner: Runner) -> Int {
+    return runner.run(
+}
+"#
+        .to_owned();
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        assert!(analyze_source(&open_core_source).is_err());
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+
+        let implementation = workspace_source_method_implementation_for_broken_source_with_open_docs(
+            &core_uri,
+            &open_core_source,
+            &package,
+            &file_open_documents(vec![]),
+            offset_to_position(
+                &open_core_source,
+                nth_offset_in_context(&open_core_source, "run", "runner.run(", 1),
+            ),
+        )
+        .expect("broken current root trait call should resolve implementations");
+
+        let GotoImplementationResponse::Array(locations) = implementation else {
+            panic!("broken current root trait call should resolve to many locations")
+        };
+        assert_eq!(locations.len(), 2);
+
+        let app_source = fs::read_to_string(&app_source_path).expect("app source should read");
+        let tools_source =
+            fs::read_to_string(&tools_source_path).expect("tools source should read");
+        assert!(locations.contains(&Location::new(
+            Url::from_file_path(&app_source_path).expect("app path should convert to URI"),
+            span_to_range(&app_source, nth_span_in_context(&app_source, "run", "fn run(self)", 1)),
+        )));
+        assert!(locations.contains(&Location::new(
+            Url::from_file_path(&tools_source_path).expect("tools path should convert to URI"),
+            span_to_range(
+                &tools_source,
+                nth_span_in_context(&tools_source, "run", "fn run(self)", 1),
+            ),
+        )));
     }
 
     #[test]
@@ -23093,6 +23244,142 @@ pub fn build() -> Counter {
         assert_eq!(
             highlights[0].range.start,
             offset_to_position(&source, nth_offset(&source, "ping", 1)),
+        );
+    }
+
+    #[test]
+    fn workspace_dependency_trait_method_call_implementation_in_broken_source_prefers_open_workspace_impl_methods(
+    ) {
+        let temp =
+            TempDir::new("ql-lsp-workspace-dependency-trait-method-implementation-broken-open");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Runner
+
+pub fn main(runner: Runner) -> Int {
+    return runner.run(
+}
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+        let tools_source_path = temp.write(
+            "workspace/packages/tools/src/lib.ql",
+            r#"
+package demo.tools
+
+use demo.core.Runner
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn walk(self) -> Int {
+        return 2
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core", "packages/tools"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/tools/qlang.toml",
+            r#"
+[package]
+name = "tools"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+        );
+
+        let open_tools_source = r#"
+package demo.tools
+
+use demo.core.Runner
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn run(self) -> Int {
+        return 2
+    }
+}
+"#
+        .to_owned();
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let tools_uri =
+            Url::from_file_path(&tools_source_path).expect("tools path should convert to URI");
+
+        let implementation = workspace_source_method_implementation_for_broken_source_with_open_docs(
+            &uri,
+            &source,
+            &package,
+            &file_open_documents(vec![(tools_uri.clone(), open_tools_source.clone())]),
+            offset_to_position(&source, nth_offset_in_context(&source, "run", "runner.run(", 1)),
+        )
+        .expect("broken dependency trait call should use open workspace impl methods");
+
+        let GotoImplementationResponse::Scalar(location) = implementation else {
+            panic!("single broken dependency trait impl should resolve to one location")
+        };
+        assert_eq!(location.uri, tools_uri);
+        assert_eq!(
+            location.range.start,
+            offset_to_position(
+                &open_tools_source,
+                nth_offset_in_context(&open_tools_source, "run", "fn run(self)", 1),
+            ),
         );
     }
 

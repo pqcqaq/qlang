@@ -5287,6 +5287,121 @@ fn broken_source_method_call_name_at(
     Some(token.text.clone())
 }
 
+fn repaired_analysis_for_broken_method_call(
+    source: &str,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<(String, Analysis, tower_lsp::lsp_types::Position)> {
+    let offset = position_to_offset(source, position)?;
+    let (tokens, _) = lex(source);
+    let (index, _token) = tokens.iter().enumerate().find(|(_, token)| {
+        token.kind == TokenKind::Ident && offset_hits_span(offset, token.span)
+    })?;
+    if tokens.get(index.checked_sub(1)?).map(|token| token.kind) != Some(TokenKind::Dot)
+        || tokens.get(index + 1).map(|token| token.kind) != Some(TokenKind::LParen)
+    {
+        return None;
+    }
+
+    let insert_offset = tokens.get(index + 1)?.span.end;
+    let mut repaired_source = source.to_owned();
+    repaired_source.insert(insert_offset, ')');
+    let analysis = analyze_source(&repaired_source).ok()?;
+    Some((
+        repaired_source,
+        analysis,
+        span_to_range(source, Span::new(insert_offset, insert_offset)).start,
+    ))
+}
+
+fn map_position_after_repaired_method_call_insert(
+    position: tower_lsp::lsp_types::Position,
+    inserted_position: tower_lsp::lsp_types::Position,
+) -> tower_lsp::lsp_types::Position {
+    if position.line == inserted_position.line && position.character > inserted_position.character {
+        tower_lsp::lsp_types::Position::new(position.line, position.character - 1)
+    } else {
+        position
+    }
+}
+
+fn map_location_after_repaired_method_call_insert(
+    current_uri: &Url,
+    location: Location,
+    inserted_position: tower_lsp::lsp_types::Position,
+) -> Location {
+    if location.uri != *current_uri {
+        return location;
+    }
+
+    Location::new(
+        location.uri,
+        tower_lsp::lsp_types::Range::new(
+            map_position_after_repaired_method_call_insert(location.range.start, inserted_position),
+            map_position_after_repaired_method_call_insert(location.range.end, inserted_position),
+        ),
+    )
+}
+
+fn map_implementation_response_after_repaired_method_call_insert(
+    current_uri: &Url,
+    response: GotoImplementationResponse,
+    inserted_position: tower_lsp::lsp_types::Position,
+) -> GotoImplementationResponse {
+    match response {
+        GotoImplementationResponse::Scalar(location) => GotoImplementationResponse::Scalar(
+            map_location_after_repaired_method_call_insert(current_uri, location, inserted_position),
+        ),
+        GotoImplementationResponse::Array(locations) => GotoImplementationResponse::Array(
+            locations
+                .into_iter()
+                .map(|location| {
+                    map_location_after_repaired_method_call_insert(
+                        current_uri,
+                        location,
+                        inserted_position,
+                    )
+                })
+                .collect(),
+        ),
+        GotoImplementationResponse::Link(links) => GotoImplementationResponse::Link(links),
+    }
+}
+
+fn workspace_source_method_implementation_for_broken_source_with_open_docs(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoImplementationResponse> {
+    let (repaired_source, repaired_analysis, inserted_position) =
+        repaired_analysis_for_broken_method_call(source, position)?;
+    let implementation = workspace_source_method_implementation_for_local_source_with_open_docs(
+        uri,
+        &repaired_source,
+        &repaired_analysis,
+        package,
+        open_docs,
+        position,
+    )
+    .or_else(|| {
+        workspace_source_method_implementation_for_dependency_with_open_docs(
+            uri,
+            &repaired_source,
+            Some(&repaired_analysis),
+            package,
+            open_docs,
+            position,
+        )
+    })?;
+
+    Some(map_implementation_response_after_repaired_method_call_insert(
+        uri,
+        implementation,
+        inserted_position,
+    ))
+}
+
 fn workspace_source_method_implementation_for_local_source_in_broken_source_with_open_docs(
     uri: &Url,
     source: &str,
@@ -8330,6 +8445,14 @@ impl LanguageServer for Backend {
                     &open_docs,
                     position,
                 )
+            {
+                return Ok(Some(implementation));
+            }
+            if analysis.is_none()
+                && let Some(implementation) =
+                    workspace_source_method_implementation_for_broken_source_with_open_docs(
+                        &uri, &source, &package, &open_docs, position,
+                    )
             {
                 return Ok(Some(implementation));
             }
