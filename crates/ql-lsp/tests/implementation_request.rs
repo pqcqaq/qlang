@@ -1273,6 +1273,224 @@ extend Config {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_returns_array_for_workspace_trait_import_surface() {
+    let fixture =
+        setup_workspace_root_runner_fixture("ql-lsp-implementation-request-workspace-trait-import");
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        fixture.app_source.clone(),
+    )
+    .await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        offset_to_position(
+            &fixture.app_source,
+            nth_offset(&fixture.app_source, "Runner", 2),
+        ),
+    )
+    .await
+    .expect("workspace trait import implementation should exist");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("workspace trait import surface should resolve to many implementation blocks")
+    };
+    assert_eq!(locations.len(), 2);
+    for (uri, source, marker) in [
+        (
+            fixture.app_uri.clone(),
+            fixture.app_source.as_str(),
+            "impl Runner for AppWorker",
+        ),
+        (
+            fixture.tools_uri.clone(),
+            fixture.tools_source.as_str(),
+            "impl Runner for ToolWorker",
+        ),
+    ] {
+        assert!(
+            locations.iter().any(|location| {
+                location.uri == uri
+                    && location.range.start
+                        == offset_to_position(source, nth_offset(source, marker, 1))
+            }),
+            "workspace trait implementations should include {marker}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_uses_broken_open_workspace_source_for_workspace_trait_import() {
+    let temp = TempDir::new("ql-lsp-implementation-request-broken-open-workspace-trait-import");
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+"#,
+    );
+    let tools_path = temp.write(
+        "workspace/packages/tools/src/lib.ql",
+        r#"
+package demo.tools
+
+pub fn ready() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/src/lib.ql",
+        r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core", "packages/tools"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/tools/qlang.toml",
+        r#"
+[package]
+name = "tools"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+    );
+
+    let app_source = fs::read_to_string(&app_path).expect("app source should read");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let tools_uri = Url::from_file_path(&tools_path).expect("tools path should convert to URI");
+    let open_tools_source = r#"
+package demo.tools
+
+use demo.core.Runner
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn run(self) -> Int {
+        return 2
+    }
+}
+
+pub fn broken() -> Int {
+    return ToolWorker {
+"#
+    .to_owned();
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, app_uri.clone(), app_source.clone()).await;
+
+    let disk_only = goto_implementation_via_request(
+        &mut service,
+        app_uri.clone(),
+        offset_to_position(&app_source, nth_offset(&app_source, "Runner", 2)),
+    )
+    .await
+    .expect("disk-only workspace trait implementation should exist");
+    let GotoImplementationResponse::Scalar(location) = disk_only else {
+        panic!("disk-only workspace trait import should resolve to one implementation")
+    };
+    assert_eq!(location.uri, app_uri);
+    assert_eq!(
+        location.range.start,
+        offset_to_position(
+            &app_source,
+            nth_offset(&app_source, "impl Runner for AppWorker", 1)
+        ),
+    );
+
+    did_open_via_request(&mut service, tools_uri.clone(), open_tools_source.clone()).await;
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        app_uri.clone(),
+        offset_to_position(&app_source, nth_offset(&app_source, "Runner", 2)),
+    )
+    .await
+    .expect("workspace trait implementation should use broken open workspace source");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("broken open workspace trait import should resolve to many implementations")
+    };
+    assert_eq!(locations.len(), 2);
+    assert!(
+        locations.iter().any(|location| {
+            location.uri == app_uri
+                && location.range.start
+                    == offset_to_position(
+                        &app_source,
+                        nth_offset(&app_source, "impl Runner for AppWorker", 1),
+                    )
+        }),
+        "workspace trait implementations should keep the current app implementation",
+    );
+    assert!(
+        locations.iter().any(|location| {
+            location.uri == tools_uri
+                && location.range.start
+                    == offset_to_position(
+                        &open_tools_source,
+                        nth_offset(&open_tools_source, "impl Runner for ToolWorker", 1),
+                    )
+        }),
+        "workspace trait implementations should include the broken open workspace implementation",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_returns_array_for_workspace_root_trait_surface() {
     let fixture =
         setup_workspace_root_runner_fixture("ql-lsp-implementation-request-workspace-root-trait");
