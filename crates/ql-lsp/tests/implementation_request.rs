@@ -568,6 +568,161 @@ pub fn build() -> Counter {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_returns_array_for_workspace_dependency_trait_method_call() {
+    let temp =
+        TempDir::new("ql-lsp-implementation-request-workspace-dependency-trait-method-call");
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.core.Runner
+
+pub fn main(runner: Runner) -> Int {
+    return runner.run()
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/src/lib.ql",
+        r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+    );
+    let tools_path = temp.write(
+        "workspace/packages/tools/src/lib.ql",
+        r#"
+package demo.tools
+
+use demo.core.Runner
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn run(self) -> Int {
+        return 2
+    }
+}
+"#,
+    );
+    let bots_path = temp.write(
+        "workspace/packages/bots/src/lib.ql",
+        r#"
+package demo.bots
+
+use demo.core.Runner
+
+struct BotWorker {}
+
+impl Runner for BotWorker {
+    fn run(self) -> Int {
+        return 3
+    }
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/bots", "packages/core", "packages/tools"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/bots/qlang.toml",
+        r#"
+[package]
+name = "bots"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tools/qlang.toml",
+        r#"
+[package]
+name = "tools"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+    );
+
+    let app_source = fs::read_to_string(&app_path).expect("app source should read");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let tools_source = fs::read_to_string(&tools_path).expect("tools source should read");
+    let tools_uri = Url::from_file_path(&tools_path).expect("tools path should convert to URI");
+    let bots_source = fs::read_to_string(&bots_path).expect("bots source should read");
+    let bots_uri = Url::from_file_path(&bots_path).expect("bots path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, app_uri.clone(), app_source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        app_uri,
+        offset_to_position(&app_source, nth_offset(&app_source, "run()", 1)),
+    )
+    .await
+    .expect("dependency trait method call implementation should exist");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("dependency trait method call should resolve to many implementation methods")
+    };
+
+    assert_eq!(locations.len(), 2);
+    for (uri, source) in [(&tools_uri, &tools_source), (&bots_uri, &bots_source)] {
+        assert!(
+            locations.iter().any(|location| {
+                location.uri == *uri
+                    && location.range.start
+                        == offset_to_position(
+                            source,
+                            nth_offset_in_context(source, "run", "fn run(self)", 1),
+                        )
+            }),
+            "dependency trait method call should include {uri}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_filters_same_named_local_dependency_in_broken_open_consumer() {
     let temp = TempDir::new("ql-lsp-implementation-request-broken-same-named-local-dependency");
     let app_path = temp.write(
