@@ -3087,6 +3087,104 @@ pub fn read(config: Config) -> Int {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_returns_none_for_root_method_definition_site_in_broken_current_source()
+{
+    let temp =
+        TempDir::new("qlsp-implementation-request-broken-current-root-method-definition-site");
+    let core_path = temp.write(
+        "workspace/packages/core/src/lib.ql",
+        r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn pulse(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn read(config: Config) -> Int {
+    return config.pulse()
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn pulse(self) -> Int
+}
+"#,
+    );
+
+    let core_uri = Url::from_file_path(&core_path).expect("core path should convert to URI");
+    let open_core_source = r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn pulse(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn read(config: Config) -> Int {
+    return config.pulse(
+}
+"#
+    .to_owned();
+    assert!(
+        ql_analysis::analyze_source(&open_core_source).is_err(),
+        "current root source should stay broken for this regression",
+    );
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, core_uri.clone(), open_core_source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        core_uri,
+        offset_to_position(
+            &open_core_source,
+            nth_offset_in_context(&open_core_source, "pulse", "pub fn pulse(self)", 1),
+        ),
+    )
+    .await;
+    assert_eq!(implementation, None);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_uses_workspace_impls_for_broken_current_root_trait_surface() {
     let fixture = setup_workspace_root_trait_single_consumer_fixture(
         "ql-lsp-implementation-request-broken-current-root-trait",
