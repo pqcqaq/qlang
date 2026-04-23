@@ -3656,6 +3656,166 @@ pub trait Runner {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_uses_workspace_impls_for_broken_current_root_trait_method_call() {
+    let temp =
+        TempDir::new("ql-lsp-implementation-request-broken-current-root-trait-method-call");
+    let core_path = temp.write(
+        "workspace/packages/core/src/lib.ql",
+        r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+
+pub fn call(runner: Runner) -> Int {
+    return runner.run(
+}
+"#,
+    );
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+"#,
+    );
+    let tools_path = temp.write(
+        "workspace/packages/tools/src/lib.ql",
+        r#"
+package demo.tools
+
+use demo.core.Runner
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn run(self) -> Int {
+        return 2
+    }
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core", "packages/tools"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/tools/qlang.toml",
+        r#"
+[package]
+name = "tools"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+    );
+
+    let open_core_source = r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+
+pub fn call(runner: Runner) -> Int {
+    return runner.run(
+}
+"#
+    .to_owned();
+    assert!(
+        ql_analysis::analyze_source(&open_core_source).is_err(),
+        "current root source should stay broken for this regression",
+    );
+
+    let app_source = fs::read_to_string(&app_path).expect("app source should read");
+    let tools_source = fs::read_to_string(&tools_path).expect("tools source should read");
+    let core_uri = Url::from_file_path(&core_path).expect("core path should convert to URI");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let tools_uri = Url::from_file_path(&tools_path).expect("tools path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, core_uri.clone(), open_core_source.clone()).await;
+    did_open_via_request(&mut service, app_uri.clone(), app_source.clone()).await;
+    did_open_via_request(&mut service, tools_uri.clone(), tools_source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        core_uri.clone(),
+        offset_to_position(
+            &open_core_source,
+            nth_offset_in_context(&open_core_source, "run", "runner.run(", 1),
+        ),
+    )
+    .await
+    .expect("broken current root trait method implementations should exist");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("broken current root trait method call should resolve to many implementations")
+    };
+    assert_eq!(locations.len(), 2);
+    for (uri, source) in [
+        (app_uri.clone(), app_source.as_str()),
+        (tools_uri.clone(), tools_source.as_str()),
+    ] {
+        assert!(
+            locations.iter().any(|location| {
+                location.uri == uri
+                    && location.range.start
+                        == offset_to_position(
+                            source,
+                            nth_offset_in_context(source, "run", "fn run(self)", 1),
+                        )
+            }),
+            "broken current root trait method implementations should include {uri}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_uses_workspace_impls_for_broken_current_root_trait_surface() {
     let fixture = setup_workspace_root_trait_single_consumer_fixture(
         "ql-lsp-implementation-request-broken-current-root-trait",
