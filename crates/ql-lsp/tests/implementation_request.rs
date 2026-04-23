@@ -403,6 +403,172 @@ pub trait Runner {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_returns_locations_for_workspace_dependency_non_import_positions()
+{
+    let temp =
+        TempDir::new("ql-lsp-implementation-request-workspace-dependency-non-import-positions");
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.core.Command as Cmd
+use demo.core.Config as Cfg
+use demo.core.Holder as Hold
+
+pub fn main(config: Cfg) -> Int {
+    let built = Cfg { value: 1, limit: 2 }
+    let holder = Hold { child: config.clone_self() }
+    let command = Cmd.Retry(1)
+    return holder.child.value + built.value + command.unwrap_or(0)
+}
+"#,
+    );
+    let core_path = temp.write(
+        "workspace/packages/core/src/lib.ql",
+        r#"
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+
+pub struct Holder {
+    child: Config,
+}
+
+impl Command {
+    pub fn unwrap_or(self, fallback: Int) -> Int {
+        match self {
+            Command.Retry(value) => value,
+        }
+    }
+}
+
+impl Config {
+    pub fn clone_self(self) -> Config {
+        return self
+    }
+}
+
+extend Config {
+    pub fn extra(self) -> Int {
+        return self.limit
+    }
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+
+pub struct Holder {
+    child: Config,
+}
+
+impl Command {
+    pub fn unwrap_or(self, fallback: Int) -> Int
+}
+
+impl Config {
+    pub fn clone_self(self) -> Config
+}
+"#,
+    );
+
+    let app_source = fs::read_to_string(&app_path).expect("app source should read");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let core_source = fs::read_to_string(&core_path).expect("core source should read");
+    let core_uri = Url::from_file_path(&core_path).expect("core path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, app_uri.clone(), app_source.clone()).await;
+
+    for (needle, occurrence, expected_markers) in [
+        ("built", 2usize, &["impl Config", "extend Config"][..]),
+        ("Retry", 1usize, &["impl Command"][..]),
+        ("child", 2usize, &["impl Config", "extend Config"][..]),
+    ] {
+        let implementation = goto_implementation_via_request(
+            &mut service,
+            app_uri.clone(),
+            offset_to_position(&app_source, nth_offset(&app_source, needle, occurrence)),
+        )
+        .await
+        .unwrap_or_else(|| panic!("workspace dependency implementation should exist for {needle}"));
+        let locations = match implementation {
+            GotoImplementationResponse::Scalar(location) => vec![location],
+            GotoImplementationResponse::Array(locations) => locations,
+            GotoImplementationResponse::Link(_) => {
+                panic!("workspace dependency implementation should resolve to locations")
+            }
+        };
+        assert_eq!(
+            locations.len(),
+            expected_markers.len(),
+            "workspace dependency implementation should return all source impl blocks for {needle}",
+        );
+        assert!(
+            locations.iter().all(|location| location.uri == core_uri),
+            "workspace dependency implementation should stay in the core source for {needle}",
+        );
+        for marker in expected_markers {
+            assert!(
+                locations.iter().any(|location| {
+                    location.range.start
+                        == offset_to_position(&core_source, nth_offset(&core_source, marker, 1))
+                }),
+                "workspace dependency implementation should include {marker} for {needle}",
+            );
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_uses_open_local_dependency_member_types() {
     let temp = TempDir::new("ql-lsp-implementation-request-open-member-types");
     let app_path = temp.write(
