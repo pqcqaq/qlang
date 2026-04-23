@@ -20611,23 +20611,25 @@ pub fn main() -> Int {
         assert_eq!(field_items[0].detail.as_deref(), Some("field value: Int"));
     }
 
-    #[test]
-    fn same_named_local_dependency_broken_open_type_implementation_prefers_matching_dependency_source()
-     {
-        let temp =
-            TempDir::new("ql-lsp-same-named-local-dependency-broken-open-type-implementation");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
-            r#"
-package demo.app
+    struct SameNamedLocalDependencyBrokenOpenImplementationFixture {
+        _temp: TempDir,
+        app_source: String,
+        app_uri: Url,
+        package: ql_analysis::PackageAnalysis,
+        task_uri: Url,
+        alpha_source_path: PathBuf,
+    }
 
-use demo.shared.alpha.Config as Cfg
-
-pub fn main(config: Cfg) -> Int {
-    return 0
-}
-"#,
-        );
+    fn setup_same_named_local_dependency_broken_open_implementation_fixture(
+        prefix: &str,
+        app_source: &str,
+        alpha_source: &str,
+        beta_source: &str,
+        alpha_interface: &str,
+        beta_interface: &str,
+    ) -> SameNamedLocalDependencyBrokenOpenImplementationFixture {
+        let temp = TempDir::new(prefix);
+        let app_path = temp.write("workspace/packages/app/src/main.ql", app_source);
         let task_path = temp.write(
             "workspace/packages/app/src/task.ql",
             r#"
@@ -20638,26 +20640,8 @@ pub fn task() -> Int {
 }
 "#,
         );
-        let alpha_source_path = temp.write(
-            "workspace/vendor/alpha/src/lib.ql",
-            r#"
-package demo.shared.alpha
-
-pub struct Config {
-    value: Int,
-}
-"#,
-        );
-        temp.write(
-            "workspace/vendor/beta/src/lib.ql",
-            r#"
-package demo.shared.beta
-
-pub struct Config {
-    value: Bool,
-}
-"#,
-        );
+        let alpha_source_path = temp.write("workspace/vendor/alpha/src/lib.ql", alpha_source);
+        temp.write("workspace/vendor/beta/src/lib.ql", beta_source);
         temp.write(
             "workspace/qlang.toml",
             r#"
@@ -20690,8 +20674,53 @@ name = "core"
 name = "core"
 "#,
         );
-        temp.write(
-            "workspace/vendor/alpha/core.qi",
+        temp.write("workspace/vendor/alpha/core.qi", alpha_interface);
+        temp.write("workspace/vendor/beta/core.qi", beta_interface);
+
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+
+        SameNamedLocalDependencyBrokenOpenImplementationFixture {
+            _temp: temp,
+            app_source,
+            app_uri,
+            package,
+            task_uri,
+            alpha_source_path,
+        }
+    }
+
+    #[test]
+    fn same_named_local_dependency_broken_open_type_implementation_prefers_matching_dependency_source()
+     {
+        let fixture = setup_same_named_local_dependency_broken_open_implementation_fixture(
+            "ql-lsp-same-named-local-dependency-broken-open-type-implementation",
+            r#"
+package demo.app
+
+use demo.shared.alpha.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    return 0
+}
+"#,
+            r#"
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+"#,
+            r#"
+package demo.shared.beta
+
+pub struct Config {
+    value: Bool,
+}
+"#,
             r#"
 // qlang interface v1
 // package: core
@@ -20703,9 +20732,6 @@ pub struct Config {
     value: Int,
 }
 "#,
-        );
-        temp.write(
-            "workspace/vendor/beta/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -20718,7 +20744,6 @@ pub struct Config {
 }
 "#,
         );
-
         let open_task_source = r#"
 package demo.app
 
@@ -20741,27 +20766,26 @@ pub fn broken() -> Int {
     return Cfg {
 "#
         .to_owned();
-
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        let analysis = analyze_source(&source).expect("app source should analyze");
-        let package = package_analysis_for_path(&app_path).expect("package analysis should succeed");
-        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+        let source = &fixture.app_source;
+        let analysis = analyze_source(source).expect("app source should analyze");
+        let package = &fixture.package;
+        let task_uri = &fixture.task_uri;
 
         assert!(analyze_source(&open_task_source).is_err());
 
         let implementation = workspace_source_implementation_for_dependency_with_open_docs(
-            &source,
+            source,
             Some(&analysis),
-            &package,
+            package,
             &file_open_documents(vec![(task_uri.clone(), open_task_source.clone())]),
-            offset_to_position(&source, nth_offset(&source, "Cfg", 2)),
+            offset_to_position(source, nth_offset(source, "Cfg", 2)),
         )
         .expect("broken open same-named dependency type implementation should exist");
 
         let GotoDefinitionResponse::Scalar(location) = implementation else {
             panic!("matching broken open dependency implementation should stay scalar")
         };
-        assert_eq!(location.uri, task_uri);
+        assert_eq!(location.uri, *task_uri);
         assert_eq!(
             location.range.start,
             offset_to_position(&open_task_source, nth_offset(&open_task_source, "extend Cfg", 1)),
@@ -20773,7 +20797,8 @@ pub fn broken() -> Int {
                 .expect("implementation URI should convert to file path")
                 .canonicalize()
                 .expect("implementation path should canonicalize"),
-            alpha_source_path
+            fixture
+                .alpha_source_path
                 .canonicalize()
                 .expect("alpha source path should canonicalize"),
             "implementation should come from the broken open consumer, not dependency source",
@@ -20783,11 +20808,8 @@ pub fn broken() -> Int {
     #[test]
     fn same_named_local_dependency_broken_open_trait_method_implementation_prefers_matching_dependency_source(
     ) {
-        let temp = TempDir::new(
+        let fixture = setup_same_named_local_dependency_broken_open_implementation_fixture(
             "qlsp-same-named-local-dependency-broken-open-trait-method-implementation",
-        );
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
             r#"
 package demo.app
 
@@ -20797,19 +20819,6 @@ pub fn main(runner: Runner) -> Int {
     return runner.run()
 }
 "#,
-        );
-        let task_path = temp.write(
-            "workspace/packages/app/src/task.ql",
-            r#"
-package demo.app
-
-pub fn task() -> Int {
-    return 0
-}
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/src/lib.ql",
             r#"
 package demo.shared.alpha
 
@@ -20817,9 +20826,6 @@ pub trait Runner {
     fn run(self) -> Int
 }
 "#,
-        );
-        temp.write(
-            "workspace/vendor/beta/src/lib.ql",
             r#"
 package demo.shared.beta
 
@@ -20827,41 +20833,6 @@ pub trait Runner {
     fn run(self) -> Bool
 }
 "#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[dependencies]
-alpha = { path = "../../vendor/alpha" }
-beta = { path = "../../vendor/beta" }
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/beta/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -20873,9 +20844,6 @@ pub trait Runner {
     fn run(self) -> Int
 }
 "#,
-        );
-        temp.write(
-            "workspace/vendor/beta/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -20888,7 +20856,6 @@ pub trait Runner {
 }
 "#,
         );
-
         let open_task_source = r#"
 package demo.app
 
@@ -20914,29 +20881,28 @@ pub fn broken() -> Int {
     return AlphaWorker {
 "#
         .to_owned();
-
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        let analysis = analyze_source(&source).expect("app source should analyze");
-        let package = package_analysis_for_path(&app_path).expect("package analysis should succeed");
-        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
-        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+        let source = &fixture.app_source;
+        let analysis = analyze_source(source).expect("app source should analyze");
+        let package = &fixture.package;
+        let uri = &fixture.app_uri;
+        let task_uri = &fixture.task_uri;
 
         assert!(analyze_source(&open_task_source).is_err());
 
         let implementation = workspace_source_method_implementation_for_dependency_with_open_docs(
-            &uri,
-            &source,
+            uri,
+            source,
             Some(&analysis),
-            &package,
+            package,
             &file_open_documents(vec![(task_uri.clone(), open_task_source.clone())]),
-            offset_to_position(&source, nth_offset_in_context(&source, "run", "runner.run()", 1)),
+            offset_to_position(source, nth_offset_in_context(source, "run", "runner.run()", 1)),
         )
         .expect("broken open same-named trait method implementation should exist");
 
         let GotoDefinitionResponse::Scalar(location) = implementation else {
             panic!("matching broken open trait method implementation should stay scalar")
         };
-        assert_eq!(location.uri, task_uri);
+        assert_eq!(location.uri, *task_uri);
         assert_eq!(
             location.range.start,
             offset_to_position(
