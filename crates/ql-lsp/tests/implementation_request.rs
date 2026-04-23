@@ -7,11 +7,11 @@ use ql_lsp::Backend;
 use serde_json::json;
 use tower::{Service, ServiceExt};
 use tower_lsp::jsonrpc::{Id, Request};
+use tower_lsp::lsp_types::request::{GotoImplementationParams, GotoImplementationResponse};
 use tower_lsp::lsp_types::{
     DidOpenTextDocumentParams, InitializeParams, Location, Position, TextDocumentIdentifier,
     TextDocumentItem, TextDocumentPositionParams, Url,
 };
-use tower_lsp::lsp_types::request::{GotoImplementationParams, GotoImplementationResponse};
 use tower_lsp::{LanguageServer, LspService};
 
 struct TempDir {
@@ -130,6 +130,120 @@ async fn goto_implementation_via_request(
         .cloned()
         .expect("gotoImplementation should succeed");
     serde_json::from_value(result).expect("gotoImplementation result should deserialize")
+}
+
+struct WorkspaceRootRunnerFixture {
+    _temp: TempDir,
+    core_source: String,
+    core_uri: Url,
+    app_source: String,
+    app_uri: Url,
+    tools_source: String,
+    tools_uri: Url,
+}
+
+fn setup_workspace_root_runner_fixture(prefix: &str) -> WorkspaceRootRunnerFixture {
+    let temp = TempDir::new(prefix);
+    let core_path = temp.write(
+        "workspace/packages/core/src/lib.ql",
+        r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+    );
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+"#,
+    );
+    let tools_path = temp.write(
+        "workspace/packages/tools/src/lib.ql",
+        r#"
+package demo.tools
+
+use demo.core.Runner
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn run(self) -> Int {
+        return 2
+    }
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core", "packages/tools"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/tools/qlang.toml",
+        r#"
+[package]
+name = "tools"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+"#,
+    );
+
+    WorkspaceRootRunnerFixture {
+        _temp: temp,
+        core_source: fs::read_to_string(&core_path).expect("core source should read"),
+        core_uri: Url::from_file_path(&core_path).expect("core path should convert to URI"),
+        app_source: fs::read_to_string(&app_path).expect("app source should read"),
+        app_uri: Url::from_file_path(&app_path).expect("app path should convert to URI"),
+        tools_source: fs::read_to_string(&tools_path).expect("tools source should read"),
+        tools_uri: Url::from_file_path(&tools_path).expect("tools path should convert to URI"),
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -459,16 +573,18 @@ pub fn broken() -> Int {
     assert_eq!(uri, task_uri);
     assert_eq!(
         range.start,
-        offset_to_position(&open_task_source, nth_offset(&open_task_source, "extend Cfg", 1)),
+        offset_to_position(
+            &open_task_source,
+            nth_offset(&open_task_source, "extend Cfg", 1)
+        ),
     );
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn implementation_request_prefers_matching_same_named_dependency_member_types_in_broken_source(
 ) {
-    let temp = TempDir::new(
-        "ql-lsp-implementation-request-broken-same-named-dependency-member-types",
-    );
+    let temp =
+        TempDir::new("ql-lsp-implementation-request-broken-same-named-dependency-member-types");
     let app_path = temp.write(
         "workspace/packages/app/src/main.ql",
         r#"
@@ -920,6 +1036,123 @@ extend Config {
                 location.range.start == offset_to_position(&source, nth_offset(&source, marker, 1))
             }),
             "same-file type implementations should include {marker}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_returns_array_for_workspace_root_trait_surface() {
+    let fixture =
+        setup_workspace_root_runner_fixture("ql-lsp-implementation-request-workspace-root-trait");
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        fixture.core_source.clone(),
+    )
+    .await;
+    did_open_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        fixture.app_source.clone(),
+    )
+    .await;
+    did_open_via_request(
+        &mut service,
+        fixture.tools_uri.clone(),
+        fixture.tools_source.clone(),
+    )
+    .await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        offset_to_position(
+            &fixture.core_source,
+            nth_offset(&fixture.core_source, "Runner", 1),
+        ),
+    )
+    .await
+    .expect("workspace root trait implementation should exist");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("workspace root trait surface should resolve to many implementation blocks")
+    };
+    assert_eq!(locations.len(), 2);
+    for (uri, source, marker) in [
+        (
+            fixture.app_uri.clone(),
+            fixture.app_source.as_str(),
+            "impl Runner for AppWorker",
+        ),
+        (
+            fixture.tools_uri.clone(),
+            fixture.tools_source.as_str(),
+            "impl Runner for ToolWorker",
+        ),
+    ] {
+        assert!(
+            locations.iter().any(|location| {
+                location.uri == uri
+                    && location.range.start
+                        == offset_to_position(source, nth_offset(source, marker, 1))
+            }),
+            "workspace root trait implementations should include {marker}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_returns_array_for_workspace_root_trait_method_definition() {
+    let fixture = setup_workspace_root_runner_fixture(
+        "ql-lsp-implementation-request-workspace-root-trait-method-definition",
+    );
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        fixture.core_source.clone(),
+    )
+    .await;
+    did_open_via_request(
+        &mut service,
+        fixture.app_uri.clone(),
+        fixture.app_source.clone(),
+    )
+    .await;
+    did_open_via_request(
+        &mut service,
+        fixture.tools_uri.clone(),
+        fixture.tools_source.clone(),
+    )
+    .await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        fixture.core_uri.clone(),
+        offset_to_position(
+            &fixture.core_source,
+            nth_offset(&fixture.core_source, "run", 1),
+        ),
+    )
+    .await
+    .expect("workspace root trait method implementation should exist");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("workspace root trait method definition should resolve to many implementations")
+    };
+    assert_eq!(locations.len(), 2);
+    for (uri, source) in [
+        (fixture.app_uri.clone(), fixture.app_source.as_str()),
+        (fixture.tools_uri.clone(), fixture.tools_source.as_str()),
+    ] {
+        assert!(
+            locations.iter().any(|location| {
+                location.uri == uri
+                    && location.range.start
+                        == offset_to_position(source, nth_offset(source, "run", 1))
+            }),
+            "workspace root trait method implementations should include {uri}",
         );
     }
 }
