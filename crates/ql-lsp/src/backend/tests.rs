@@ -23387,6 +23387,177 @@ pub fn build() -> Counter {
     }
 
     #[test]
+    fn workspace_dependency_member_type_implementation_prefers_open_local_dependency_members() {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-member-implementation");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+
+pub fn main() -> Int {
+    let current = build()
+    return current.extra.id + current.pulse().id
+}
+"#,
+        );
+        let alpha_source_path = temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int
+}
+
+pub fn build() -> Counter
+"#,
+        );
+
+        let open_alpha_source = r#"
+package demo.shared.alpha
+
+pub struct Extra {
+    id: Int,
+}
+
+impl Extra {
+    pub fn read(self) -> Int {
+        return self.id
+    }
+}
+
+extend Extra {
+    pub fn bonus(self) -> Int {
+        return self.id + 1
+    }
+}
+
+pub struct Counter {
+    value: Int,
+    extra: Extra,
+}
+
+impl Counter {
+    pub fn pulse(self) -> Extra {
+        return self.extra
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1, extra: Extra { id: 2 } }
+}
+"#;
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let alpha_uri =
+            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
+        let open_docs =
+            file_open_documents(vec![(alpha_uri.clone(), open_alpha_source.to_owned())]);
+
+        for (needle, occurrence) in [("extra", 1usize), ("pulse", 1usize)] {
+            let position = offset_to_position(&source, nth_offset(&source, needle, occurrence) + 1);
+            assert_eq!(
+                workspace_source_implementation_for_dependency_with_open_docs(
+                    &source,
+                    Some(&analysis),
+                    &package,
+                    &file_open_documents(vec![]),
+                    position,
+                ),
+                None,
+                "disk-only implementation should miss unsaved dependency member type {needle}",
+            );
+
+            let implementation = workspace_source_implementation_for_dependency_with_open_docs(
+                &source,
+                Some(&analysis),
+                &package,
+                &open_docs,
+                position,
+            )
+            .expect("dependency member type implementation should use open dependency source");
+            let GotoImplementationResponse::Array(locations) = implementation else {
+                panic!(
+                    "dependency member type implementation should resolve to dependency impl blocks"
+                )
+            };
+            assert_eq!(locations.len(), 2);
+            assert!(
+                locations.iter().all(|location| location.uri == alpha_uri),
+                "implementation should stay in the open dependency source",
+            );
+            for marker in ["impl Extra", "extend Extra"] {
+                assert!(
+                    locations.iter().any(|location| {
+                        location.range.start
+                            == offset_to_position(
+                                open_alpha_source,
+                                nth_offset(open_alpha_source, marker, 1),
+                            )
+                    }),
+                    "dependency member type implementation should include {marker} for {needle}",
+                );
+            }
+        }
+    }
+
+    #[test]
     fn workspace_dependency_member_semantic_tokens_prefer_open_local_dependency_members() {
         let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-member-semantic-tokens");
         let app_path = temp.write(
@@ -23919,6 +24090,178 @@ pub fn build() -> Counter {
             highlights[0].range.start,
             offset_to_position(&source, nth_offset(&source, "ping", 1)),
         );
+    }
+
+    #[test]
+    fn workspace_dependency_member_type_implementation_in_broken_source_prefers_open_local_dependency_members(
+    ) {
+        let temp =
+            TempDir::new("ql-lsp-workspace-dependency-open-doc-member-implementation-broken");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+
+pub fn main() -> Int {
+    let current = build()
+    return current.extra.id + current.pulse().id
+"#,
+        );
+        let alpha_source_path = temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int
+}
+
+pub fn build() -> Counter
+"#,
+        );
+
+        let open_alpha_source = r#"
+package demo.shared.alpha
+
+pub struct Extra {
+    id: Int,
+}
+
+impl Extra {
+    pub fn read(self) -> Int {
+        return self.id
+    }
+}
+
+extend Extra {
+    pub fn bonus(self) -> Int {
+        return self.id + 1
+    }
+}
+
+pub struct Counter {
+    value: Int,
+    extra: Extra,
+}
+
+impl Counter {
+    pub fn pulse(self) -> Extra {
+        return self.extra
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1, extra: Extra { id: 2 } }
+}
+"#;
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let alpha_uri =
+            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
+        let open_docs =
+            file_open_documents(vec![(alpha_uri.clone(), open_alpha_source.to_owned())]);
+
+        for (needle, occurrence) in [("extra", 1usize), ("pulse", 1usize)] {
+            let position = offset_to_position(&source, nth_offset(&source, needle, occurrence) + 1);
+            assert_eq!(
+                workspace_source_implementation_for_dependency_with_open_docs(
+                    &source,
+                    None,
+                    &package,
+                    &file_open_documents(vec![]),
+                    position,
+                ),
+                None,
+                "disk-only broken-source implementation should miss unsaved dependency member type {needle}",
+            );
+
+            let implementation = workspace_source_implementation_for_dependency_with_open_docs(
+                &source,
+                None,
+                &package,
+                &open_docs,
+                position,
+            )
+            .expect("broken-source dependency member type implementation should use open source");
+            let GotoImplementationResponse::Array(locations) = implementation else {
+                panic!(
+                    "broken-source dependency member type implementation should resolve to dependency impl blocks"
+                )
+            };
+            assert_eq!(locations.len(), 2);
+            assert!(
+                locations.iter().all(|location| location.uri == alpha_uri),
+                "implementation should stay in the open dependency source",
+            );
+            for marker in ["impl Extra", "extend Extra"] {
+                assert!(
+                    locations.iter().any(|location| {
+                        location.range.start
+                            == offset_to_position(
+                                open_alpha_source,
+                                nth_offset(open_alpha_source, marker, 1),
+                            )
+                    }),
+                    "broken-source dependency member type implementation should include {marker} for {needle}",
+                );
+            }
+        }
     }
 
     #[test]
