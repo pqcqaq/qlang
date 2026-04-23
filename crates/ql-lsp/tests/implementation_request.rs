@@ -104,7 +104,7 @@ async fn goto_implementation_via_request(
     service: &mut LspService<Backend>,
     uri: Url,
     position: Position,
-) -> GotoImplementationResponse {
+) -> Option<GotoImplementationResponse> {
     let request = Request::build("textDocument/implementation")
         .params(json!(GotoImplementationParams {
             text_document_position_params: TextDocumentPositionParams {
@@ -273,7 +273,8 @@ pub fn build() -> Counter {
         app_uri,
         offset_to_position(&source, nth_offset(&source, "extra", 1) + 1),
     )
-    .await;
+    .await
+    .expect("dependency field type implementation should exist");
     let GotoImplementationResponse::Array(locations) = implementation else {
         panic!(
             "dependency field type implementation should resolve to impl block locations: {implementation:?}"
@@ -450,7 +451,8 @@ pub fn broken() -> Int {
         app_uri,
         offset_to_position(&source, nth_offset(&source, "Cfg", 2)),
     )
-    .await;
+    .await
+    .expect("matching broken open dependency implementation should exist");
     let GotoImplementationResponse::Scalar(Location { uri, range }) = implementation else {
         panic!("matching broken open dependency implementation should stay scalar")
     };
@@ -656,7 +658,8 @@ pub fn build() -> Counter {
         app_uri,
         offset_to_position(&source, nth_offset(&source, "extra", 1) + 1),
     )
-    .await;
+    .await
+    .expect("broken-source dependency member type implementation should exist");
     let GotoImplementationResponse::Array(locations) = implementation else {
         panic!(
             "broken-source dependency member type implementation should resolve to impl block locations: {implementation:?}"
@@ -679,4 +682,87 @@ pub fn build() -> Counter {
             "implementation should include alpha {marker}",
         );
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_returns_scalar_for_same_file_method_call() {
+    let temp = TempDir::new("ql-lsp-implementation-request-same-file-method-call");
+    let source_path = temp.write(
+        "sample.ql",
+        r#"
+struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    fn read(self, delta: Int) -> Int {
+        return self.value + delta
+    }
+}
+
+fn main() -> Int {
+    let counter = Counter { value: 1 }
+    return counter.read(1)
+}
+"#,
+    );
+    let source = fs::read_to_string(&source_path).expect("same-file source should read");
+    let uri = Url::from_file_path(&source_path).expect("source path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, uri.clone(), source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        uri.clone(),
+        offset_to_position(&source, nth_offset(&source, "read", 2)),
+    )
+    .await
+    .expect("same-file method call implementation should exist");
+    let GotoImplementationResponse::Scalar(location) = implementation else {
+        panic!("same-file concrete method call should resolve to one implementation")
+    };
+    assert_eq!(location.uri, uri);
+    assert_eq!(
+        location.range.start,
+        offset_to_position(&source, nth_offset(&source, "read", 1)),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_returns_none_for_same_file_method_definition_site() {
+    let temp = TempDir::new("ql-lsp-implementation-request-same-file-declaration-site");
+    let source_path = temp.write(
+        "sample.ql",
+        r#"
+struct Config {
+    value: Int,
+}
+
+impl Config {
+    fn get(self) -> Int {
+        return self.value
+    }
+}
+
+fn read(config: Config) -> Int {
+    return config.get()
+}
+"#,
+    );
+    let source = fs::read_to_string(&source_path).expect("same-file source should read");
+    let uri = Url::from_file_path(&source_path).expect("source path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, uri.clone(), source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        uri,
+        offset_to_position(&source, nth_offset(&source, "get", 1)),
+    )
+    .await;
+    assert_eq!(implementation, None);
 }
