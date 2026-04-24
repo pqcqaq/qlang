@@ -19054,9 +19054,8 @@ impl Config {
 
     #[test]
     fn workspace_dependency_member_prepare_rename_prefers_open_local_dependency_source() {
-        let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-member-prepare-rename");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_workspace_dependency_open_local_member_fixture(
+            "ql-lsp-workspace-dependency-open-doc-member-prepare-rename",
             r#"
 package demo.app
 
@@ -19068,119 +19067,30 @@ pub fn main() -> Int {
 }
 "#,
         );
-        let alpha_source_path = temp.write(
-            "workspace/vendor/alpha/src/lib.ql",
-            r#"
-package demo.shared.alpha
-
-pub struct Counter {
-    value: Int,
-}
-
-impl Counter {
-    pub fn ping(self) -> Int {
-        return self.value
-    }
-}
-
-pub fn build() -> Counter {
-    return Counter { value: 1 }
-}
-"#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[dependencies]
-alpha = { path = "../../vendor/alpha" }
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/core.qi",
-            r#"
-// qlang interface v1
-// package: core
-
-// source: src/lib.ql
-package demo.shared.alpha
-
-pub struct Counter {
-    value: Int,
-}
-
-impl Counter {
-    pub fn ping(self) -> Int
-}
-
-pub fn build() -> Counter
-"#,
-        );
-
-        let open_alpha_source = r#"
-package demo.shared.alpha
-
-pub struct Extra {
-    id: Int,
-}
-
-pub struct Counter {
-    value: Int,
-    extra: Extra,
-}
-
-impl Counter {
-    pub fn pulse(self) -> Extra {
-        return self.extra
-    }
-}
-
-pub fn build() -> Counter {
-    return Counter { value: 1, extra: Extra { id: 2 } }
-}
-"#;
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        let analysis = analyze_source(&source).expect("app source should analyze");
-        let package =
-            package_analysis_for_path(&app_path).expect("package analysis should succeed");
-        let alpha_uri =
-            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
-        let open_docs = file_open_documents(vec![(alpha_uri, open_alpha_source.to_owned())]);
+        let open_alpha_source = WORKSPACE_DEPENDENCY_OPEN_ALPHA_MEMBER_TYPE_SOURCE;
+        let source = fixture.app_source.as_str();
+        let analysis = analyze_source(source).expect("app source should analyze");
+        let package = &fixture.package;
+        let open_docs = workspace_dependency_open_docs(&fixture.alpha_uri, open_alpha_source);
 
         for (needle, occurrence, kind) in [
             ("extra", 1usize, AnalysisSymbolKind::Field),
             ("pulse", 1usize, AnalysisSymbolKind::Method),
         ] {
-            let offset = nth_offset(&source, needle, occurrence);
+            let offset = nth_offset(source, needle, occurrence);
             assert!(
                 package
-                    .dependency_prepare_rename_in_source_at(&source, offset + 1)
+                    .dependency_prepare_rename_in_source_at(source, offset + 1)
                     .is_none(),
                 "disk-only prepare rename should miss unsaved dependency member {needle}",
             );
 
             let rename_target = workspace_source_dependency_prepare_rename_with_open_docs(
-                &source,
+                source,
                 Some(&analysis),
-                &package,
+                package,
                 &open_docs,
-                offset_to_position(&source, offset + 1),
+                offset_to_position(source, offset + 1),
             )
             .expect("open-doc prepare rename should resolve unsaved dependency member");
             assert_eq!(rename_target.kind, kind);
@@ -19191,9 +19101,8 @@ pub fn build() -> Counter {
 
     #[test]
     fn workspace_dependency_member_rename_prefers_open_local_dependency_source() {
-        let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-member-rename");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_workspace_dependency_open_local_member_fixture_with_task(
+            "ql-lsp-workspace-dependency-open-doc-member-rename",
             r#"
 package demo.app
 
@@ -19203,10 +19112,8 @@ pub fn main() -> Int {
     return build().pulse()
 }
 "#,
-        );
-        let task_path = temp.write(
-            "workspace/packages/app/src/task.ql",
-            r#"
+            Some(
+                r#"
 package demo.app
 
 use demo.shared.alpha.build as build
@@ -19216,111 +19123,32 @@ pub fn task() -> Int {
     return build().pulse() + forward(build())
 }
 "#,
-        );
-        let alpha_source_path = temp.write(
-            "workspace/vendor/alpha/src/lib.ql",
-            r#"
-package demo.shared.alpha
-
-pub struct Counter {
-    value: Int,
-}
-
-impl Counter {
-    pub fn ping(self) -> Int {
-        return self.value
-    }
-}
-
-pub fn build() -> Counter {
-    return Counter { value: 1 }
-}
-"#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[dependencies]
-alpha = { path = "../../vendor/alpha" }
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/core.qi",
-            r#"
-// qlang interface v1
-// package: core
-
-// source: src/lib.ql
-package demo.shared.alpha
-
-pub struct Counter {
-    value: Int,
-}
-
-impl Counter {
-    pub fn ping(self) -> Int
-}
-
-pub fn build() -> Counter
-"#,
+            ),
         );
 
-        let open_alpha_source = r#"
-package demo.shared.alpha
-
-pub struct Counter {
-    value: Int,
-}
-
-impl Counter {
-    pub fn pulse(self) -> Int {
-        return self.value
-    }
-}
-
-pub fn forward(counter: Counter) -> Int {
-    return counter.pulse()
-}
-
-pub fn build() -> Counter {
-    return Counter { value: 1 }
-}
-"#;
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        let analysis = analyze_source(&source).expect("app source should analyze");
-        let package =
-            package_analysis_for_path(&app_path).expect("package analysis should succeed");
-        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
-        let task_source = fs::read_to_string(&task_path).expect("task source should read");
-        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
-        let alpha_uri =
-            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
-        let pulse_position = offset_to_position(&source, nth_offset(&source, "pulse", 1) + 1);
+        let open_alpha_source = WORKSPACE_DEPENDENCY_OPEN_ALPHA_RENAME_SOURCE;
+        let source = fixture.app_source.as_str();
+        let analysis = analyze_source(source).expect("app source should analyze");
+        let package = &fixture.package;
+        let uri = &fixture.app_uri;
+        let task_source = fixture
+            .task_source
+            .as_deref()
+            .expect("fixture should include task source");
+        let task_uri = fixture
+            .task_uri
+            .as_ref()
+            .expect("fixture should include task uri");
+        let alpha_uri = &fixture.alpha_uri;
+        let pulse_position = offset_to_position(source, nth_offset(source, "pulse", 1) + 1);
 
         let empty_docs = file_open_documents(vec![]);
         assert!(
             rename_for_workspace_source_dependency_with_open_docs(
-                &uri,
-                &source,
+                uri,
+                source,
                 Some(&analysis),
-                &package,
+                package,
                 &empty_docs,
                 pulse_position,
                 "probe",
@@ -19331,15 +19159,15 @@ pub fn build() -> Counter {
         );
 
         let open_docs = file_open_documents(vec![
-            (uri.clone(), source.clone()),
-            (task_uri.clone(), task_source.clone()),
+            (uri.clone(), source.to_owned()),
+            (task_uri.clone(), task_source.to_owned()),
             (alpha_uri.clone(), open_alpha_source.to_owned()),
         ]);
         let edit = rename_for_workspace_source_dependency_with_open_docs(
-            &uri,
-            &source,
+            uri,
+            source,
             Some(&analysis),
-            &package,
+            package,
             &open_docs,
             pulse_position,
             "probe",
@@ -19351,33 +19179,33 @@ pub fn build() -> Counter {
             edit,
             vec![
                 (
-                    uri,
+                    uri.clone(),
                     vec![TextEdit::new(
                         span_to_range(
-                            &source,
+                            source,
                             Span::new(
-                                nth_offset(&source, "pulse", 1),
-                                nth_offset(&source, "pulse", 1) + "pulse".len(),
+                                nth_offset(source, "pulse", 1),
+                                nth_offset(source, "pulse", 1) + "pulse".len(),
                             ),
                         ),
                         "probe".to_owned(),
                     )],
                 ),
                 (
-                    task_uri,
+                    task_uri.clone(),
                     vec![TextEdit::new(
                         span_to_range(
-                            &task_source,
+                            task_source,
                             Span::new(
-                                nth_offset(&task_source, "pulse", 1),
-                                nth_offset(&task_source, "pulse", 1) + "pulse".len(),
+                                nth_offset(task_source, "pulse", 1),
+                                nth_offset(task_source, "pulse", 1) + "pulse".len(),
                             ),
                         ),
                         "probe".to_owned(),
                     )],
                 ),
                 (
-                    alpha_uri,
+                    alpha_uri.clone(),
                     vec![
                         TextEdit::new(
                             span_to_range(
@@ -22420,14 +22248,26 @@ pub fn main() -> Int {
         app_uri: Url,
         package: ql_analysis::PackageAnalysis,
         alpha_uri: Url,
+        task_source: Option<String>,
+        task_uri: Option<Url>,
     }
 
     fn setup_workspace_dependency_open_local_member_fixture(
         prefix: &str,
         app_source: &str,
     ) -> WorkspaceDependencyOpenLocalMemberFixture {
+        setup_workspace_dependency_open_local_member_fixture_with_task(prefix, app_source, None)
+    }
+
+    fn setup_workspace_dependency_open_local_member_fixture_with_task(
+        prefix: &str,
+        app_source: &str,
+        task_source: Option<&str>,
+    ) -> WorkspaceDependencyOpenLocalMemberFixture {
         let temp = TempDir::new(prefix);
         let app_path = temp.write("workspace/packages/app/src/main.ql", app_source);
+        let task_path = task_source
+            .map(|source| temp.write("workspace/packages/app/src/task.ql", source));
         let alpha_source_path = temp.write(
             "workspace/vendor/alpha/src/lib.ql",
             r#"
@@ -22499,6 +22339,14 @@ pub fn build() -> Counter
             package_analysis_for_path(&app_path).expect("package analysis should succeed");
         let alpha_uri =
             Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
+        let (task_source, task_uri) = task_path
+            .map(|path| {
+                (
+                    fs::read_to_string(&path).expect("task source should read"),
+                    Url::from_file_path(&path).expect("task path should convert to URI"),
+                )
+            })
+            .map_or((None, None), |(source, uri)| (Some(source), Some(uri)));
 
         WorkspaceDependencyOpenLocalMemberFixture {
             _temp: temp,
@@ -22506,6 +22354,8 @@ pub fn build() -> Counter
             app_uri,
             package,
             alpha_uri,
+            task_source,
+            task_uri,
         }
     }
 
@@ -23050,6 +22900,28 @@ impl Counter {
     pub fn pulse(self) -> Int {
         return self.value
     }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#;
+
+    const WORKSPACE_DEPENDENCY_OPEN_ALPHA_RENAME_SOURCE: &str = r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn pulse(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn forward(counter: Counter) -> Int {
+    return counter.pulse()
 }
 
 pub fn build() -> Counter {
@@ -24120,7 +23992,7 @@ pub fn measure(value: Int) -> Int {
         assert_eq!(
             workspace_import_document_highlights(
                 uri,
-                &source,
+                source,
                 &analysis,
                 package,
                 offset_to_position(&source, nth_offset(&source, "run", 2)),
