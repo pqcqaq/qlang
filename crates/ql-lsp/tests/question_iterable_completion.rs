@@ -8,7 +8,11 @@ use ql_lsp::bridge::{
     completion_for_dependency_member_fields, completion_for_dependency_methods,
     completion_for_package_analysis,
 };
-use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, CompletionResponse, Position};
+use tower_lsp::lsp_types::{CompletionResponse, Position};
+
+mod common;
+
+use common::completion::{assert_member_completion_item, MemberKind};
 
 struct TempDir {
     path: PathBuf,
@@ -81,49 +85,6 @@ impl RootKind {
     }
 }
 
-#[derive(Clone, Copy)]
-enum MemberKind {
-    Field,
-    Method,
-}
-
-impl MemberKind {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Field => "field",
-            Self::Method => "method",
-        }
-    }
-
-    fn completion_suffix(self) -> &'static str {
-        match self {
-            Self::Field => ".va",
-            Self::Method => ".ge",
-        }
-    }
-
-    fn expected_label(self) -> &'static str {
-        match self {
-            Self::Field => "value",
-            Self::Method => "get",
-        }
-    }
-
-    fn expected_kind(self) -> CompletionItemKind {
-        match self {
-            Self::Field => CompletionItemKind::FIELD,
-            Self::Method => CompletionItemKind::FUNCTION,
-        }
-    }
-
-    fn expected_detail(self) -> &'static str {
-        match self {
-            Self::Field => "field value: Int",
-            Self::Method => "fn get(self) -> Int",
-        }
-    }
-}
-
 fn nth_offset(source: &str, needle: &str, occurrence: usize) -> usize {
     source
         .match_indices(needle)
@@ -188,12 +149,6 @@ pub fn read() -> Int {{
     )
 }
 
-fn assert_completion_item(member: MemberKind, item: CompletionItem) {
-    assert_eq!(item.label, member.expected_label());
-    assert_eq!(item.kind, Some(member.expected_kind()));
-    assert_eq!(item.detail.as_deref(), Some(member.expected_detail()));
-}
-
 fn run_completion_case(root: RootKind, member: MemberKind, broken: bool) {
     let temp = TempDir::new(&format!(
         "ql-lsp-question-iterable-{}-{}-completion{}",
@@ -242,7 +197,7 @@ packages = ["../dep"]
             panic!("question iterable member completion should exist without semantic analysis");
         };
         assert_eq!(items.len(), 1);
-        assert_completion_item(member, items[0].clone());
+        assert_member_completion_item(member, &items[0]);
     } else {
         let package = analyze_package(&app_root).expect("package analysis should succeed");
         let analysis =
@@ -253,7 +208,7 @@ packages = ["../dep"]
             panic!("question iterable member completion should exist");
         };
         assert_eq!(items.len(), 1);
-        assert_completion_item(member, items[0].clone());
+        assert_member_completion_item(member, &items[0]);
     }
 }
 
@@ -263,8 +218,8 @@ fn dependency_field_completion_works_on_question_function_iterable_receivers() {
 }
 
 #[test]
-fn dependency_field_completion_works_on_question_function_iterable_receivers_without_semantic_analysis()
- {
+fn dependency_field_completion_works_on_question_function_iterable_receivers_without_semantic_analysis(
+) {
     run_completion_case(RootKind::Function, MemberKind::Field, true);
 }
 
@@ -274,8 +229,8 @@ fn dependency_method_completion_works_on_question_function_iterable_receivers() 
 }
 
 #[test]
-fn dependency_method_completion_works_on_question_function_iterable_receivers_without_semantic_analysis()
- {
+fn dependency_method_completion_works_on_question_function_iterable_receivers_without_semantic_analysis(
+) {
     run_completion_case(RootKind::Function, MemberKind::Method, true);
 }
 
@@ -285,8 +240,8 @@ fn dependency_field_completion_works_on_question_static_iterable_receivers() {
 }
 
 #[test]
-fn dependency_field_completion_works_on_question_static_iterable_receivers_without_semantic_analysis()
- {
+fn dependency_field_completion_works_on_question_static_iterable_receivers_without_semantic_analysis(
+) {
     run_completion_case(RootKind::Static, MemberKind::Field, true);
 }
 
@@ -296,7 +251,7 @@ fn dependency_method_completion_works_on_question_static_iterable_receivers() {
 }
 
 #[test]
-fn dependency_method_completion_works_on_question_static_iterable_receivers_without_semantic_analysis()
- {
+fn dependency_method_completion_works_on_question_static_iterable_receivers_without_semantic_analysis(
+) {
     run_completion_case(RootKind::Static, MemberKind::Method, true);
 }
