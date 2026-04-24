@@ -8,7 +8,11 @@ use ql_lsp::bridge::{
     completion_for_dependency_member_fields, completion_for_dependency_methods,
     completion_for_package_analysis,
 };
-use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, CompletionResponse, Position};
+use tower_lsp::lsp_types::{CompletionResponse, Position};
+
+mod common;
+
+use common::completion::{assert_member_completion_item, MemberKind};
 
 struct TempDir {
     path: PathBuf,
@@ -60,30 +64,13 @@ impl CaseKind {
     }
 
     fn completion_suffix(self) -> &'static str {
-        match self {
-            Self::UnsafeTupleField => ".va",
-            Self::UnsafeArrayMethod => ".ge",
-        }
+        self.member_kind().completion_suffix()
     }
 
-    fn expected_label(self) -> &'static str {
+    fn member_kind(self) -> MemberKind {
         match self {
-            Self::UnsafeTupleField => "value",
-            Self::UnsafeArrayMethod => "get",
-        }
-    }
-
-    fn expected_kind(self) -> CompletionItemKind {
-        match self {
-            Self::UnsafeTupleField => CompletionItemKind::FIELD,
-            Self::UnsafeArrayMethod => CompletionItemKind::FUNCTION,
-        }
-    }
-
-    fn expected_detail(self) -> &'static str {
-        match self {
-            Self::UnsafeTupleField => "field value: Int",
-            Self::UnsafeArrayMethod => "fn get(self) -> Int",
+            Self::UnsafeTupleField => MemberKind::Field,
+            Self::UnsafeArrayMethod => MemberKind::Method,
         }
     }
 
@@ -188,16 +175,11 @@ fn offset_to_position(source: &str, offset: usize) -> Position {
     Position::new(line, prefix[line_start..].chars().count() as u32)
 }
 
-fn assert_completion_item(case: CaseKind, item: CompletionItem) {
-    assert_eq!(item.label, case.expected_label());
-    assert_eq!(item.kind, Some(case.expected_kind()));
-    assert_eq!(item.detail.as_deref(), Some(case.expected_detail()));
-}
-
 fn run_completion_case(case: CaseKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-for-loop-unsafe-iterable-{}-completion{}",
+        "ql-lsp-for-loop-unsafe-iterable-{}-{}-completion{}",
         case.label(),
+        case.member_kind().label(),
         if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
@@ -243,7 +225,7 @@ packages = ["../dep"]
             panic!("unsafe iterable receiver completion should exist without semantic analysis");
         };
         assert_eq!(items.len(), 1);
-        assert_completion_item(case, items[0].clone());
+        assert_member_completion_item(case.member_kind(), &items[0]);
     } else {
         let package = analyze_package(&app_root).expect("package analysis should succeed");
         let analysis =
@@ -254,7 +236,7 @@ packages = ["../dep"]
             panic!("unsafe iterable receiver completion should exist");
         };
         assert_eq!(items.len(), 1);
-        assert_completion_item(case, items[0].clone());
+        assert_member_completion_item(case.member_kind(), &items[0]);
     }
 }
 
