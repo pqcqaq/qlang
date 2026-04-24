@@ -22814,14 +22814,7 @@ pub fn build() -> Counter {
             &open_docs,
         )
         .expect("document highlights should use open dependency member source");
-        assert_eq!(highlights.len(), 1);
-        assert_eq!(
-            highlights[0].range.start,
-            offset_to_position(
-                &fixture.app_source,
-                nth_offset(&fixture.app_source, "pulse", 1),
-            ),
-        );
+        assert_workspace_dependency_single_member_highlight(&fixture, "pulse", &highlights);
     }
 
     #[test]
@@ -22889,14 +22882,7 @@ pub fn main() -> Int {
             &open_docs,
         )
         .expect("broken-source document highlights should use open dependency source");
-        assert_eq!(highlights.len(), 1);
-        assert_eq!(
-            highlights[0].range.start,
-            offset_to_position(
-                &fixture.app_source,
-                nth_offset(&fixture.app_source, "ping", 1),
-            ),
-        );
+        assert_workspace_dependency_single_member_highlight(&fixture, "ping", &highlights);
     }
 
     #[test]
@@ -23212,6 +23198,18 @@ pub fn build() -> Counter {
         assert_eq!(items[0].label, "pulse");
         assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
         assert_eq!(items[0].detail.as_deref(), Some("fn pulse(self) -> Int"));
+    }
+
+    fn assert_workspace_dependency_single_member_highlight(
+        fixture: &WorkspaceDependencyOpenLocalMemberFixture,
+        member: &str,
+        highlights: &[tower_lsp::lsp_types::DocumentHighlight],
+    ) {
+        assert_eq!(highlights.len(), 1);
+        assert_eq!(
+            highlights[0].range.start,
+            offset_to_position(&fixture.app_source, nth_offset(&fixture.app_source, member, 1)),
+        );
     }
 
     fn assert_workspace_dependency_member_definition_location(
