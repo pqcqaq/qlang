@@ -69,7 +69,9 @@
         workspace_source_variant_completions, workspace_symbols_for_documents,
         workspace_symbols_for_documents_and_roots,
     };
-    use crate::bridge::{implementation_for_analysis, semantic_tokens_legend, span_to_range};
+    use crate::bridge::{
+        implementation_for_analysis, semantic_tokens_legend, span_to_range, symbol_information,
+    };
     use ql_analysis::{RenameError, SymbolKind as AnalysisSymbolKind, analyze_source};
     use ql_diagnostics::UNRESOLVED_VALUE_CODE;
     use ql_span::Span;
@@ -3574,23 +3576,6 @@ pub fn main() -> Int {
 
     fn assert_workspace_edit(edit: WorkspaceEdit, uri: &Url, expected: Vec<TextEdit>) {
         assert_workspace_edit_changes(edit, vec![(uri.clone(), expected)]);
-    }
-
-    #[allow(deprecated)]
-    fn symbol_information(
-        name: impl Into<String>,
-        kind: SymbolKind,
-        location: Location,
-        container_name: Option<String>,
-    ) -> SymbolInformation {
-        SymbolInformation {
-            name: name.into(),
-            kind,
-            tags: None,
-            deprecated: None,
-            location,
-            container_name,
-        }
     }
 
     fn assert_single_dependency_method_symbol(

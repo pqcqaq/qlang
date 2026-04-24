@@ -59,11 +59,11 @@ use crate::bridge::{
     references_for_dependency_struct_fields, references_for_dependency_values,
     references_for_dependency_variants, references_for_package_analysis, rename_for_analysis,
     rename_for_dependency_imports, semantic_tokens_for_analysis, semantic_tokens_legend,
-    semantic_tokens_result_from_occurrences, span_to_range, type_definition_for_analysis,
-    type_definition_for_dependency_imports, type_definition_for_dependency_method_types,
-    type_definition_for_dependency_struct_field_types, type_definition_for_dependency_values,
-    type_definition_for_dependency_variants, type_definition_for_package_analysis,
-    workspace_symbols_for_analysis,
+    semantic_tokens_result_from_occurrences, span_to_range, symbol_information,
+    type_definition_for_analysis, type_definition_for_dependency_imports,
+    type_definition_for_dependency_method_types, type_definition_for_dependency_struct_field_types,
+    type_definition_for_dependency_values, type_definition_for_dependency_variants,
+    type_definition_for_package_analysis, workspace_symbols_for_analysis,
 };
 use crate::store::DocumentStore;
 
@@ -345,7 +345,6 @@ fn append_manifest_and_workspace_symbols(
     }
 }
 
-#[allow(deprecated)]
 fn append_package_workspace_symbols(
     package: &ql_analysis::PackageAnalysis,
     open_docs: &HashMap<PathBuf, (Url, String)>,
@@ -393,7 +392,6 @@ fn append_package_workspace_symbols(
     }
 }
 
-#[allow(deprecated)]
 fn append_manifest_source_workspace_symbols(
     manifest: &ql_project::ProjectManifest,
     open_docs: &HashMap<PathBuf, (Url, String)>,
@@ -519,7 +517,6 @@ fn append_local_dependency_workspace_symbols(
     preferred_manifest_paths
 }
 
-#[allow(deprecated)]
 fn append_workspace_member_symbols(
     member_manifest_path: &Path,
     open_docs: &HashMap<PathBuf, (Url, String)>,
@@ -972,7 +969,6 @@ fn workspace_symbols_for_documents_and_roots(
     symbols
 }
 
-#[allow(deprecated)]
 fn workspace_symbols_for_dependencies(
     dependencies: &[DependencyInterface],
     query: &str,
@@ -998,14 +994,12 @@ fn workspace_symbols_for_dependencies(
                 continue;
             };
 
-            symbols.push(SymbolInformation {
-                name: symbol.name.clone(),
-                kind: document_symbol_kind(symbol.kind),
-                tags: None,
-                deprecated: None,
-                location: Location::new(uri.clone(), span_to_range(&source, span)),
-                container_name: Some(symbol.package_name.clone()),
-            });
+            symbols.push(symbol_information(
+                symbol.name.clone(),
+                document_symbol_kind(symbol.kind),
+                Location::new(uri.clone(), span_to_range(&source, span)),
+                Some(symbol.package_name.clone()),
+            ));
         }
     }
 

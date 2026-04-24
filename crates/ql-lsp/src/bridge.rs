@@ -1171,7 +1171,6 @@ pub fn document_symbols_for_analysis(source: &str, analysis: &Analysis) -> Docum
         .into()
 }
 
-#[allow(deprecated)]
 pub fn workspace_symbols_for_analysis(
     uri: &Url,
     source: &str,
@@ -1185,13 +1184,13 @@ pub fn workspace_symbols_for_analysis(
         .filter(|symbol| {
             query.is_empty() || symbol.name.to_ascii_lowercase().contains(query.as_str())
         })
-        .map(|symbol| SymbolInformation {
-            name: symbol.name,
-            kind: document_symbol_kind(symbol.kind),
-            tags: None,
-            deprecated: None,
-            location: Location::new(uri.clone(), span_to_range(source, symbol.span)),
-            container_name: None,
+        .map(|symbol| {
+            symbol_information(
+                symbol.name,
+                document_symbol_kind(symbol.kind),
+                Location::new(uri.clone(), span_to_range(source, symbol.span)),
+                None,
+            )
         })
         .collect::<Vec<_>>();
     symbols.sort_by_key(|symbol| {
@@ -1202,6 +1201,23 @@ pub fn workspace_symbols_for_analysis(
         )
     });
     symbols
+}
+
+#[allow(deprecated)]
+pub(crate) fn symbol_information(
+    name: impl Into<String>,
+    kind: tower_lsp::lsp_types::SymbolKind,
+    location: Location,
+    container_name: Option<String>,
+) -> SymbolInformation {
+    SymbolInformation {
+        name: name.into(),
+        kind,
+        tags: None,
+        deprecated: None,
+        location,
+        container_name,
+    }
 }
 
 pub fn prepare_rename_for_analysis(
