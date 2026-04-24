@@ -15953,43 +15953,17 @@ pub fn wrapper(value: Int) -> Int {
         )
         .expect("broken-source workspace import references should exist");
 
-        assert!(
-            references.iter().any(|reference| {
-                reference.uri == core_uri
-                    && reference.range.start
-                        == offset_to_position(
-                            &open_core_source,
-                            nth_offset(&open_core_source, "exported", 1),
-                        )
-            }),
-            "references should include open workspace source definition",
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &core_uri,
+            &open_core_source,
+            &[("exported", 1), ("exported", 2)],
         );
-        assert!(
-            references.iter().any(|reference| {
-                reference.uri == core_uri
-                    && reference.range.start
-                        == offset_to_position(
-                            &open_core_source,
-                            nth_offset(&open_core_source, "exported", 2),
-                        )
-            }),
-            "references should include open workspace source use",
-        );
-        assert!(
-            references.iter().any(|reference| {
-                reference.uri == uri
-                    && reference.range.start
-                        == offset_to_position(&source, nth_offset(&source, "run", 2))
-            }),
-            "references should include broken-source local use",
-        );
-        assert!(
-            references.iter().any(|reference| {
-                reference.uri == uri
-                    && reference.range.start
-                        == offset_to_position(&source, nth_offset(&source, "run", 3))
-            }),
-            "references should include second broken-source local use",
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &uri,
+            &source,
+            &[("run", 2), ("run", 3)],
         );
         assert!(
             !references.iter().any(|reference| {
@@ -20300,25 +20274,20 @@ impl Config {
         .expect("broken-source same-named dependency method references should exist");
 
         assert_eq!(references.len(), 2);
-        assert!(
-            references.iter().any(|reference| {
-                reference
-                    .uri
-                    .to_file_path()
-                    .ok()
-                    .and_then(|path| path.canonicalize().ok())
-                    == alpha_source_path.canonicalize().ok()
-                    && reference.range.start
-                        == offset_to_position(&alpha_source, nth_offset(&alpha_source, "ping", 1))
-            }),
+        assert_locations_contain_file_occurrence(
+            &references,
+            &alpha_source_path,
+            &alpha_source,
+            "ping",
+            1,
             "references should include alpha dependency source method definition",
         );
-        assert!(
-            references.iter().any(|reference| {
-                reference.uri == uri
-                    && reference.range.start
-                        == offset_to_position(&source, nth_offset(&source, "ping", 1))
-            }),
+        assert_locations_contain_uri_occurrence(
+            &references,
+            &uri,
+            &source,
+            "ping",
+            1,
             "references should include broken-source local method occurrence",
         );
         assert!(
@@ -20879,17 +20848,12 @@ pub enum Command {
         .expect("broken-source same-named dependency variant references should exist");
 
         assert_eq!(references.len(), 3);
-        assert!(
-            references.iter().any(|reference| {
-                reference
-                    .uri
-                    .to_file_path()
-                    .ok()
-                    .and_then(|path| path.canonicalize().ok())
-                    == fixture.alpha_source_path.canonicalize().ok()
-                    && reference.range.start
-                        == offset_to_position(alpha_source, nth_offset(alpha_source, "Retry", 1))
-            }),
+        assert_locations_contain_file_occurrence(
+            &references,
+            &fixture.alpha_source_path,
+            alpha_source,
+            "Retry",
+            1,
             "references should include alpha dependency source variant definition",
         );
         assert!(
