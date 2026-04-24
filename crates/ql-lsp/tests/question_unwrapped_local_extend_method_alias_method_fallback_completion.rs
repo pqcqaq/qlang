@@ -60,8 +60,9 @@ fn offset_to_position(source: &str, offset: usize) -> Position {
 #[test]
 fn dependency_method_completion_works_on_question_unwrapped_local_extend_method_result_alias_receivers_without_semantic_analysis(
 ) {
-    let temp =
-        TempDir::new("ql-lsp-question-unwrapped-local-extend-method-alias-method-completion-broken");
+    let temp = TempDir::new(
+        "ql-lsp-question-unwrapped-local-extend-method-alias-method-completion-broken",
+    );
     let app_root = temp.path().join("workspace").join("app");
 
     temp.write(
@@ -139,6 +140,6 @@ pub fn read(config: Cfg) -> Int {
     };
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].label, "get");
-    assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
     assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
 }
