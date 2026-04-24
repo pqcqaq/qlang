@@ -3636,7 +3636,7 @@ impl Analysis {
         let definition = self.definition_at(offset)?;
 
         let mut targets = match definition.kind {
-            SymbolKind::Struct | SymbolKind::Enum => {
+            SymbolKind::Struct | SymbolKind::Enum | SymbolKind::TypeAlias => {
                 let item_id = self.same_file_item_id_for_definition(&definition)?;
                 self.implementation_targets_for_type_item(item_id)
             }
@@ -3744,6 +3744,9 @@ impl Analysis {
                 }
                 (HirItemKind::Enum(enum_decl), SymbolKind::Enum) => {
                     enum_decl.name_span == definition.span
+                }
+                (HirItemKind::TypeAlias(type_alias), SymbolKind::TypeAlias) => {
+                    type_alias.name_span == definition.span
                 }
                 (HirItemKind::Trait(trait_decl), SymbolKind::Trait) => {
                     trait_decl.name_span == definition.span

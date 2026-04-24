@@ -1,6 +1,6 @@
 # P1-P8 阶段总览
 
-> 最后同步：2026-04-23
+> 最后同步：2026-04-25
 
 这页只保留阶段级结论和当前焦点。
 
@@ -75,6 +75,7 @@
 - 这一轮把 broken current workspace root source-backed concrete method call 的歧义分支也对齐到了既有 helper 契约：repaired source 现在只再用于 dependency method 路径；若当前文件里有多个同名本地候选方法，request 路径会继续返回空结果，不再猜实现。
 - 这一轮把 workspace root concrete trait-impl method call 的 request 级回归也补上了：concrete typed `worker.run()` 在 `LspService` 真请求路径里继续保持 scalar，不会误扩成 trait impl 聚合结果。
 - 这一轮把 source-backed method declaration site 的 `implementation` 契约也对齐到了 same-file 基线：从 workspace root/source 源码里的方法声明名本身发起时，VSCode 不再把这条声明当作自己的 implementation 回给调用方；只有真实调用位点才会继续回到方法定义。
+- 这一轮把 same-file `type` / `opaque type` alias 自身的 `implementation` 也接到 type surface：从 alias 定义或使用处发起时，会回到直接写在该 alias 上的 `impl` / `extend` block；`type Alias = Other` 不会透传到 `Other` 的实现，继续保持类型语义边界。
 - 这一轮把 broken-source implementation fallback 上的 same-named 本地依赖隔离也补齐了：当前 package 里存在 `alpha/beta` 这类同名导出依赖时，broken open consumers 的 type / trait implementation 聚合现在会先按真实 dependency identity 过滤 import binding，再决定可见本地名，不会再把兄弟依赖的 `extend` / `impl` 误收进来。
 - 这一轮把 broken current consumer 的 trait-typed receiver method call `implementation` 也补上了：当前 active root/source 自身处于 parse-error 时，会先把 `runner.run(` 这类未闭合调用修复成最小可分析形态，再复用既有 source-backed local/dependency method implementation 路径；broken local trait call 现在会继续聚合可见 workspace impl methods，broken dependency trait call 也会继续优先读取 parseable open docs。
 - 这一轮顺手把 workspace root `Find References` 也补到了 trait method definition；从导出源码里的 trait method 发起时，VSCode 现在会把可见 workspace members / 本地依赖源码里的匹配 impl methods 一起聚合进来，并优先读取 parseable open docs。

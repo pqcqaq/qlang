@@ -3438,6 +3438,74 @@ fn build(account: Account, admin: Admin) -> Int {
 }
 
 #[test]
+fn implementation_queries_follow_same_file_type_alias_surfaces() {
+    let source = r#"
+type UserId = Int
+opaque type OrderId = Int
+
+impl UserId {
+    fn value(self) -> Int {
+        return 1
+    }
+}
+
+extend UserId {
+    fn extra(self) -> Int {
+        return 2
+    }
+}
+
+impl OrderId {
+    fn value(self) -> Int {
+        return 3
+    }
+}
+
+fn build(user: UserId, order: OrderId) -> Int {
+    return user.value() + order.value()
+}
+"#;
+
+    let analysis = analyzed(source);
+    let type_alias_use = source
+        .find("user: UserId")
+        .map(|offset| offset + "user: ".len())
+        .expect("type alias use should exist");
+    let opaque_type_use = source
+        .find("order: OrderId")
+        .map(|offset| offset + "order: ".len())
+        .expect("opaque type use should exist");
+
+    assert_eq!(
+        analysis.implementations_at(type_alias_use),
+        Some(vec![
+            ql_analysis::ImplementationTarget {
+                span: Span::new(
+                    source.find("impl UserId").unwrap(),
+                    source.find("}\n\nextend UserId").unwrap() + 1,
+                ),
+            },
+            ql_analysis::ImplementationTarget {
+                span: Span::new(
+                    source.find("extend UserId").unwrap(),
+                    source.find("}\n\nimpl OrderId").unwrap() + 1,
+                ),
+            },
+        ])
+    );
+
+    assert_eq!(
+        analysis.implementations_at(opaque_type_use),
+        Some(vec![ql_analysis::ImplementationTarget {
+            span: Span::new(
+                source.find("impl OrderId").unwrap(),
+                source.find("}\n\nfn build").unwrap() + 1,
+            ),
+        }])
+    );
+}
+
+#[test]
 fn dependency_implementation_queries_follow_workspace_trait_and_type_surfaces() {
     let temp = TempDir::new("ql-analysis-dependency-implementations");
     let app_path = temp.write(

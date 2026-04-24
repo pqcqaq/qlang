@@ -1469,6 +1469,90 @@ fn build(value: UserId) -> UserId {
 }
 
 #[test]
+fn implementation_bridge_follows_type_alias_and_opaque_type_surfaces() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+type UserId = Int
+opaque type OrderId = Int
+
+impl UserId {
+    fn value(self) -> Int {
+        return 1
+    }
+}
+
+extend UserId {
+    fn extra(self) -> Int {
+        return 2
+    }
+}
+
+impl OrderId {
+    fn value(self) -> Int {
+        return 3
+    }
+}
+
+fn build(user: UserId, order: OrderId) -> Int {
+    return user.value() + order.value()
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let type_alias_position = span_to_range(source, nth_span(source, "UserId", 4)).start;
+    let opaque_type_position = span_to_range(source, nth_span(source, "OrderId", 3)).start;
+
+    let implementation = implementation_for_analysis(&uri, source, &analysis, type_alias_position)
+        .expect("type alias implementation should exist");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("type alias should resolve to impl and extend blocks")
+    };
+    assert_eq!(
+        locations,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        source.find("impl UserId").unwrap(),
+                        source.find("}\n\nextend UserId").unwrap() + 1,
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        source.find("extend UserId").unwrap(),
+                        source.find("}\n\nimpl OrderId").unwrap() + 1,
+                    ),
+                ),
+            ),
+        ]
+    );
+
+    let implementation = implementation_for_analysis(&uri, source, &analysis, opaque_type_position)
+        .expect("opaque type implementation should exist");
+    let GotoImplementationResponse::Scalar(location) = implementation else {
+        panic!("opaque type should resolve to a single impl block")
+    };
+    assert_eq!(
+        location,
+        Location::new(
+            uri,
+            span_to_range(
+                source,
+                Span::new(
+                    source.find("impl OrderId").unwrap(),
+                    source.find("}\n\nfn build").unwrap() + 1,
+                ),
+            ),
+        )
+    );
+}
+
+#[test]
 fn hover_definition_and_references_bridge_follow_same_file_type_namespace_item_surface() {
     struct ItemCase<'a> {
         name: &'a str,
