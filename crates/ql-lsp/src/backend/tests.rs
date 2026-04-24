@@ -13022,36 +13022,24 @@ impl Config {
         .expect("workspace root variant references should exist");
 
         assert_eq!(variant_references.len(), 6);
-        assert!(variant_references.iter().any(|reference| {
-            reference.uri == core_uri
-                && reference.range.start
-                    == offset_to_position(&core_source, nth_offset(&core_source, "Retry", 1))
-        }));
-        assert!(variant_references.iter().any(|reference| {
-            reference.uri == core_uri
-                && reference.range.start
-                    == offset_to_position(&core_source, nth_offset(&core_source, "Retry", 2))
-        }));
-        assert!(variant_references.iter().any(|reference| {
-            reference.uri == app_uri
-                && reference.range.start
-                    == offset_to_position(&app_source, nth_offset(&app_source, "Retry", 1))
-        }));
-        assert!(variant_references.iter().any(|reference| {
-            reference.uri == app_uri
-                && reference.range.start
-                    == offset_to_position(&app_source, nth_offset(&app_source, "Retry", 2))
-        }));
-        assert!(variant_references.iter().any(|reference| {
-            reference.uri == task_uri
-                && reference.range.start
-                    == offset_to_position(&task_source, nth_offset(&task_source, "Retry", 1))
-        }));
-        assert!(variant_references.iter().any(|reference| {
-            reference.uri == task_uri
-                && reference.range.start
-                    == offset_to_position(&task_source, nth_offset(&task_source, "Retry", 2))
-        }));
+        assert_locations_contain_uri_occurrences(
+            &variant_references,
+            &core_uri,
+            &core_source,
+            &[("Retry", 1), ("Retry", 2)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &variant_references,
+            &app_uri,
+            &app_source,
+            &[("Retry", 1), ("Retry", 2)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &variant_references,
+            &task_uri,
+            &task_source,
+            &[("Retry", 1), ("Retry", 2)],
+        );
 
         let method_references = workspace_source_references_for_root_symbol_with_open_docs(
             &core_uri,
@@ -13065,26 +13053,24 @@ impl Config {
         .expect("workspace root method references should exist");
 
         assert_eq!(method_references.len(), 4);
-        assert!(method_references.iter().any(|reference| {
-            reference.uri == core_uri
-                && reference.range.start
-                    == offset_to_position(&core_source, nth_offset(&core_source, "get", 1))
-        }));
-        assert!(method_references.iter().any(|reference| {
-            reference.uri == core_uri
-                && reference.range.start
-                    == offset_to_position(&core_source, nth_offset(&core_source, "get", 2))
-        }));
-        assert!(method_references.iter().any(|reference| {
-            reference.uri == app_uri
-                && reference.range.start
-                    == offset_to_position(&app_source, nth_offset(&app_source, "get", 1))
-        }));
-        assert!(method_references.iter().any(|reference| {
-            reference.uri == task_uri
-                && reference.range.start
-                    == offset_to_position(&task_source, nth_offset(&task_source, "get", 1))
-        }));
+        assert_locations_contain_uri_occurrences(
+            &method_references,
+            &core_uri,
+            &core_source,
+            &[("get", 1), ("get", 2)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &method_references,
+            &app_uri,
+            &app_source,
+            &[("get", 1)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &method_references,
+            &task_uri,
+            &task_source,
+            &[("get", 1)],
+        );
 
         let field_references = workspace_source_references_for_root_symbol_with_open_docs(
             &core_uri,
@@ -13098,31 +13084,24 @@ impl Config {
         .expect("workspace root field references should exist");
 
         assert_eq!(field_references.len(), 5);
-        assert!(field_references.iter().any(|reference| {
-            reference.uri == core_uri
-                && reference.range.start
-                    == offset_to_position(&core_source, nth_offset(&core_source, "value", 1))
-        }));
-        assert!(field_references.iter().any(|reference| {
-            reference.uri == core_uri
-                && reference.range.start
-                    == offset_to_position(&core_source, nth_offset(&core_source, "value", 2))
-        }));
-        assert!(field_references.iter().any(|reference| {
-            reference.uri == core_uri
-                && reference.range.start
-                    == offset_to_position(&core_source, nth_offset(&core_source, "value", 3))
-        }));
-        assert!(field_references.iter().any(|reference| {
-            reference.uri == app_uri
-                && reference.range.start
-                    == offset_to_position(&app_source, nth_offset(&app_source, "value", 1))
-        }));
-        assert!(field_references.iter().any(|reference| {
-            reference.uri == task_uri
-                && reference.range.start
-                    == offset_to_position(&task_source, nth_offset(&task_source, "value", 1))
-        }));
+        assert_locations_contain_uri_occurrences(
+            &field_references,
+            &core_uri,
+            &core_source,
+            &[("value", 1), ("value", 2), ("value", 3)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &field_references,
+            &app_uri,
+            &app_source,
+            &[("value", 1)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &field_references,
+            &task_uri,
+            &task_source,
+            &[("value", 1)],
+        );
     }
 
     #[test]
@@ -13275,36 +13254,24 @@ impl Config {
         .expect("workspace root variant references should exist");
 
         assert_eq!(variant_references.len(), 6);
-        assert!(variant_references.iter().any(|reference| {
-            reference.uri == core_uri
-                && reference.range.start
-                    == offset_to_position(&core_source, nth_offset(&core_source, "Retry", 1))
-        }));
-        assert!(variant_references.iter().any(|reference| {
-            reference.uri == core_uri
-                && reference.range.start
-                    == offset_to_position(&core_source, nth_offset(&core_source, "Retry", 2))
-        }));
-        assert!(variant_references.iter().any(|reference| {
-            reference.uri == app_uri
-                && reference.range.start
-                    == offset_to_position(&app_source, nth_offset(&app_source, "Retry", 1))
-        }));
-        assert!(variant_references.iter().any(|reference| {
-            reference.uri == app_uri
-                && reference.range.start
-                    == offset_to_position(&app_source, nth_offset(&app_source, "Retry", 2))
-        }));
-        assert!(variant_references.iter().any(|reference| {
-            reference.uri == jobs_uri
-                && reference.range.start
-                    == offset_to_position(&jobs_source, nth_offset(&jobs_source, "Retry", 1))
-        }));
-        assert!(variant_references.iter().any(|reference| {
-            reference.uri == jobs_uri
-                && reference.range.start
-                    == offset_to_position(&jobs_source, nth_offset(&jobs_source, "Retry", 2))
-        }));
+        assert_locations_contain_uri_occurrences(
+            &variant_references,
+            &core_uri,
+            &core_source,
+            &[("Retry", 1), ("Retry", 2)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &variant_references,
+            &app_uri,
+            &app_source,
+            &[("Retry", 1), ("Retry", 2)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &variant_references,
+            &jobs_uri,
+            &jobs_source,
+            &[("Retry", 1), ("Retry", 2)],
+        );
 
         let method_references = workspace_source_references_for_root_symbol_with_open_docs(
             &core_uri,
@@ -13318,26 +13285,24 @@ impl Config {
         .expect("workspace root method references should exist");
 
         assert_eq!(method_references.len(), 4);
-        assert!(method_references.iter().any(|reference| {
-            reference.uri == core_uri
-                && reference.range.start
-                    == offset_to_position(&core_source, nth_offset(&core_source, "get", 1))
-        }));
-        assert!(method_references.iter().any(|reference| {
-            reference.uri == core_uri
-                && reference.range.start
-                    == offset_to_position(&core_source, nth_offset(&core_source, "get", 2))
-        }));
-        assert!(method_references.iter().any(|reference| {
-            reference.uri == app_uri
-                && reference.range.start
-                    == offset_to_position(&app_source, nth_offset(&app_source, "get", 1))
-        }));
-        assert!(method_references.iter().any(|reference| {
-            reference.uri == jobs_uri
-                && reference.range.start
-                    == offset_to_position(&jobs_source, nth_offset(&jobs_source, "get", 1))
-        }));
+        assert_locations_contain_uri_occurrences(
+            &method_references,
+            &core_uri,
+            &core_source,
+            &[("get", 1), ("get", 2)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &method_references,
+            &app_uri,
+            &app_source,
+            &[("get", 1)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &method_references,
+            &jobs_uri,
+            &jobs_source,
+            &[("get", 1)],
+        );
 
         let field_references = workspace_source_references_for_root_symbol_with_open_docs(
             &core_uri,
@@ -13351,31 +13316,24 @@ impl Config {
         .expect("workspace root field references should exist");
 
         assert_eq!(field_references.len(), 5);
-        assert!(field_references.iter().any(|reference| {
-            reference.uri == core_uri
-                && reference.range.start
-                    == offset_to_position(&core_source, nth_offset(&core_source, "value", 1))
-        }));
-        assert!(field_references.iter().any(|reference| {
-            reference.uri == core_uri
-                && reference.range.start
-                    == offset_to_position(&core_source, nth_offset(&core_source, "value", 2))
-        }));
-        assert!(field_references.iter().any(|reference| {
-            reference.uri == core_uri
-                && reference.range.start
-                    == offset_to_position(&core_source, nth_offset(&core_source, "value", 3))
-        }));
-        assert!(field_references.iter().any(|reference| {
-            reference.uri == app_uri
-                && reference.range.start
-                    == offset_to_position(&app_source, nth_offset(&app_source, "value", 1))
-        }));
-        assert!(field_references.iter().any(|reference| {
-            reference.uri == jobs_uri
-                && reference.range.start
-                    == offset_to_position(&jobs_source, nth_offset(&jobs_source, "value", 1))
-        }));
+        assert_locations_contain_uri_occurrences(
+            &field_references,
+            &core_uri,
+            &core_source,
+            &[("value", 1), ("value", 2), ("value", 3)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &field_references,
+            &app_uri,
+            &app_source,
+            &[("value", 1)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &field_references,
+            &jobs_uri,
+            &jobs_source,
+            &[("value", 1)],
+        );
     }
 
     #[test]
@@ -23511,6 +23469,24 @@ name = "core"
                 .any(|location| location.uri == *uri && location.range.start == expected_position),
             "{message}",
         );
+    }
+
+    fn assert_locations_contain_uri_occurrences(
+        locations: &[Location],
+        uri: &Url,
+        source: &str,
+        occurrences: &[(&str, usize)],
+    ) {
+        for (needle, occurrence) in occurrences {
+            assert_locations_contain_uri_occurrence(
+                locations,
+                uri,
+                source,
+                needle,
+                *occurrence,
+                "locations should contain expected URI occurrence",
+            );
+        }
     }
 
     fn assert_locations_contain_file_occurrence(
