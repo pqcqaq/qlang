@@ -3411,6 +3411,13 @@ fn broken_source_root_definition_site_in_tokens(
         Some(TokenKind::Struct) => ql_analysis::SymbolKind::Struct,
         Some(TokenKind::Enum) => ql_analysis::SymbolKind::Enum,
         Some(TokenKind::Trait) => ql_analysis::SymbolKind::Trait,
+        Some(TokenKind::Type) => ql_analysis::SymbolKind::TypeAlias,
+        Some(TokenKind::Opaque)
+            if tokens.get(index + 1).map(|token| token.kind) == Some(TokenKind::Type) =>
+        {
+            index += 1;
+            ql_analysis::SymbolKind::TypeAlias
+        }
         _ => return None,
     };
     let name = broken_source_import_ident_token(tokens, index + 1)?;
@@ -3437,7 +3444,12 @@ fn broken_source_root_definition_sites_in_source(
         match tokens[index].kind {
             TokenKind::LBrace => brace_depth += 1,
             TokenKind::RBrace => brace_depth = brace_depth.saturating_sub(1),
-            TokenKind::Pub | TokenKind::Struct | TokenKind::Enum | TokenKind::Trait
+            TokenKind::Pub
+            | TokenKind::Struct
+            | TokenKind::Enum
+            | TokenKind::Trait
+            | TokenKind::Type
+            | TokenKind::Opaque
                 if brace_depth == 0 =>
             {
                 if let Some((site, next_index)) =
@@ -3620,6 +3632,7 @@ fn broken_source_implementation_locations_in_source(
         ql_analysis::SymbolKind::Struct
             | ql_analysis::SymbolKind::Enum
             | ql_analysis::SymbolKind::Trait
+            | ql_analysis::SymbolKind::TypeAlias
     ) {
         return Vec::new();
     }
@@ -3632,9 +3645,9 @@ fn broken_source_implementation_locations_in_source(
     broken_source_impl_block_sites_in_source(uri, source)
         .into_iter()
         .filter(|site| match target.kind {
-            ql_analysis::SymbolKind::Struct | ql_analysis::SymbolKind::Enum => {
-                local_names.contains(&site.target_name)
-            }
+            ql_analysis::SymbolKind::Struct
+            | ql_analysis::SymbolKind::Enum
+            | ql_analysis::SymbolKind::TypeAlias => local_names.contains(&site.target_name),
             ql_analysis::SymbolKind::Trait => site
                 .trait_name
                 .as_ref()
@@ -3704,7 +3717,8 @@ fn broken_source_definition_locations_in_source(
     match target.kind {
         ql_analysis::SymbolKind::Struct
         | ql_analysis::SymbolKind::Enum
-        | ql_analysis::SymbolKind::Trait => broken_source_root_definition_sites_in_source(source)
+        | ql_analysis::SymbolKind::Trait
+        | ql_analysis::SymbolKind::TypeAlias => broken_source_root_definition_sites_in_source(source)
             .into_iter()
             .filter(|site| site.kind == target.kind && site.name == target.name)
             .map(|site| Location::new(uri.clone(), span_to_range(source, site.span)))
@@ -4550,6 +4564,7 @@ fn root_implementation_target_for_source(
         ql_analysis::SymbolKind::Struct
             | ql_analysis::SymbolKind::Enum
             | ql_analysis::SymbolKind::Trait
+            | ql_analysis::SymbolKind::TypeAlias
     ) || !occurrence_matches_definition_target(analysis, offset, &definition_target)
     {
         return None;
@@ -5508,6 +5523,7 @@ fn extend_workspace_dependency_implementation_locations_with_open_docs(
         ql_analysis::SymbolKind::Struct
             | ql_analysis::SymbolKind::Enum
             | ql_analysis::SymbolKind::Trait
+            | ql_analysis::SymbolKind::TypeAlias
     ) {
         return;
     }
@@ -5567,7 +5583,9 @@ fn extend_workspace_dependency_implementation_locations_with_open_docs(
             .iter()
             .filter_map(|item| match (&target.kind, &item.kind) {
                 (
-                    ql_analysis::SymbolKind::Struct | ql_analysis::SymbolKind::Enum,
+                    ql_analysis::SymbolKind::Struct
+                        | ql_analysis::SymbolKind::Enum
+                        | ql_analysis::SymbolKind::TypeAlias,
                     AstItemKind::Impl(impl_block),
                 ) if implementation_target_matches_dependency_type_expr(
                     package,
@@ -5583,7 +5601,9 @@ fn extend_workspace_dependency_implementation_locations_with_open_docs(
                     ))
                 }
                 (
-                    ql_analysis::SymbolKind::Struct | ql_analysis::SymbolKind::Enum,
+                    ql_analysis::SymbolKind::Struct
+                        | ql_analysis::SymbolKind::Enum
+                        | ql_analysis::SymbolKind::TypeAlias,
                     AstItemKind::Extend(extend_block),
                 ) if implementation_target_matches_dependency_type_expr(
                     package,

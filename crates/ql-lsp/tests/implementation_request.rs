@@ -4949,6 +4949,465 @@ fn build(user: UserId, order: OrderId) -> Int {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_returns_array_for_workspace_type_alias_import_surface() {
+    let temp = TempDir::new("ql-lsp-implementation-request-workspace-type-alias-import-surface");
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.core.UserId
+
+pub fn main(id: UserId) -> UserId {
+    return id
+}
+"#,
+    );
+    let core_path = temp.write(
+        "workspace/packages/core/src/lib.ql",
+        r#"
+package demo.core
+
+pub type UserId = Int
+
+pub trait Identified {
+    fn id(self) -> Int
+}
+
+impl UserId {
+    fn value(self) -> Int {
+        return 1
+    }
+}
+
+extend UserId {
+    fn extra(self) -> Int {
+        return 2
+    }
+}
+
+impl Identified for UserId {
+    fn id(self) -> Int {
+        return 3
+    }
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub type UserId = Int
+"#,
+    );
+    let app_source = fs::read_to_string(&app_path).expect("app source should read");
+    let core_source = fs::read_to_string(&core_path).expect("core source should read");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let core_uri = Url::from_file_path(&core_path).expect("core path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, app_uri.clone(), app_source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        app_uri,
+        offset_to_position(&app_source, nth_offset(&app_source, "UserId", 2)),
+    )
+    .await
+    .expect("workspace type alias import implementation should exist");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("workspace type alias import should resolve to many implementation blocks")
+    };
+    assert_eq!(locations.len(), 3);
+    assert!(
+        locations.iter().all(|location| location.uri == core_uri),
+        "all workspace type alias implementations should point at workspace source",
+    );
+    for marker in ["impl UserId", "extend UserId", "impl Identified for UserId"] {
+        assert!(
+            locations.iter().any(|location| {
+                location.range.start
+                    == offset_to_position(&core_source, nth_offset(&core_source, marker, 1))
+            }),
+            "workspace type alias implementations should include {marker}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_uses_broken_open_workspace_source_for_type_alias_import() {
+    let temp = TempDir::new("ql-lsp-implementation-request-broken-open-type-alias-import");
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.core.UserId
+
+pub fn main(id: UserId) -> UserId {
+    return id
+}
+"#,
+    );
+    let core_path = temp.write(
+        "workspace/packages/core/src/lib.ql",
+        r#"
+package demo.core
+
+pub type UserId = Int
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub type UserId = Int
+"#,
+    );
+    let app_source = fs::read_to_string(&app_path).expect("app source should read");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let core_uri = Url::from_file_path(&core_path).expect("core path should convert to URI");
+    let open_core_source = r#"
+package demo.core
+
+pub type UserId = Int
+
+impl UserId {
+    fn value(self) -> Int {
+        return 1
+    }
+}
+
+extend UserId {
+    fn extra(self) -> Int {
+        return 2
+    }
+}
+
+pub fn broken() -> UserId {
+    return
+"#
+    .to_owned();
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, app_uri.clone(), app_source.clone()).await;
+    let disk_only = goto_implementation_via_request(
+        &mut service,
+        app_uri.clone(),
+        offset_to_position(&app_source, nth_offset(&app_source, "UserId", 2)),
+    )
+    .await;
+    assert_eq!(disk_only, None);
+
+    did_open_via_request(&mut service, core_uri.clone(), open_core_source.clone()).await;
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        app_uri,
+        offset_to_position(&app_source, nth_offset(&app_source, "UserId", 2)),
+    )
+    .await
+    .expect("workspace type alias import implementation should use broken open source");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("broken open type alias import should resolve to many implementation blocks")
+    };
+    assert_eq!(locations.len(), 2);
+    assert!(
+        locations.iter().all(|location| location.uri == core_uri),
+        "all broken open type alias implementations should stay in the open source",
+    );
+    for marker in ["impl UserId", "extend UserId"] {
+        assert!(
+            locations.iter().any(|location| {
+                location.range.start
+                    == offset_to_position(&open_core_source, nth_offset(&open_core_source, marker, 1))
+            }),
+            "broken open type alias implementations should include {marker}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_returns_array_for_workspace_root_type_alias_surface() {
+    let temp = TempDir::new("ql-lsp-implementation-request-workspace-root-type-alias");
+    let core_path = temp.write(
+        "workspace/packages/core/src/lib.ql",
+        r#"
+package demo.core
+
+pub type UserId = Int
+
+impl UserId {
+    fn local(self) -> Int {
+        return 1
+    }
+}
+"#,
+    );
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.core.UserId
+
+impl UserId {
+    fn app(self) -> Int {
+        return 2
+    }
+}
+"#,
+    );
+    let tools_path = temp.write(
+        "workspace/packages/tools/src/lib.ql",
+        r#"
+package demo.tools
+
+use demo.core.UserId
+
+extend UserId {
+    fn tool(self) -> Int {
+        return 3
+    }
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core", "packages/tools"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tools/qlang.toml",
+        r#"
+[package]
+name = "tools"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub type UserId = Int
+"#,
+    );
+    let core_source = fs::read_to_string(&core_path).expect("core source should read");
+    let app_source = fs::read_to_string(&app_path).expect("app source should read");
+    let tools_source = fs::read_to_string(&tools_path).expect("tools source should read");
+    let core_uri = Url::from_file_path(&core_path).expect("core path should convert to URI");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let tools_uri = Url::from_file_path(&tools_path).expect("tools path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, core_uri.clone(), core_source.clone()).await;
+    did_open_via_request(&mut service, app_uri.clone(), app_source.clone()).await;
+    did_open_via_request(&mut service, tools_uri.clone(), tools_source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        core_uri.clone(),
+        offset_to_position(&core_source, nth_offset(&core_source, "UserId", 1)),
+    )
+    .await
+    .expect("workspace root type alias implementation should exist");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("workspace root type alias should resolve to many implementation blocks")
+    };
+    assert_eq!(locations.len(), 3);
+    for (uri, source, marker) in [
+        (core_uri, core_source.as_str(), "impl UserId"),
+        (app_uri, app_source.as_str(), "impl UserId"),
+        (tools_uri, tools_source.as_str(), "extend UserId"),
+    ] {
+        assert!(
+            locations.iter().any(|location| {
+                location.uri == uri
+                    && location.range.start
+                        == offset_to_position(source, nth_offset(source, marker, 1))
+            }),
+            "workspace root type alias implementations should include {marker}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn implementation_request_uses_broken_current_source_for_root_type_alias_surface() {
+    let temp = TempDir::new("ql-lsp-implementation-request-broken-current-root-type-alias");
+    let core_path = temp.write(
+        "workspace/packages/core/src/lib.ql",
+        r#"
+package demo.core
+
+pub type UserId = Int
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub type UserId = Int
+"#,
+    );
+    let core_uri = Url::from_file_path(&core_path).expect("core path should convert to URI");
+    let open_core_source = r#"
+package demo.core
+
+pub opaque type UserId = Int
+
+impl UserId {
+    fn value(self) -> Int {
+        return 1
+    }
+}
+
+extend UserId {
+    fn extra(self) -> Int {
+        return 2
+    }
+}
+
+pub fn broken() -> UserId {
+    return
+"#
+    .to_owned();
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, core_uri.clone(), open_core_source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        core_uri.clone(),
+        offset_to_position(&open_core_source, nth_offset(&open_core_source, "UserId", 1)),
+    )
+    .await
+    .expect("broken current root type alias implementation should exist");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("broken current root type alias should resolve to many implementation blocks")
+    };
+    assert_eq!(locations.len(), 2);
+    assert!(
+        locations.iter().all(|location| location.uri == core_uri),
+        "broken current root type alias implementations should stay in current source",
+    );
+    for marker in ["impl UserId", "extend UserId"] {
+        assert!(
+            locations.iter().any(|location| {
+                location.range.start
+                    == offset_to_position(&open_core_source, nth_offset(&open_core_source, marker, 1))
+            }),
+            "broken current root type alias implementations should include {marker}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_returns_array_for_workspace_type_import_surface() {
     let fixture = setup_workspace_type_import_fixture(
         "ql-lsp-implementation-request-workspace-type-import-surface",

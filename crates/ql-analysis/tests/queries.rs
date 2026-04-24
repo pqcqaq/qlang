@@ -3515,6 +3515,7 @@ package demo.app
 
 use demo.core.Runner
 use demo.core.Config
+use demo.core.UserId
 
 struct LocalWorker {}
 
@@ -3524,7 +3525,7 @@ impl Runner for LocalWorker {
     }
 }
 
-pub fn main(value: Config) -> Config {
+pub fn main(value: Config, id: UserId) -> Config {
     return value
 }
 "#,
@@ -3557,6 +3558,30 @@ impl Config {
 extend Config {
     fn label(self) -> Int {
         return self.value
+    }
+}
+
+pub trait Identified {
+    fn id(self) -> Int
+}
+
+pub type UserId = Int
+
+impl UserId {
+    fn value(self) -> Int {
+        return 1
+    }
+}
+
+extend UserId {
+    fn extra(self) -> Int {
+        return 2
+    }
+}
+
+impl Identified for UserId {
+    fn id(self) -> Int {
+        return 3
     }
 }
 "#;
@@ -3601,6 +3626,8 @@ pub trait Runner {
 pub struct Config {
     value: Int,
 }
+
+pub type UserId = Int
 "#,
     );
 
@@ -3656,6 +3683,46 @@ pub struct Config {
                 "src/lib.ql".to_owned(),
                 Span::new(
                     core_source.find("extend Config").unwrap(),
+                    core_source.find("}\n\npub trait Identified").unwrap() + 1,
+                ),
+            ),
+        ]
+    );
+
+    let alias_targets = package
+        .dependency_implementations_at(&analysis, nth_offset(&source, "UserId", 2))
+        .expect("type alias dependency implementations should exist");
+    assert_eq!(
+        alias_targets
+            .iter()
+            .map(|target| (
+                fs::canonicalize(&target.manifest_path).expect("manifest path should canonicalize"),
+                target.source_path.clone(),
+                target.span
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                fs::canonicalize(&core_manifest_path).expect("manifest path should canonicalize"),
+                "src/lib.ql".to_owned(),
+                Span::new(
+                    core_source.find("impl UserId").unwrap(),
+                    core_source.find("}\n\nextend UserId").unwrap() + 1,
+                ),
+            ),
+            (
+                fs::canonicalize(&core_manifest_path).expect("manifest path should canonicalize"),
+                "src/lib.ql".to_owned(),
+                Span::new(
+                    core_source.find("extend UserId").unwrap(),
+                    core_source.find("}\n\nimpl Identified for UserId").unwrap() + 1,
+                ),
+            ),
+            (
+                fs::canonicalize(&core_manifest_path).expect("manifest path should canonicalize"),
+                "src/lib.ql".to_owned(),
+                Span::new(
+                    core_source.find("impl Identified for UserId").unwrap(),
                     core_source.len() - 1,
                 ),
             ),

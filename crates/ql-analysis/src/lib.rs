@@ -2038,14 +2038,14 @@ impl PackageAnalysis {
         let target = self.dependency_type_definition_at(analysis, offset)?;
         if !matches!(
             target.kind,
-            SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Trait
+            SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Trait | SymbolKind::TypeAlias
         ) {
             return None;
         }
 
         let dependency_package = analyze_package(target.manifest_path.as_path()).ok()?;
         let mut targets = match target.kind {
-            SymbolKind::Struct | SymbolKind::Enum => {
+            SymbolKind::Struct | SymbolKind::Enum | SymbolKind::TypeAlias => {
                 package_implementation_targets_for_type(&dependency_package, &target.name)
             }
             SymbolKind::Trait => {

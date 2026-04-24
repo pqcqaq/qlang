@@ -1,5 +1,7 @@
 # Phase 6 LSP 与编辑器语义收口
 
+> 本页是 Phase 6 的历史阶段总结；当前 LSP/workspace/dependency 支持面以 `docs/roadmap/current-supported-surface.md` 为准。
+
 ## 目标
 
 Phase 6 的任务不是一次做完 project-wide IDE，而是在已有 same-file 语义边界上，把 query、rename、completion、semantic tokens 和 LSP bridge 系统性收口成一套稳定 editor semantics。
