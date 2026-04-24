@@ -12310,22 +12310,25 @@ pub fn wrapper(value: Int) -> Int {
         )
         .expect("workspace root references should use open import consumers");
 
-        let contains = |uri: &Url, source: &str, needle: &str, occurrence: usize| {
-            references.iter().any(|location| {
-                location.uri == *uri
-                    && location.range.start
-                        == offset_to_position(source, nth_offset(source, needle, occurrence))
-            })
-        };
-
         assert_eq!(references.len(), 7);
-        assert!(contains(&core_uri, &open_core_source, "exported", 1));
-        assert!(contains(&core_uri, &open_core_source, "exported", 2));
-        assert!(contains(&app_uri, &app_source, "run", 1));
-        assert!(contains(&app_uri, &app_source, "run", 2));
-        assert!(contains(&task_uri, &open_task_source, "ship", 1));
-        assert!(contains(&task_uri, &open_task_source, "ship", 2));
-        assert!(contains(&task_uri, &open_task_source, "ship", 3));
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &core_uri,
+            &open_core_source,
+            &[("exported", 1), ("exported", 2)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &app_uri,
+            &app_source,
+            &[("run", 1), ("run", 2)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &task_uri,
+            &open_task_source,
+            &[("ship", 1), ("ship", 2), ("ship", 3)],
+        );
         assert!(
             !references.iter().any(|location| {
                 location.uri == task_uri
@@ -12454,21 +12457,25 @@ pub fn exported(value: Int) -> Int
         )
         .expect("workspace root definition references should exist");
 
-        let contains = |uri: &Url, source: &str, needle: &str, occurrence: usize| {
-            references.iter().any(|location| {
-                location.uri == *uri
-                    && location.range.start
-                        == offset_to_position(source, nth_offset(source, needle, occurrence))
-            })
-        };
-
         assert_eq!(references.len(), 6);
-        assert!(contains(&core_uri, &core_source, "exported", 1));
-        assert!(contains(&core_uri, &core_source, "exported", 2));
-        assert!(contains(&app_uri, &app_source, "run", 1));
-        assert!(contains(&app_uri, &app_source, "run", 2));
-        assert!(contains(&jobs_uri, &jobs_source, "exec", 1));
-        assert!(contains(&jobs_uri, &jobs_source, "exec", 2));
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &core_uri,
+            &core_source,
+            &[("exported", 1), ("exported", 2)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &app_uri,
+            &app_source,
+            &[("run", 1), ("run", 2)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &jobs_uri,
+            &jobs_source,
+            &[("exec", 1), ("exec", 2)],
+        );
     }
 
     #[test]
@@ -12585,21 +12592,25 @@ pub fn exported(value: Int) -> Int
         )
         .expect("workspace root usage references should exist");
 
-        let contains = |uri: &Url, source: &str, needle: &str, occurrence: usize| {
-            references.iter().any(|location| {
-                location.uri == *uri
-                    && location.range.start
-                        == offset_to_position(source, nth_offset(source, needle, occurrence))
-            })
-        };
-
         assert_eq!(references.len(), 6);
-        assert!(contains(&core_uri, &core_source, "exported", 1));
-        assert!(contains(&core_uri, &core_source, "exported", 2));
-        assert!(contains(&app_uri, &app_source, "run", 1));
-        assert!(contains(&app_uri, &app_source, "run", 2));
-        assert!(contains(&jobs_uri, &jobs_source, "exec", 1));
-        assert!(contains(&jobs_uri, &jobs_source, "exec", 2));
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &core_uri,
+            &core_source,
+            &[("exported", 1), ("exported", 2)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &app_uri,
+            &app_source,
+            &[("run", 1), ("run", 2)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &jobs_uri,
+            &jobs_source,
+            &[("exec", 1), ("exec", 2)],
+        );
     }
 
     #[test]
