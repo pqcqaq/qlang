@@ -15546,22 +15546,25 @@ pub fn wrapper(value: Int) -> Int {
         )
         .expect("workspace import references should use open sources and consumers");
 
-        let contains = |uri: &Url, source: &str, needle: &str, occurrence: usize| {
-            references.iter().any(|location| {
-                location.uri == *uri
-                    && location.range.start
-                        == offset_to_position(source, nth_offset(source, needle, occurrence))
-            })
-        };
-
         assert_eq!(references.len(), 7);
-        assert!(contains(&core_uri, &open_core_source, "exported", 1));
-        assert!(contains(&core_uri, &open_core_source, "exported", 2));
-        assert!(contains(&app_uri, &app_source, "run", 1));
-        assert!(contains(&app_uri, &app_source, "run", 2));
-        assert!(contains(&task_uri, &open_task_source, "ship", 1));
-        assert!(contains(&task_uri, &open_task_source, "ship", 2));
-        assert!(contains(&task_uri, &open_task_source, "ship", 3));
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &core_uri,
+            &open_core_source,
+            &[("exported", 1), ("exported", 2)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &app_uri,
+            &app_source,
+            &[("run", 1), ("run", 2)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &task_uri,
+            &open_task_source,
+            &[("ship", 1), ("ship", 2), ("ship", 3)],
+        );
         assert!(
             !references.iter().any(|location| {
                 location.uri == task_uri
@@ -16224,23 +16227,31 @@ pub fn measure(value: Int) -> Int
         )
         .expect("broken-source workspace import references should exist");
 
-        let contains = |uri: &Url, source: &str, needle: &str, occurrence: usize| {
-            references.iter().any(|location| {
-                location.uri == *uri
-                    && location.range.start
-                        == offset_to_position(source, nth_offset(source, needle, occurrence))
-            })
-        };
-
         assert_eq!(references.len(), 8);
-        assert!(contains(&core_uri, &core_source, "measure", 1));
-        assert!(contains(&app_uri, &app_source, "measure", 2));
-        assert!(contains(&app_uri, &app_source, "measure", 3));
-        assert!(contains(&core_uri, &core_source, "measure", 2));
-        assert!(contains(&task_uri, &task_source, "measure", 1));
-        assert!(contains(&task_uri, &task_source, "measure", 2));
-        assert!(contains(&jobs_uri, &jobs_source, "measure", 1));
-        assert!(contains(&jobs_uri, &jobs_source, "measure", 2));
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &core_uri,
+            &core_source,
+            &[("measure", 1), ("measure", 2)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &app_uri,
+            &app_source,
+            &[("measure", 2), ("measure", 3)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &task_uri,
+            &task_source,
+            &[("measure", 1), ("measure", 2)],
+        );
+        assert_locations_contain_uri_occurrences(
+            &references,
+            &jobs_uri,
+            &jobs_source,
+            &[("measure", 1), ("measure", 2)],
+        );
     }
 
     #[test]
@@ -16343,28 +16354,47 @@ pub fn measure(value: Int) -> Int
         )
         .expect("broken-source local dependency import references should exist");
 
-        let contains = |path: &Path, source: &str, needle: &str, occurrence: usize| {
-            let path = path
-                .canonicalize()
-                .expect("expected path should canonicalize");
-            references.iter().any(|location| {
-                location
-                    .uri
-                    .to_file_path()
-                    .ok()
-                    .and_then(|location_path| location_path.canonicalize().ok())
-                    == Some(path.clone())
-                    && location.range.start
-                        == offset_to_position(source, nth_offset(source, needle, occurrence))
-            })
-        };
-
         assert_eq!(references.len(), 5);
-        assert!(contains(&core_source_path, &core_source, "measure", 1));
-        assert!(contains(&app_path, &app_source, "measure", 2));
-        assert!(contains(&core_source_path, &core_source, "measure", 2));
-        assert!(contains(&helper_path, &helper_source, "measure", 1));
-        assert!(contains(&helper_path, &helper_source, "measure", 2));
+        assert_locations_contain_file_occurrence(
+            &references,
+            &core_source_path,
+            &core_source,
+            "measure",
+            1,
+            "references should include core source definition",
+        );
+        assert_locations_contain_file_occurrence(
+            &references,
+            &app_path,
+            &app_source,
+            "measure",
+            2,
+            "references should include app source import use",
+        );
+        assert_locations_contain_file_occurrence(
+            &references,
+            &core_source_path,
+            &core_source,
+            "measure",
+            2,
+            "references should include core source use",
+        );
+        assert_locations_contain_file_occurrence(
+            &references,
+            &helper_path,
+            &helper_source,
+            "measure",
+            1,
+            "references should include helper source import",
+        );
+        assert_locations_contain_file_occurrence(
+            &references,
+            &helper_path,
+            &helper_source,
+            "measure",
+            2,
+            "references should include helper source use",
+        );
     }
 
     #[test]
