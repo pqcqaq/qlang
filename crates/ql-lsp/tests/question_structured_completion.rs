@@ -8,7 +8,11 @@ use ql_lsp::bridge::{
     completion_for_dependency_member_fields, completion_for_dependency_methods,
     completion_for_package_analysis,
 };
-use tower_lsp::lsp_types::{CompletionItemKind, CompletionResponse, Position};
+use tower_lsp::lsp_types::{CompletionResponse, Position};
+
+mod common;
+
+use common::completion::{assert_member_completion_item, MemberKind};
 
 struct TempDir {
     path: PathBuf,
@@ -45,59 +49,17 @@ impl Drop for TempDir {
     }
 }
 
-#[derive(Clone, Copy)]
-enum MemberKind {
-    Field,
-    Method,
+fn member_receiver_expr(member: MemberKind) -> &'static str {
+    match member {
+        MemberKind::Field => "config.child?",
+        MemberKind::Method => "config.child()?",
+    }
 }
 
-impl MemberKind {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Field => "field",
-            Self::Method => "method",
-        }
-    }
-
-    fn receiver_expr(self) -> &'static str {
-        match self {
-            Self::Field => "config.child?",
-            Self::Method => "config.child()?",
-        }
-    }
-
-    fn completion_suffix(self) -> &'static str {
-        match self {
-            Self::Field => ".va",
-            Self::Method => ".ge",
-        }
-    }
-
-    fn expected_label(self) -> &'static str {
-        match self {
-            Self::Field => "value",
-            Self::Method => "get",
-        }
-    }
-
-    fn expected_kind(self) -> CompletionItemKind {
-        match self {
-            Self::Field => CompletionItemKind::FIELD,
-            Self::Method => CompletionItemKind::FUNCTION,
-        }
-    }
-
-    fn expected_detail(self) -> &'static str {
-        match self {
-            Self::Field => "field value: Int",
-            Self::Method => "fn get(self) -> Int",
-        }
-    }
-
-    fn dep_qi(self) -> &'static str {
-        match self {
-            Self::Field => {
-                r#"
+fn member_dependency_qi(member: MemberKind) -> &'static str {
+    match member {
+        MemberKind::Field => {
+            r#"
 // qlang interface v1
 // package: dep
 
@@ -112,9 +74,9 @@ pub struct Config {
     child: Option[Child],
 }
 "#
-            }
-            Self::Method => {
-                r#"
+        }
+        MemberKind::Method => {
+            r#"
 // qlang interface v1
 // package: dep
 
@@ -141,7 +103,6 @@ impl Child {
     pub fn get(self) -> Int
 }
 "#
-            }
         }
     }
 }
@@ -201,15 +162,9 @@ pub fn read(config: Cfg, flag: Bool) -> Int {{
 {broken_line}    return ({wrapped}){suffix}
 }}
 "#,
-        wrapped = structured.wrap(member.receiver_expr()),
+        wrapped = structured.wrap(member_receiver_expr(member)),
         suffix = member.completion_suffix(),
     )
-}
-
-fn assert_completion_items(member: MemberKind, items: tower_lsp::lsp_types::CompletionItem) {
-    assert_eq!(items.label, member.expected_label());
-    assert_eq!(items.kind, Some(member.expected_kind()));
-    assert_eq!(items.detail.as_deref(), Some(member.expected_detail()));
 }
 
 fn run_completion_case(member: MemberKind, structured: StructuredKind, broken: bool) {
@@ -228,7 +183,7 @@ fn run_completion_case(member: MemberKind, structured: StructuredKind, broken: b
 name = "dep"
 "#,
     );
-    temp.write("workspace/dep/dep.qi", member.dep_qi());
+    temp.write("workspace/dep/dep.qi", member_dependency_qi(member));
     temp.write(
         "workspace/app/qlang.toml",
         r#"
@@ -260,7 +215,7 @@ packages = ["../dep"]
             );
         };
         assert_eq!(items.len(), 1);
-        assert_completion_items(member, items[0].clone());
+        assert_member_completion_item(member, &items[0]);
     } else {
         let package = analyze_package_dependencies(&app_root)
             .expect("dependency-only package analysis should succeed");
@@ -272,7 +227,7 @@ packages = ["../dep"]
             panic!("structured question-unwrapped member completion should exist");
         };
         assert_eq!(items.len(), 1);
-        assert_completion_items(member, items[0].clone());
+        assert_member_completion_item(member, &items[0]);
     }
 }
 
@@ -282,8 +237,8 @@ fn dependency_field_completion_works_on_if_structured_question_unwrapped_receive
 }
 
 #[test]
-fn dependency_field_completion_works_on_if_structured_question_unwrapped_receiver_without_semantic_analysis()
- {
+fn dependency_field_completion_works_on_if_structured_question_unwrapped_receiver_without_semantic_analysis(
+) {
     run_completion_case(MemberKind::Field, StructuredKind::If, true);
 }
 
@@ -293,8 +248,8 @@ fn dependency_field_completion_works_on_match_structured_question_unwrapped_rece
 }
 
 #[test]
-fn dependency_field_completion_works_on_match_structured_question_unwrapped_receiver_without_semantic_analysis()
- {
+fn dependency_field_completion_works_on_match_structured_question_unwrapped_receiver_without_semantic_analysis(
+) {
     run_completion_case(MemberKind::Field, StructuredKind::Match, true);
 }
 
@@ -304,8 +259,8 @@ fn dependency_method_completion_works_on_if_structured_question_unwrapped_receiv
 }
 
 #[test]
-fn dependency_method_completion_works_on_if_structured_question_unwrapped_receiver_without_semantic_analysis()
- {
+fn dependency_method_completion_works_on_if_structured_question_unwrapped_receiver_without_semantic_analysis(
+) {
     run_completion_case(MemberKind::Method, StructuredKind::If, true);
 }
 
@@ -315,7 +270,7 @@ fn dependency_method_completion_works_on_match_structured_question_unwrapped_rec
 }
 
 #[test]
-fn dependency_method_completion_works_on_match_structured_question_unwrapped_receiver_without_semantic_analysis()
- {
+fn dependency_method_completion_works_on_match_structured_question_unwrapped_receiver_without_semantic_analysis(
+) {
     run_completion_case(MemberKind::Method, StructuredKind::Match, true);
 }
