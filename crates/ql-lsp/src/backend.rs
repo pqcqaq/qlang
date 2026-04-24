@@ -6012,49 +6012,55 @@ fn workspace_source_method_implementation_for_local_source_in_broken_source_with
     })
 }
 
-fn workspace_source_implementation_with_open_docs(
+fn workspace_source_implementation_for_analyzed_source_with_open_docs(
     uri: &Url,
     source: &str,
-    analysis: Option<&Analysis>,
+    analysis: &Analysis,
     package: &ql_analysis::PackageAnalysis,
     open_docs: &OpenDocuments,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<GotoImplementationResponse> {
-    if let Some(analysis) = analysis {
-        return workspace_source_root_implementation_with_open_docs(
+    workspace_source_root_implementation_with_open_docs(
+        uri, source, analysis, package, open_docs, position,
+    )
+    .or_else(|| {
+        workspace_source_trait_method_implementation_with_open_docs(
             uri, source, analysis, package, open_docs, position,
         )
-        .or_else(|| {
-            workspace_source_trait_method_implementation_with_open_docs(
-                uri, source, analysis, package, open_docs, position,
-            )
-        })
-        .or_else(|| {
-            workspace_source_implementation_for_dependency_with_open_docs(
-                source,
-                Some(analysis),
-                package,
-                open_docs,
-                position,
-            )
-        })
-        .or_else(|| {
-            workspace_source_method_implementation_for_local_source_with_open_docs(
-                uri, source, analysis, package, open_docs, position,
-            )
-        })
-        .or_else(|| {
-            workspace_source_method_implementation_for_dependency_with_open_docs(
-                uri,
-                source,
-                Some(analysis),
-                package,
-                open_docs,
-                position,
-            )
-        });
-    }
+    })
+    .or_else(|| {
+        workspace_source_implementation_for_dependency_with_open_docs(
+            source,
+            Some(analysis),
+            package,
+            open_docs,
+            position,
+        )
+    })
+    .or_else(|| {
+        workspace_source_method_implementation_for_local_source_with_open_docs(
+            uri, source, analysis, package, open_docs, position,
+        )
+    })
+    .or_else(|| {
+        workspace_source_method_implementation_for_dependency_with_open_docs(
+            uri,
+            source,
+            Some(analysis),
+            package,
+            open_docs,
+            position,
+        )
+    })
+}
 
+fn workspace_source_implementation_for_broken_source_with_open_docs(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoImplementationResponse> {
     workspace_source_root_implementation_in_broken_source_with_open_docs(
         uri, source, package, open_docs, position,
     )
@@ -6087,6 +6093,33 @@ fn workspace_source_implementation_with_open_docs(
             uri, source, position,
         )
     })
+}
+
+fn workspace_source_implementation_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoImplementationResponse> {
+    match analysis {
+        Some(analysis) => workspace_source_implementation_for_analyzed_source_with_open_docs(
+            uri, source, analysis, package, open_docs, position,
+        ),
+        None => workspace_source_implementation_for_broken_source_with_open_docs(
+            uri, source, package, open_docs, position,
+        ),
+    }
+}
+
+fn fallback_implementation_for_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoImplementationResponse> {
+    implementation_for_analysis(uri, source, analysis?, position)
 }
 
 #[cfg(test)]
@@ -9078,19 +9111,20 @@ impl LanguageServer for Backend {
             ) {
                 return Ok(Some(implementation));
             }
-            let Some(analysis) = analysis else {
-                return Ok(None);
-            };
-            return Ok(implementation_for_analysis(
-                &uri, &source, &analysis, position,
+            return Ok(fallback_implementation_for_analysis(
+                &uri,
+                &source,
+                analysis.as_ref(),
+                position,
             ));
         }
 
-        let Ok(analysis) = analyze_source(&source) else {
-            return Ok(None);
-        };
-        Ok(implementation_for_analysis(
-            &uri, &source, &analysis, position,
+        let analysis = analyze_source(&source).ok();
+        Ok(fallback_implementation_for_analysis(
+            &uri,
+            &source,
+            analysis.as_ref(),
+            position,
         ))
     }
 
