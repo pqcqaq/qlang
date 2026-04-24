@@ -776,50 +776,43 @@
 
 ### LSP Server
 
-`ql-lsp` 当前是最小但真实的语言服务实现，不重复实现编译器语义。
+`ql-lsp` 是真实的语言服务实现，不重复实现编译器语义。
+
+初始化时声明的主要能力包括：
+
+- full-sync text document lifecycle 与 diagnostics
+- hover、declaration、definition、typeDefinition、implementation
+- references、documentHighlight、documentSymbol、workspaceSymbol
+- completion（含 `.` trigger）、codeAction、formatting
+- full document semantic tokens
+- prepareRename 与 rename
 
 当前运行算法：
 
-1. `didOpen`
-   - 把文档文本存入 `DocumentStore`
-   - 调用 `analyze_source`
-   - 推送 diagnostics
-2. `didChange`（当前 full sync）
-   - 更新文档文本
-   - 重新分析
-   - 推送新 diagnostics
-3. `didClose`
-   - 从 store 删除文档
-4. `hover`
-   - `Position -> byte offset`
-   - 调用 `analysis.hover_at(offset)`
-   - 把 hover 信息桥接成 LSP markdown
-5. `goto_definition`
-   - `Position -> byte offset`
-   - 调用 `analysis.definition_at(offset)`
-   - `Span -> Range` 后返回位置
-6. `references`
-   - `Position -> byte offset`
-   - 调用 `analysis.references_at(offset)`
-   - 根据 `includeDeclaration` 过滤 declaration occurrence
-   - `Span -> Range` 后返回同文件 `Location` 列表
-7. `prepare_rename`
-   - `Position -> byte offset`
-   - 调用 `analysis.prepare_rename_at(offset)`
-   - 取当前 occurrence span 作为 rename range
-   - 用源码切片作为 placeholder，避免 declaration/use token 形态不一致时丢失真实文本
-8. `rename`
-   - `Position -> byte offset`
-   - 调用 `analysis.rename_at(offset, new_name)`
-   - 分析层先做 rename kind 过滤和 identifier 校验
-   - 再把同文件 `Span` 集合桥接成当前文档的 `WorkspaceEdit`
+1. `didOpen` / `didChange`
+   - 把文档文本写入 `DocumentStore`
+   - 重新分析并推送 diagnostics
+2. `didClose`
+   - 从 store 删除文档并清空 diagnostics
+3. request handler
+   - 从 `DocumentStore` 读取当前文本
+   - 用 `Position -> byte offset` 进入 compiler/query surface
+   - 若文件属于 package/workspace，则同时读取 package analysis、workspace roots 与打开中的源码文档
+4. healthy source
+   - 优先走 source-backed workspace / local dependency 路径
+   - 再回落到当前文件 `Analysis` 的 same-file query surface
+5. broken-source / parse-error
+   - 只开放明确实现的保守 fallback，例如 dependency / workspace import 的 hover、definition、typeDefinition、references、documentHighlight、completion、semantic tokens 和受限 rename
+   - 需要完整语义的 formatting、documentSymbol、普通 same-file query 等继续返回空结果
+6. response bridge
+   - 把 compiler span、diagnostic、query result、completion item、semantic token 和 workspace edit 投影成 LSP response
 
 当前桥接层职责明确在 `bridge.rs`：
 
 - `Position <-> byte offset`
 - `Span -> Range`
 - 编译器 diagnostics -> LSP diagnostics
-- compiler hover / definition / references / completion / semantic tokens / rename -> LSP response
+- compiler hover / navigation / references / completion / semantic tokens / rename -> LSP response
 
 为什么这样设计：
 
