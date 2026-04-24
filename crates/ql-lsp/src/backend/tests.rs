@@ -19193,9 +19193,8 @@ pub fn task() -> Int {
 
     #[test]
     fn local_dependency_method_rename_updates_workspace_consumers_from_source_definition() {
-        let temp = TempDir::new("ql-lsp-local-dependency-method-rename-source-definition");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_app_core_workspace_fixture(
+            "ql-lsp-local-dependency-method-rename-source-definition",
             r#"
 package demo.app
 
@@ -19205,10 +19204,8 @@ pub fn main(config: Cfg) -> Int {
     return config.ping()
 }
 "#,
-        );
-        let task_path = temp.write(
-            "workspace/packages/app/src/task.ql",
-            r#"
+            Some(
+                r#"
 package demo.app
 
 use demo.core.Config as OtherCfg
@@ -19217,9 +19214,7 @@ pub fn task(config: OtherCfg) -> Int {
     return config.ping()
 }
 "#,
-        );
-        let core_source_path = temp.write(
-            "workspace/packages/core/src/lib.ql",
+            ),
             r#"
 package demo.core
 
@@ -19237,33 +19232,6 @@ impl Config {
     }
 }
 "#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app", "packages/core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -19281,19 +19249,24 @@ impl Config {
 "#,
         );
 
-        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_source = &fixture.app_source;
         let app_analysis = analyze_source(&app_source).expect("app source should analyze");
-        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
-        let task_source = fs::read_to_string(&task_path).expect("task source should read");
-        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
-        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let app_uri = fixture.app_uri.clone();
+        let task_source = fixture
+            .task_source
+            .as_ref()
+            .expect("fixture should include task source");
+        let task_uri = fixture
+            .task_uri
+            .as_ref()
+            .expect("fixture should include task uri")
+            .clone();
+        let core_source = &fixture.core_source;
         let core_analysis = analyze_source(&core_source).expect("core source should analyze");
-        let core_uri =
-            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
-        let package =
-            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
-        let app_package =
-            package_analysis_for_path(&app_path).expect("app package analysis should succeed");
+        let core_uri = fixture.core_uri.clone();
+        let package = package_analysis_for_path(&fixture.core_source_path)
+            .expect("package analysis should succeed");
+        let app_package = &fixture.package;
         let open_docs = file_open_documents(vec![
             (app_uri.clone(), app_source.clone()),
             (task_uri.clone(), task_source.clone()),
@@ -19321,7 +19294,7 @@ impl Config {
         );
         let external_locations = workspace_dependency_reference_locations_with_open_docs(
             &package,
-            Some(core_source_path.as_path()),
+            Some(fixture.core_source_path.as_path()),
             &open_docs,
             &local_target,
             false,
@@ -19403,9 +19376,8 @@ impl Config {
 
     #[test]
     fn local_dependency_field_rename_updates_workspace_consumers_from_source_definition() {
-        let temp = TempDir::new("ql-lsp-local-dependency-field-rename-source-definition");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_app_core_workspace_fixture(
+            "ql-lsp-local-dependency-field-rename-source-definition",
             r#"
 package demo.app
 
@@ -19415,10 +19387,8 @@ pub fn main(config: Cfg) -> Int {
     return config.value
 }
 "#,
-        );
-        let task_path = temp.write(
-            "workspace/packages/app/src/task.ql",
-            r#"
+            Some(
+                r#"
 package demo.app
 
 use demo.core.Config as OtherCfg
@@ -19427,9 +19397,7 @@ pub fn task(config: OtherCfg) -> Int {
     return config.value
 }
 "#,
-        );
-        let core_source_path = temp.write(
-            "workspace/packages/core/src/lib.ql",
+            ),
             r#"
 package demo.core
 
@@ -19444,33 +19412,6 @@ impl Config {
     }
 }
 "#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app", "packages/core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -19489,19 +19430,24 @@ impl Config {
 "#,
         );
 
-        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_source = &fixture.app_source;
         let app_analysis = analyze_source(&app_source).expect("app source should analyze");
-        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
-        let task_source = fs::read_to_string(&task_path).expect("task source should read");
-        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
-        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let app_uri = fixture.app_uri.clone();
+        let task_source = fixture
+            .task_source
+            .as_ref()
+            .expect("fixture should include task source");
+        let task_uri = fixture
+            .task_uri
+            .as_ref()
+            .expect("fixture should include task uri")
+            .clone();
+        let core_source = &fixture.core_source;
         let core_analysis = analyze_source(&core_source).expect("core source should analyze");
-        let core_uri =
-            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
-        let package =
-            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
-        let app_package =
-            package_analysis_for_path(&app_path).expect("app package analysis should succeed");
+        let core_uri = fixture.core_uri.clone();
+        let package = package_analysis_for_path(&fixture.core_source_path)
+            .expect("package analysis should succeed");
+        let app_package = &fixture.package;
         let open_docs = file_open_documents(vec![
             (app_uri.clone(), app_source.clone()),
             (task_uri.clone(), task_source.clone()),
@@ -19529,7 +19475,7 @@ impl Config {
         );
         let external_locations = workspace_dependency_reference_locations_with_open_docs(
             &package,
-            Some(core_source_path.as_path()),
+            Some(fixture.core_source_path.as_path()),
             &open_docs,
             &local_target,
             false,
