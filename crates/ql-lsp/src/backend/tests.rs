@@ -21927,37 +21927,13 @@ pub fn main() -> Int {
 "#,
         );
 
-        let open_alpha_source = r#"
-package demo.shared.alpha
-
-pub struct Counter {
-    value: Int,
-}
-
-
-impl Counter {
-    pub fn ping(self) -> Int {
-        return self.value
-    }
-}
-
-pub fn forward(counter: Counter) -> Int {
-    return counter.ping()
-}
-
-pub fn build() -> Counter {
-    return Counter { value: 1 }
-}
-"#;
+        let open_alpha_source = WORKSPACE_DEPENDENCY_OPEN_ALPHA_QUERY_SOURCE;
         let source = &fixture.app_source;
         let analysis = analyze_source(source).expect("app source should analyze");
         let package = &fixture.package;
         let uri = &fixture.app_uri;
         let alpha_uri = &fixture.alpha_uri;
-        let open_docs = file_open_documents(vec![(
-            alpha_uri.clone(),
-            open_alpha_source.to_owned(),
-        )]);
+        let open_docs = workspace_dependency_open_docs(alpha_uri, open_alpha_source);
 
         let definition = workspace_source_definition_for_dependency_with_open_docs(
             uri,
@@ -21988,27 +21964,12 @@ pub fn build() -> Counter {
         )
         .expect("dependency references should use open dependency source");
 
-        assert!(
-            references.iter().any(|reference| {
-                reference.uri == *alpha_uri
-                    && reference.range.start
-                        == offset_to_position(
-                            open_alpha_source,
-                            nth_offset(open_alpha_source, "ping", 1),
-                        )
-            }),
-            "references should include open dependency source definition",
-        );
-        assert!(
-            references.iter().any(|reference| {
-                reference.uri == *alpha_uri
-                    && reference.range.start
-                        == offset_to_position(
-                            open_alpha_source,
-                            nth_offset(open_alpha_source, "ping", 2),
-                        )
-            }),
-            "references should include open dependency source method use",
+        assert_workspace_dependency_open_method_references(
+            &fixture,
+            open_alpha_source,
+            &references,
+            true,
+            false,
         );
     }
 
@@ -22027,29 +21988,10 @@ pub fn main() -> Int {
 "#,
         );
 
-        let open_alpha_source = r#"
-package demo.shared.alpha
-
-pub struct Counter {
-    value: Int,
-}
-
-impl Counter {
-    pub fn pulse(self) -> Int {
-        return self.value
-    }
-}
-
-pub fn build() -> Counter {
-    return Counter { value: 1 }
-}
-"#;
+        let open_alpha_source = WORKSPACE_DEPENDENCY_OPEN_ALPHA_COMPLETION_SOURCE;
         let source = &fixture.app_source;
         let package = &fixture.package;
-        let open_docs = file_open_documents(vec![(
-            fixture.alpha_uri.clone(),
-            open_alpha_source.to_owned(),
-        )]);
+        let open_docs = workspace_dependency_open_docs(&fixture.alpha_uri, open_alpha_source);
         let offset = nth_offset(source, "build().pu", 1) + "build().pu".len();
 
         let completion = workspace_source_method_completions_with_open_docs(
@@ -22060,13 +22002,7 @@ pub fn build() -> Counter {
         )
         .expect("method completion should use open dependency source");
 
-        let CompletionResponse::Array(items) = completion else {
-            panic!("method completion should resolve to a plain item array")
-        };
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].label, "pulse");
-        assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
-        assert_eq!(items[0].detail.as_deref(), Some("fn pulse(self) -> Int"));
+        assert_workspace_dependency_open_method_completion(completion);
     }
 
     #[test]
@@ -22876,10 +22812,7 @@ pub fn build() -> Counter {
 "#;
         let analysis =
             analyze_source(&fixture.app_source).expect("app source should analyze");
-        let open_docs = file_open_documents(vec![(
-            fixture.alpha_uri.clone(),
-            open_alpha_source.to_owned(),
-        )]);
+        let open_docs = workspace_dependency_open_docs(&fixture.alpha_uri, open_alpha_source);
         assert_workspace_dependency_member_type_implementations(
             &fixture,
             open_alpha_source,
@@ -23113,10 +23046,7 @@ pub fn build() -> Counter {
 "#;
         let analysis =
             analyze_source(&fixture.app_source).expect("app source should analyze");
-        let open_docs = file_open_documents(vec![(
-            fixture.alpha_uri.clone(),
-            open_alpha_source.to_owned(),
-        )]);
+        let open_docs = workspace_dependency_open_docs(&fixture.alpha_uri, open_alpha_source);
         let pulse_position = offset_to_position(
             &fixture.app_source,
             nth_offset(&fixture.app_source, "pulse", 1) + 1,
@@ -23211,32 +23141,9 @@ pub fn main() -> Int {
 "#,
         );
 
-        let open_alpha_source = r#"
-package demo.shared.alpha
-
-pub struct Counter {
-    value: Int,
-}
-
-impl Counter {
-    pub fn ping(self) -> Int {
-        return self.value
-    }
-}
-
-pub fn forward(counter: Counter) -> Int {
-    return counter.ping()
-}
-
-pub fn build() -> Counter {
-    return Counter { value: 1 }
-}
-"#;
+        let open_alpha_source = WORKSPACE_DEPENDENCY_OPEN_ALPHA_QUERY_SOURCE;
         assert!(analyze_source(&fixture.app_source).is_err());
-        let open_docs = file_open_documents(vec![(
-            fixture.alpha_uri.clone(),
-            open_alpha_source.to_owned(),
-        )]);
+        let open_docs = workspace_dependency_open_docs(&fixture.alpha_uri, open_alpha_source);
         let ping_position = offset_to_position(
             &fixture.app_source,
             nth_offset(&fixture.app_source, "ping", 1) + 1,
@@ -23253,38 +23160,12 @@ pub fn build() -> Counter {
             )
             .expect("broken-source dependency references should use open dependency source");
 
-        assert!(
-            references.iter().any(|reference| {
-                reference.uri == fixture.alpha_uri
-                    && reference.range.start
-                        == offset_to_position(
-                            open_alpha_source,
-                            nth_offset(open_alpha_source, "ping", 1),
-                        )
-            }),
-            "references should include open dependency source definition",
-        );
-        assert!(
-            references.iter().any(|reference| {
-                reference.uri == fixture.alpha_uri
-                    && reference.range.start
-                        == offset_to_position(
-                            open_alpha_source,
-                            nth_offset(open_alpha_source, "ping", 2),
-                        )
-            }),
-            "references should include open dependency source method use",
-        );
-        assert!(
-            references.iter().any(|reference| {
-                reference.uri == fixture.app_uri
-                    && reference.range.start
-                        == offset_to_position(
-                            &fixture.app_source,
-                            nth_offset(&fixture.app_source, "ping", 1),
-                        )
-            }),
-            "references should include broken-source local method occurrence",
+        assert_workspace_dependency_open_method_references(
+            &fixture,
+            open_alpha_source,
+            &references,
+            true,
+            true,
         );
 
         assert_eq!(
@@ -23370,10 +23251,7 @@ pub fn build() -> Counter {
 }
 "#;
         assert!(analyze_source(&fixture.app_source).is_err());
-        let open_docs = file_open_documents(vec![(
-            fixture.alpha_uri.clone(),
-            open_alpha_source.to_owned(),
-        )]);
+        let open_docs = workspace_dependency_open_docs(&fixture.alpha_uri, open_alpha_source);
         assert_workspace_dependency_member_type_implementations(
             &fixture,
             open_alpha_source,
@@ -23486,7 +23364,47 @@ pub fn main() -> Int {
 "#,
         );
 
-        let open_alpha_source = r#"
+        let open_alpha_source = WORKSPACE_DEPENDENCY_OPEN_ALPHA_COMPLETION_SOURCE;
+        let source = &fixture.app_source;
+        assert!(analyze_source(source).is_err());
+        let package = &fixture.package;
+        let open_docs = workspace_dependency_open_docs(&fixture.alpha_uri, open_alpha_source);
+        let offset = nth_offset(source, "build().pu", 1) + "build().pu".len();
+
+        let completion = workspace_source_method_completions_with_open_docs(
+            source,
+            package,
+            &open_docs,
+            offset_to_position(source, offset),
+        )
+        .expect("broken-source method completion should use open dependency source");
+
+        assert_workspace_dependency_open_method_completion(completion);
+    }
+
+    const WORKSPACE_DEPENDENCY_OPEN_ALPHA_QUERY_SOURCE: &str = r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn forward(counter: Counter) -> Int {
+    return counter.ping()
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#;
+
+    const WORKSPACE_DEPENDENCY_OPEN_ALPHA_COMPLETION_SOURCE: &str = r#"
 package demo.shared.alpha
 
 pub struct Counter {
@@ -23503,25 +23421,68 @@ pub fn build() -> Counter {
     return Counter { value: 1 }
 }
 "#;
-        let source = &fixture.app_source;
-        assert!(analyze_source(source).is_err());
-        let package = &fixture.package;
-        let open_docs = file_open_documents(vec![(
-            fixture.alpha_uri.clone(),
-            open_alpha_source.to_owned(),
-        )]);
-        let offset = nth_offset(source, "build().pu", 1) + "build().pu".len();
 
-        let completion = workspace_source_method_completions_with_open_docs(
-            source,
-            package,
-            &open_docs,
-            offset_to_position(source, offset),
-        )
-        .expect("broken-source method completion should use open dependency source");
+    fn workspace_dependency_open_docs(
+        alpha_uri: &Url,
+        open_alpha_source: &str,
+    ) -> super::OpenDocuments {
+        file_open_documents(vec![(alpha_uri.clone(), open_alpha_source.to_owned())])
+    }
 
+    fn assert_workspace_dependency_open_method_references(
+        fixture: &WorkspaceDependencyMemberTypeImplementationFixture,
+        open_alpha_source: &str,
+        references: &[Location],
+        include_definition: bool,
+        include_local_reference: bool,
+    ) {
+        let open_source_occurrences = if include_definition {
+            [Some((
+                1usize,
+                "references should include open dependency source definition",
+            )), Some((
+                2usize,
+                "references should include open dependency source method use",
+            ))]
+        } else {
+            [None, Some((
+                2usize,
+                "references should include open dependency source method use",
+            ))]
+        };
+
+        for (occurrence, message) in open_source_occurrences.into_iter().flatten() {
+            assert!(
+                references.iter().any(|reference| {
+                    reference.uri == fixture.alpha_uri
+                        && reference.range.start
+                            == offset_to_position(
+                                open_alpha_source,
+                                nth_offset(open_alpha_source, "ping", occurrence),
+                            )
+                }),
+                "{message}",
+            );
+        }
+
+        if include_local_reference {
+            assert!(
+                references.iter().any(|reference| {
+                    reference.uri == fixture.app_uri
+                        && reference.range.start
+                            == offset_to_position(
+                                &fixture.app_source,
+                                nth_offset(&fixture.app_source, "ping", 1),
+                            )
+                }),
+                "references should include broken-source local method occurrence",
+            );
+        }
+    }
+
+    fn assert_workspace_dependency_open_method_completion(completion: CompletionResponse) {
         let CompletionResponse::Array(items) = completion else {
-            panic!("broken-source method completion should resolve to a plain item array")
+            panic!("method completion should resolve to a plain item array")
         };
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label, "pulse");
