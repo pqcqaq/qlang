@@ -23544,11 +23544,134 @@ pub fn main() -> Int {
         );
     }
 
+    struct AppCoreWorkspaceFixture {
+        _temp: TempDir,
+        app_source: String,
+        app_uri: Url,
+        package: ql_analysis::PackageAnalysis,
+        core_source: String,
+        core_source_path: PathBuf,
+        core_uri: Url,
+        task_source: Option<String>,
+        task_uri: Option<Url>,
+    }
+
+    fn setup_app_core_workspace_fixture(
+        prefix: &str,
+        app_source: &str,
+        task_source: Option<&str>,
+        core_source: &str,
+        core_interface: &str,
+    ) -> AppCoreWorkspaceFixture {
+        let temp = TempDir::new(prefix);
+        let app_path = temp.write("workspace/packages/app/src/main.ql", app_source);
+        let task_path = task_source
+            .map(|source| temp.write("workspace/packages/app/src/task.ql", source));
+        let core_source_path = temp.write("workspace/packages/core/src/lib.ql", core_source);
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write("workspace/packages/core/core.qi", core_interface);
+
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let core_source =
+            fs::read_to_string(&core_source_path).expect("core source should read for assertions");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        let (task_source, task_uri) = task_path
+            .map(|path| {
+                (
+                    fs::read_to_string(&path).expect("task source should read"),
+                    Url::from_file_path(&path).expect("task path should convert to URI"),
+                )
+            })
+            .map_or((None, None), |(source, uri)| (Some(source), Some(uri)));
+
+        AppCoreWorkspaceFixture {
+            _temp: temp,
+            app_source,
+            app_uri,
+            package,
+            core_source,
+            core_source_path,
+            core_uri,
+            task_source,
+            task_uri,
+        }
+    }
+
+    fn assert_locations_contain_uri_occurrence(
+        locations: &[Location],
+        uri: &Url,
+        source: &str,
+        needle: &str,
+        occurrence: usize,
+        message: &str,
+    ) {
+        let expected_position = offset_to_position(source, nth_offset(source, needle, occurrence));
+        assert!(
+            locations
+                .iter()
+                .any(|location| location.uri == *uri && location.range.start == expected_position),
+            "{message}",
+        );
+    }
+
+    fn assert_locations_contain_file_occurrence(
+        locations: &[Location],
+        file_path: &Path,
+        source: &str,
+        needle: &str,
+        occurrence: usize,
+        message: &str,
+    ) {
+        let expected_path = file_path
+            .canonicalize()
+            .expect("expected reference path should canonicalize");
+        let expected_position = offset_to_position(source, nth_offset(source, needle, occurrence));
+        assert!(
+            locations.iter().any(|location| {
+                location
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|path| path.canonicalize().ok())
+                    .as_ref()
+                    == Some(&expected_path)
+                    && location.range.start == expected_position
+            }),
+            "{message}",
+        );
+    }
+
     #[test]
     fn workspace_dependency_references_without_declaration_include_other_workspace_uses() {
-        let temp = TempDir::new("ql-lsp-workspace-dependency-source-references-no-decl");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_app_core_workspace_fixture(
+            "ql-lsp-workspace-dependency-source-references-no-decl",
             r#"
 package demo.app
 
@@ -23558,10 +23681,8 @@ pub fn main(config: Cfg) -> Int {
     return config.ping()
 }
 "#,
-        );
-        let task_path = temp.write(
-            "workspace/packages/app/src/task.ql",
-            r#"
+            Some(
+                r#"
 package demo.app
 
 use demo.core.Config as OtherCfg
@@ -23570,9 +23691,7 @@ pub fn task(config: OtherCfg) -> Int {
     return config.ping()
 }
 "#,
-        );
-        let core_source_path = temp.write(
-            "workspace/packages/core/src/lib.ql",
+            ),
             r#"
 package demo.core
 
@@ -23590,33 +23709,6 @@ impl Config {
     }
 }
 "#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app", "packages/core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -23634,51 +23726,50 @@ impl Config {
 "#,
         );
 
-        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let source = &fixture.app_source;
         let analysis = analyze_source(&source).expect("app source should analyze");
-        let package =
-            package_analysis_for_path(&app_path).expect("package analysis should succeed");
-        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
-        let core_source =
-            fs::read_to_string(&core_source_path).expect("core source should read for assertions");
-        let task_source = fs::read_to_string(&task_path).expect("task source should read");
-        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+        let package = &fixture.package;
+        let uri = &fixture.app_uri;
+        let core_source = &fixture.core_source;
+        let task_source = fixture
+            .task_source
+            .as_deref()
+            .expect("fixture should include task source");
+        let task_uri = fixture
+            .task_uri
+            .as_ref()
+            .expect("fixture should include task uri");
 
         let references = workspace_source_references_for_dependency(
-            &uri,
+            uri,
             &source,
             Some(&analysis),
-            &package,
+            package,
             offset_to_position(&source, nth_offset(&source, "ping", 1)),
             false,
         )
         .expect("workspace dependency references without declaration should exist");
 
         assert_eq!(references.len(), 3);
-        assert_eq!(references[0].uri, uri);
+        assert_eq!(references[0].uri, *uri);
         assert_eq!(
             references[0].range.start,
             offset_to_position(&source, nth_offset(&source, "ping", 1)),
         );
-        assert!(
-            references.iter().any(|reference| {
-                reference
-                    .uri
-                    .to_file_path()
-                    .ok()
-                    .and_then(|path| path.canonicalize().ok())
-                    == core_source_path.canonicalize().ok()
-                    && reference.range.start
-                        == offset_to_position(&core_source, nth_offset(&core_source, "ping", 3))
-            }),
+        assert_locations_contain_file_occurrence(
+            &references,
+            &fixture.core_source_path,
+            core_source,
+            "ping",
+            3,
             "references should include workspace source method use",
         );
-        assert!(
-            references.iter().any(|reference| {
-                reference.uri == task_uri
-                    && reference.range.start
-                        == offset_to_position(&task_source, nth_offset(&task_source, "ping", 1))
-            }),
+        assert_locations_contain_uri_occurrence(
+            &references,
+            task_uri,
+            task_source,
+            "ping",
+            1,
             "references should include other workspace file method use",
         );
     }
@@ -23686,9 +23777,8 @@ impl Config {
     #[test]
     fn workspace_dependency_value_references_survive_parse_errors_and_prefer_workspace_member_source()
      {
-        let temp = TempDir::new("ql-lsp-workspace-dependency-source-references-parse-errors");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_app_core_workspace_fixture(
+            "ql-lsp-workspace-dependency-source-references-parse-errors",
             r#"
 package demo.app
 
@@ -23698,10 +23788,8 @@ pub fn main(value: Int) -> Int {
     let result = run(value)
     return result
 "#,
-        );
-        let task_path = temp.write(
-            "workspace/packages/app/src/task.ql",
-            r#"
+            Some(
+                r#"
 package demo.app
 
 use demo.core.exported as call
@@ -23710,9 +23798,7 @@ pub fn task(value: Int) -> Int {
     return call(value)
 }
 "#,
-        );
-        let core_source_path = temp.write(
-            "workspace/packages/core/src/lib.ql",
+            ),
             r#"
 package demo.core
 
@@ -23720,33 +23806,6 @@ pub fn exported(value: Int) -> Int {
     return value
 }
 "#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app", "packages/core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -23758,19 +23817,23 @@ pub fn exported(value: Int) -> Int
 "#,
         );
 
-        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let source = &fixture.app_source;
         assert!(analyze_source(&source).is_err());
-        let package = package_analysis_for_path(&app_path)
-            .expect("package analysis should survive parse errors");
-        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
-        let core_source =
-            fs::read_to_string(&core_source_path).expect("core source should read for assertions");
-        let task_source = fs::read_to_string(&task_path).expect("task source should read");
-        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+        let package = &fixture.package;
+        let uri = &fixture.app_uri;
+        let core_source = &fixture.core_source;
+        let task_source = fixture
+            .task_source
+            .as_deref()
+            .expect("fixture should include task source");
+        let task_uri = fixture
+            .task_uri
+            .as_ref()
+            .expect("fixture should include task uri");
         let references = workspace_source_references_for_dependency_in_broken_source(
-            &uri,
+            uri,
             &source,
-            &package,
+            package,
             offset_to_position(&source, nth_offset(&source, "run", 2)),
             true,
         )
@@ -23784,7 +23847,8 @@ pub fn exported(value: Int) -> Int
                 .expect("definition URI should convert to a file path")
                 .canonicalize()
                 .expect("definition path should canonicalize"),
-            core_source_path
+            fixture
+                .core_source_path
                 .canonicalize()
                 .expect("core source path should canonicalize"),
         );
@@ -23792,40 +23856,38 @@ pub fn exported(value: Int) -> Int
             references[0].range.start,
             offset_to_position(&core_source, nth_offset(&core_source, "exported", 1)),
         );
-        assert_eq!(references[1].uri, uri);
+        assert_eq!(references[1].uri, *uri);
         assert_eq!(
             references[1].range.start,
             offset_to_position(&source, nth_offset(&source, "run", 1)),
         );
-        assert_eq!(references[2].uri, uri);
+        assert_eq!(references[2].uri, *uri);
         assert_eq!(
             references[2].range.start,
             offset_to_position(&source, nth_offset(&source, "run", 2)),
         );
-        assert!(
-            references.iter().any(|reference| {
-                reference.uri == task_uri
-                    && reference.range.start
-                        == offset_to_position(&task_source, nth_offset(&task_source, "call", 1))
-            }),
+        assert_locations_contain_uri_occurrence(
+            &references,
+            task_uri,
+            task_source,
+            "call",
+            1,
             "run should include task alias definition",
         );
-        assert!(
-            references.iter().any(|reference| {
-                reference.uri == task_uri
-                    && reference.range.start
-                        == offset_to_position(&task_source, nth_offset(&task_source, "call", 2))
-            }),
+        assert_locations_contain_uri_occurrence(
+            &references,
+            task_uri,
+            task_source,
+            "call",
+            2,
             "run should include task call occurrence",
         );
     }
 
     #[test]
     fn workspace_dependency_value_references_without_declaration_survive_parse_errors() {
-        let temp =
-            TempDir::new("ql-lsp-workspace-dependency-source-references-parse-errors-no-decl");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_app_core_workspace_fixture(
+            "ql-lsp-workspace-dependency-source-references-parse-errors-no-decl",
             r#"
 package demo.app
 
@@ -23834,10 +23896,8 @@ use demo.core.exported as run
 pub fn main(value: Int) -> Int {
     return run(value
 "#,
-        );
-        let task_path = temp.write(
-            "workspace/packages/app/src/task.ql",
-            r#"
+            Some(
+                r#"
 package demo.app
 
 use demo.core.exported as call
@@ -23846,9 +23906,7 @@ pub fn task(value: Int) -> Int {
     return call(value)
 }
 "#,
-        );
-        let core_source_path = temp.write(
-            "workspace/packages/core/src/lib.ql",
+            ),
             r#"
 package demo.core
 
@@ -23860,33 +23918,6 @@ pub fn wrapper(value: Int) -> Int {
     return exported(value)
 }
 "#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app", "packages/core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -23898,20 +23929,24 @@ pub fn exported(value: Int) -> Int
 "#,
         );
 
-        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let source = &fixture.app_source;
         assert!(analyze_source(&source).is_err());
-        let package = package_analysis_for_path(&app_path)
-            .expect("package analysis should survive parse errors");
-        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
-        let core_source =
-            fs::read_to_string(&core_source_path).expect("core source should read for assertions");
-        let task_source = fs::read_to_string(&task_path).expect("task source should read");
-        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+        let package = &fixture.package;
+        let uri = &fixture.app_uri;
+        let core_source = &fixture.core_source;
+        let task_source = fixture
+            .task_source
+            .as_deref()
+            .expect("fixture should include task source");
+        let task_uri = fixture
+            .task_uri
+            .as_ref()
+            .expect("fixture should include task uri");
 
         let references = workspace_source_references_for_dependency_in_broken_source(
-            &uri,
+            uri,
             &source,
-            &package,
+            package,
             offset_to_position(&source, nth_offset(&source, "run", 2)),
             false,
         )
@@ -23920,30 +23955,25 @@ pub fn exported(value: Int) -> Int
         );
 
         assert_eq!(references.len(), 3);
-        assert_eq!(references[0].uri, uri);
+        assert_eq!(references[0].uri, *uri);
         assert_eq!(
             references[0].range.start,
             offset_to_position(&source, nth_offset(&source, "run", 2)),
         );
-        assert!(
-            references.iter().any(|reference| {
-                reference
-                    .uri
-                    .to_file_path()
-                    .ok()
-                    .and_then(|path| path.canonicalize().ok())
-                    == core_source_path.canonicalize().ok()
-                    && reference.range.start
-                        == offset_to_position(&core_source, nth_offset(&core_source, "exported", 2))
-            }),
+        assert_locations_contain_file_occurrence(
+            &references,
+            &fixture.core_source_path,
+            core_source,
+            "exported",
+            2,
             "references should include workspace source occurrence",
         );
-        assert!(
-            references.iter().any(|reference| {
-                reference.uri == task_uri
-                    && reference.range.start
-                        == offset_to_position(&task_source, nth_offset(&task_source, "call", 2))
-            }),
+        assert_locations_contain_uri_occurrence(
+            &references,
+            task_uri,
+            task_source,
+            "call",
+            2,
             "references should include other workspace file occurrence",
         );
     }
@@ -23985,9 +24015,8 @@ pub fn main() -> Int {
 
     #[test]
     fn document_highlight_keeps_package_import_occurrences_in_current_file() {
-        let temp = TempDir::new("ql-lsp-document-highlight-package-import");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_app_core_workspace_fixture(
+            "ql-lsp-document-highlight-package-import",
             r#"
 package demo.app
 
@@ -23997,9 +24026,7 @@ pub fn main() -> Int {
     return run(1)
 }
 "#,
-        );
-        temp.write(
-            "workspace/packages/core/src/lib.ql",
+            None,
             r#"
 package demo.core
 
@@ -24007,33 +24034,6 @@ pub fn exported(value: Int) -> Int {
     return value
 }
 "#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app", "packages/core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -24045,17 +24045,16 @@ pub fn exported(value: Int) -> Int
 "#,
         );
 
-        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let source = &fixture.app_source;
         let analysis = analyze_source(&source).expect("app source should analyze");
-        let package =
-            package_analysis_for_path(&app_path).expect("package analysis should succeed");
-        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let package = &fixture.package;
+        let uri = &fixture.app_uri;
 
         let highlights = workspace_import_document_highlights(
-            &uri,
+            uri,
             &source,
             &analysis,
-            &package,
+            package,
             offset_to_position(&source, nth_offset(&source, "run", 2)),
         )
         .expect("package-aware document highlight should exist");
@@ -24069,9 +24068,8 @@ pub fn exported(value: Int) -> Int
 
     #[test]
     fn workspace_import_document_highlights_prefer_open_workspace_source() {
-        let temp = TempDir::new("ql-lsp-document-highlight-package-import-open-docs");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_app_core_workspace_fixture(
+            "ql-lsp-document-highlight-package-import-open-docs",
             r#"
 package demo.app
 
@@ -24083,9 +24081,7 @@ pub fn main() -> Int {
     return second
 }
 "#,
-        );
-        let core_source_path = temp.write(
-            "workspace/packages/core/src/lib.ql",
+            None,
             r#"
 package demo.core
 
@@ -24093,33 +24089,6 @@ pub fn helper() -> Int {
     return 0
 }
 "#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app", "packages/core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -24131,13 +24100,10 @@ pub fn measure(value: Int) -> Int
 "#,
         );
 
-        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let source = &fixture.app_source;
         let analysis = analyze_source(&source).expect("app source should analyze");
-        let package =
-            package_analysis_for_path(&app_path).expect("package analysis should succeed");
-        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
-        let core_uri =
-            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        let package = &fixture.package;
+        let uri = &fixture.app_uri;
         let open_core_source = r#"
 package demo.core
 
@@ -24153,10 +24119,10 @@ pub fn measure(value: Int) -> Int {
 
         assert_eq!(
             workspace_import_document_highlights(
-                &uri,
+                uri,
                 &source,
                 &analysis,
-                &package,
+                package,
                 offset_to_position(&source, nth_offset(&source, "run", 2)),
             ),
             None,
@@ -24164,13 +24130,13 @@ pub fn measure(value: Int) -> Int {
         );
 
         let highlights = workspace_import_document_highlights_with_open_docs(
-            &uri,
+            uri,
             &source,
             &analysis,
-            &package,
+            package,
             &file_open_documents(vec![
                 (uri.clone(), source.clone()),
-                (core_uri, open_core_source),
+                (fixture.core_uri.clone(), open_core_source),
             ]),
             offset_to_position(&source, nth_offset(&source, "run", 2)),
         )
@@ -24185,9 +24151,8 @@ pub fn measure(value: Int) -> Int {
 
     #[test]
     fn document_highlight_keeps_workspace_import_occurrences_in_broken_source() {
-        let temp = TempDir::new("ql-lsp-document-highlight-package-import-parse-errors");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_app_core_workspace_fixture(
+            "ql-lsp-document-highlight-package-import-parse-errors",
             r#"
 package demo.app
 
@@ -24198,9 +24163,7 @@ pub fn main() -> Int {
     let second = run(first)
     return second
 "#,
-        );
-        temp.write(
-            "workspace/packages/core/src/lib.ql",
+            None,
             r#"
 package demo.core
 
@@ -24208,33 +24171,6 @@ pub fn exported(value: Int) -> Int {
     return value
 }
 "#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app", "packages/core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -24246,16 +24182,15 @@ pub fn exported(value: Int) -> Int
 "#,
         );
 
-        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let source = &fixture.app_source;
         assert!(analyze_source(&source).is_err());
-        let package = package_analysis_for_path(&app_path)
-            .expect("package analysis should survive parse errors");
-        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let package = &fixture.package;
+        let uri = &fixture.app_uri;
 
         let highlights = fallback_document_highlights_for_package_at(
-            &uri,
+            uri,
             &source,
-            &package,
+            package,
             offset_to_position(&source, nth_offset(&source, "run", 2)),
         )
         .expect("broken-source workspace import document highlight should exist");
@@ -24269,9 +24204,8 @@ pub fn exported(value: Int) -> Int
 
     #[test]
     fn document_highlight_keeps_dependency_value_occurrences_in_broken_source() {
-        let temp = TempDir::new("ql-lsp-document-highlight-dependency-value-parse-errors");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_app_core_workspace_fixture(
+            "ql-lsp-document-highlight-dependency-value-parse-errors",
             r#"
 package demo.app
 
@@ -24281,10 +24215,8 @@ pub fn main() -> Int {
     let first = run(1)
     return run(first)
 "#,
-        );
-        temp.write(
-            "workspace/packages/app/src/task.ql",
-            r#"
+            Some(
+                r#"
 package demo.app
 
 use demo.core.exported as call
@@ -24293,9 +24225,7 @@ pub fn task(value: Int) -> Int {
     return call(value)
 }
 "#,
-        );
-        temp.write(
-            "workspace/packages/core/src/lib.ql",
+            ),
             r#"
 package demo.core
 
@@ -24303,33 +24233,6 @@ pub fn exported(value: Int) -> Int {
     return value
 }
 "#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app", "packages/core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../core"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/packages/core/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -24341,16 +24244,15 @@ pub fn exported(value: Int) -> Int
 "#,
         );
 
-        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let source = &fixture.app_source;
         assert!(analyze_source(&source).is_err());
-        let package = package_analysis_for_path(&app_path)
-            .expect("package analysis should survive parse errors");
-        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let package = &fixture.package;
+        let uri = &fixture.app_uri;
 
         let highlights = fallback_document_highlights_for_package_at(
-            &uri,
+            uri,
             &source,
-            &package,
+            package,
             offset_to_position(&source, nth_offset(&source, "run", 3)),
         )
         .expect("broken-source dependency value document highlight should exist");
