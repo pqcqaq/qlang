@@ -22049,13 +22049,11 @@ pub fn main() -> Int {
             pulse_position,
         )
         .expect("dependency definition should use open dependency member source");
-        let GotoDefinitionResponse::Scalar(location) = definition else {
-            panic!("dependency definition should resolve to a scalar source location")
-        };
-        assert_eq!(location.uri, fixture.alpha_uri);
-        assert_eq!(
-            location.range.start,
-            offset_to_position(open_alpha_source, nth_offset(open_alpha_source, "pulse", 1)),
+        assert_workspace_dependency_member_definition_location(
+            &fixture.alpha_uri,
+            open_alpha_source,
+            "pulse",
+            definition,
         );
 
         assert_eq!(
@@ -22079,13 +22077,16 @@ pub fn main() -> Int {
             pulse_position,
         )
         .expect("dependency hover should use open dependency member source");
-        let HoverContents::Markup(markup) = hover.contents else {
-            panic!("hover should use markdown")
-        };
-        assert!(markup.value.contains("fn pulse(self) -> Int"));
-        assert!(!markup.value.contains("fn ping(self) -> Int"));
+        assert_workspace_dependency_member_hover_markup(
+            hover,
+            "fn pulse(self) -> Int",
+            "fn ping(self) -> Int",
+        );
 
-        assert_eq!(
+        assert_workspace_dependency_member_implementation_location(
+            &fixture.alpha_uri,
+            open_alpha_source,
+            "pulse",
             workspace_source_method_implementation_for_dependency_with_open_docs(
                 &fixture.app_uri,
                 &fixture.app_source,
@@ -22093,11 +22094,8 @@ pub fn main() -> Int {
                 &fixture.package,
                 &open_docs,
                 pulse_position,
-            ),
-            Some(GotoImplementationResponse::Scalar(Location::new(
-                fixture.alpha_uri,
-                span_to_range(open_alpha_source, nth_span(open_alpha_source, "pulse", 1)),
-            ))),
+            )
+            .expect("dependency implementation should use open dependency member source"),
         );
     }
 
@@ -22406,43 +22404,29 @@ pub fn main() -> Int {
             analyze_source(&fixture.app_source).expect("app source should analyze");
         let open_docs = workspace_dependency_open_docs(&fixture.alpha_uri, open_alpha_source);
 
-        for (needle, occurrence) in [("extra", 1usize), ("pulse", 1usize)] {
-            let position = offset_to_position(
-                &fixture.app_source,
-                nth_offset(&fixture.app_source, needle, occurrence) + 1,
-            );
-            assert_eq!(
+        assert_workspace_dependency_member_type_definitions(
+            &fixture,
+            open_alpha_source,
+            |position| {
                 workspace_source_type_definition_for_dependency(
                     &fixture.app_uri,
                     &fixture.app_source,
                     Some(&analysis),
                     &fixture.package,
                     position,
-                ),
-                None,
-                "disk-only type definition should miss unsaved dependency member {needle}",
-            );
-
-            let type_definition = workspace_source_type_definition_for_dependency_with_open_docs(
-                &fixture.app_uri,
-                &fixture.app_source,
-                Some(&analysis),
-                &fixture.package,
-                &open_docs,
-                position,
-            )
-            .expect("dependency member type definition should use open dependency source");
-            let GotoTypeDefinitionResponse::Scalar(location) = type_definition else {
-                panic!(
-                    "dependency member type definition should resolve to a scalar source location"
                 )
-            };
-            assert_eq!(location.uri, fixture.alpha_uri);
-            assert_eq!(
-                location.range.start,
-                offset_to_position(open_alpha_source, nth_offset(open_alpha_source, "Extra", 1)),
-            );
-        }
+            },
+            |position| {
+                workspace_source_type_definition_for_dependency_with_open_docs(
+                    &fixture.app_uri,
+                    &fixture.app_source,
+                    Some(&analysis),
+                    &fixture.package,
+                    &open_docs,
+                    position,
+                )
+            },
+        );
     }
 
     struct WorkspaceDependencyOpenLocalMemberFixture {
@@ -22583,6 +22567,38 @@ pub fn build() -> Counter
                     "dependency member type implementation should include {marker} for {needle}",
                 );
             }
+        }
+    }
+
+    fn assert_workspace_dependency_member_type_definitions(
+        fixture: &WorkspaceDependencyOpenLocalMemberFixture,
+        open_alpha_source: &str,
+        disk_only_type_definition: impl Fn(Position) -> Option<GotoTypeDefinitionResponse>,
+        open_type_definition: impl Fn(Position) -> Option<GotoTypeDefinitionResponse>,
+    ) {
+        for (needle, occurrence) in [("extra", 1usize), ("pulse", 1usize)] {
+            let position = offset_to_position(
+                &fixture.app_source,
+                nth_offset(&fixture.app_source, needle, occurrence) + 1,
+            );
+            assert_eq!(
+                disk_only_type_definition(position.clone()),
+                None,
+                "disk-only type definition should miss unsaved dependency member {needle}",
+            );
+
+            let type_definition = open_type_definition(position)
+                .expect("dependency member type definition should use open dependency source");
+            let GotoTypeDefinitionResponse::Scalar(location) = type_definition else {
+                panic!(
+                    "dependency member type definition should resolve to a scalar source location"
+                )
+            };
+            assert_eq!(location.uri, fixture.alpha_uri);
+            assert_eq!(
+                location.range.start,
+                offset_to_position(open_alpha_source, nth_offset(open_alpha_source, "Extra", 1)),
+            );
         }
     }
 
@@ -23249,6 +23265,50 @@ pub fn build() -> Counter {
         assert_eq!(items[0].label, "pulse");
         assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
         assert_eq!(items[0].detail.as_deref(), Some("fn pulse(self) -> Int"));
+    }
+
+    fn assert_workspace_dependency_member_definition_location(
+        alpha_uri: &Url,
+        open_alpha_source: &str,
+        member: &str,
+        definition: GotoDefinitionResponse,
+    ) {
+        let GotoDefinitionResponse::Scalar(location) = definition else {
+            panic!("dependency definition should resolve to a scalar source location")
+        };
+        assert_eq!(location.uri, *alpha_uri);
+        assert_eq!(
+            location.range.start,
+            offset_to_position(open_alpha_source, nth_offset(open_alpha_source, member, 1)),
+        );
+    }
+
+    fn assert_workspace_dependency_member_hover_markup(
+        hover: tower_lsp::lsp_types::Hover,
+        expected_snippet: &str,
+        unexpected_snippet: &str,
+    ) {
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains(expected_snippet));
+        assert!(!markup.value.contains(unexpected_snippet));
+    }
+
+    fn assert_workspace_dependency_member_implementation_location(
+        alpha_uri: &Url,
+        open_alpha_source: &str,
+        member: &str,
+        implementation: GotoImplementationResponse,
+    ) {
+        let GotoImplementationResponse::Scalar(location) = implementation else {
+            panic!("dependency implementation should resolve to a scalar source location")
+        };
+        assert_eq!(location.uri, *alpha_uri);
+        assert_eq!(
+            location.range.start,
+            offset_to_position(open_alpha_source, nth_offset(open_alpha_source, member, 1)),
+        );
     }
 
     struct SameNamedLocalDependencyMemberFixture {
