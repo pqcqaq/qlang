@@ -4869,6 +4869,86 @@ extend Config {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn implementation_request_returns_alias_and_opaque_type_implementation_surfaces() {
+    let temp = TempDir::new("ql-lsp-implementation-request-same-file-alias-type-surface");
+    let source_path = temp.write(
+        "sample.ql",
+        r#"
+type UserId = Int
+opaque type OrderId = Int
+
+impl UserId {
+    fn value(self) -> Int {
+        return 1
+    }
+}
+
+extend UserId {
+    fn extra(self) -> Int {
+        return 2
+    }
+}
+
+impl OrderId {
+    fn value(self) -> Int {
+        return 3
+    }
+}
+
+fn build(user: UserId, order: OrderId) -> Int {
+    return user.value() + order.value()
+}
+"#,
+    );
+    let source = fs::read_to_string(&source_path).expect("same-file source should read");
+    let uri = Url::from_file_path(&source_path).expect("source path should convert to URI");
+
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+    did_open_via_request(&mut service, uri.clone(), source.clone()).await;
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        uri.clone(),
+        offset_to_position(&source, nth_offset(&source, "UserId", 4)),
+    )
+    .await
+    .expect("same-file type alias implementation should exist");
+    let GotoImplementationResponse::Array(locations) = implementation else {
+        panic!("same-file type alias should resolve to impl and extend blocks")
+    };
+    assert_eq!(locations.len(), 2);
+    assert!(
+        locations.iter().all(|location| location.uri == uri),
+        "all same-file type alias implementations should stay in the current file",
+    );
+    for marker in ["impl UserId", "extend UserId"] {
+        assert!(
+            locations.iter().any(|location| {
+                location.range.start == offset_to_position(&source, nth_offset(&source, marker, 1))
+            }),
+            "same-file type alias implementations should include {marker}",
+        );
+    }
+
+    let implementation = goto_implementation_via_request(
+        &mut service,
+        uri.clone(),
+        offset_to_position(&source, nth_offset(&source, "OrderId", 3)),
+    )
+    .await
+    .expect("same-file opaque type implementation should exist");
+    let GotoImplementationResponse::Scalar(location) = implementation else {
+        panic!("same-file opaque type should resolve to one impl block")
+    };
+    assert_eq!(location.uri, uri);
+    assert_eq!(
+        location.range.start,
+        offset_to_position(&source, nth_offset(&source, "impl OrderId", 1)),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn implementation_request_returns_array_for_workspace_type_import_surface() {
     let fixture = setup_workspace_type_import_fixture(
         "ql-lsp-implementation-request-workspace-type-import-surface",
