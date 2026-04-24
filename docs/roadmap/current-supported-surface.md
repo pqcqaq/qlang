@@ -104,7 +104,7 @@
 - broken-source 下，workspace root `function / const / static / struct / enum / trait / type alias` 的 import/use references 现在也会做保守聚合：除当前文件和导出包源码外，还会补回当前 package 可见的 workspace members / 本地路径依赖里的其他 broken consumer import/use。
 - broken-source 下，workspace root `function / const / static / struct / enum / trait / type alias` 现在也允许从当前 consumer 的 import/use 位置发起 workspace rename（包含 alias import/use）；当前保守联动范围是当前 broken 文件、当前 package 其他源码文件、当前 package 可见的 workspace members / 本地路径依赖里的其他 consumer 源码，以及导出包源码；alias import 仍只更新导入路径，不改本地 alias/use。
 - broken-source 下，workspace root import/use 的 `prepareRename` 与 workspace import alias rename 现在也会读取已打开但未落盘的 workspace 源码；consumer 文件暂时可不保存就能继续做这两条重命名路径。
-- rename 仍然以 same-file 为主；import / local 等其余符号仍未开放更广义的 cross-file rename / workspace edits。
+- rename 仍然以 same-file 为默认保守面；source-backed dependency `method / field / enum variant` 和 workspace root `function / const / static / struct / enum / trait / type alias` 已开放受限 workspace rename / workspace edits。import / local 等其余符号仍未开放更广义的跨文件重命名。
 
 ## 当前明确未支持
 
@@ -112,7 +112,7 @@
 - escaping / higher-order dependency method values、超出当前不可变局部 alias direct-call slice 的 dependency receiver method codegen
 - registry / version solving / publish workflow
 - 预编译 release / VSCode Marketplace 分发
-- 更广义的 cross-file rename / workspace edits（超出 source-backed dependency `method / field / enum variant`）
+- 更广义的 cross-file rename / workspace edits（超出 source-backed dependency `method / field / enum variant` 与 workspace root `function / const / static / struct / enum / trait / type alias` 的受限切片）
 - 更宽的 project-scale references / refactor、补齐 `match` 分支等更完整 code actions / inlay hints
 - 超出当前保守 slice 的广义 parse-error member 语义
 - 完整 trait solver、完整 monomorphization、更完整 effect system

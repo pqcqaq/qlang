@@ -19,7 +19,7 @@ features:
   - title: 当前重点
     details: package/workspace、`.qi`、local dependencies、project-aware build/run/test、dependency-backed LSP。
   - title: 当前边界
-    details: 跨包执行当前稳定覆盖 direct local dependency 的 bridgeable public `const/static` values、受限 public top-level free function、public `extern "c"` 符号、被这些签名直接引用的 public 非泛型 `struct` / `enum`，以及这些 bridgeable public `struct` 上的受限 public receiver method；rename 仍以 same-file 为主。
+    details: 跨包执行当前稳定覆盖 direct local dependency 的 bridgeable public `const/static` values、受限 public top-level free function、public `extern "c"` 符号、被这些签名直接引用的 public 非泛型 `struct` / `enum`，以及这些 bridgeable public `struct` 上的受限 public receiver method；rename 以 same-file 为默认保守面，并已覆盖 source-backed dependency member / enum variant 与 workspace root symbol 的受限 workspace edits。
   - title: 真相源
     details: 如果文档与实现冲突，以 `crates/*` 和回归测试为准。
 ---

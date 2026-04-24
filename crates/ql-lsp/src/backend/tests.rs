@@ -80,7 +80,8 @@
     use tower_lsp::lsp_types::request::GotoImplementationResponse;
     use tower_lsp::lsp_types::{
         CodeActionOrCommand, CompletionItemKind, CompletionResponse, Diagnostic,
-        GotoDefinitionResponse, HoverContents, Location, NumberOrString, Position,
+        DocumentHighlight, GotoDefinitionResponse, HoverContents, Location, NumberOrString,
+        Position,
         PrepareRenameResponse, Range, SemanticTokenType, SemanticTokensResult, SymbolInformation,
         SymbolKind, TextEdit, Url, WorkspaceEdit,
     };
@@ -20582,15 +20583,12 @@ pub fn main() -> Int {
             ),
         )
         .expect("broken-source same-named dependency method completion should exist");
-        let CompletionResponse::Array(method_items) = method_completion else {
-            panic!("method completion should resolve to a plain item array")
-        };
-        assert_eq!(method_items.len(), 1);
-        assert_eq!(method_items[0].label, "ping");
-        assert_eq!(method_items[0].kind, Some(CompletionItemKind::METHOD));
-        assert_eq!(
-            method_items[0].detail.as_deref(),
-            Some("fn ping(self) -> Int")
+        assert_single_completion_item(
+            method_completion,
+            "method",
+            "ping",
+            CompletionItemKind::METHOD,
+            "fn ping(self) -> Int",
         );
 
         let field_completion = completion_for_dependency_member_fields(
@@ -20602,13 +20600,13 @@ pub fn main() -> Int {
             ),
         )
         .expect("broken-source same-named dependency field completion should exist");
-        let CompletionResponse::Array(field_items) = field_completion else {
-            panic!("field completion should resolve to a plain item array")
-        };
-        assert_eq!(field_items.len(), 1);
-        assert_eq!(field_items[0].label, "value");
-        assert_eq!(field_items[0].kind, Some(CompletionItemKind::FIELD));
-        assert_eq!(field_items[0].detail.as_deref(), Some("field value: Int"));
+        assert_single_completion_item(
+            field_completion,
+            "field",
+            "value",
+            CompletionItemKind::FIELD,
+            "field value: Int",
+        );
     }
 
     struct SameNamedLocalDependencyBrokenOpenImplementationFixture {
@@ -21144,15 +21142,11 @@ pub enum Command {
             offset_to_position(source, nth_offset(source, "Retry", 2)),
         )
         .expect("broken-source same-named dependency variant document highlight should exist");
-        let actual = highlights
-            .into_iter()
-            .map(|highlight| highlight.range.start)
-            .collect::<Vec<_>>();
-        let expected = vec![
-            offset_to_position(source, nth_offset(source, "Retry", 1)),
-            offset_to_position(source, nth_offset(source, "Retry", 2)),
-        ];
-        assert_eq!(actual, expected);
+        assert_highlight_starts_for_occurrences(
+            source,
+            highlights,
+            &[("Retry", 1), ("Retry", 2)],
+        );
     }
 
     #[test]
@@ -21520,15 +21514,12 @@ pub enum Command {
         )
         .expect("broken-source same-named dependency variant completion should exist");
 
-        let CompletionResponse::Array(items) = completion else {
-            panic!("variant completion should resolve to a plain item array")
-        };
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].label, "Backoff");
-        assert_eq!(items[0].kind, Some(CompletionItemKind::ENUM_MEMBER));
-        assert_eq!(
-            items[0].detail.as_deref(),
-            Some("variant Command.Backoff(Int)")
+        assert_single_completion_item(
+            completion,
+            "variant",
+            "Backoff",
+            CompletionItemKind::ENUM_MEMBER,
+            "variant Command.Backoff(Int)",
         );
     }
 
@@ -21596,14 +21587,13 @@ pub struct Settings {
             offset_to_position(source, nth_offset(source, "po", 1) + 2),
         )
         .expect("broken-source same-named dependency struct field completion should exist");
-
-        let CompletionResponse::Array(items) = completion else {
-            panic!("struct field completion should resolve to a plain item array")
-        };
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].label, "port");
-        assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
-        assert_eq!(items[0].detail.as_deref(), Some("field port: Int"));
+        assert_single_completion_item(
+            completion,
+            "struct field",
+            "port",
+            CompletionItemKind::FIELD,
+            "field port: Int",
+        );
     }
 
     struct SameNamedLocalDependencyWorkspaceCompletionFixture {
@@ -21768,15 +21758,12 @@ pub fn build() -> Counter
             offset_to_position(source, nth_offset(source, "pi", 1) + 2),
         )
         .expect("workspace same-named dependency method completion should exist");
-        let CompletionResponse::Array(method_items) = method_completion else {
-            panic!("method completion should resolve to a plain item array")
-        };
-        assert_eq!(method_items.len(), 1);
-        assert_eq!(method_items[0].label, "ping");
-        assert_eq!(method_items[0].kind, Some(CompletionItemKind::METHOD));
-        assert_eq!(
-            method_items[0].detail.as_deref(),
-            Some("fn ping(self) -> Int")
+        assert_single_completion_item(
+            method_completion,
+            "method",
+            "ping",
+            CompletionItemKind::METHOD,
+            "fn ping(self) -> Int",
         );
 
         let field_completion = workspace_source_member_field_completions(
@@ -21785,13 +21772,13 @@ pub fn build() -> Counter
             offset_to_position(source, nth_offset(source, "to", 1) + 2),
         )
         .expect("workspace same-named dependency field completion should exist");
-        let CompletionResponse::Array(field_items) = field_completion else {
-            panic!("field completion should resolve to a plain item array")
-        };
-        assert_eq!(field_items.len(), 1);
-        assert_eq!(field_items[0].label, "total");
-        assert_eq!(field_items[0].kind, Some(CompletionItemKind::FIELD));
-        assert_eq!(field_items[0].detail.as_deref(), Some("field total: Int"));
+        assert_single_completion_item(
+            field_completion,
+            "field",
+            "total",
+            CompletionItemKind::FIELD,
+            "field total: Int",
+        );
     }
 
     #[test]
@@ -21886,15 +21873,12 @@ pub struct Settings {
             offset_to_position(source, nth_offset(source, "B", 1) + 1),
         )
         .expect("workspace same-named dependency variant completion should exist");
-        let CompletionResponse::Array(variant_items) = variant_completion else {
-            panic!("variant completion should resolve to a plain item array")
-        };
-        assert_eq!(variant_items.len(), 1);
-        assert_eq!(variant_items[0].label, "Backoff");
-        assert_eq!(variant_items[0].kind, Some(CompletionItemKind::ENUM_MEMBER));
-        assert_eq!(
-            variant_items[0].detail.as_deref(),
-            Some("variant Command.Backoff(Int)")
+        assert_single_completion_item(
+            variant_completion,
+            "variant",
+            "Backoff",
+            CompletionItemKind::ENUM_MEMBER,
+            "variant Command.Backoff(Int)",
         );
 
         let field_completion = workspace_source_struct_field_completions(
@@ -21903,13 +21887,13 @@ pub struct Settings {
             offset_to_position(source, nth_offset(source, "po", 1) + 2),
         )
         .expect("workspace same-named dependency struct field completion should exist");
-        let CompletionResponse::Array(field_items) = field_completion else {
-            panic!("struct field completion should resolve to a plain item array")
-        };
-        assert_eq!(field_items.len(), 1);
-        assert_eq!(field_items[0].label, "port");
-        assert_eq!(field_items[0].kind, Some(CompletionItemKind::FIELD));
-        assert_eq!(field_items[0].detail.as_deref(), Some("field port: Int"));
+        assert_single_completion_item(
+            field_completion,
+            "struct field",
+            "port",
+            CompletionItemKind::FIELD,
+            "field port: Int",
+        );
     }
 
     #[test]
@@ -23191,25 +23175,60 @@ pub fn build() -> Counter {
     }
 
     fn assert_workspace_dependency_open_method_completion(completion: CompletionResponse) {
+        assert_single_completion_item(
+            completion,
+            "method",
+            "pulse",
+            CompletionItemKind::METHOD,
+            "fn pulse(self) -> Int",
+        );
+    }
+
+    fn assert_single_completion_item(
+        completion: CompletionResponse,
+        completion_kind: &str,
+        expected_label: &str,
+        expected_kind: CompletionItemKind,
+        expected_detail: &str,
+    ) {
         let CompletionResponse::Array(items) = completion else {
-            panic!("method completion should resolve to a plain item array")
+            panic!("{completion_kind} completion should resolve to a plain item array")
         };
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].label, "pulse");
-        assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
-        assert_eq!(items[0].detail.as_deref(), Some("fn pulse(self) -> Int"));
+        assert_eq!(items[0].label, expected_label);
+        assert_eq!(items[0].kind, Some(expected_kind));
+        assert_eq!(items[0].detail.as_deref(), Some(expected_detail));
     }
 
     fn assert_workspace_dependency_single_member_highlight(
         fixture: &WorkspaceDependencyOpenLocalMemberFixture,
         member: &str,
-        highlights: &[tower_lsp::lsp_types::DocumentHighlight],
+        highlights: &[DocumentHighlight],
     ) {
         assert_eq!(highlights.len(), 1);
         assert_eq!(
             highlights[0].range.start,
             offset_to_position(&fixture.app_source, nth_offset(&fixture.app_source, member, 1)),
         );
+    }
+
+    fn assert_highlight_starts_for_occurrences(
+        source: &str,
+        highlights: Vec<DocumentHighlight>,
+        occurrences: &[(&str, usize)],
+    ) -> Vec<Position> {
+        let actual = highlights
+            .into_iter()
+            .map(|highlight| highlight.range.start)
+            .collect::<Vec<_>>();
+        let expected = occurrences
+            .iter()
+            .map(|(needle, occurrence)| {
+                offset_to_position(source, nth_offset(source, needle, *occurrence))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+        expected
     }
 
     fn assert_workspace_dependency_member_definition_location(
@@ -23428,15 +23447,11 @@ pub fn main() -> Int {
             offset_to_position(source, nth_offset(source, "ping", 1)),
         )
         .expect("same-named dependency method document highlight should exist");
-        let method_actual = method_highlights
-            .into_iter()
-            .map(|highlight| highlight.range.start)
-            .collect::<Vec<_>>();
-        let method_expected = vec![
-            offset_to_position(source, nth_offset(source, "ping", 1)),
-            offset_to_position(source, nth_offset(source, "ping", 2)),
-        ];
-        assert_eq!(method_actual, method_expected);
+        let method_expected = assert_highlight_starts_for_occurrences(
+            source,
+            method_highlights,
+            &[("ping", 1), ("ping", 2)],
+        );
 
         let field_highlights = workspace_dependency_document_highlights(
             uri,
@@ -23446,15 +23461,11 @@ pub fn main() -> Int {
             offset_to_position(source, nth_offset(source, "value", 1)),
         )
         .expect("same-named dependency field document highlight should exist");
-        let field_actual = field_highlights
-            .into_iter()
-            .map(|highlight| highlight.range.start)
-            .collect::<Vec<_>>();
-        let field_expected = vec![
-            offset_to_position(source, nth_offset(source, "value", 1)),
-            offset_to_position(source, nth_offset(source, "value", 2)),
-        ];
-        assert_eq!(field_actual, field_expected);
+        let field_expected = assert_highlight_starts_for_occurrences(
+            source,
+            field_highlights,
+            &[("value", 1), ("value", 2)],
+        );
 
         assert!(
             !method_expected.contains(&offset_to_position(source, nth_offset(source, "ping", 3))),
@@ -23499,15 +23510,11 @@ pub fn main() -> Int {
             offset_to_position(source, nth_offset(source, "ping", 1)),
         )
         .expect("broken-source same-named dependency method document highlight should exist");
-        let method_actual = method_highlights
-            .into_iter()
-            .map(|highlight| highlight.range.start)
-            .collect::<Vec<_>>();
-        let method_expected = vec![
-            offset_to_position(source, nth_offset(source, "ping", 1)),
-            offset_to_position(source, nth_offset(source, "ping", 2)),
-        ];
-        assert_eq!(method_actual, method_expected);
+        let method_expected = assert_highlight_starts_for_occurrences(
+            source,
+            method_highlights,
+            &[("ping", 1), ("ping", 2)],
+        );
 
         let field_highlights = fallback_document_highlights_for_package_at(
             uri,
@@ -23516,15 +23523,11 @@ pub fn main() -> Int {
             offset_to_position(source, nth_offset(source, "value", 1)),
         )
         .expect("broken-source same-named dependency field document highlight should exist");
-        let field_actual = field_highlights
-            .into_iter()
-            .map(|highlight| highlight.range.start)
-            .collect::<Vec<_>>();
-        let field_expected = vec![
-            offset_to_position(source, nth_offset(source, "value", 1)),
-            offset_to_position(source, nth_offset(source, "value", 2)),
-        ];
-        assert_eq!(field_actual, field_expected);
+        let field_expected = assert_highlight_starts_for_occurrences(
+            source,
+            field_highlights,
+            &[("value", 1), ("value", 2)],
+        );
 
         assert!(
             !method_expected.contains(&offset_to_position(source, nth_offset(source, "ping", 3))),
@@ -23973,17 +23976,11 @@ pub fn main() -> Int {
         )
         .expect("same-file document highlight should exist");
 
-        let actual = highlights
-            .into_iter()
-            .map(|highlight| highlight.range.start)
-            .collect::<Vec<_>>();
-        let expected = vec![
-            offset_to_position(&source, nth_offset(&source, "helper", 1)),
-            offset_to_position(&source, nth_offset(&source, "helper", 2)),
-            offset_to_position(&source, nth_offset(&source, "helper", 3)),
-        ];
-
-        assert_eq!(actual, expected);
+        assert_highlight_starts_for_occurrences(
+            &source,
+            highlights,
+            &[("helper", 1), ("helper", 2), ("helper", 3)],
+        );
     }
 
     #[test]
@@ -24063,16 +24060,11 @@ pub fn exported(value: Int) -> Int
         )
         .expect("package-aware document highlight should exist");
 
-        let actual = highlights
-            .into_iter()
-            .map(|highlight| highlight.range.start)
-            .collect::<Vec<_>>();
-        let expected = vec![
-            offset_to_position(&source, nth_offset(&source, "run", 1)),
-            offset_to_position(&source, nth_offset(&source, "run", 2)),
-        ];
-
-        assert_eq!(actual, expected);
+        assert_highlight_starts_for_occurrences(
+            &source,
+            highlights,
+            &[("run", 1), ("run", 2)],
+        );
     }
 
     #[test]
@@ -24184,17 +24176,11 @@ pub fn measure(value: Int) -> Int {
         )
         .expect("package-aware document highlight should use open workspace source");
 
-        let actual = highlights
-            .into_iter()
-            .map(|highlight| highlight.range.start)
-            .collect::<Vec<_>>();
-        let expected = vec![
-            offset_to_position(&source, nth_offset(&source, "run", 1)),
-            offset_to_position(&source, nth_offset(&source, "run", 2)),
-            offset_to_position(&source, nth_offset(&source, "run", 3)),
-        ];
-
-        assert_eq!(actual, expected);
+        assert_highlight_starts_for_occurrences(
+            &source,
+            highlights,
+            &[("run", 1), ("run", 2), ("run", 3)],
+        );
     }
 
     #[test]
@@ -24274,17 +24260,11 @@ pub fn exported(value: Int) -> Int
         )
         .expect("broken-source workspace import document highlight should exist");
 
-        let actual = highlights
-            .into_iter()
-            .map(|highlight| highlight.range.start)
-            .collect::<Vec<_>>();
-        let expected = vec![
-            offset_to_position(&source, nth_offset(&source, "run", 1)),
-            offset_to_position(&source, nth_offset(&source, "run", 2)),
-            offset_to_position(&source, nth_offset(&source, "run", 3)),
-        ];
-
-        assert_eq!(actual, expected);
+        assert_highlight_starts_for_occurrences(
+            &source,
+            highlights,
+            &[("run", 1), ("run", 2), ("run", 3)],
+        );
     }
 
     #[test]
@@ -24375,17 +24355,11 @@ pub fn exported(value: Int) -> Int
         )
         .expect("broken-source dependency value document highlight should exist");
 
-        let actual = highlights
-            .into_iter()
-            .map(|highlight| highlight.range.start)
-            .collect::<Vec<_>>();
-        let expected = vec![
-            offset_to_position(&source, nth_offset(&source, "run", 1)),
-            offset_to_position(&source, nth_offset(&source, "run", 2)),
-            offset_to_position(&source, nth_offset(&source, "run", 3)),
-        ];
-
-        assert_eq!(actual, expected);
+        assert_highlight_starts_for_occurrences(
+            &source,
+            highlights,
+            &[("run", 1), ("run", 2), ("run", 3)],
+        );
     }
 
     #[test]
@@ -24457,17 +24431,11 @@ pub fn maybe_children() -> Option[[Child; 2]]
             "broken-source dependency structured root-indexed value document highlight should exist",
         );
 
-        let actual = highlights
-            .into_iter()
-            .map(|highlight| highlight.range.start)
-            .collect::<Vec<_>>();
-        let expected = vec![
-            offset_to_position(&source, nth_offset(&source, "first", 1)),
-            offset_to_position(&source, nth_offset(&source, "first", 2)),
-            offset_to_position(&source, nth_offset(&source, "first", 3)),
-        ];
-
-        assert_eq!(actual, expected);
+        assert_highlight_starts_for_occurrences(
+            &source,
+            highlights,
+            &[("first", 1), ("first", 2), ("first", 3)],
+        );
     }
 
     #[test]
