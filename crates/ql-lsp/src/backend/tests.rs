@@ -22779,6 +22779,52 @@ pub fn build() -> Counter
         }
     }
 
+    fn assert_workspace_dependency_member_type_implementations(
+        fixture: &WorkspaceDependencyMemberTypeImplementationFixture,
+        open_alpha_source: &str,
+        disk_only_implementation: impl Fn(Position) -> Option<GotoImplementationResponse>,
+        open_implementation: impl Fn(Position) -> Option<GotoImplementationResponse>,
+    ) {
+        for (needle, occurrence) in [("extra", 1usize), ("pulse", 1usize)] {
+            let position = offset_to_position(
+                &fixture.app_source,
+                nth_offset(&fixture.app_source, needle, occurrence) + 1,
+            );
+            assert_eq!(
+                disk_only_implementation(position.clone()),
+                None,
+                "disk-only implementation should miss unsaved dependency member type {needle}",
+            );
+
+            let implementation = open_implementation(position)
+                .expect("dependency member type implementation should use open source");
+            let GotoImplementationResponse::Array(locations) = implementation else {
+                panic!(
+                    "dependency member type implementation should resolve to dependency impl blocks"
+                )
+            };
+            assert_eq!(locations.len(), 2);
+            assert!(
+                locations
+                    .iter()
+                    .all(|location| location.uri == fixture.alpha_uri),
+                "implementation should stay in the open dependency source",
+            );
+            for marker in ["impl Extra", "extend Extra"] {
+                assert!(
+                    locations.iter().any(|location| {
+                        location.range.start
+                            == offset_to_position(
+                                open_alpha_source,
+                                nth_offset(open_alpha_source, marker, 1),
+                            )
+                    }),
+                    "dependency member type implementation should include {marker} for {needle}",
+                );
+            }
+        }
+    }
+
     #[test]
     fn workspace_dependency_member_type_implementation_prefers_open_local_dependency_members() {
         let fixture = setup_workspace_dependency_member_type_implementation_fixture(
@@ -22834,57 +22880,28 @@ pub fn build() -> Counter {
             fixture.alpha_uri.clone(),
             open_alpha_source.to_owned(),
         )]);
-
-        for (needle, occurrence) in [("extra", 1usize), ("pulse", 1usize)] {
-            let position = offset_to_position(
-                &fixture.app_source,
-                nth_offset(&fixture.app_source, needle, occurrence) + 1,
-            );
-            assert_eq!(
+        assert_workspace_dependency_member_type_implementations(
+            &fixture,
+            open_alpha_source,
+            |position| {
                 workspace_source_implementation_for_dependency_with_open_docs(
                     &fixture.app_source,
                     Some(&analysis),
                     &fixture.package,
                     &file_open_documents(vec![]),
                     position,
-                ),
-                None,
-                "disk-only implementation should miss unsaved dependency member type {needle}",
-            );
-
-            let implementation = workspace_source_implementation_for_dependency_with_open_docs(
-                &fixture.app_source,
-                Some(&analysis),
-                &fixture.package,
-                &open_docs,
-                position,
-            )
-            .expect("dependency member type implementation should use open dependency source");
-            let GotoImplementationResponse::Array(locations) = implementation else {
-                panic!(
-                    "dependency member type implementation should resolve to dependency impl blocks"
                 )
-            };
-            assert_eq!(locations.len(), 2);
-            assert!(
-                locations
-                    .iter()
-                    .all(|location| location.uri == fixture.alpha_uri),
-                "implementation should stay in the open dependency source",
-            );
-            for marker in ["impl Extra", "extend Extra"] {
-                assert!(
-                    locations.iter().any(|location| {
-                        location.range.start
-                            == offset_to_position(
-                                open_alpha_source,
-                                nth_offset(open_alpha_source, marker, 1),
-                            )
-                    }),
-                    "dependency member type implementation should include {marker} for {needle}",
-                );
-            }
-        }
+            },
+            |position| {
+                workspace_source_implementation_for_dependency_with_open_docs(
+                    &fixture.app_source,
+                    Some(&analysis),
+                    &fixture.package,
+                    &open_docs,
+                    position,
+                )
+            },
+        );
     }
 
     #[test]
@@ -23357,57 +23374,28 @@ pub fn build() -> Counter {
             fixture.alpha_uri.clone(),
             open_alpha_source.to_owned(),
         )]);
-
-        for (needle, occurrence) in [("extra", 1usize), ("pulse", 1usize)] {
-            let position = offset_to_position(
-                &fixture.app_source,
-                nth_offset(&fixture.app_source, needle, occurrence) + 1,
-            );
-            assert_eq!(
+        assert_workspace_dependency_member_type_implementations(
+            &fixture,
+            open_alpha_source,
+            |position| {
                 workspace_source_implementation_for_dependency_with_open_docs(
                     &fixture.app_source,
                     None,
                     &fixture.package,
                     &file_open_documents(vec![]),
                     position,
-                ),
-                None,
-                "disk-only broken-source implementation should miss unsaved dependency member type {needle}",
-            );
-
-            let implementation = workspace_source_implementation_for_dependency_with_open_docs(
-                &fixture.app_source,
-                None,
-                &fixture.package,
-                &open_docs,
-                position,
-            )
-            .expect("broken-source dependency member type implementation should use open source");
-            let GotoImplementationResponse::Array(locations) = implementation else {
-                panic!(
-                    "broken-source dependency member type implementation should resolve to dependency impl blocks"
                 )
-            };
-            assert_eq!(locations.len(), 2);
-            assert!(
-                locations
-                    .iter()
-                    .all(|location| location.uri == fixture.alpha_uri),
-                "implementation should stay in the open dependency source",
-            );
-            for marker in ["impl Extra", "extend Extra"] {
-                assert!(
-                    locations.iter().any(|location| {
-                        location.range.start
-                            == offset_to_position(
-                                open_alpha_source,
-                                nth_offset(open_alpha_source, marker, 1),
-                            )
-                    }),
-                    "broken-source dependency member type implementation should include {marker} for {needle}",
-                );
-            }
-        }
+            },
+            |position| {
+                workspace_source_implementation_for_dependency_with_open_docs(
+                    &fixture.app_source,
+                    None,
+                    &fixture.package,
+                    &open_docs,
+                    position,
+                )
+            },
+        );
     }
 
     #[test]
