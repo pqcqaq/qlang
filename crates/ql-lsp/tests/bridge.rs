@@ -4993,7 +4993,7 @@ fn main(counter: Counter) -> Int {
 
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].label, "get");
-    assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
     assert_eq!(
         items[0].text_edit,
         Some(tower_lsp::lsp_types::CompletionTextEdit::Edit(
@@ -5051,9 +5051,9 @@ fn main(counter: Counter) -> Int {
             .collect::<Vec<_>>(),
         vec!["extra", "get", "read", "total", "value"]
     );
-    assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
-    assert_eq!(items[1].kind, Some(CompletionItemKind::FUNCTION));
-    assert_eq!(items[2].kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
+    assert_eq!(items[1].kind, Some(CompletionItemKind::METHOD));
+    assert_eq!(items[2].kind, Some(CompletionItemKind::METHOD));
     assert_eq!(items[3].kind, Some(CompletionItemKind::FIELD));
     assert_eq!(items[4].kind, Some(CompletionItemKind::FIELD));
     assert_eq!(items[0].detail.as_deref(), Some("fn extra(self) -> Int"));
@@ -5164,7 +5164,7 @@ fn main(counter: Counter) -> Int {
 
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].label, "read");
-    assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
     assert_eq!(
         items[0].detail.as_deref(),
         Some("fn read(self, delta: Int) -> Int")
@@ -5227,7 +5227,7 @@ fn main(counter: Counter) -> Int {
     assert_eq!(items.len(), 2);
     let read_item = &items[0];
     assert_eq!(read_item.label, "read");
-    assert_eq!(read_item.kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(read_item.kind, Some(CompletionItemKind::METHOD));
     assert_eq!(
         read_item.detail.as_deref(),
         Some("fn read(self, delta: Int) -> Int")
