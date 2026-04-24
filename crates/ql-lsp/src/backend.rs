@@ -2191,6 +2191,7 @@ fn workspace_import_reference_locations_with_open_docs(
     locations
 }
 
+#[cfg(test)]
 fn workspace_source_definition_for_import(
     uri: &Url,
     source: &str,
@@ -2227,6 +2228,7 @@ fn workspace_source_definition_for_import_with_open_docs(
     .map(GotoDefinitionResponse::Scalar)
 }
 
+#[cfg(test)]
 fn workspace_source_type_definition_for_import(
     uri: &Url,
     source: &str,
@@ -2287,6 +2289,7 @@ fn hover_from_workspace_source_location_with_open_docs(
     })
 }
 
+#[cfg(test)]
 fn workspace_source_hover_for_import(
     uri: &Url,
     source: &str,
@@ -2329,6 +2332,7 @@ fn workspace_source_hover_for_import_with_open_docs(
     )
 }
 
+#[cfg(test)]
 fn workspace_source_definition_for_import_in_broken_source(
     uri: &Url,
     source: &str,
@@ -2361,6 +2365,7 @@ fn workspace_source_definition_for_import_in_broken_source_with_open_docs(
     .map(GotoDefinitionResponse::Scalar)
 }
 
+#[cfg(test)]
 fn workspace_source_type_definition_for_import_in_broken_source(
     uri: &Url,
     source: &str,
@@ -2410,6 +2415,7 @@ fn broken_source_import_occurrence_span_at(
         .map(|token| token.span)
 }
 
+#[cfg(test)]
 fn workspace_source_hover_for_import_in_broken_source(
     uri: &Url,
     source: &str,
@@ -2617,6 +2623,7 @@ fn dependency_member_semantic_tokens_with_open_docs(
     tokens
 }
 
+#[cfg(test)]
 fn semantic_tokens_for_workspace_package_analysis(
     uri: &Url,
     source: &str,
@@ -2674,6 +2681,7 @@ fn semantic_tokens_for_workspace_package_analysis_with_open_docs(
     semantic_tokens_result_from_occurrences(source, tokens)
 }
 
+#[cfg(test)]
 fn semantic_tokens_for_workspace_dependency_fallback(
     uri: &Url,
     source: &str,
@@ -3714,26 +3722,6 @@ fn broken_source_definition_locations_in_source(
     }
 }
 
-fn extend_workspace_dependency_definition_matches(
-    package: &ql_analysis::PackageAnalysis,
-    current_path: Option<&Path>,
-    current_source: Option<&str>,
-    current_analysis: Option<&Analysis>,
-    target: &DependencyDefinitionTarget,
-    matches: &mut Vec<Location>,
-) {
-    let open_docs = OpenDocuments::new();
-    extend_workspace_dependency_definition_matches_with_open_docs(
-        package,
-        current_path,
-        current_source,
-        current_analysis,
-        &open_docs,
-        target,
-        matches,
-    );
-}
-
 fn extend_workspace_dependency_definition_matches_with_open_docs(
     package: &ql_analysis::PackageAnalysis,
     current_path: Option<&Path>,
@@ -4344,24 +4332,6 @@ fn offset_hits_span(offset: usize, span: Span) -> bool {
     span.contains(offset) || span.end == offset
 }
 
-fn extend_workspace_dependency_reference_locations(
-    package: &ql_analysis::PackageAnalysis,
-    current_path: Option<&Path>,
-    target: &DependencyDefinitionTarget,
-    include_declaration: bool,
-    locations: &mut Vec<Location>,
-) {
-    let open_docs = OpenDocuments::new();
-    extend_workspace_dependency_reference_locations_with_open_docs(
-        package,
-        current_path,
-        &open_docs,
-        target,
-        include_declaration,
-        locations,
-    );
-}
-
 fn extend_workspace_dependency_reference_locations_with_open_docs(
     package: &ql_analysis::PackageAnalysis,
     current_path: Option<&Path>,
@@ -4439,22 +4409,6 @@ fn extend_workspace_dependency_reference_locations_with_open_docs(
     }
 }
 
-fn workspace_dependency_reference_locations(
-    package: &ql_analysis::PackageAnalysis,
-    current_path: Option<&Path>,
-    target: &DependencyDefinitionTarget,
-    include_declaration: bool,
-) -> Vec<Location> {
-    let open_docs = OpenDocuments::new();
-    workspace_dependency_reference_locations_with_open_docs(
-        package,
-        current_path,
-        &open_docs,
-        target,
-        include_declaration,
-    )
-}
-
 fn workspace_dependency_reference_locations_with_open_docs(
     package: &ql_analysis::PackageAnalysis,
     current_path: Option<&Path>,
@@ -4497,19 +4451,6 @@ fn workspace_dependency_reference_locations_with_open_docs(
     });
     locations.dedup_by(|left, right| same_location_anchor(left, right));
     locations
-}
-
-fn workspace_source_location_for_dependency_target(
-    uri: &Url,
-    source: &str,
-    analysis: Option<&Analysis>,
-    package: &ql_analysis::PackageAnalysis,
-    target: &DependencyDefinitionTarget,
-) -> Option<Location> {
-    let open_docs = OpenDocuments::new();
-    workspace_source_location_for_dependency_target_with_open_docs(
-        uri, source, analysis, package, &open_docs, target,
-    )
 }
 
 fn workspace_source_location_for_dependency_target_with_open_docs(
@@ -6134,6 +6075,7 @@ fn workspace_source_implementation_with_open_docs(
     })
 }
 
+#[cfg(test)]
 fn workspace_source_definition_for_dependency(
     uri: &Url,
     source: &str,
@@ -6164,6 +6106,7 @@ fn workspace_source_definition_for_dependency_with_open_docs(
     .map(GotoDefinitionResponse::Scalar)
 }
 
+#[cfg(test)]
 fn workspace_source_type_definition_for_dependency(
     uri: &Url,
     source: &str,
@@ -6194,6 +6137,7 @@ fn workspace_source_type_definition_for_dependency_with_open_docs(
     .map(GotoTypeDefinitionResponse::Scalar)
 }
 
+#[cfg(test)]
 fn workspace_source_hover_for_dependency(
     uri: &Url,
     source: &str,
@@ -6273,6 +6217,7 @@ fn workspace_source_dependency_completion(
     None
 }
 
+#[cfg(test)]
 fn workspace_source_variant_completions(
     source: &str,
     package: &ql_analysis::PackageAnalysis,
@@ -6311,6 +6256,7 @@ fn workspace_source_variant_completions_with_open_docs(
     )
 }
 
+#[cfg(test)]
 fn workspace_source_struct_field_completions(
     source: &str,
     package: &ql_analysis::PackageAnalysis,
@@ -6353,6 +6299,7 @@ fn workspace_source_struct_field_completions_with_open_docs(
     )
 }
 
+#[cfg(test)]
 fn workspace_source_member_field_completions(
     source: &str,
     package: &ql_analysis::PackageAnalysis,
@@ -6391,6 +6338,7 @@ fn workspace_source_member_field_completions_with_open_docs(
     )
 }
 
+#[cfg(test)]
 fn workspace_source_method_completions(
     source: &str,
     package: &ql_analysis::PackageAnalysis,
@@ -6435,6 +6383,7 @@ fn workspace_source_method_completions_with_open_docs(
     )
 }
 
+#[cfg(test)]
 fn workspace_source_references_for_import(
     uri: &Url,
     source: &str,
@@ -6648,6 +6597,7 @@ fn workspace_broken_import_reference_locations_for_visible_sources(
     locations
 }
 
+#[cfg(test)]
 fn workspace_source_references_for_import_in_broken_source(
     uri: &Url,
     source: &str,
@@ -6780,6 +6730,7 @@ fn workspace_import_document_highlights_in_broken_source_with_open_docs(
     Some(highlights)
 }
 
+#[cfg(test)]
 fn workspace_import_document_highlights(
     uri: &Url,
     source: &str,
@@ -6823,6 +6774,7 @@ fn workspace_import_document_highlights_with_open_docs(
     Some(highlights)
 }
 
+#[cfg(test)]
 fn workspace_dependency_document_highlights(
     uri: &Url,
     source: &str,
@@ -6924,6 +6876,7 @@ fn workspace_source_dependency_prepare_rename_with_open_docs(
         })
 }
 
+#[cfg(test)]
 fn prepare_rename_for_workspace_import_in_broken_source(
     uri: &Url,
     source: &str,
@@ -6974,6 +6927,7 @@ fn prepare_rename_for_workspace_import_in_broken_source_with_open_docs(
     })
 }
 
+#[cfg(test)]
 fn prepare_rename_for_workspace_source_root_symbol_from_import_in_broken_source(
     uri: &Url,
     source: &str,
@@ -7033,6 +6987,7 @@ fn prepare_rename_for_workspace_source_root_symbol_from_import_in_broken_source_
     })
 }
 
+#[cfg(test)]
 fn prepare_rename_for_workspace_source_root_symbol_from_import(
     uri: &Url,
     source: &str,
@@ -7095,6 +7050,7 @@ fn prepare_rename_for_workspace_source_root_symbol_from_import_with_open_docs(
     })
 }
 
+#[cfg(test)]
 fn rename_for_workspace_import_in_broken_source(
     uri: &Url,
     source: &str,
@@ -8510,6 +8466,7 @@ fn workspace_source_references_for_root_symbol_with_open_docs(
     (!locations.is_empty()).then_some(locations)
 }
 
+#[cfg(test)]
 fn workspace_source_references_for_dependency(
     uri: &Url,
     source: &str,
@@ -8608,6 +8565,7 @@ fn workspace_source_references_for_dependency_with_open_docs(
     Some(locations)
 }
 
+#[cfg(test)]
 fn workspace_source_references_for_dependency_in_broken_source(
     uri: &Url,
     source: &str,
@@ -8682,6 +8640,7 @@ fn document_highlights_for_package_analysis_at(
     document_highlights_from_locations(uri, locations)
 }
 
+#[cfg(test)]
 fn fallback_document_highlights_for_package_at(
     uri: &Url,
     source: &str,
