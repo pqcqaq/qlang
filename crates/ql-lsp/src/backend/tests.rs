@@ -21914,9 +21914,8 @@ pub struct Settings {
 
     #[test]
     fn workspace_dependency_queries_use_unsaved_open_local_dependency_source() {
-        let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-queries");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_workspace_dependency_member_type_implementation_fixture(
+            "ql-lsp-workspace-dependency-open-doc-queries",
             r#"
 package demo.app
 
@@ -21925,70 +21924,6 @@ use demo.shared.alpha.build as build
 pub fn main() -> Int {
     return build().ping()
 }
-"#,
-        );
-        let alpha_source_path = temp.write(
-            "workspace/vendor/alpha/src/lib.ql",
-            r#"
-package demo.shared.alpha
-
-pub struct Counter {
-    value: Int,
-}
-
-impl Counter {
-    pub fn ping(self) -> Int {
-        return self.value
-    }
-}
-
-pub fn build() -> Counter {
-    return Counter { value: 1 }
-}
-"#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[dependencies]
-alpha = { path = "../../vendor/alpha" }
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/core.qi",
-            r#"
-// qlang interface v1
-// package: core
-
-// source: src/lib.ql
-package demo.shared.alpha
-
-pub struct Counter {
-    value: Int,
-}
-
-impl Counter {
-    pub fn ping(self) -> Int
-}
-
-pub fn build() -> Counter
 "#,
         );
 
@@ -22014,48 +21949,48 @@ pub fn build() -> Counter {
     return Counter { value: 1 }
 }
 "#;
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        let analysis = analyze_source(&source).expect("app source should analyze");
-        let package =
-            package_analysis_for_path(&app_path).expect("package analysis should succeed");
-        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
-        let alpha_uri =
-            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
-        let open_docs =
-            file_open_documents(vec![(alpha_uri.clone(), open_alpha_source.to_owned())]);
+        let source = &fixture.app_source;
+        let analysis = analyze_source(source).expect("app source should analyze");
+        let package = &fixture.package;
+        let uri = &fixture.app_uri;
+        let alpha_uri = &fixture.alpha_uri;
+        let open_docs = file_open_documents(vec![(
+            alpha_uri.clone(),
+            open_alpha_source.to_owned(),
+        )]);
 
         let definition = workspace_source_definition_for_dependency_with_open_docs(
-            &uri,
-            &source,
+            uri,
+            source,
             Some(&analysis),
-            &package,
+            package,
             &open_docs,
-            offset_to_position(&source, nth_offset(&source, "ping", 1) + 1),
+            offset_to_position(source, nth_offset(source, "ping", 1) + 1),
         )
         .expect("dependency definition should use open dependency source");
         let GotoDefinitionResponse::Scalar(location) = definition else {
             panic!("dependency definition should resolve to a scalar source location")
         };
-        assert_eq!(location.uri, alpha_uri);
+        assert_eq!(location.uri, *alpha_uri);
         assert_eq!(
             location.range.start,
             offset_to_position(open_alpha_source, nth_offset(open_alpha_source, "ping", 1)),
         );
 
         let references = workspace_source_references_for_dependency_with_open_docs(
-            &uri,
-            &source,
+            uri,
+            source,
             Some(&analysis),
-            &package,
+            package,
             &open_docs,
-            offset_to_position(&source, nth_offset(&source, "ping", 1) + 1),
+            offset_to_position(source, nth_offset(source, "ping", 1) + 1),
             true,
         )
         .expect("dependency references should use open dependency source");
 
         assert!(
             references.iter().any(|reference| {
-                reference.uri == alpha_uri
+                reference.uri == *alpha_uri
                     && reference.range.start
                         == offset_to_position(
                             open_alpha_source,
@@ -22066,7 +22001,7 @@ pub fn build() -> Counter {
         );
         assert!(
             references.iter().any(|reference| {
-                reference.uri == alpha_uri
+                reference.uri == *alpha_uri
                     && reference.range.start
                         == offset_to_position(
                             open_alpha_source,
@@ -22079,9 +22014,8 @@ pub fn build() -> Counter {
 
     #[test]
     fn workspace_dependency_method_completion_uses_unsaved_open_local_dependency_source() {
-        let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-method-completion");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_workspace_dependency_member_type_implementation_fixture(
+            "ql-lsp-workspace-dependency-open-doc-method-completion",
             r#"
 package demo.app
 
@@ -22090,70 +22024,6 @@ use demo.shared.alpha.build as build
 pub fn main() -> Int {
     return build().pu()
 }
-"#,
-        );
-        let alpha_source_path = temp.write(
-            "workspace/vendor/alpha/src/lib.ql",
-            r#"
-package demo.shared.alpha
-
-pub struct Counter {
-    value: Int,
-}
-
-impl Counter {
-    pub fn ping(self) -> Int {
-        return self.value
-    }
-}
-
-pub fn build() -> Counter {
-    return Counter { value: 1 }
-}
-"#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[dependencies]
-alpha = { path = "../../vendor/alpha" }
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/core.qi",
-            r#"
-// qlang interface v1
-// package: core
-
-// source: src/lib.ql
-package demo.shared.alpha
-
-pub struct Counter {
-    value: Int,
-}
-
-impl Counter {
-    pub fn ping(self) -> Int
-}
-
-pub fn build() -> Counter
 "#,
         );
 
@@ -22174,19 +22044,19 @@ pub fn build() -> Counter {
     return Counter { value: 1 }
 }
 "#;
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        let package =
-            package_analysis_for_path(&app_path).expect("package analysis should succeed");
-        let alpha_uri =
-            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
-        let open_docs = file_open_documents(vec![(alpha_uri, open_alpha_source.to_owned())]);
-        let offset = nth_offset(&source, "build().pu", 1) + "build().pu".len();
+        let source = &fixture.app_source;
+        let package = &fixture.package;
+        let open_docs = file_open_documents(vec![(
+            fixture.alpha_uri.clone(),
+            open_alpha_source.to_owned(),
+        )]);
+        let offset = nth_offset(source, "build().pu", 1) + "build().pu".len();
 
         let completion = workspace_source_method_completions_with_open_docs(
-            &source,
-            &package,
+            source,
+            package,
             &open_docs,
-            offset_to_position(&source, offset),
+            offset_to_position(source, offset),
         )
         .expect("method completion should use open dependency source");
 
@@ -23616,9 +23486,8 @@ impl Runner for ToolWorker {
     #[test]
     fn workspace_dependency_broken_source_method_completion_uses_unsaved_open_local_dependency_source()
      {
-        let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-broken-method-completion");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_workspace_dependency_member_type_implementation_fixture(
+            "ql-lsp-workspace-dependency-open-doc-broken-method-completion",
             r#"
 package demo.app
 
@@ -23626,70 +23495,6 @@ use demo.shared.alpha.build as build
 
 pub fn main() -> Int {
     return build().pu(
-"#,
-        );
-        let alpha_source_path = temp.write(
-            "workspace/vendor/alpha/src/lib.ql",
-            r#"
-package demo.shared.alpha
-
-pub struct Counter {
-    value: Int,
-}
-
-impl Counter {
-    pub fn ping(self) -> Int {
-        return self.value
-    }
-}
-
-pub fn build() -> Counter {
-    return Counter { value: 1 }
-}
-"#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[dependencies]
-alpha = { path = "../../vendor/alpha" }
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/core.qi",
-            r#"
-// qlang interface v1
-// package: core
-
-// source: src/lib.ql
-package demo.shared.alpha
-
-pub struct Counter {
-    value: Int,
-}
-
-impl Counter {
-    pub fn ping(self) -> Int
-}
-
-pub fn build() -> Counter
 "#,
         );
 
@@ -23710,20 +23515,20 @@ pub fn build() -> Counter {
     return Counter { value: 1 }
 }
 "#;
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        assert!(analyze_source(&source).is_err());
-        let package =
-            package_analysis_for_path(&app_path).expect("package analysis should succeed");
-        let alpha_uri =
-            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
-        let open_docs = file_open_documents(vec![(alpha_uri, open_alpha_source.to_owned())]);
-        let offset = nth_offset(&source, "build().pu", 1) + "build().pu".len();
+        let source = &fixture.app_source;
+        assert!(analyze_source(source).is_err());
+        let package = &fixture.package;
+        let open_docs = file_open_documents(vec![(
+            fixture.alpha_uri.clone(),
+            open_alpha_source.to_owned(),
+        )]);
+        let offset = nth_offset(source, "build().pu", 1) + "build().pu".len();
 
         let completion = workspace_source_method_completions_with_open_docs(
-            &source,
-            &package,
+            source,
+            package,
             &open_docs,
-            offset_to_position(&source, offset),
+            offset_to_position(source, offset),
         )
         .expect("broken-source method completion should use open dependency source");
 
