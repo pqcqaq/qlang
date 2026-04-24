@@ -21967,6 +21967,7 @@ pub fn main() -> Int {
         assert_workspace_dependency_open_method_references(
             &fixture,
             open_alpha_source,
+            "ping",
             &references,
             true,
             false,
@@ -22617,40 +22618,7 @@ pub fn main() -> Int {
 }
 "#,
         );
-        let open_alpha_source = r#"
-package demo.shared.alpha
-
-pub struct Extra {
-    id: Int,
-}
-
-impl Extra {
-    pub fn read(self) -> Int {
-        return self.id
-    }
-}
-
-extend Extra {
-    pub fn bonus(self) -> Int {
-        return self.id + 1
-    }
-}
-
-pub struct Counter {
-    value: Int,
-    extra: Extra,
-}
-
-impl Counter {
-    pub fn pulse(self) -> Extra {
-        return self.extra
-    }
-}
-
-pub fn build() -> Counter {
-    return Counter { value: 1, extra: Extra { id: 2 } }
-}
-"#;
+        let open_alpha_source = WORKSPACE_DEPENDENCY_OPEN_ALPHA_IMPLEMENTATION_SOURCE;
         let analysis =
             analyze_source(&fixture.app_source).expect("app source should analyze");
         let open_docs = workspace_dependency_open_docs(&fixture.alpha_uri, open_alpha_source);
@@ -22829,38 +22797,13 @@ pub fn build() -> Counter {
             true,
         )
         .expect("dependency references should use open dependency member source");
-        assert!(
-            references.iter().any(|reference| {
-                reference.uri == fixture.alpha_uri
-                    && reference.range.start
-                        == offset_to_position(
-                            open_alpha_source,
-                            nth_offset(open_alpha_source, "pulse", 1),
-                        )
-            }),
-            "references should include open dependency source definition",
-        );
-        assert!(
-            references.iter().any(|reference| {
-                reference.uri == fixture.alpha_uri
-                    && reference.range.start
-                        == offset_to_position(
-                            open_alpha_source,
-                            nth_offset(open_alpha_source, "pulse", 2),
-                        )
-            }),
-            "references should include open dependency source member use",
-        );
-        assert!(
-            references.iter().any(|reference| {
-                reference.uri == fixture.app_uri
-                    && reference.range.start
-                        == offset_to_position(
-                            &fixture.app_source,
-                            nth_offset(&fixture.app_source, "pulse", 1),
-                        )
-            }),
-            "references should include current source member use",
+        assert_workspace_dependency_open_method_references(
+            &fixture,
+            open_alpha_source,
+            "pulse",
+            &references,
+            true,
+            true,
         );
 
         let highlights = fallback_document_highlights_for_package_at_with_open_docs(
@@ -22917,6 +22860,7 @@ pub fn main() -> Int {
         assert_workspace_dependency_open_method_references(
             &fixture,
             open_alpha_source,
+            "ping",
             &references,
             true,
             true,
@@ -22970,40 +22914,7 @@ pub fn main() -> Int {
     return current.extra.id + current.pulse().id
 "#,
         );
-        let open_alpha_source = r#"
-package demo.shared.alpha
-
-pub struct Extra {
-    id: Int,
-}
-
-impl Extra {
-    pub fn read(self) -> Int {
-        return self.id
-    }
-}
-
-extend Extra {
-    pub fn bonus(self) -> Int {
-        return self.id + 1
-    }
-}
-
-pub struct Counter {
-    value: Int,
-    extra: Extra,
-}
-
-impl Counter {
-    pub fn pulse(self) -> Extra {
-        return self.extra
-    }
-}
-
-pub fn build() -> Counter {
-    return Counter { value: 1, extra: Extra { id: 2 } }
-}
-"#;
+        let open_alpha_source = WORKSPACE_DEPENDENCY_OPEN_ALPHA_IMPLEMENTATION_SOURCE;
         assert!(analyze_source(&fixture.app_source).is_err());
         let open_docs = workspace_dependency_open_docs(&fixture.alpha_uri, open_alpha_source);
         assert_workspace_dependency_member_type_implementations(
@@ -23199,6 +23110,41 @@ pub fn build() -> Counter {
 }
 "#;
 
+    const WORKSPACE_DEPENDENCY_OPEN_ALPHA_IMPLEMENTATION_SOURCE: &str = r#"
+package demo.shared.alpha
+
+pub struct Extra {
+    id: Int,
+}
+
+impl Extra {
+    pub fn read(self) -> Int {
+        return self.id
+    }
+}
+
+extend Extra {
+    pub fn bonus(self) -> Int {
+        return self.id + 1
+    }
+}
+
+pub struct Counter {
+    value: Int,
+    extra: Extra,
+}
+
+impl Counter {
+    pub fn pulse(self) -> Extra {
+        return self.extra
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1, extra: Extra { id: 2 } }
+}
+"#;
+
     fn workspace_dependency_open_docs(
         alpha_uri: &Url,
         open_alpha_source: &str,
@@ -23209,6 +23155,7 @@ pub fn build() -> Counter {
     fn assert_workspace_dependency_open_method_references(
         fixture: &WorkspaceDependencyOpenLocalMemberFixture,
         open_alpha_source: &str,
+        method: &str,
         references: &[Location],
         include_definition: bool,
         include_local_reference: bool,
@@ -23235,7 +23182,7 @@ pub fn build() -> Counter {
                         && reference.range.start
                             == offset_to_position(
                                 open_alpha_source,
-                                nth_offset(open_alpha_source, "ping", occurrence),
+                                nth_offset(open_alpha_source, method, occurrence),
                             )
                 }),
                 "{message}",
@@ -23249,10 +23196,10 @@ pub fn build() -> Counter {
                         && reference.range.start
                             == offset_to_position(
                                 &fixture.app_source,
-                                nth_offset(&fixture.app_source, "ping", 1),
+                                nth_offset(&fixture.app_source, method, 1),
                             )
                 }),
-                "references should include broken-source local method occurrence",
+                "references should include current source method occurrence",
             );
         }
     }
