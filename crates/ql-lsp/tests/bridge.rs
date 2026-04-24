@@ -35,6 +35,13 @@ fn alias_span(source: &str, alias: &str) -> Span {
         .expect("import alias definition should exist")
 }
 
+fn assert_no_completion_response(completion: Option<CompletionResponse>, context: &str) {
+    assert!(
+        completion.is_none(),
+        "expected no completion response for {context}, got {completion:?}"
+    );
+}
+
 fn decode_semantic_tokens(
     tokens: &[tower_lsp::lsp_types::SemanticToken],
 ) -> Vec<(u32, u32, u32, u32)> {
@@ -5285,15 +5292,9 @@ fn main(counter: Counter) -> Int {
     let read_range = span_to_range(source, Span::new(read_offset, read_offset + 2));
     let read_position = Position::new(read_range.start.line, read_range.start.character + 2);
 
-    let Some(CompletionResponse::Array(read_items)) =
-        completion_for_analysis(source, &analysis, read_position)
-    else {
-        panic!("expected array completion response");
-    };
-
-    assert!(
-        read_items.is_empty(),
-        "expected no fake deferred impl candidates on concrete receiver, got {read_items:?}"
+    assert_no_completion_response(
+        completion_for_analysis(source, &analysis, read_position),
+        "deferred impl member path on concrete receiver",
     );
 
     let extra_offset = source
@@ -5303,15 +5304,9 @@ fn main(counter: Counter) -> Int {
     let extra_range = span_to_range(source, Span::new(extra_offset, extra_offset + 2));
     let extra_position = Position::new(extra_range.start.line, extra_range.start.character + 2);
 
-    let Some(CompletionResponse::Array(extra_items)) =
-        completion_for_analysis(source, &analysis, extra_position)
-    else {
-        panic!("expected array completion response");
-    };
-
-    assert!(
-        extra_items.is_empty(),
-        "expected no fake deferred extend candidates on concrete receiver, got {extra_items:?}"
+    assert_no_completion_response(
+        completion_for_analysis(source, &analysis, extra_position),
+        "deferred extend member path on concrete receiver",
     );
 }
 
@@ -5745,13 +5740,10 @@ fn main() -> Int {
     let variant_range = span_to_range(source, Span::new(variant_offset, variant_offset + 2));
     let position = Position::new(variant_range.start.line, variant_range.start.character + 1);
 
-    let Some(CompletionResponse::Array(items)) =
-        completion_for_analysis(source, &analysis, position)
-    else {
-        panic!("expected array completion response");
-    };
-
-    assert!(items.is_empty());
+    assert_no_completion_response(
+        completion_for_analysis(source, &analysis, position),
+        "deeper variant-like member path",
+    );
 }
 
 #[test]
