@@ -3576,6 +3576,23 @@ pub fn main() -> Int {
         assert_workspace_edit_changes(edit, vec![(uri.clone(), expected)]);
     }
 
+    #[allow(deprecated)]
+    fn symbol_information(
+        name: impl Into<String>,
+        kind: SymbolKind,
+        location: Location,
+        container_name: Option<String>,
+    ) -> SymbolInformation {
+        SymbolInformation {
+            name: name.into(),
+            kind,
+            tags: None,
+            deprecated: None,
+            location,
+            container_name,
+        }
+    }
+
     fn assert_single_dependency_method_symbol(
         symbols: Vec<SymbolInformation>,
         name: &str,
@@ -3587,12 +3604,10 @@ pub fn main() -> Int {
     ) {
         assert_eq!(
             symbols,
-            vec![SymbolInformation {
-                name: name.to_owned(),
-                kind: SymbolKind::METHOD,
-                tags: None,
-                deprecated: None,
-                location: Location::new(
+            vec![symbol_information(
+                name,
+                SymbolKind::METHOD,
+                Location::new(
                     Url::from_file_path(
                         fs::canonicalize(interface_path)
                             .expect("dependency interface path should canonicalize"),
@@ -3603,8 +3618,8 @@ pub fn main() -> Int {
                         tower_lsp::lsp_types::Position::new(line, end),
                     ),
                 ),
-                container_name: Some(package_name.to_owned()),
-            }]
+                Some(package_name.to_owned()),
+            )]
         );
     }
 
@@ -3620,12 +3635,10 @@ pub fn main() -> Int {
     ) {
         assert_eq!(
             symbols,
-            vec![SymbolInformation {
-                name: name.to_owned(),
+            vec![symbol_information(
+                name,
                 kind,
-                tags: None,
-                deprecated: None,
-                location: Location::new(
+                Location::new(
                     Url::from_file_path(
                         fs::canonicalize(interface_path)
                             .expect("dependency interface path should canonicalize"),
@@ -3636,8 +3649,8 @@ pub fn main() -> Int {
                         tower_lsp::lsp_types::Position::new(line, end),
                     ),
                 ),
-                container_name: Some(package_name.to_owned()),
-            }]
+                Some(package_name.to_owned()),
+            )]
         );
     }
 
@@ -3651,12 +3664,10 @@ pub fn main() -> Int {
     ) {
         assert_eq!(
             symbols,
-            vec![SymbolInformation {
-                name: name.to_owned(),
+            vec![symbol_information(
+                name,
                 kind,
-                tags: None,
-                deprecated: None,
-                location: Location::new(
+                Location::new(
                     Url::from_file_path(source_path).expect("source path should convert to URI"),
                     tower_lsp::lsp_types::Range::new(
                         offset_to_position(source, nth_offset(source, name, occurrence)),
@@ -3666,8 +3677,8 @@ pub fn main() -> Int {
                         ),
                     ),
                 ),
-                container_name: None,
-            }]
+                None,
+            )]
         );
     }
 
@@ -4419,12 +4430,10 @@ beta = { path = "../../vendor/dep-interface" }
         end: u32,
         package_name: &str,
     ) {
-        let source_symbol = SymbolInformation {
-            name: name.to_owned(),
-            kind: SymbolKind::METHOD,
-            tags: None,
-            deprecated: None,
-            location: Location::new(
+        let source_symbol = symbol_information(
+            name,
+            SymbolKind::METHOD,
+            Location::new(
                 Url::from_file_path(source_path).expect("source path should convert to URI"),
                 tower_lsp::lsp_types::Range::new(
                     offset_to_position(source, nth_offset(source, name, source_occurrence)),
@@ -4434,14 +4443,12 @@ beta = { path = "../../vendor/dep-interface" }
                     ),
                 ),
             ),
-            container_name: None,
-        };
-        let dependency_symbol = SymbolInformation {
-            name: name.to_owned(),
-            kind: SymbolKind::METHOD,
-            tags: None,
-            deprecated: None,
-            location: Location::new(
+            None,
+        );
+        let dependency_symbol = symbol_information(
+            name,
+            SymbolKind::METHOD,
+            Location::new(
                 Url::from_file_path(
                     fs::canonicalize(interface_path)
                         .expect("dependency interface path should canonicalize"),
@@ -4452,8 +4459,8 @@ beta = { path = "../../vendor/dep-interface" }
                     tower_lsp::lsp_types::Position::new(line, end),
                 ),
             ),
-            container_name: Some(package_name.to_owned()),
-        };
+            Some(package_name.to_owned()),
+        );
 
         assert_eq!(symbols.len(), 2, "actual symbols: {symbols:#?}");
         assert!(
@@ -4480,12 +4487,10 @@ beta = { path = "../../vendor/dep-interface" }
         end_character: u32,
         package_name: &str,
     ) {
-        let source_symbol = SymbolInformation {
-            name: name.to_owned(),
+        let source_symbol = symbol_information(
+            name,
             kind,
-            tags: None,
-            deprecated: None,
-            location: Location::new(
+            Location::new(
                 Url::from_file_path(source_path).expect("source path should convert to URI"),
                 tower_lsp::lsp_types::Range::new(
                     offset_to_position(source, nth_offset(source, name, source_occurrence)),
@@ -4495,14 +4500,12 @@ beta = { path = "../../vendor/dep-interface" }
                     ),
                 ),
             ),
-            container_name: None,
-        };
-        let dependency_symbol = SymbolInformation {
-            name: name.to_owned(),
+            None,
+        );
+        let dependency_symbol = symbol_information(
+            name,
             kind,
-            tags: None,
-            deprecated: None,
-            location: Location::new(
+            Location::new(
                 Url::from_file_path(
                     fs::canonicalize(interface_path)
                         .expect("dependency interface path should canonicalize"),
@@ -4513,8 +4516,8 @@ beta = { path = "../../vendor/dep-interface" }
                     tower_lsp::lsp_types::Position::new(end_line, end_character),
                 ),
             ),
-            container_name: Some(package_name.to_owned()),
-        };
+            Some(package_name.to_owned()),
+        );
 
         assert_eq!(symbols.len(), 2, "actual symbols: {symbols:#?}");
         assert!(
