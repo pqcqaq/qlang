@@ -20912,44 +20912,27 @@ pub fn broken() -> Int {
         );
     }
 
-    #[test]
-    fn same_named_local_dependency_broken_source_variant_queries_prefer_matching_dependency_source()
-    {
-        let temp = TempDir::new("ql-lsp-same-named-local-dependency-broken-source-variant-queries");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
-            r#"
-package demo.app
+    struct SameNamedLocalDependencyBrokenSourceFixture {
+        _temp: TempDir,
+        app_source: String,
+        app_uri: Url,
+        package: ql_analysis::PackageAnalysis,
+        alpha_source_path: PathBuf,
+        beta_source_path: PathBuf,
+    }
 
-use demo.shared.alpha.Command as Cmd
-use demo.shared.beta.Command as OtherCmd
-
-pub fn main() -> Int {
-    let first = Cmd.Retry(1)
-    let second = Cmd.Retry(2)
-    let third = OtherCmd.Retry(
-"#,
-        );
-        let alpha_source_path = temp.write(
-            "workspace/vendor/alpha/src/lib.ql",
-            r#"
-package demo.shared.alpha
-
-pub enum Command {
-    Retry(Int),
-}
-"#,
-        );
-        let beta_source_path = temp.write(
-            "workspace/vendor/beta/src/lib.ql",
-            r#"
-package demo.shared.beta
-
-pub enum Command {
-    Retry(Int),
-}
-"#,
-        );
+    fn setup_same_named_local_dependency_broken_source_fixture(
+        prefix: &str,
+        app_source: &str,
+        alpha_source: &str,
+        beta_source: &str,
+        alpha_interface: &str,
+        beta_interface: &str,
+    ) -> SameNamedLocalDependencyBrokenSourceFixture {
+        let temp = TempDir::new(prefix);
+        let app_path = temp.write("workspace/packages/app/src/main.ql", app_source);
+        let alpha_source_path = temp.write("workspace/vendor/alpha/src/lib.ql", alpha_source);
+        let beta_source_path = temp.write("workspace/vendor/beta/src/lib.ql", beta_source);
         temp.write(
             "workspace/qlang.toml",
             r#"
@@ -20982,8 +20965,55 @@ name = "core"
 name = "core"
 "#,
         );
-        temp.write(
-            "workspace/vendor/alpha/core.qi",
+        temp.write("workspace/vendor/alpha/core.qi", alpha_interface);
+        temp.write("workspace/vendor/beta/core.qi", beta_interface);
+
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+
+        SameNamedLocalDependencyBrokenSourceFixture {
+            _temp: temp,
+            app_source,
+            app_uri,
+            package,
+            alpha_source_path,
+            beta_source_path,
+        }
+    }
+
+    #[test]
+    fn same_named_local_dependency_broken_source_variant_queries_prefer_matching_dependency_source()
+    {
+        let alpha_source = r#"
+package demo.shared.alpha
+
+pub enum Command {
+    Retry(Int),
+}
+"#;
+        let fixture = setup_same_named_local_dependency_broken_source_fixture(
+            "ql-lsp-same-named-local-dependency-broken-source-variant-queries",
+            r#"
+package demo.app
+
+use demo.shared.alpha.Command as Cmd
+use demo.shared.beta.Command as OtherCmd
+
+pub fn main() -> Int {
+    let first = Cmd.Retry(1)
+    let second = Cmd.Retry(2)
+    let third = OtherCmd.Retry(
+"#,
+            alpha_source,
+            r#"
+package demo.shared.beta
+
+pub enum Command {
+    Retry(Int),
+}
+"#,
             r#"
 // qlang interface v1
 // package: core
@@ -20995,9 +21025,6 @@ pub enum Command {
     Retry(Int),
 }
 "#,
-        );
-        temp.write(
-            "workspace/vendor/beta/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -21010,21 +21037,17 @@ pub enum Command {
 }
 "#,
         );
-
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        assert!(analyze_source(&source).is_err());
-        let package = package_analysis_for_path(&app_path)
-            .expect("package analysis should survive parse errors");
-        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
-        let alpha_source =
-            fs::read_to_string(&alpha_source_path).expect("alpha source should read");
+        let source = &fixture.app_source;
+        assert!(analyze_source(source).is_err());
+        let package = &fixture.package;
+        let uri = &fixture.app_uri;
 
         let definition = workspace_source_definition_for_dependency(
-            &uri,
-            &source,
+            uri,
+            source,
             None,
-            &package,
-            offset_to_position(&source, nth_offset(&source, "Retry", 2)),
+            package,
+            offset_to_position(source, nth_offset(source, "Retry", 2)),
         )
         .expect("broken-source same-named dependency variant definition should exist");
         let GotoDefinitionResponse::Scalar(definition_location) = definition else {
@@ -21037,21 +21060,22 @@ pub enum Command {
                 .expect("definition URI should convert to a file path")
                 .canonicalize()
                 .expect("definition path should canonicalize"),
-            alpha_source_path
+            fixture
+                .alpha_source_path
                 .canonicalize()
                 .expect("alpha source path should canonicalize"),
         );
         assert_eq!(
             definition_location.range.start,
-            offset_to_position(&alpha_source, nth_offset(&alpha_source, "Retry", 1)),
+            offset_to_position(alpha_source, nth_offset(alpha_source, "Retry", 1)),
         );
 
         let type_definition = workspace_source_type_definition_for_dependency(
-            &uri,
-            &source,
+            uri,
+            source,
             None,
-            &package,
-            offset_to_position(&source, nth_offset(&source, "Retry", 2)),
+            package,
+            offset_to_position(source, nth_offset(source, "Retry", 2)),
         )
         .expect("broken-source same-named dependency variant type definition should exist");
         let GotoTypeDefinitionResponse::Scalar(type_location) = type_definition else {
@@ -21064,20 +21088,21 @@ pub enum Command {
                 .expect("type definition URI should convert to a file path")
                 .canonicalize()
                 .expect("type definition path should canonicalize"),
-            alpha_source_path
+            fixture
+                .alpha_source_path
                 .canonicalize()
                 .expect("alpha source path should canonicalize"),
         );
         assert_eq!(
             type_location.range.start,
-            offset_to_position(&alpha_source, nth_offset(&alpha_source, "Command", 1)),
+            offset_to_position(alpha_source, nth_offset(alpha_source, "Command", 1)),
         );
 
         let references = workspace_source_references_for_dependency_in_broken_source(
-            &uri,
-            &source,
-            &package,
-            offset_to_position(&source, nth_offset(&source, "Retry", 2)),
+            uri,
+            source,
+            package,
+            offset_to_position(source, nth_offset(source, "Retry", 2)),
             true,
         )
         .expect("broken-source same-named dependency variant references should exist");
@@ -21090,18 +21115,14 @@ pub enum Command {
                     .to_file_path()
                     .ok()
                     .and_then(|path| path.canonicalize().ok())
-                    == alpha_source_path.canonicalize().ok()
+                    == fixture.alpha_source_path.canonicalize().ok()
                     && reference.range.start
-                        == offset_to_position(&alpha_source, nth_offset(&alpha_source, "Retry", 1))
+                        == offset_to_position(alpha_source, nth_offset(alpha_source, "Retry", 1))
             }),
             "references should include alpha dependency source variant definition",
         );
         assert!(
-            references
-                .iter()
-                .filter(|reference| reference.uri == uri)
-                .count()
-                == 2,
+            references.iter().filter(|reference| reference.uri == *uri).count() == 2,
             "references should keep only local alpha variant uses",
         );
         assert!(
@@ -21111,16 +21132,16 @@ pub enum Command {
                     .to_file_path()
                     .ok()
                     .and_then(|path| path.canonicalize().ok())
-                    != beta_source_path.canonicalize().ok()
+                    != fixture.beta_source_path.canonicalize().ok()
             }),
             "references should not include beta dependency source",
         );
 
         let highlights = fallback_document_highlights_for_package_at(
-            &uri,
-            &source,
-            &package,
-            offset_to_position(&source, nth_offset(&source, "Retry", 2)),
+            uri,
+            source,
+            package,
+            offset_to_position(source, nth_offset(source, "Retry", 2)),
         )
         .expect("broken-source same-named dependency variant document highlight should exist");
         let actual = highlights
@@ -21128,8 +21149,8 @@ pub enum Command {
             .map(|highlight| highlight.range.start)
             .collect::<Vec<_>>();
         let expected = vec![
-            offset_to_position(&source, nth_offset(&source, "Retry", 1)),
-            offset_to_position(&source, nth_offset(&source, "Retry", 2)),
+            offset_to_position(source, nth_offset(source, "Retry", 1)),
+            offset_to_position(source, nth_offset(source, "Retry", 2)),
         ];
         assert_eq!(actual, expected);
     }
@@ -21137,9 +21158,8 @@ pub enum Command {
     #[test]
     fn same_named_local_dependency_broken_source_variant_prepare_rename_and_rename_prefer_matching_dependency_source()
      {
-        let temp = TempDir::new("ql-lsp-same-named-local-dependency-broken-source-variant-rename");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_same_named_local_dependency_broken_source_fixture(
+            "ql-lsp-same-named-local-dependency-broken-source-variant-rename",
             r#"
 package demo.app
 
@@ -21151,9 +21171,6 @@ pub fn main() -> Int {
     let second = Cmd.Retry(2)
     let third = OtherCmd.Retry(
 "#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/src/lib.ql",
             r#"
 package demo.shared.alpha
 
@@ -21161,9 +21178,6 @@ pub enum Command {
     Retry(Int),
 }
 "#,
-        );
-        temp.write(
-            "workspace/vendor/beta/src/lib.ql",
             r#"
 package demo.shared.beta
 
@@ -21171,41 +21185,6 @@ pub enum Command {
     Retry(Int),
 }
 "#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[dependencies]
-alpha = { path = "../../vendor/alpha" }
-beta = { path = "../../vendor/beta" }
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/beta/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -21217,9 +21196,6 @@ pub enum Command {
     Retry(Int),
 }
 "#,
-        );
-        temp.write(
-            "workspace/vendor/beta/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -21232,55 +21208,53 @@ pub enum Command {
 }
 "#,
         );
-
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        assert!(analyze_source(&source).is_err());
-        let package = package_analysis_for_path(&app_path)
-            .expect("package analysis should survive parse errors");
-        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
-        let use_offset = nth_offset(&source, "Retry", 2);
+        let source = &fixture.app_source;
+        assert!(analyze_source(source).is_err());
+        let package = &fixture.package;
+        let uri = &fixture.app_uri;
+        let use_offset = nth_offset(source, "Retry", 2);
 
         assert_eq!(
             prepare_rename_for_dependency_imports(
-                &source,
-                &package,
-                offset_to_position(&source, use_offset),
+                source,
+                package,
+                offset_to_position(source, use_offset),
             ),
             Some(PrepareRenameResponse::RangeWithPlaceholder {
-                range: span_to_range(&source, Span::new(use_offset, use_offset + "Retry".len())),
+                range: span_to_range(source, Span::new(use_offset, use_offset + "Retry".len())),
                 placeholder: "Retry".to_owned(),
             }),
         );
 
         let edit = rename_for_dependency_imports(
-            &uri,
-            &source,
-            &package,
-            offset_to_position(&source, use_offset),
+            uri,
+            source,
+            package,
+            offset_to_position(source, use_offset),
             "Repeat",
         )
         .expect("rename should succeed")
         .expect("rename should return workspace edits");
         assert_workspace_edit(
             edit,
-            &uri,
+            uri,
             vec![
                 TextEdit::new(
                     span_to_range(
-                        &source,
+                        source,
                         Span::new(
-                            nth_offset(&source, "Retry", 1),
-                            nth_offset(&source, "Retry", 1) + "Retry".len(),
+                            nth_offset(source, "Retry", 1),
+                            nth_offset(source, "Retry", 1) + "Retry".len(),
                         ),
                     ),
                     "Repeat".to_owned(),
                 ),
                 TextEdit::new(
                     span_to_range(
-                        &source,
+                        source,
                         Span::new(
-                            nth_offset(&source, "Retry", 2),
-                            nth_offset(&source, "Retry", 2) + "Retry".len(),
+                            nth_offset(source, "Retry", 2),
+                            nth_offset(source, "Retry", 2) + "Retry".len(),
                         ),
                     ),
                     "Repeat".to_owned(),
@@ -21292,9 +21266,8 @@ pub enum Command {
     #[test]
     fn same_named_local_dependency_broken_source_member_prepare_rename_and_rename_prefer_matching_dependency_source()
      {
-        let temp = TempDir::new("ql-lsp-same-named-local-dependency-broken-source-member-rename");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_same_named_local_dependency_broken_source_fixture(
+            "ql-lsp-same-named-local-dependency-broken-source-member-rename",
             r#"
 package demo.app
 
@@ -21309,9 +21282,6 @@ pub fn main() -> Int {
     let fifth = other().ping() + other().value
     let broken = other(
 "#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/src/lib.ql",
             r#"
 package demo.shared.alpha
 
@@ -21329,9 +21299,6 @@ impl Config {
     }
 }
 "#,
-        );
-        temp.write(
-            "workspace/vendor/beta/src/lib.ql",
             r#"
 package demo.shared.beta
 
@@ -21349,41 +21316,6 @@ impl Config {
     }
 }
 "#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[dependencies]
-alpha = { path = "../../vendor/alpha" }
-beta = { path = "../../vendor/beta" }
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/beta/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -21401,9 +21333,6 @@ impl Config {
     pub fn ping(self) -> Int
 }
 "#,
-        );
-        temp.write(
-            "workspace/vendor/beta/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -21422,55 +21351,53 @@ impl Config {
 }
 "#,
         );
+        let source = &fixture.app_source;
+        assert!(analyze_source(source).is_err());
+        let package = &fixture.package;
+        let uri = &fixture.app_uri;
 
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        assert!(analyze_source(&source).is_err());
-        let package = package_analysis_for_path(&app_path)
-            .expect("package analysis should survive parse errors");
-        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
-
-        let method_use = nth_offset(&source, "ping", 2);
+        let method_use = nth_offset(source, "ping", 2);
         assert_eq!(
             prepare_rename_for_dependency_imports(
-                &source,
-                &package,
-                offset_to_position(&source, method_use),
+                source,
+                package,
+                offset_to_position(source, method_use),
             ),
             Some(PrepareRenameResponse::RangeWithPlaceholder {
-                range: span_to_range(&source, Span::new(method_use, method_use + "ping".len())),
+                range: span_to_range(source, Span::new(method_use, method_use + "ping".len())),
                 placeholder: "ping".to_owned(),
             }),
         );
 
         let method_edit = rename_for_dependency_imports(
-            &uri,
-            &source,
-            &package,
-            offset_to_position(&source, method_use),
+            uri,
+            source,
+            package,
+            offset_to_position(source, method_use),
             "probe",
         )
         .expect("rename should succeed")
         .expect("rename should return workspace edits");
         assert_workspace_edit(
             method_edit,
-            &uri,
+            uri,
             vec![
                 TextEdit::new(
                     span_to_range(
-                        &source,
+                        source,
                         Span::new(
-                            nth_offset(&source, "ping", 1),
-                            nth_offset(&source, "ping", 1) + "ping".len(),
+                            nth_offset(source, "ping", 1),
+                            nth_offset(source, "ping", 1) + "ping".len(),
                         ),
                     ),
                     "probe".to_owned(),
                 ),
                 TextEdit::new(
                     span_to_range(
-                        &source,
+                        source,
                         Span::new(
-                            nth_offset(&source, "ping", 2),
-                            nth_offset(&source, "ping", 2) + "ping".len(),
+                            nth_offset(source, "ping", 2),
+                            nth_offset(source, "ping", 2) + "ping".len(),
                         ),
                     ),
                     "probe".to_owned(),
@@ -21478,48 +21405,48 @@ impl Config {
             ],
         );
 
-        let field_use = nth_offset(&source, "value", 2);
+        let field_use = nth_offset(source, "value", 2);
         assert_eq!(
             prepare_rename_for_dependency_imports(
-                &source,
-                &package,
-                offset_to_position(&source, field_use),
+                source,
+                package,
+                offset_to_position(source, field_use),
             ),
             Some(PrepareRenameResponse::RangeWithPlaceholder {
-                range: span_to_range(&source, Span::new(field_use, field_use + "value".len())),
+                range: span_to_range(source, Span::new(field_use, field_use + "value".len())),
                 placeholder: "value".to_owned(),
             }),
         );
 
         let field_edit = rename_for_dependency_imports(
-            &uri,
-            &source,
-            &package,
-            offset_to_position(&source, field_use),
+            uri,
+            source,
+            package,
+            offset_to_position(source, field_use),
             "count",
         )
         .expect("rename should succeed")
         .expect("rename should return workspace edits");
         assert_workspace_edit(
             field_edit,
-            &uri,
+            uri,
             vec![
                 TextEdit::new(
                     span_to_range(
-                        &source,
+                        source,
                         Span::new(
-                            nth_offset(&source, "value", 1),
-                            nth_offset(&source, "value", 1) + "value".len(),
+                            nth_offset(source, "value", 1),
+                            nth_offset(source, "value", 1) + "value".len(),
                         ),
                     ),
                     "count".to_owned(),
                 ),
                 TextEdit::new(
                     span_to_range(
-                        &source,
+                        source,
                         Span::new(
-                            nth_offset(&source, "value", 2),
-                            nth_offset(&source, "value", 2) + "value".len(),
+                            nth_offset(source, "value", 2),
+                            nth_offset(source, "value", 2) + "value".len(),
                         ),
                     ),
                     "count".to_owned(),
@@ -21531,10 +21458,8 @@ impl Config {
     #[test]
     fn same_named_local_dependency_broken_source_variant_completion_prefers_matching_dependency_source()
      {
-        let temp =
-            TempDir::new("ql-lsp-same-named-local-dependency-broken-source-variant-completion");
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
+        let fixture = setup_same_named_local_dependency_broken_source_fixture(
+            "ql-lsp-same-named-local-dependency-broken-source-variant-completion",
             r#"
 package demo.app
 
@@ -21544,9 +21469,6 @@ use demo.shared.beta.Command as OtherCmd
 pub fn main() -> Int {
     let first = Cmd.B
 "#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/src/lib.ql",
             r#"
 package demo.shared.alpha
 
@@ -21555,9 +21477,6 @@ pub enum Command {
     Backoff(Int),
 }
 "#,
-        );
-        temp.write(
-            "workspace/vendor/beta/src/lib.ql",
             r#"
 package demo.shared.beta
 
@@ -21566,41 +21485,6 @@ pub enum Command {
     Block(Int),
 }
 "#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[dependencies]
-alpha = { path = "../../vendor/alpha" }
-beta = { path = "../../vendor/beta" }
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/beta/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -21613,9 +21497,6 @@ pub enum Command {
     Backoff(Int),
 }
 "#,
-        );
-        temp.write(
-            "workspace/vendor/beta/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -21629,15 +21510,13 @@ pub enum Command {
 }
 "#,
         );
-
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        assert!(analyze_source(&source).is_err());
-        let package = package_analysis_for_path(&app_path)
-            .expect("package analysis should survive parse errors");
+        let source = &fixture.app_source;
+        assert!(analyze_source(source).is_err());
+        let package = &fixture.package;
         let completion = completion_for_dependency_variants(
-            &source,
-            &package,
-            offset_to_position(&source, nth_offset(&source, "B", 1) + 1),
+            source,
+            package,
+            offset_to_position(source, nth_offset(source, "B", 1) + 1),
         )
         .expect("broken-source same-named dependency variant completion should exist");
 
@@ -21656,11 +21535,8 @@ pub enum Command {
     #[test]
     fn same_named_local_dependency_broken_source_struct_field_completion_prefers_matching_dependency_source()
      {
-        let temp = TempDir::new(
+        let fixture = setup_same_named_local_dependency_broken_source_fixture(
             "ql-lsp-same-named-local-dependency-broken-source-struct-field-completion",
-        );
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
             r#"
 package demo.app
 
@@ -21670,9 +21546,6 @@ use demo.shared.beta.Settings as OtherSettings
 pub fn main() -> Int {
     let value = Settings { po
 "#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/src/lib.ql",
             r#"
 package demo.shared.alpha
 
@@ -21681,9 +21554,6 @@ pub struct Settings {
     port: Int,
 }
 "#,
-        );
-        temp.write(
-            "workspace/vendor/beta/src/lib.ql",
             r#"
 package demo.shared.beta
 
@@ -21692,41 +21562,6 @@ pub struct Settings {
     block: Bool,
 }
 "#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[dependencies]
-alpha = { path = "../../vendor/alpha" }
-beta = { path = "../../vendor/beta" }
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/beta/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -21739,9 +21574,6 @@ pub struct Settings {
     port: Int,
 }
 "#,
-        );
-        temp.write(
-            "workspace/vendor/beta/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -21755,15 +21587,13 @@ pub struct Settings {
 }
 "#,
         );
-
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        assert!(analyze_source(&source).is_err());
-        let package = package_analysis_for_path(&app_path)
-            .expect("package analysis should survive parse errors");
+        let source = &fixture.app_source;
+        assert!(analyze_source(source).is_err());
+        let package = &fixture.package;
         let completion = completion_for_dependency_struct_fields(
-            &source,
-            &package,
-            offset_to_position(&source, nth_offset(&source, "po", 1) + 2),
+            source,
+            package,
+            offset_to_position(source, nth_offset(source, "po", 1) + 2),
         )
         .expect("broken-source same-named dependency struct field completion should exist");
 
