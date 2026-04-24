@@ -7,7 +7,7 @@ Phase 6 already exposed same-file lexical completion for visible value bindings.
 That meant free functions were already present on the analysis side as lexical value candidates. But the coverage was still asymmetric:
 
 - analysis already proved that visible value completion could include free functions
-- LSP already mapped method completion to `FUNCTION`
+- LSP already mapped free-function completion to `FUNCTION`
 - there was still no direct parity regression proving that lexical free-function candidates stayed aligned across analysis and the LSP bridge
 
 Without that explicit coverage, lexical completion could drift so that callable declarations still existed in `QueryIndex` while the editor-facing projection stopped behaving consistently.

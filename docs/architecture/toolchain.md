@@ -567,7 +567,7 @@ LSP 服务端，复用编译器 HIR 与查询系统。长期目标支持：
 - same-file enum 的 type-context completion 现在也已经有显式 parity 回归：analysis 会继续产出 `enum` 候选，LSP bridge 会继续把它投影为 `ENUM` completion item，并沿用同一份 detail / insert-text / text-edit 语义
 - same-file trait 的 type-context completion 现在也已经有显式 parity 回归：analysis 会继续产出 `trait` 候选，LSP bridge 会继续把它投影为 `INTERFACE` completion item，并沿用同一份 detail / insert-text / text-edit 语义
 - stable receiver field completion 现在也已经有显式 parity 回归：analysis 会继续产出 `field` 候选，LSP bridge 会继续把它投影为 `FIELD` completion item，并沿用同一份 detail / insert-text / text-edit 语义
-- stable receiver unique method completion 现在也已经有显式 parity 回归：analysis 会继续产出唯一 `method` 候选，LSP bridge 会继续把它投影为 `FUNCTION` completion item，并沿用同一份 detail / insert-text / text-edit 语义
+- stable receiver unique method completion 现在也已经有显式 parity 回归：analysis 会继续产出唯一 `method` 候选，LSP bridge 会继续把它投影为 `METHOD` completion item，并沿用同一份 detail / insert-text / text-edit 语义
 - same-file const / static 的 value completion 现在也已经有显式 parity 回归：analysis 会继续产出 `const` / `static` 候选，LSP bridge 会继续把它们投影为 `CONSTANT` completion item，并沿用同一份 detail / insert-text / text-edit 语义
 - same-file local 的 value completion 现在也已经有显式 parity 回归：analysis 会继续产出 `local` 候选，LSP bridge 会继续把它投影为 `VARIABLE` completion item，并沿用同一份 detail / insert-text / text-edit 语义
 - same-file parameter 的 value completion 现在也已经有显式 parity 回归：analysis 会继续产出 `parameter` 候选，LSP bridge 会继续把它投影为 `VARIABLE` completion item，并沿用同一份 detail / insert-text / text-edit 语义

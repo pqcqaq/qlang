@@ -192,7 +192,7 @@ source
 - same-file enum 的 type-context completion 现在也有显式 parity 回归：analysis 会继续把 `enum` 作为 type 候选产出，LSP bridge 会继续把它映射成 `ENUM` completion item，并保持稳定 detail 与 text edit，而不是让 enum candidate 在 editor-facing 投影中再次漂移
 - same-file trait 的 type-context completion 现在也有显式 parity 回归：analysis 会继续把 `trait` 作为 type 候选产出，LSP bridge 会继续把它映射成 `INTERFACE` completion item，并保持稳定 detail 与 text edit，而不是让 trait candidate 在 editor-facing 投影中再次漂移
 - stable receiver field completion 现在也有显式 parity 回归：analysis 会继续把 `field` 作为 member 候选产出，LSP bridge 会继续把它映射成 `FIELD` completion item，并保持稳定 detail 与 text edit，而不是让 field candidate 在 editor-facing 投影中再次漂移
-- stable receiver unique-method completion 现在也有显式 parity 回归：analysis 会继续把唯一 `method` candidate 作为 member 候选产出，LSP bridge 会继续把它映射成 `FUNCTION` completion item，并保持稳定 detail 与 text edit，而不是让稳定 receiver member surface 的 method 投影再次漂移
+- stable receiver unique-method completion 现在也有显式 parity 回归：analysis 会继续把唯一 `method` candidate 作为 member 候选产出，LSP bridge 会继续把它映射成 `METHOD` completion item，并保持稳定 detail 与 text edit，而不是让稳定 receiver member surface 的 method 投影再次漂移
 - same-file const / static 的 value completion 现在也有显式 parity 回归：analysis 会继续把 `const` / `static` 作为 value 候选产出，LSP bridge 会继续把它们映射成 `CONSTANT` completion item，并保持稳定 detail 与 text edit，而不是让这些 item-value candidate 在 editor-facing 投影中再次漂移
 - same-file local 的 value completion 现在也有显式 parity 回归：analysis 会继续把 `local` 作为 value 候选产出，LSP bridge 会继续把它映射成 `VARIABLE` completion item，并保持稳定 detail 与 text edit，而不是让 lexical local candidate 在 editor-facing 投影中再次漂移
 - same-file parameter 的 value completion 现在也有显式 parity 回归：analysis 会继续把 `parameter` 作为 value 候选产出，LSP bridge 会继续把它映射成 `VARIABLE` completion item，并保持稳定 detail 与 text edit，而不是让 parameter candidate 在 editor-facing 投影中再次漂移

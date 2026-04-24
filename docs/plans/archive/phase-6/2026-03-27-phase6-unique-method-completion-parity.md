@@ -6,7 +6,7 @@ Phase 6 already had same-file member completion on the analysis side for stable 
 
 That meant uniquely resolved method symbols were already available as member completion candidates through `QueryIndex`, and the LSP bridge already knew how to map:
 
-- `SymbolKind::Method` -> `CompletionItemKind::FUNCTION`
+- `SymbolKind::Method` -> `CompletionItemKind::METHOD`
 
 But there was still no explicit parity regression proving that already-supported unique method candidates stayed aligned end to end for detail rendering, kind projection, and editor-facing replacement edits.
 
@@ -28,7 +28,7 @@ These tests lock the existing behavior that stable-receiver unique method candid
 
 - appear in same-file member completion
 - keep `SymbolKind::Method` on the analysis side
-- map to `CompletionItemKind::FUNCTION` on the LSP side
+- map to `CompletionItemKind::METHOD` on the LSP side
 - preserve stable detail rendering and replacement edits
 
 ## Boundary
