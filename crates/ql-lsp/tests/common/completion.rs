@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind};
 
 #[derive(Clone, Copy)]
