@@ -21606,67 +21606,24 @@ pub struct Settings {
         assert_eq!(items[0].detail.as_deref(), Some("field port: Int"));
     }
 
-    #[test]
-    fn same_named_local_dependency_workspace_member_completion_prefers_matching_dependency_source_over_stale_interface()
-     {
-        let temp = TempDir::new(
-            "ql-lsp-same-named-local-dependency-workspace-member-completion-source-preferred",
-        );
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
-            r#"
-package demo.app
-
-use demo.shared.alpha.build as build
-use demo.shared.beta.build as other
-
-pub fn main() -> Int {
-    return build().pi() + build().to + other().pong() + other().block
-}
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/src/lib.ql",
-            r#"
-package demo.shared.alpha
-
-pub struct Counter {
-    total: Int,
-    value: Int,
-}
-
-impl Counter {
-    pub fn ping(self) -> Int {
-        return self.total
+    struct SameNamedLocalDependencyWorkspaceCompletionFixture {
+        _temp: TempDir,
+        app_source: String,
+        package: ql_analysis::PackageAnalysis,
     }
-}
 
-pub fn build() -> Counter {
-    return Counter { total: 1, value: 2 }
-}
-"#,
-        );
-        temp.write(
-            "workspace/vendor/beta/src/lib.ql",
-            r#"
-package demo.shared.beta
-
-pub struct Counter {
-    block: Int,
-    value: Int,
-}
-
-impl Counter {
-    pub fn pong(self) -> Int {
-        return self.block
-    }
-}
-
-pub fn build() -> Counter {
-    return Counter { block: 3, value: 4 }
-}
-"#,
-        );
+    fn setup_same_named_local_dependency_workspace_completion_fixture(
+        prefix: &str,
+        app_source: &str,
+        alpha_source: &str,
+        beta_source: &str,
+        alpha_interface: &str,
+        beta_interface: &str,
+    ) -> SameNamedLocalDependencyWorkspaceCompletionFixture {
+        let temp = TempDir::new(prefix);
+        let app_path = temp.write("workspace/packages/app/src/main.ql", app_source);
+        temp.write("workspace/vendor/alpha/src/lib.ql", alpha_source);
+        temp.write("workspace/vendor/beta/src/lib.ql", beta_source);
         temp.write(
             "workspace/qlang.toml",
             r#"
@@ -21699,8 +21656,71 @@ name = "core"
 name = "core"
 "#,
         );
-        temp.write(
-            "workspace/vendor/alpha/core.qi",
+        temp.write("workspace/vendor/alpha/core.qi", alpha_interface);
+        temp.write("workspace/vendor/beta/core.qi", beta_interface);
+
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+
+        SameNamedLocalDependencyWorkspaceCompletionFixture {
+            _temp: temp,
+            app_source,
+            package,
+        }
+    }
+
+    #[test]
+    fn same_named_local_dependency_workspace_member_completion_prefers_matching_dependency_source_over_stale_interface()
+     {
+        let fixture = setup_same_named_local_dependency_workspace_completion_fixture(
+            "ql-lsp-same-named-local-dependency-workspace-member-completion-source-preferred",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+use demo.shared.beta.build as other
+
+pub fn main() -> Int {
+    return build().pi() + build().to + other().pong() + other().block
+}
+"#,
+            r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    total: Int,
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.total
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { total: 1, value: 2 }
+}
+"#,
+            r#"
+package demo.shared.beta
+
+pub struct Counter {
+    block: Int,
+    value: Int,
+}
+
+impl Counter {
+    pub fn pong(self) -> Int {
+        return self.block
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { block: 3, value: 4 }
+}
+"#,
             r#"
 // qlang interface v1
 // package: core
@@ -21719,9 +21739,6 @@ impl Counter {
 
 pub fn build() -> Counter
 "#,
-        );
-        temp.write(
-            "workspace/vendor/beta/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -21741,16 +21758,14 @@ impl Counter {
 pub fn build() -> Counter
 "#,
         );
-
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        assert!(analyze_source(&source).is_ok());
-        let package =
-            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let source = &fixture.app_source;
+        assert!(analyze_source(source).is_ok());
+        let package = &fixture.package;
 
         let method_completion = workspace_source_method_completions(
-            &source,
-            &package,
-            offset_to_position(&source, nth_offset(&source, "pi", 1) + 2),
+            source,
+            package,
+            offset_to_position(source, nth_offset(source, "pi", 1) + 2),
         )
         .expect("workspace same-named dependency method completion should exist");
         let CompletionResponse::Array(method_items) = method_completion else {
@@ -21765,9 +21780,9 @@ pub fn build() -> Counter
         );
 
         let field_completion = workspace_source_member_field_completions(
-            &source,
-            &package,
-            offset_to_position(&source, nth_offset(&source, "to", 1) + 2),
+            source,
+            package,
+            offset_to_position(source, nth_offset(source, "to", 1) + 2),
         )
         .expect("workspace same-named dependency field completion should exist");
         let CompletionResponse::Array(field_items) = field_completion else {
@@ -21782,11 +21797,8 @@ pub fn build() -> Counter
     #[test]
     fn same_named_local_dependency_workspace_variant_and_struct_field_completion_prefer_matching_dependency_source_over_stale_interface()
      {
-        let temp = TempDir::new(
+        let fixture = setup_same_named_local_dependency_workspace_completion_fixture(
             "ql-lsp-same-named-local-dependency-workspace-variant-struct-field-completion-source-preferred",
-        );
-        let app_path = temp.write(
-            "workspace/packages/app/src/main.ql",
             r#"
 package demo.app
 
@@ -21803,9 +21815,6 @@ pub fn main() -> Int {
     return first + settings.port + other + second.block
 }
 "#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/src/lib.ql",
             r#"
 package demo.shared.alpha
 
@@ -21819,9 +21828,6 @@ pub struct Settings {
     port: Int,
 }
 "#,
-        );
-        temp.write(
-            "workspace/vendor/beta/src/lib.ql",
             r#"
 package demo.shared.beta
 
@@ -21835,41 +21841,6 @@ pub struct Settings {
     block: Bool,
 }
 "#,
-        );
-        temp.write(
-            "workspace/qlang.toml",
-            r#"
-[workspace]
-members = ["packages/app"]
-"#,
-        );
-        temp.write(
-            "workspace/packages/app/qlang.toml",
-            r#"
-[package]
-name = "app"
-
-[dependencies]
-alpha = { path = "../../vendor/alpha" }
-beta = { path = "../../vendor/beta" }
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/beta/qlang.toml",
-            r#"
-[package]
-name = "core"
-"#,
-        );
-        temp.write(
-            "workspace/vendor/alpha/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -21887,9 +21858,6 @@ pub struct Settings {
     priority: Int,
 }
 "#,
-        );
-        temp.write(
-            "workspace/vendor/beta/core.qi",
             r#"
 // qlang interface v1
 // package: core
@@ -21908,16 +21876,14 @@ pub struct Settings {
 }
 "#,
         );
-
-        let source = fs::read_to_string(&app_path).expect("app source should read");
-        assert!(analyze_source(&source).is_ok());
-        let package =
-            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let source = &fixture.app_source;
+        assert!(analyze_source(source).is_ok());
+        let package = &fixture.package;
 
         let variant_completion = workspace_source_variant_completions(
-            &source,
-            &package,
-            offset_to_position(&source, nth_offset(&source, "B", 1) + 1),
+            source,
+            package,
+            offset_to_position(source, nth_offset(source, "B", 1) + 1),
         )
         .expect("workspace same-named dependency variant completion should exist");
         let CompletionResponse::Array(variant_items) = variant_completion else {
@@ -21932,9 +21898,9 @@ pub struct Settings {
         );
 
         let field_completion = workspace_source_struct_field_completions(
-            &source,
-            &package,
-            offset_to_position(&source, nth_offset(&source, "po", 1) + 2),
+            source,
+            package,
+            offset_to_position(source, nth_offset(source, "po", 1) + 2),
         )
         .expect("workspace same-named dependency struct field completion should exist");
         let CompletionResponse::Array(field_items) = field_completion else {
