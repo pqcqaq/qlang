@@ -2590,7 +2590,7 @@ packages = ["../dep"]
     };
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].label, "get");
-    assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
     assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
 }
 
@@ -2659,7 +2659,7 @@ packages = ["../dep"]
     };
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].label, "get");
-    assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
     assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
 }
 
@@ -2877,7 +2877,7 @@ packages = ["../dep"]
     };
     assert_eq!(method_items.len(), 1);
     assert_eq!(method_items[0].label, "get");
-    assert_eq!(method_items[0].kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(method_items[0].kind, Some(CompletionItemKind::METHOD));
     assert_eq!(
         method_items[0].detail.as_deref(),
         Some("fn get(self) -> Int")
@@ -2972,7 +2972,7 @@ packages = ["../dep"]
     };
     assert_eq!(method_items.len(), 1);
     assert_eq!(method_items[0].label, "get");
-    assert_eq!(method_items[0].kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(method_items[0].kind, Some(CompletionItemKind::METHOD));
     assert_eq!(
         method_items[0].detail.as_deref(),
         Some("fn get(self) -> Int")
@@ -3069,7 +3069,7 @@ packages = ["../dep"]
     assert_eq!(load_method_items[0].label, "get");
     assert_eq!(
         load_method_items[0].kind,
-        Some(CompletionItemKind::FUNCTION)
+        Some(CompletionItemKind::METHOD)
     );
     assert_eq!(
         load_method_items[0].detail.as_deref(),
@@ -3108,7 +3108,7 @@ packages = ["../dep"]
     assert_eq!(maybe_method_items[0].label, "get");
     assert_eq!(
         maybe_method_items[0].kind,
-        Some(CompletionItemKind::FUNCTION)
+        Some(CompletionItemKind::METHOD)
     );
     assert_eq!(
         maybe_method_items[0].detail.as_deref(),
@@ -5060,7 +5060,7 @@ packages = ["../dep"]
     };
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].label, "get");
-    assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
     assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
 }
 

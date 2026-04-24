@@ -460,7 +460,7 @@ pub fn read(flag: Bool) -> Int {{
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label, "get");
-        assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+        assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
         assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
     } else {
         let package = analyze_package_dependencies(&app_root)
@@ -479,7 +479,7 @@ pub fn read(flag: Bool) -> Int {{
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label, "get");
-        assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+        assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
         assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
     }
 }
@@ -573,7 +573,7 @@ pub fn read(flag: Bool) -> Leaf {{
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label, "leaf");
-        assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+        assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
         assert_eq!(items[0].detail.as_deref(), Some("fn leaf(self) -> Leaf"));
     } else {
         let package = analyze_package_dependencies(&app_root)
@@ -592,7 +592,7 @@ pub fn read(flag: Bool) -> Leaf {{
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label, "leaf");
-        assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+        assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
         assert_eq!(items[0].detail.as_deref(), Some("fn leaf(self) -> Leaf"));
     }
 }
