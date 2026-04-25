@@ -98,7 +98,7 @@
 
 ## 下一轮（已排定）
 
-- LSP：`textDocument/implementation` 的已完成基线已明显超出这里最初记录，当前准确支持面以 `current-supported-surface.md` 为准；下一轮继续扩更宽的 implementation index，并优先收口 request/helper 尚未完全对齐的边界。`goto_implementation` 分发已先拆成 analyzed source 与 broken-source fallback 两条路径，source-backed dependency concrete method response 尾部、package source snapshot 读取、以及 implementation location/response normalization 已共享；后续继续在各自分支内收口 target resolution / response normalization。
+- LSP：`textDocument/implementation` 的已完成基线已明显超出这里最初记录，当前准确支持面以 `current-supported-surface.md` 为准；下一轮继续扩更宽的 implementation index，并优先收口 request/helper 尚未完全对齐的边界。`goto_implementation` 分发已先拆成 analyzed source 与 broken-source fallback 两条路径，source-backed dependency concrete method response 尾部、package source snapshot 读取、implementation location/response normalization、以及 workspace type / trait-method response 构造已共享；后续继续在各自分支内收口 target resolution / response normalization。
 - backend：继续扩 direct local dependency 下真实项目高频的 public value/type/member 调用面，优先补会直接阻断 workspace `build/run/test` 的路径。
 - 文档：继续只保留入口结论、支持边界和最近 checkpoint；不再追加长流水账。
 

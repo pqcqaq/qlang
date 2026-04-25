@@ -7,7 +7,8 @@
         fallback_document_highlights_for_package_at_with_open_docs, file_open_documents,
         implementation_response_from_locations, import_missing_dependency_code_actions_for_position,
         local_source_dependency_target_with_analysis, normalize_locations_in_source_order,
-        package_analysis_for_path, package_source_snapshot_with_open_docs, PackageSourceSnapshot,
+        package_analysis_for_path, package_source_snapshot_with_open_docs,
+        DependencyDefinitionTarget, PackageSourceSnapshot,
         prepare_rename_for_dependency_imports,
         prepare_rename_for_workspace_import_in_broken_source,
         prepare_rename_for_workspace_source_root_symbol_from_import,
@@ -69,6 +70,8 @@
         workspace_source_type_definition_for_import_with_open_docs,
         workspace_source_variant_completions, workspace_symbols_for_documents,
         workspace_symbols_for_documents_and_roots,
+        workspace_implementation_response_with_open_docs,
+        workspace_trait_method_implementation_response_with_open_docs,
     };
     use crate::bridge::{
         implementation_for_analysis, semantic_tokens_legend, span_to_range, symbol_information,
@@ -2742,6 +2745,84 @@ impl Runner for ToolWorker {
         )));
     }
 
+    #[test]
+    fn workspace_trait_method_response_helper_aggregates_visible_impl_methods() {
+        let fixture = setup_workspace_trait_method_fixture(
+            "ql-lsp-workspace-trait-method-response-helper",
+            r#"
+package demo.app
+
+use demo.core.Runner
+
+struct AppWorker {}
+
+impl Runner for AppWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+"#,
+            Some(
+                r#"
+package demo.tools
+
+use demo.core.Runner
+
+struct ToolWorker {}
+
+impl Runner for ToolWorker {
+    fn run(self) -> Int {
+        return 2
+    }
+}
+"#,
+            ),
+        );
+        let core_source_path = fixture
+            .core_uri
+            .to_file_path()
+            .expect("core URI should convert to a file path");
+        let core_manifest_path = core_source_path
+            .parent()
+            .and_then(Path::parent)
+            .expect("core source should be under package src")
+            .join("qlang.toml");
+        let target = DependencyDefinitionTarget {
+            package_name: "core".to_owned(),
+            manifest_path: core_manifest_path,
+            source_path: "src/lib.ql".to_owned(),
+            kind: AnalysisSymbolKind::Trait,
+            name: "Runner".to_owned(),
+            path: core_source_path,
+            span: Span::new(0, 0),
+        };
+
+        let response = workspace_trait_method_implementation_response_with_open_docs(
+            &fixture.package,
+            &file_open_documents(vec![]),
+            &target,
+            "run",
+        )
+        .expect("workspace trait method implementation response should exist");
+        let GotoDefinitionResponse::Array(locations) = response else {
+            panic!("workspace trait method response should return many locations")
+        };
+
+        assert_eq!(locations.len(), 2);
+        assert!(locations.contains(&Location::new(
+            fixture.app_uri.clone(),
+            span_to_range(&fixture.app_source, nth_span(&fixture.app_source, "run", 1)),
+        )));
+        let tools_source = fixture
+            .tools_source
+            .expect("tools source should exist for helper response test");
+        let tools_uri = fixture.tools_uri.expect("tools URI should exist");
+        assert!(locations.contains(&Location::new(
+            tools_uri,
+            span_to_range(&tools_source, nth_span(&tools_source, "run", 1)),
+        )));
+    }
+
     struct WorkspaceTypeImportImplementationFixture {
         _temp: TempDir,
         app_source: String,
@@ -2808,6 +2889,95 @@ pub struct Config {
             package,
             core_uri,
         }
+    }
+
+    #[test]
+    fn workspace_implementation_response_helper_uses_source_preferred_locations() {
+        let fixture = setup_workspace_type_import_implementation_fixture(
+            "ql-lsp-workspace-implementation-response-helper",
+            r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(value: Config) -> Config {
+    return value
+}
+"#,
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+        );
+        let core_source_path = fixture
+            .core_uri
+            .to_file_path()
+            .expect("core URI should convert to a file path");
+        let core_manifest_path = core_source_path
+            .parent()
+            .and_then(Path::parent)
+            .expect("core source should be under package src")
+            .join("qlang.toml");
+        let open_core_source = r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    fn build(self) -> Int {
+        return self.value
+    }
+}
+
+extend Config {
+    fn label(self) -> Int {
+        return self.value
+    }
+}
+"#
+        .to_owned();
+        let target = DependencyDefinitionTarget {
+            package_name: "core".to_owned(),
+            manifest_path: core_manifest_path,
+            source_path: "src/lib.ql".to_owned(),
+            kind: AnalysisSymbolKind::Struct,
+            name: "Config".to_owned(),
+            path: core_source_path,
+            span: Span::new(0, 0),
+        };
+
+        let response = workspace_implementation_response_with_open_docs(
+            &fixture.package,
+            &file_open_documents(vec![(fixture.core_uri.clone(), open_core_source.clone())]),
+            &target,
+        )
+        .expect("workspace implementation response should exist");
+        let GotoDefinitionResponse::Array(locations) = response else {
+            panic!("workspace implementation response should return many locations")
+        };
+
+        assert_eq!(locations.len(), 2);
+        assert_eq!(locations[0].uri, fixture.core_uri);
+        assert_eq!(
+            locations[0].range.start,
+            offset_to_position(
+                &open_core_source,
+                nth_offset(&open_core_source, "impl Config", 1),
+            ),
+        );
+        assert_eq!(locations[1].uri, fixture.core_uri);
+        assert_eq!(
+            locations[1].range.start,
+            offset_to_position(
+                &open_core_source,
+                nth_offset(&open_core_source, "extend Config", 1),
+            ),
+        );
     }
 
     #[test]

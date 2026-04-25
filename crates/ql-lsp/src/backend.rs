@@ -4699,9 +4699,7 @@ fn workspace_source_root_implementation_with_open_docs(
     let current_path = uri.to_file_path().ok()?;
     let target =
         root_implementation_target_for_source(&current_path, source, analysis, package, position)?;
-    implementation_response_from_locations(workspace_implementation_locations_with_open_docs(
-        package, open_docs, &target,
-    ))
+    workspace_implementation_response_with_open_docs(package, open_docs, &target)
 }
 
 fn workspace_source_root_implementation_in_broken_source_with_open_docs(
@@ -4719,9 +4717,7 @@ fn workspace_source_root_implementation_in_broken_source_with_open_docs(
         position,
     )?;
 
-    implementation_response_from_locations(workspace_implementation_locations_with_open_docs(
-        package, open_docs, &target,
-    ))
+    workspace_implementation_response_with_open_docs(package, open_docs, &target)
 }
 
 fn trait_method_implementation_query_for_source(
@@ -5528,13 +5524,11 @@ fn workspace_source_trait_method_implementation_with_open_docs(
         package,
         position,
     )?;
-    implementation_response_from_locations(
-        workspace_trait_method_implementation_locations_with_open_docs(
-            package,
-            open_docs,
-            &query.trait_target,
-            &query.method_name,
-        ),
+    workspace_trait_method_implementation_response_with_open_docs(
+        package,
+        open_docs,
+        &query.trait_target,
+        &query.method_name,
     )
 }
 
@@ -5553,13 +5547,11 @@ fn workspace_source_trait_method_implementation_in_broken_source_with_open_docs(
         position,
     )?;
 
-    implementation_response_from_locations(
-        workspace_trait_method_implementation_locations_with_open_docs(
-            package,
-            open_docs,
-            &query.trait_target,
-            &query.method_name,
-        ),
+    workspace_trait_method_implementation_response_with_open_docs(
+        package,
+        open_docs,
+        &query.trait_target,
+        &query.method_name,
     )
 }
 
@@ -5712,6 +5704,16 @@ fn workspace_implementation_locations_with_open_docs(
     locations
 }
 
+fn workspace_implementation_response_with_open_docs(
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    target: &DependencyDefinitionTarget,
+) -> Option<GotoImplementationResponse> {
+    implementation_response_from_locations(workspace_implementation_locations_with_open_docs(
+        package, open_docs, target,
+    ))
+}
+
 fn workspace_trait_method_implementation_locations_with_open_docs(
     package: &ql_analysis::PackageAnalysis,
     open_docs: &OpenDocuments,
@@ -5738,6 +5740,22 @@ fn workspace_trait_method_implementation_locations_with_open_docs(
     locations
 }
 
+fn workspace_trait_method_implementation_response_with_open_docs(
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    target: &DependencyDefinitionTarget,
+    method_name: &str,
+) -> Option<GotoImplementationResponse> {
+    implementation_response_from_locations(
+        workspace_trait_method_implementation_locations_with_open_docs(
+            package,
+            open_docs,
+            target,
+            method_name,
+        ),
+    )
+}
+
 fn workspace_source_implementation_for_dependency_with_open_docs(
     source: &str,
     analysis: Option<&Analysis>,
@@ -5753,9 +5771,7 @@ fn workspace_source_implementation_for_dependency_with_open_docs(
             broken_source_dependency_type_definition_target_at(source, package, position)
         })?
     })?;
-    implementation_response_from_locations(workspace_implementation_locations_with_open_docs(
-        package, open_docs, &target,
-    ))
+    workspace_implementation_response_with_open_docs(package, open_docs, &target)
 }
 
 fn method_definition_location_at(
@@ -5816,13 +5832,11 @@ fn workspace_source_method_implementation_for_dependency_with_open_docs(
             position,
         )
     {
-        return implementation_response_from_locations(
-            workspace_trait_method_implementation_locations_with_open_docs(
-                package,
-                open_docs,
-                &query.trait_target,
-                &query.method_name,
-            ),
+        return workspace_trait_method_implementation_response_with_open_docs(
+            package,
+            open_docs,
+            &query.trait_target,
+            &query.method_name,
         );
     }
 
@@ -5858,13 +5872,11 @@ fn workspace_source_method_implementation_for_local_source_with_open_docs(
         package,
         position,
     ) {
-        return implementation_response_from_locations(
-            workspace_trait_method_implementation_locations_with_open_docs(
-                package,
-                open_docs,
-                &query.trait_target,
-                &query.method_name,
-            ),
+        return workspace_trait_method_implementation_response_with_open_docs(
+            package,
+            open_docs,
+            &query.trait_target,
+            &query.method_name,
         );
     }
 
