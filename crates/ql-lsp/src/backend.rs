@@ -4598,6 +4598,38 @@ fn package_source_snapshot_with_open_docs(
     })
 }
 
+fn location_source_order_key(location: &Location) -> (u32, u32, u32, u32) {
+    (
+        location.range.start.line,
+        location.range.start.character,
+        location.range.end.line,
+        location.range.end.character,
+    )
+}
+
+fn normalize_locations_in_source_order(locations: &mut Vec<Location>) {
+    locations.sort_by_key(location_source_order_key);
+    locations.dedup_by(|left, right| same_location_anchor(left, right));
+}
+
+fn normalize_method_sites_in_source_order(sites: &mut Vec<WorkspaceMethodDefinitionSite>) {
+    sites.sort_by_key(|site| location_source_order_key(&site.location));
+    sites.dedup_by(|left, right| same_location_anchor(&left.location, &right.location));
+}
+
+fn normalize_implementation_response_locations(locations: &mut Vec<Location>) {
+    locations.sort_by_key(|location| {
+        (
+            location.uri.to_string(),
+            location.range.start.line,
+            location.range.start.character,
+            location.range.end.line,
+            location.range.end.character,
+        )
+    });
+    locations.dedup_by(|left, right| same_location_anchor(left, right));
+}
+
 fn root_implementation_target_for_source(
     current_path: &Path,
     source: &str,
@@ -5327,16 +5359,7 @@ fn workspace_trait_method_implementation_sites_with_open_docs(
                     target,
                     method_name,
                 );
-                module_sites.sort_by_key(|site| {
-                    (
-                        site.location.range.start.line,
-                        site.location.range.start.character,
-                        site.location.range.end.line,
-                        site.location.range.end.character,
-                    )
-                });
-                module_sites
-                    .dedup_by(|left, right| same_location_anchor(&left.location, &right.location));
+                normalize_method_sites_in_source_order(&mut module_sites);
                 sites.extend(module_sites);
                 continue;
             }
@@ -5380,15 +5403,7 @@ fn workspace_trait_method_implementation_sites_with_open_docs(
             .flatten()
             .collect::<Vec<_>>();
 
-        module_sites.sort_by_key(|site| {
-            (
-                site.location.range.start.line,
-                site.location.range.start.character,
-                site.location.range.end.line,
-                site.location.range.end.character,
-            )
-        });
-        module_sites.dedup_by(|left, right| same_location_anchor(&left.location, &right.location));
+        normalize_method_sites_in_source_order(&mut module_sites);
         sites.extend(module_sites);
     }
 
@@ -5584,15 +5599,7 @@ fn extend_workspace_dependency_implementation_locations_with_open_docs(
                     broken_source_implementation_locations_in_source(
                         &uri, &source, package, target,
                     );
-                module_locations.sort_by_key(|location| {
-                    (
-                        location.range.start.line,
-                        location.range.start.character,
-                        location.range.end.line,
-                        location.range.end.character,
-                    )
-                });
-                module_locations.dedup_by(|left, right| same_location_anchor(left, right));
+                normalize_locations_in_source_order(&mut module_locations);
                 locations.extend(module_locations);
                 continue;
             }
@@ -5655,15 +5662,7 @@ fn extend_workspace_dependency_implementation_locations_with_open_docs(
             })
             .collect::<Vec<_>>();
 
-        module_locations.sort_by_key(|location| {
-            (
-                location.range.start.line,
-                location.range.start.character,
-                location.range.end.line,
-                location.range.end.character,
-            )
-        });
-        module_locations.dedup_by(|left, right| same_location_anchor(left, right));
+        normalize_locations_in_source_order(&mut module_locations);
         locations.extend(module_locations);
     }
 }
@@ -5675,16 +5674,7 @@ fn implementation_response_from_locations(
         return None;
     }
 
-    locations.sort_by_key(|location| {
-        (
-            location.uri.to_string(),
-            location.range.start.line,
-            location.range.start.character,
-            location.range.end.line,
-            location.range.end.character,
-        )
-    });
-    locations.dedup_by(|left, right| same_location_anchor(left, right));
+    normalize_implementation_response_locations(&mut locations);
 
     if locations.len() == 1 {
         Some(GotoImplementationResponse::Scalar(
@@ -6027,15 +6017,7 @@ fn workspace_source_method_implementation_for_local_source_in_broken_source_with
     let method_name = broken_source_method_call_name_at(source, position)?;
     let mut locations =
         broken_source_method_definition_locations_in_source(uri, source, &method_name);
-    locations.sort_by_key(|location| {
-        (
-            location.range.start.line,
-            location.range.start.character,
-            location.range.end.line,
-            location.range.end.character,
-        )
-    });
-    locations.dedup_by(|left, right| same_location_anchor(left, right));
+    normalize_locations_in_source_order(&mut locations);
     (locations.len() == 1).then(|| {
         implementation_response_from_locations(locations)
             .expect("single broken-source method implementation exists")

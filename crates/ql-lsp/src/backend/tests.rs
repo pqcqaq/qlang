@@ -5,9 +5,9 @@
         completion_options, dependency_definition_target_at, document_formatting_edits,
         document_highlights_for_analysis_at, fallback_document_highlights_for_package_at,
         fallback_document_highlights_for_package_at_with_open_docs, file_open_documents,
-        PackageSourceSnapshot, import_missing_dependency_code_actions_for_position,
-        local_source_dependency_target_with_analysis, package_analysis_for_path,
-        package_source_snapshot_with_open_docs,
+        implementation_response_from_locations, import_missing_dependency_code_actions_for_position,
+        local_source_dependency_target_with_analysis, normalize_locations_in_source_order,
+        package_analysis_for_path, package_source_snapshot_with_open_docs, PackageSourceSnapshot,
         prepare_rename_for_dependency_imports,
         prepare_rename_for_workspace_import_in_broken_source,
         prepare_rename_for_workspace_source_root_symbol_from_import,
@@ -243,6 +243,58 @@ pub struct Open {
 
         assert_eq!(snapshot_uri, uri);
         assert_eq!(source, open_source);
+    }
+
+    #[test]
+    fn source_order_location_normalization_sorts_and_deduplicates_overlaps() {
+        let uri = Url::parse("file:///test.ql").expect("uri should parse");
+        let first = Location::new(
+            uri.clone(),
+            Range::new(Position::new(1, 10), Position::new(1, 15)),
+        );
+        let overlapping = Location::new(
+            uri.clone(),
+            Range::new(Position::new(1, 12), Position::new(1, 20)),
+        );
+        let later = Location::new(
+            uri,
+            Range::new(Position::new(2, 0), Position::new(2, 5)),
+        );
+        let mut locations = vec![later.clone(), overlapping, first.clone()];
+
+        normalize_locations_in_source_order(&mut locations);
+
+        assert_eq!(locations, vec![first, later]);
+    }
+
+    #[test]
+    fn implementation_response_normalizes_locations_before_returning_array() {
+        let first_uri = Url::parse("file:///a.ql").expect("first URI should parse");
+        let second_uri = Url::parse("file:///b.ql").expect("second URI should parse");
+        let first = Location::new(
+            first_uri.clone(),
+            Range::new(Position::new(4, 0), Position::new(4, 5)),
+        );
+        let overlapping_first = Location::new(
+            first_uri,
+            Range::new(Position::new(4, 2), Position::new(4, 6)),
+        );
+        let second = Location::new(
+            second_uri,
+            Range::new(Position::new(1, 0), Position::new(1, 5)),
+        );
+
+        let response = implementation_response_from_locations(vec![
+            second.clone(),
+            overlapping_first,
+            first.clone(),
+        ])
+        .expect("implementation response should exist");
+        let GotoDefinitionResponse::Array(locations) = response else {
+            panic!("deduplicated multi-location implementation should stay an array")
+        };
+
+        assert_eq!(locations, vec![first, second]);
     }
 
     #[test]
