@@ -5762,6 +5762,32 @@ fn method_definition_location_at(
     Some(Location::new(uri.clone(), span_to_range(source, definition.span)))
 }
 
+fn source_backed_method_implementation_for_dependency_target_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    target: &DependencyDefinitionTarget,
+    source_definition: Option<Location>,
+) -> Option<GotoImplementationResponse> {
+    if target.kind != ql_analysis::SymbolKind::Method {
+        return None;
+    }
+
+    let implementation = workspace_source_location_for_dependency_target_with_open_docs(
+        uri, source, analysis, package, open_docs, target,
+    )?;
+    if source_definition
+        .as_ref()
+        .is_some_and(|source_definition| same_location_anchor(&implementation, source_definition))
+    {
+        return None;
+    }
+
+    Some(GotoImplementationResponse::Scalar(implementation))
+}
+
 fn workspace_source_method_implementation_for_dependency_with_open_docs(
     uri: &Url,
     source: &str,
@@ -5792,24 +5818,17 @@ fn workspace_source_method_implementation_for_dependency_with_open_docs(
     let target = dependency_definition_target_with_open_docs_at(
         source, analysis, package, open_docs, position,
     )?;
-    if target.kind != ql_analysis::SymbolKind::Method {
-        return None;
-    }
-
-    let source_definition = analysis.and_then(|analysis| {
-        method_definition_location_at(uri, source, analysis, position)
-    });
-    let implementation = workspace_source_location_for_dependency_target_with_open_docs(
-        uri, source, analysis, package, open_docs, &target,
-    )?;
-    if source_definition
-        .as_ref()
-        .is_some_and(|source_definition| same_location_anchor(&implementation, source_definition))
-    {
-        return None;
-    }
-
-    Some(GotoImplementationResponse::Scalar(implementation))
+    let source_definition = analysis
+        .and_then(|analysis| method_definition_location_at(uri, source, analysis, position));
+    source_backed_method_implementation_for_dependency_target_with_open_docs(
+        uri,
+        source,
+        analysis,
+        package,
+        open_docs,
+        &target,
+        source_definition,
+    )
 }
 
 fn workspace_source_method_implementation_for_local_source_with_open_docs(
@@ -5843,27 +5862,17 @@ fn workspace_source_method_implementation_for_local_source_with_open_docs(
     ) else {
         return implementation_for_analysis(uri, source, analysis, position);
     };
-    if target.kind != ql_analysis::SymbolKind::Method {
-        return None;
-    }
 
     let source_definition = method_definition_location_at(uri, source, analysis, position);
-    let implementation = workspace_source_location_for_dependency_target_with_open_docs(
+    source_backed_method_implementation_for_dependency_target_with_open_docs(
         uri,
         source,
         Some(analysis),
         package,
         open_docs,
         &target,
-    )?;
-    if source_definition
-        .as_ref()
-        .is_some_and(|source_definition| same_location_anchor(&implementation, source_definition))
-    {
-        return None;
-    }
-
-    Some(GotoImplementationResponse::Scalar(implementation))
+        source_definition,
+    )
 }
 
 fn broken_source_method_call_name_at(
