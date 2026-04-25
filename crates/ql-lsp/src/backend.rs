@@ -4550,6 +4550,54 @@ struct WorkspaceMethodDefinitionSite {
     definition_target: ql_analysis::DefinitionTarget,
 }
 
+enum PackageSourceSnapshot {
+    Analyzed {
+        uri: Url,
+        source: String,
+        analysis: Analysis,
+    },
+    BrokenOpen {
+        uri: Url,
+        source: String,
+    },
+}
+
+fn package_source_snapshot_with_open_docs(
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    source_path: &Path,
+) -> Option<PackageSourceSnapshot> {
+    let canonical_source_path = canonicalize_or_clone(source_path);
+    if let Some((uri, source, analysis)) = open_document_snapshot(open_docs, source_path) {
+        return Some(PackageSourceSnapshot::Analyzed {
+            uri,
+            source,
+            analysis,
+        });
+    }
+    if let Some((uri, source)) = open_docs.get(&canonical_source_path) {
+        return Some(PackageSourceSnapshot::BrokenOpen {
+            uri: uri.clone(),
+            source: source.clone(),
+        });
+    }
+
+    let uri = Url::from_file_path(source_path).ok()?;
+    let source = fs::read_to_string(source_path).ok()?.replace("\r\n", "\n");
+    let analysis = package
+        .modules()
+        .iter()
+        .find(|module| canonicalize_or_clone(module.path()) == canonical_source_path)
+        .map(|module| module.analysis().clone())
+        .or_else(|| analyze_source(&source).ok())?;
+
+    Some(PackageSourceSnapshot::Analyzed {
+        uri,
+        source,
+        analysis,
+    })
+}
+
 fn root_implementation_target_for_source(
     current_path: &Path,
     source: &str,
@@ -5260,50 +5308,38 @@ fn workspace_trait_method_implementation_sites_with_open_docs(
     };
 
     for source_path in source_paths {
-        let canonical_source_path = canonicalize_or_clone(&source_path);
-        let (uri, source, analysis) = if let Some((open_uri, open_source, open_analysis)) =
-            open_document_snapshot(open_docs, &source_path)
-        {
-            (open_uri, open_source, open_analysis)
-        } else if let Some((open_uri, open_source)) = open_docs.get(&canonical_source_path) {
-            let mut module_sites = broken_source_trait_method_implementation_sites_in_source(
-                open_uri,
-                open_source,
-                package,
-                target,
-                method_name,
-            );
-            module_sites.sort_by_key(|site| {
-                (
-                    site.location.range.start.line,
-                    site.location.range.start.character,
-                    site.location.range.end.line,
-                    site.location.range.end.character,
-                )
-            });
-            module_sites.dedup_by(|left, right| same_location_anchor(&left.location, &right.location));
-            sites.extend(module_sites);
+        let Some(snapshot) =
+            package_source_snapshot_with_open_docs(package, open_docs, &source_path)
+        else {
             continue;
-        } else {
-            let Ok(uri) = Url::from_file_path(&source_path) else {
+        };
+        let (uri, source, analysis) = match snapshot {
+            PackageSourceSnapshot::Analyzed {
+                uri,
+                source,
+                analysis,
+            } => (uri, source, analysis),
+            PackageSourceSnapshot::BrokenOpen { uri, source } => {
+                let mut module_sites = broken_source_trait_method_implementation_sites_in_source(
+                    &uri,
+                    &source,
+                    package,
+                    target,
+                    method_name,
+                );
+                module_sites.sort_by_key(|site| {
+                    (
+                        site.location.range.start.line,
+                        site.location.range.start.character,
+                        site.location.range.end.line,
+                        site.location.range.end.character,
+                    )
+                });
+                module_sites
+                    .dedup_by(|left, right| same_location_anchor(&left.location, &right.location));
+                sites.extend(module_sites);
                 continue;
-            };
-            let Ok(source) = fs::read_to_string(&source_path) else {
-                continue;
-            };
-            let source = source.replace("\r\n", "\n");
-            let analysis = package
-                .modules()
-                .iter()
-                .find(|module| {
-                    canonicalize_or_clone(module.path()) == canonical_source_path
-                })
-                .map(|module| module.analysis().clone())
-                .or_else(|| analyze_source(&source).ok());
-            let Some(analysis) = analysis else {
-                continue;
-            };
-            (uri, source, analysis)
+            }
         };
 
         let mut module_sites = analysis
@@ -5532,49 +5568,34 @@ fn extend_workspace_dependency_implementation_locations_with_open_docs(
     };
 
     for source_path in source_paths {
-        let canonical_source_path = canonicalize_or_clone(&source_path);
-        let (uri, source, analysis) = if let Some((open_uri, open_source, open_analysis)) =
-            open_document_snapshot(open_docs, &source_path)
-        {
-            (open_uri, open_source, open_analysis)
-        } else if let Some((open_uri, open_source)) = open_docs.get(&canonical_source_path) {
-            let mut module_locations = broken_source_implementation_locations_in_source(
-                open_uri,
-                open_source,
-                package,
-                target,
-            );
-            module_locations.sort_by_key(|location| {
-                (
-                    location.range.start.line,
-                    location.range.start.character,
-                    location.range.end.line,
-                    location.range.end.character,
-                )
-            });
-            module_locations.dedup_by(|left, right| same_location_anchor(left, right));
-            locations.extend(module_locations);
+        let Some(snapshot) =
+            package_source_snapshot_with_open_docs(package, open_docs, &source_path)
+        else {
             continue;
-        } else {
-            let Ok(uri) = Url::from_file_path(&source_path) else {
+        };
+        let (uri, source, analysis) = match snapshot {
+            PackageSourceSnapshot::Analyzed {
+                uri,
+                source,
+                analysis,
+            } => (uri, source, analysis),
+            PackageSourceSnapshot::BrokenOpen { uri, source } => {
+                let mut module_locations =
+                    broken_source_implementation_locations_in_source(
+                        &uri, &source, package, target,
+                    );
+                module_locations.sort_by_key(|location| {
+                    (
+                        location.range.start.line,
+                        location.range.start.character,
+                        location.range.end.line,
+                        location.range.end.character,
+                    )
+                });
+                module_locations.dedup_by(|left, right| same_location_anchor(left, right));
+                locations.extend(module_locations);
                 continue;
-            };
-            let Ok(source) = fs::read_to_string(&source_path) else {
-                continue;
-            };
-            let source = source.replace("\r\n", "\n");
-            let analysis = package
-                .modules()
-                .iter()
-                .find(|module| {
-                    canonicalize_or_clone(module.path()) == canonical_source_path
-                })
-                .map(|module| module.analysis().clone())
-                .or_else(|| analyze_source(&source).ok());
-            let Some(analysis) = analysis else {
-                continue;
-            };
-            (uri, source, analysis)
+            }
         };
 
         let mut module_locations = analysis

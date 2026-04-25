@@ -5,8 +5,9 @@
         completion_options, dependency_definition_target_at, document_formatting_edits,
         document_highlights_for_analysis_at, fallback_document_highlights_for_package_at,
         fallback_document_highlights_for_package_at_with_open_docs, file_open_documents,
-        import_missing_dependency_code_actions_for_position,
+        PackageSourceSnapshot, import_missing_dependency_code_actions_for_position,
         local_source_dependency_target_with_analysis, package_analysis_for_path,
+        package_source_snapshot_with_open_docs,
         prepare_rename_for_dependency_imports,
         prepare_rename_for_workspace_import_in_broken_source,
         prepare_rename_for_workspace_source_root_symbol_from_import,
@@ -149,6 +150,99 @@
     fn nth_span_in_context(source: &str, needle: &str, context: &str, occurrence: usize) -> Span {
         let start = nth_offset_in_context(source, needle, context, occurrence);
         Span::new(start, start + needle.len())
+    }
+
+    #[test]
+    fn package_source_snapshot_prefers_parseable_open_document() {
+        let temp = TempDir::new("ql-lsp-package-source-snapshot-open");
+        let source_path = temp.write(
+            "workspace/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Disk {}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        let package =
+            package_analysis_for_path(&source_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&source_path).expect("source path should convert to URI");
+        let open_source = r#"
+package demo.core
+
+pub struct Open {}
+"#
+        .to_owned();
+        let open_docs = file_open_documents(vec![(uri.clone(), open_source.clone())]);
+
+        let snapshot = package_source_snapshot_with_open_docs(&package, &open_docs, &source_path)
+            .expect("open source snapshot should exist");
+        let PackageSourceSnapshot::Analyzed {
+            uri: snapshot_uri,
+            source,
+            analysis,
+        } = snapshot
+        else {
+            panic!("parseable open document should produce an analyzed snapshot")
+        };
+
+        assert_eq!(snapshot_uri, uri);
+        assert_eq!(source, open_source);
+        let definition = analysis
+            .definition_at(nth_offset(&source, "Open", 1))
+            .expect("open document definition should be analyzed");
+        assert_eq!(definition.kind, AnalysisSymbolKind::Struct);
+        assert_eq!(definition.name, "Open");
+    }
+
+    #[test]
+    fn package_source_snapshot_keeps_broken_open_document() {
+        let temp = TempDir::new("ql-lsp-package-source-snapshot-broken-open");
+        let source_path = temp.write(
+            "workspace/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Disk {}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        let package =
+            package_analysis_for_path(&source_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&source_path).expect("source path should convert to URI");
+        let open_source = r#"
+package demo.core
+
+pub struct Open {
+"#
+        .to_owned();
+        assert!(analyze_source(&open_source).is_err());
+        let open_docs = file_open_documents(vec![(uri.clone(), open_source.clone())]);
+
+        let snapshot = package_source_snapshot_with_open_docs(&package, &open_docs, &source_path)
+            .expect("broken open source snapshot should exist");
+        let PackageSourceSnapshot::BrokenOpen {
+            uri: snapshot_uri,
+            source,
+        } = snapshot
+        else {
+            panic!("broken open document should stay available as a broken snapshot")
+        };
+
+        assert_eq!(snapshot_uri, uri);
+        assert_eq!(source, open_source);
     }
 
     #[test]
