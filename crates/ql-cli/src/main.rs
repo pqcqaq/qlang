@@ -7850,44 +7850,41 @@ fn render_direct_dependency_public_method_forwarders(
             1
         })?;
 
-        for module in &artifact.modules {
-            let dependency_source_path =
-                dependency_module_source_path(&dependency.manifest_path, &module.source_path);
-            let dependency_source = fs::read_to_string(&dependency_source_path).map_err(|error| {
-                if report_failure {
-                    eprintln!(
-                        "error: {command_label} failed to access dependency source `{}`: {error}",
-                        normalize_path(&dependency_source_path)
-                    );
-                    eprintln!(
-                        "note: while preparing dependency public method bridges for `{}`",
-                        normalize_path(manifest_path)
-                    );
-                }
-                1
-            })?;
-            let source_module = match parse_source(&dependency_source) {
-                Ok(module) => module,
-                Err(_) => {
+        collect_dependency_public_method_forwarders_from_modules(
+            &dependency_package,
+            &dependency.manifest_path,
+            &artifact.modules,
+            required_types_by_module_path,
+            &mut discovered_required_types,
+            &mut forwarders,
+            |dependency_source_path| {
+                fs::read_to_string(dependency_source_path).map_err(|error| {
+                    if report_failure {
+                        eprintln!(
+                            "error: {command_label} failed to access dependency source `{}`: {error}",
+                            normalize_path(dependency_source_path)
+                        );
+                        eprintln!(
+                            "note: while preparing dependency public method bridges for `{}`",
+                            normalize_path(manifest_path)
+                        );
+                    }
+                    1
+                })
+            },
+            |dependency_source_path, dependency_source| {
+                parse_source(dependency_source).map_err(|_| {
                     if report_failure {
                         eprintln!(
                             "error: {command_label} failed to parse dependency source `{}` while preparing public method bridges",
-                            normalize_path(&dependency_source_path)
+                            normalize_path(dependency_source_path)
                         );
                         eprintln!("note: dependency package: `{dependency_package}`");
                     }
-                    return Err(1);
-                }
-            };
-            collect_dependency_module_public_method_forwarders(
-                &dependency_package,
-                &source_module,
-                &dependency_source,
-                required_types_by_module_path,
-                &mut discovered_required_types,
-                &mut forwarders,
-            );
-        }
+                    1
+                })
+            },
+        )?;
     }
 
     Ok(RenderedDependencyPublicMethodForwarders {
@@ -7949,53 +7946,76 @@ fn render_direct_dependency_public_method_forwarders_quiet(
             }
         })?;
 
-        for module in &artifact.modules {
-            let dependency_source_path = dependency_module_source_path(
-                &dependency_manifest.manifest_path,
-                &module.source_path,
-            );
-            let dependency_source =
-                fs::read_to_string(&dependency_source_path).map_err(|error| {
+        collect_dependency_public_method_forwarders_from_modules(
+            &dependency_package,
+            &dependency_manifest.manifest_path,
+            &artifact.modules,
+            required_types_by_module_path,
+            &mut discovered_required_types,
+            &mut forwarders,
+            |dependency_source_path| {
+                fs::read_to_string(dependency_source_path).map_err(|error| {
                     PrepareProjectTargetBuildError {
                         failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
                             dependency_manifest_path: dependency_manifest.manifest_path.clone(),
                             dependency_package: dependency_package.clone(),
-                            source_path: dependency_source_path.clone(),
+                            source_path: dependency_source_path.to_path_buf(),
                             message: format!(
                                 "failed to access dependency source `{}`: {error}",
-                                normalize_path(&dependency_source_path)
+                                normalize_path(dependency_source_path)
                             ),
                         },
                     }
-                })?;
-            let source_module = parse_source(&dependency_source).map_err(|_| {
-                PrepareProjectTargetBuildError {
+                })
+            },
+            |dependency_source_path, dependency_source| {
+                parse_source(dependency_source).map_err(|_| PrepareProjectTargetBuildError {
                     failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
                         dependency_manifest_path: dependency_manifest.manifest_path.clone(),
                         dependency_package: dependency_package.clone(),
-                        source_path: dependency_source_path.clone(),
+                        source_path: dependency_source_path.to_path_buf(),
                         message: format!(
                             "failed to parse dependency source `{}` while preparing public method bridges",
-                            normalize_path(&dependency_source_path)
+                            normalize_path(dependency_source_path)
                         ),
                     },
-                }
-            })?;
-            collect_dependency_module_public_method_forwarders(
-                &dependency_package,
-                &source_module,
-                &dependency_source,
-                required_types_by_module_path,
-                &mut discovered_required_types,
-                &mut forwarders,
-            );
-        }
+                })
+            },
+        )?;
     }
 
     Ok(RenderedDependencyPublicMethodForwarders {
         forwarders: forwarders.join("\n\n"),
         required_types_by_module_path: discovered_required_types,
     })
+}
+
+fn collect_dependency_public_method_forwarders_from_modules<E>(
+    dependency_package: &str,
+    dependency_manifest_path: &Path,
+    modules: &[ql_project::InterfaceModule],
+    required_types_by_module_path: &BTreeMap<Vec<String>, BTreeSet<String>>,
+    discovered_required_types: &mut BTreeMap<Vec<String>, BTreeSet<String>>,
+    forwarders: &mut Vec<String>,
+    mut read_source: impl FnMut(&Path) -> Result<String, E>,
+    mut parse_source_module: impl FnMut(&Path, &str) -> Result<Module, E>,
+) -> Result<(), E> {
+    for module in modules {
+        let dependency_source_path =
+            dependency_module_source_path(dependency_manifest_path, &module.source_path);
+        let dependency_source = read_source(&dependency_source_path)?;
+        let source_module = parse_source_module(&dependency_source_path, &dependency_source)?;
+        collect_dependency_module_public_method_forwarders(
+            dependency_package,
+            &source_module,
+            &dependency_source,
+            required_types_by_module_path,
+            discovered_required_types,
+            forwarders,
+        );
+    }
+
+    Ok(())
 }
 
 fn collect_dependency_module_public_method_forwarders(
