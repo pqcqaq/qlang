@@ -7563,55 +7563,44 @@ fn render_direct_dependency_public_function_forwarders(
             }
             1
         })?;
-        let module_import_paths =
-            dependency_interface_module_import_paths(&dependency_package, &artifact.modules);
-        let imported_externs =
-            collect_imported_dependency_externs(&root_source_module, &module_import_paths);
-
-        for module in &artifact.modules {
-            let dependency_source_path =
-                dependency_module_source_path(&dependency.manifest_path, &module.source_path);
-            let dependency_source = fs::read_to_string(&dependency_source_path).map_err(|error| {
-                if report_failure {
-                    eprintln!(
-                        "error: {command_label} failed to access dependency source `{}`: {error}",
-                        normalize_path(&dependency_source_path)
-                    );
-                    eprintln!(
-                        "note: while preparing dependency public function wrappers for `{}`",
-                        normalize_path(manifest_path)
-                    );
-                }
-                1
-            })?;
-            let source_module = match parse_source(&dependency_source) {
-                Ok(module) => module,
-                Err(_) => {
+        collect_dependency_public_function_forwarders_from_modules(
+            &dependency_package,
+            &dependency.manifest_path,
+            &artifact.modules,
+            &root_source_module,
+            required_functions_by_module_path,
+            &occupied_root_names,
+            &mut required_types_by_module_path,
+            &mut owners_by_symbol,
+            &mut forwarders,
+            |dependency_source_path| {
+                fs::read_to_string(dependency_source_path).map_err(|error| {
+                    if report_failure {
+                        eprintln!(
+                            "error: {command_label} failed to access dependency source `{}`: {error}",
+                            normalize_path(dependency_source_path)
+                        );
+                        eprintln!(
+                            "note: while preparing dependency public function wrappers for `{}`",
+                            normalize_path(manifest_path)
+                        );
+                    }
+                    1
+                })
+            },
+            |dependency_source_path, dependency_source| {
+                parse_source(dependency_source).map_err(|_| {
                     if report_failure {
                         eprintln!(
                             "error: {command_label} failed to parse dependency source `{}` while preparing public function wrappers",
-                            normalize_path(&dependency_source_path)
+                            normalize_path(dependency_source_path)
                         );
                         eprintln!("note: dependency package: `{dependency_package}`");
                     }
-                    return Err(1);
-                }
-            };
-            let module_import_path =
-                dependency_interface_module_import_path(&dependency_package, &source_module);
-            collect_dependency_module_public_function_forwarders(
-                &dependency_package,
-                &dependency.manifest_path,
-                &source_module,
-                &dependency_source,
-                Some(&imported_externs),
-                required_functions_by_module_path.get(&module_import_path),
-                &occupied_root_names,
-                &mut required_types_by_module_path,
-                &mut owners_by_symbol,
-                &mut forwarders,
-            )
-            .map_err(|error| {
+                    1
+                })
+            },
+            |error| {
                 if report_failure {
                     match error {
                         DependencyPublicFunctionForwarderError::DependencyConflict {
@@ -7631,7 +7620,9 @@ fn render_direct_dependency_public_function_forwarders(
                             eprintln!(
                                 "error: {command_label} cannot synthesize direct dependency public function bridge for `{symbol}` because the root source already defines the same top-level name"
                             );
-                            eprintln!("note: conflicting direct dependency package: `{dependency_package}`");
+                            eprintln!(
+                                "note: conflicting direct dependency package: `{dependency_package}`"
+                            );
                             eprintln!(
                                 "hint: rename the local top-level item or avoid importing a direct dependency public function with the same original symbol name"
                             );
@@ -7639,8 +7630,8 @@ fn render_direct_dependency_public_function_forwarders(
                     }
                 }
                 1
-            })?;
-        }
+            },
+        )?;
     }
 
     Ok(RenderedDependencyPublicFunctionForwarders {
@@ -7708,58 +7699,45 @@ fn render_direct_dependency_public_function_forwarders_quiet(
                 },
             }
         })?;
-        let module_import_paths =
-            dependency_interface_module_import_paths(&dependency_package, &artifact.modules);
-        let imported_externs =
-            collect_imported_dependency_externs(&root_source_module, &module_import_paths);
-
-        for module in &artifact.modules {
-            let dependency_source_path = dependency_module_source_path(
-                &dependency_manifest.manifest_path,
-                &module.source_path,
-            );
-            let dependency_source =
-                fs::read_to_string(&dependency_source_path).map_err(|error| {
+        collect_dependency_public_function_forwarders_from_modules(
+            &dependency_package,
+            &dependency_manifest.manifest_path,
+            &artifact.modules,
+            &root_source_module,
+            required_functions_by_module_path,
+            &occupied_root_names,
+            &mut required_types_by_module_path,
+            &mut owners_by_symbol,
+            &mut forwarders,
+            |dependency_source_path| {
+                fs::read_to_string(dependency_source_path).map_err(|error| {
                     PrepareProjectTargetBuildError {
                         failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
                             dependency_manifest_path: dependency_manifest.manifest_path.clone(),
                             dependency_package: dependency_package.clone(),
-                            source_path: dependency_source_path.clone(),
+                            source_path: dependency_source_path.to_path_buf(),
                             message: format!(
                                 "failed to access dependency source `{}`: {error}",
-                                normalize_path(&dependency_source_path)
+                                normalize_path(dependency_source_path)
                             ),
                         },
                     }
-                })?;
-            let source_module = parse_source(&dependency_source).map_err(|_| {
-                PrepareProjectTargetBuildError {
+                })
+            },
+            |dependency_source_path, dependency_source| {
+                parse_source(dependency_source).map_err(|_| PrepareProjectTargetBuildError {
                     failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
                         dependency_manifest_path: dependency_manifest.manifest_path.clone(),
                         dependency_package: dependency_package.clone(),
-                        source_path: dependency_source_path.clone(),
+                        source_path: dependency_source_path.to_path_buf(),
                         message: format!(
                             "failed to parse dependency source `{}` while preparing public function wrappers",
-                            normalize_path(&dependency_source_path)
+                            normalize_path(dependency_source_path)
                         ),
                     },
-                }
-            })?;
-            let module_import_path =
-                dependency_interface_module_import_path(&dependency_package, &source_module);
-            collect_dependency_module_public_function_forwarders(
-                &dependency_package,
-                &dependency_manifest.manifest_path,
-                &source_module,
-                &dependency_source,
-                Some(&imported_externs),
-                required_functions_by_module_path.get(&module_import_path),
-                &occupied_root_names,
-                &mut required_types_by_module_path,
-                &mut owners_by_symbol,
-                &mut forwarders,
-            )
-            .map_err(|error| match error {
+                })
+            },
+            |error| match error {
                 DependencyPublicFunctionForwarderError::DependencyConflict { symbol, owner } => {
                     PrepareProjectTargetBuildError {
                         failure_kind:
@@ -7784,14 +7762,57 @@ fn render_direct_dependency_public_function_forwarders_quiet(
                             },
                     }
                 }
-            })?;
-        }
+            },
+        )?;
     }
 
     Ok(RenderedDependencyPublicFunctionForwarders {
         forwarders: forwarders.join("\n\n"),
         required_types_by_module_path,
     })
+}
+
+fn collect_dependency_public_function_forwarders_from_modules<E>(
+    dependency_package: &str,
+    dependency_manifest_path: &Path,
+    modules: &[ql_project::InterfaceModule],
+    root_source_module: &Module,
+    required_functions_by_module_path: &BTreeMap<Vec<String>, BTreeSet<String>>,
+    occupied_root_names: &BTreeSet<String>,
+    required_types_by_module_path: &mut BTreeMap<Vec<String>, BTreeSet<String>>,
+    owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
+    forwarders: &mut Vec<String>,
+    mut read_source: impl FnMut(&Path) -> Result<String, E>,
+    mut parse_source_module: impl FnMut(&Path, &str) -> Result<Module, E>,
+    mut map_bridge_error: impl FnMut(DependencyPublicFunctionForwarderError) -> E,
+) -> Result<(), E> {
+    let module_import_paths = dependency_interface_module_import_paths(dependency_package, modules);
+    let imported_externs =
+        collect_imported_dependency_externs(root_source_module, &module_import_paths);
+
+    for module in modules {
+        let dependency_source_path =
+            dependency_module_source_path(dependency_manifest_path, &module.source_path);
+        let dependency_source = read_source(&dependency_source_path)?;
+        let source_module = parse_source_module(&dependency_source_path, &dependency_source)?;
+        let module_import_path =
+            dependency_interface_module_import_path(dependency_package, &source_module);
+        collect_dependency_module_public_function_forwarders(
+            dependency_package,
+            dependency_manifest_path,
+            &source_module,
+            &dependency_source,
+            Some(&imported_externs),
+            required_functions_by_module_path.get(&module_import_path),
+            occupied_root_names,
+            required_types_by_module_path,
+            owners_by_symbol,
+            forwarders,
+        )
+        .map_err(&mut map_bridge_error)?;
+    }
+
+    Ok(())
 }
 
 fn render_direct_dependency_public_method_forwarders(

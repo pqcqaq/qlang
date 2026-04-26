@@ -310,6 +310,101 @@ dep = "../dep"
 }
 
 #[test]
+fn test_package_path_supports_direct_dependency_public_struct_method_values() {
+    if !toolchain_available("`ql test` dependency public struct method value test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-dependency-public-struct-method-value");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source tree");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+
+    temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        "pub struct Box { value: Int }\n\nimpl Box {\n    pub fn add(self, delta: Int) -> Int {\n        return self.value + delta\n    }\n}\n\npub fn make_box() -> Box { return Box { value: 7 } }\n",
+    );
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    temp.write(
+        "app/tests/smoke.ql",
+        "use dep.make_box as make\n\nfn main() -> Int {\n    let value = make()\n    let add = value.add\n    return add(5) - 12\n}\n",
+    );
+
+    let interface_output = dep_root.join("dep.qi");
+    let dependency_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test` dependency public struct method value",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-dependency-public-struct-method-value",
+        "package dependency public struct method value test",
+        &output,
+    )
+    .expect("package-path `ql test` should support direct dependency public struct method values");
+    expect_empty_stderr(
+        "project-test-dependency-public-struct-method-value",
+        "package dependency public struct method value test",
+        &stderr,
+    )
+    .expect("dependency public struct method value test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-dependency-public-struct-method-value",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("dependency public struct method value test should report one passing smoke test");
+    expect_file_exists(
+        "project-test-dependency-public-struct-method-value",
+        &interface_output,
+        "synced dependency interface",
+        "package dependency public struct method value test",
+    )
+    .expect("dependency public struct method value test should emit the dependency interface");
+    expect_file_exists(
+        "project-test-dependency-public-struct-method-value",
+        &dependency_output,
+        "dependency package artifact",
+        "package dependency public struct method value test",
+    )
+    .expect("dependency public struct method value test should build the dependency artifact");
+    expect_file_exists(
+        "project-test-dependency-public-struct-method-value",
+        &smoke_output,
+        "smoke test executable",
+        "package dependency public struct method value test",
+    )
+    .expect("dependency public struct method value test should emit the smoke test executable");
+}
+
+#[test]
 fn test_package_path_supports_direct_dependency_public_trait_methods() {
     if !toolchain_available("`ql test` dependency public trait method test") {
         return;
