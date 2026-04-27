@@ -36,7 +36,7 @@ name = "std.core"
     );
     temp.write(
         "stdlib/packages/core/src/lib.ql",
-        "package std.core\n\npub fn max_int(left: Int, right: Int) -> Int {\n    if left > right {\n        return left\n    }\n    return right\n}\n\npub fn clamp_int(value: Int, low: Int, high: Int) -> Int {\n    if value < low {\n        return low\n    }\n    if value > high {\n        return high\n    }\n    return value\n}\n\npub fn is_even_int(value: Int) -> Bool {\n    return value % 2 == 0\n}\n\npub fn is_odd_int(value: Int) -> Bool {\n    return value % 2 != 0\n}\n\npub fn in_range_int(value: Int, low: Int, high: Int) -> Bool {\n    return value >= low && value <= high\n}\n\npub fn bool_to_int(value: Bool) -> Int {\n    if value {\n        return 1\n    }\n    return 0\n}\n",
+        "package std.core\n\npub fn max_int(left: Int, right: Int) -> Int {\n    if left > right {\n        return left\n    }\n    return right\n}\n\npub fn clamp_int(value: Int, low: Int, high: Int) -> Int {\n    if value < low {\n        return low\n    }\n    if value > high {\n        return high\n    }\n    return value\n}\n\npub fn compare_int(left: Int, right: Int) -> Int {\n    if left < right {\n        return 0 - 1\n    }\n    if left > right {\n        return 1\n    }\n    return 0\n}\n\npub fn is_even_int(value: Int) -> Bool {\n    return value % 2 == 0\n}\n\npub fn is_odd_int(value: Int) -> Bool {\n    return value % 2 != 0\n}\n\npub fn is_positive_int(value: Int) -> Bool {\n    return value > 0\n}\n\npub fn is_negative_int(value: Int) -> Bool {\n    return value < 0\n}\n\npub fn in_range_int(value: Int, low: Int, high: Int) -> Bool {\n    return value >= low && value <= high\n}\n\npub fn is_divisible_by_int(value: Int, divisor: Int) -> Bool {\n    return divisor != 0 && value % divisor == 0\n}\n\npub fn bool_to_int(value: Bool) -> Int {\n    if value {\n        return 1\n    }\n    return 0\n}\n",
     );
     temp.write(
         "stdlib/packages/test/qlang.toml",
@@ -50,7 +50,7 @@ name = "std.test"
     );
     temp.write(
         "stdlib/packages/test/src/lib.ql",
-        "package std.test\n\npub fn expect_true(value: Bool) -> Int {\n    if value {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_false(value: Bool) -> Int {\n    if value {\n        return 1\n    }\n    return 0\n}\n\npub fn expect_int_eq(actual: Int, expected: Int) -> Int {\n    if actual == expected {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_zero(value: Int) -> Int {\n    if value == 0 {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_nonzero(value: Int) -> Int {\n    if value != 0 {\n        return 0\n    }\n    return 1\n}\n",
+        "package std.test\n\npub fn expect_true(value: Bool) -> Int {\n    if value {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_false(value: Bool) -> Int {\n    if value {\n        return 1\n    }\n    return 0\n}\n\npub fn expect_bool_eq(actual: Bool, expected: Bool) -> Int {\n    if actual == expected {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_int_eq(actual: Int, expected: Int) -> Int {\n    if actual == expected {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_int_ne(actual: Int, unexpected: Int) -> Int {\n    if actual != unexpected {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_int_gt(actual: Int, threshold: Int) -> Int {\n    if actual > threshold {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_int_ge(actual: Int, threshold: Int) -> Int {\n    if actual >= threshold {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_int_lt(actual: Int, threshold: Int) -> Int {\n    if actual < threshold {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_int_le(actual: Int, threshold: Int) -> Int {\n    if actual <= threshold {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_zero(value: Int) -> Int {\n    if value == 0 {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_nonzero(value: Int) -> Int {\n    if value != 0 {\n        return 0\n    }\n    return 1\n}\n",
     );
     temp.path().join("stdlib")
 }
@@ -181,7 +181,7 @@ fn project_init_with_stdlib_creates_consuming_package_scaffold_and_check_succeed
             &project_root.join("tests/smoke.ql"),
             "stdlib package smoke test"
         ),
-        "use std.core.in_range_int as in_range_int\nuse std.core.is_even_int as is_even_int\nuse std.core.is_odd_int as is_odd_int\nuse std.core.max_int as max_int\nuse std.test.expect_false as expect_false\nuse std.test.expect_int_eq as expect_int_eq\nuse std.test.expect_nonzero as expect_nonzero\nuse std.test.expect_true as expect_true\nuse std.test.expect_zero as expect_zero\n\nfn main() -> Int {\n    let max_check = expect_int_eq(max_int(20, 22), 22)\n    let range_check = expect_true(in_range_int(22, 20, 22))\n    let odd_check = expect_true(is_odd_int(21))\n    let even_check = expect_false(is_even_int(9))\n    let nonzero_check = expect_nonzero(1)\n\n    return expect_zero(max_check + range_check + odd_check + even_check + nonzero_check)\n}\n"
+        "use std.core.compare_int as compare_int\nuse std.core.in_range_int as in_range_int\nuse std.core.is_divisible_by_int as is_divisible_by_int\nuse std.core.is_even_int as is_even_int\nuse std.core.is_negative_int as is_negative_int\nuse std.core.is_odd_int as is_odd_int\nuse std.core.is_positive_int as is_positive_int\nuse std.core.max_int as max_int\nuse std.test.expect_bool_eq as expect_bool_eq\nuse std.test.expect_false as expect_false\nuse std.test.expect_int_eq as expect_int_eq\nuse std.test.expect_int_ge as expect_int_ge\nuse std.test.expect_int_gt as expect_int_gt\nuse std.test.expect_int_le as expect_int_le\nuse std.test.expect_int_lt as expect_int_lt\nuse std.test.expect_int_ne as expect_int_ne\nuse std.test.expect_nonzero as expect_nonzero\nuse std.test.expect_true as expect_true\nuse std.test.expect_zero as expect_zero\n\nfn main() -> Int {\n    let max_check = expect_int_eq(max_int(20, 22), 22)\n    let compare_check = expect_int_eq(compare_int(9, 3), 1)\n    let range_check = expect_true(in_range_int(22, 20, 22))\n    let divisible_check = expect_bool_eq(is_divisible_by_int(21, 7), true)\n    let zero_divisor_check = expect_false(is_divisible_by_int(21, 0))\n    let positive_check = expect_true(is_positive_int(22))\n    let negative_check = expect_true(is_negative_int(0 - 1))\n    let odd_check = expect_true(is_odd_int(21))\n    let even_check = expect_false(is_even_int(9))\n    let ne_check = expect_int_ne(20, 22)\n    let gt_check = expect_int_gt(22, 20)\n    let ge_check = expect_int_ge(22, 22)\n    let lt_check = expect_int_lt(20, 22)\n    let le_check = expect_int_le(22, 22)\n    let nonzero_check = expect_nonzero(1)\n\n    return expect_zero(max_check + compare_check + range_check + divisible_check + zero_divisor_check + positive_check + negative_check + odd_check + even_check + ne_check + gt_check + ge_check + lt_check + le_check + nonzero_check)\n}\n"
     );
 
     let mut check = ql_command(&workspace_root);
@@ -571,7 +571,7 @@ fn project_init_with_stdlib_creates_consuming_workspace_scaffold_and_check_succe
             &member_root.join("tests/smoke.ql"),
             "stdlib workspace member smoke test"
         ),
-        "use std.core.in_range_int as in_range_int\nuse std.core.is_even_int as is_even_int\nuse std.core.is_odd_int as is_odd_int\nuse std.core.max_int as max_int\nuse std.test.expect_false as expect_false\nuse std.test.expect_int_eq as expect_int_eq\nuse std.test.expect_nonzero as expect_nonzero\nuse std.test.expect_true as expect_true\nuse std.test.expect_zero as expect_zero\n\nfn main() -> Int {\n    let max_check = expect_int_eq(max_int(20, 22), 22)\n    let range_check = expect_true(in_range_int(22, 20, 22))\n    let odd_check = expect_true(is_odd_int(21))\n    let even_check = expect_false(is_even_int(9))\n    let nonzero_check = expect_nonzero(1)\n\n    return expect_zero(max_check + range_check + odd_check + even_check + nonzero_check)\n}\n"
+        "use std.core.compare_int as compare_int\nuse std.core.in_range_int as in_range_int\nuse std.core.is_divisible_by_int as is_divisible_by_int\nuse std.core.is_even_int as is_even_int\nuse std.core.is_negative_int as is_negative_int\nuse std.core.is_odd_int as is_odd_int\nuse std.core.is_positive_int as is_positive_int\nuse std.core.max_int as max_int\nuse std.test.expect_bool_eq as expect_bool_eq\nuse std.test.expect_false as expect_false\nuse std.test.expect_int_eq as expect_int_eq\nuse std.test.expect_int_ge as expect_int_ge\nuse std.test.expect_int_gt as expect_int_gt\nuse std.test.expect_int_le as expect_int_le\nuse std.test.expect_int_lt as expect_int_lt\nuse std.test.expect_int_ne as expect_int_ne\nuse std.test.expect_nonzero as expect_nonzero\nuse std.test.expect_true as expect_true\nuse std.test.expect_zero as expect_zero\n\nfn main() -> Int {\n    let max_check = expect_int_eq(max_int(20, 22), 22)\n    let compare_check = expect_int_eq(compare_int(9, 3), 1)\n    let range_check = expect_true(in_range_int(22, 20, 22))\n    let divisible_check = expect_bool_eq(is_divisible_by_int(21, 7), true)\n    let zero_divisor_check = expect_false(is_divisible_by_int(21, 0))\n    let positive_check = expect_true(is_positive_int(22))\n    let negative_check = expect_true(is_negative_int(0 - 1))\n    let odd_check = expect_true(is_odd_int(21))\n    let even_check = expect_false(is_even_int(9))\n    let ne_check = expect_int_ne(20, 22)\n    let gt_check = expect_int_gt(22, 20)\n    let ge_check = expect_int_ge(22, 22)\n    let lt_check = expect_int_lt(20, 22)\n    let le_check = expect_int_le(22, 22)\n    let nonzero_check = expect_nonzero(1)\n\n    return expect_zero(max_check + compare_check + range_check + divisible_check + zero_divisor_check + positive_check + negative_check + odd_check + even_check + ne_check + gt_check + ge_check + lt_check + le_check + nonzero_check)\n}\n"
     );
 
     let mut check = ql_command(&workspace_root);
@@ -605,6 +605,91 @@ fn project_init_with_stdlib_creates_consuming_workspace_scaffold_and_check_succe
                     .replace('\\', "/")
             ),
             "loaded interface:",
+        ],
+    )
+    .unwrap();
+}
+
+#[test]
+fn project_init_with_stdlib_creates_runnable_and_testable_workspace_scaffold() {
+    if !toolchain_available("`ql project init --workspace --stdlib` runnable workspace test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-init-stdlib-workspace-run");
+    let stdlib_root = write_minimal_stdlib(&temp);
+    let project_root = temp.path().join("demo-workspace");
+
+    let mut init = ql_command(&workspace_root);
+    init.args([
+        "project",
+        "init",
+        &project_root.to_string_lossy(),
+        "--workspace",
+        "--name",
+        "app",
+        "--stdlib",
+        &stdlib_root.to_string_lossy(),
+    ]);
+    let output = run_command_capture(
+        &mut init,
+        "`ql project init --workspace --stdlib` runnable workspace",
+    );
+    let (_stdout, stderr) = expect_success(
+        "project-init-stdlib-workspace-run",
+        "stdlib workspace init for runnable scaffold",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-workspace-run",
+        "stdlib workspace init for runnable scaffold",
+        &stderr,
+    )
+    .unwrap();
+
+    let mut run = ql_command(&workspace_root);
+    run.current_dir(temp.path());
+    run.args(["run"]).arg(&project_root);
+    let output = run_command_capture(&mut run, "`ql run` initialized stdlib workspace");
+    let (stdout, stderr) = expect_exit_code(
+        "project-init-stdlib-workspace-run",
+        "run initialized stdlib workspace",
+        &output,
+        0,
+    )
+    .unwrap();
+    expect_silent_output(
+        "project-init-stdlib-workspace-run",
+        "run initialized stdlib workspace",
+        &stdout,
+        &stderr,
+    )
+    .unwrap();
+
+    let mut test = ql_command(&workspace_root);
+    test.current_dir(temp.path());
+    test.args(["test"]).arg(&project_root);
+    let output = run_command_capture(&mut test, "`ql test` initialized stdlib workspace");
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-workspace-run",
+        "test initialized stdlib workspace",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-workspace-run",
+        "test initialized stdlib workspace",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "project-init-stdlib-workspace-run",
+        &stdout.replace('\\', "/"),
+        &[
+            "test packages/app/tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
         ],
     )
     .unwrap();

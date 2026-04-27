@@ -116,8 +116,8 @@
 
 完成标准：
 
-- `stdlib/packages/core` 能被 `ql check/build/test` 验证，并提供第一批稳定基础函数。（已落地整数/布尔 helper，含符号、奇偶和范围检查）
-- `stdlib/packages/test` 能提供 smoke-test 友好的断言辅助。（已落地 true/false、int equality、zero/nonzero 断言）
+- `stdlib/packages/core` 能被 `ql check/build/test` 验证，并提供第一批稳定基础函数。（已落地整数/布尔 helper，含符号、比较、零值/正负、奇偶、范围和整除检查）
+- `stdlib/packages/test` 能提供 smoke-test 友好的断言辅助。（已落地 true/false、bool equality、int equality/order、zero/nonzero 断言）
 - 用户项目模板能依赖 `std.core` / `std.test` 并通过 `ql test`。（已落地 `ql project init --stdlib <path>` 的 package 与 workspace member 生成路径）
 - `stdlib` API 只使用当前稳定语言面；泛型、IO、字符串、自动 prelude 和 registry 发布继续后置。
 

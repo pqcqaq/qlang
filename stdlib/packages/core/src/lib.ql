@@ -41,6 +41,32 @@ pub fn sign_int(value: Int) -> Int {
     return 0
 }
 
+pub fn compare_int(left: Int, right: Int) -> Int {
+    if left < right {
+        return 0 - 1
+    }
+    if left > right {
+        return 1
+    }
+    return 0
+}
+
+pub fn is_zero_int(value: Int) -> Bool {
+    return value == 0
+}
+
+pub fn is_nonzero_int(value: Int) -> Bool {
+    return value != 0
+}
+
+pub fn is_positive_int(value: Int) -> Bool {
+    return value > 0
+}
+
+pub fn is_negative_int(value: Int) -> Bool {
+    return value < 0
+}
+
 pub fn is_even_int(value: Int) -> Bool {
     return value % 2 == 0
 }
@@ -51,6 +77,10 @@ pub fn is_odd_int(value: Int) -> Bool {
 
 pub fn in_range_int(value: Int, low: Int, high: Int) -> Bool {
     return value >= low && value <= high
+}
+
+pub fn is_divisible_by_int(value: Int, divisor: Int) -> Bool {
+    return divisor != 0 && value % divisor == 0
 }
 
 pub fn bool_to_int(value: Bool) -> Int {

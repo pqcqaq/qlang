@@ -4,8 +4,8 @@
 
 Current packages:
 
-- `std.core`: integer and boolean helpers such as `max_int`, `min_int`, `clamp_int`, `abs_int`, `sign_int`, `is_even_int`, `is_odd_int`, `in_range_int`, and `bool_to_int`.
-- `std.test`: smoke-test helpers `expect_true`, `expect_false`, `expect_int_eq`, `expect_zero`, and `expect_nonzero`; helpers return `0` for pass and non-zero for failure.
+- `std.core`: integer and boolean helpers such as `max_int`, `min_int`, `clamp_int`, `abs_int`, `sign_int`, `compare_int`, `is_zero_int`, `is_nonzero_int`, `is_positive_int`, `is_negative_int`, `is_even_int`, `is_odd_int`, `in_range_int`, `is_divisible_by_int`, and `bool_to_int`.
+- `std.test`: smoke-test helpers `expect_true`, `expect_false`, `expect_bool_eq`, `expect_int_eq`, `expect_int_ne`, `expect_int_gt`, `expect_int_ge`, `expect_int_lt`, `expect_int_le`, `expect_zero`, and `expect_nonzero`; helpers return `0` for pass and non-zero for failure.
 
 Use local dependencies with quoted TOML keys because the package names contain dots:
 
@@ -18,8 +18,8 @@ Use local dependencies with quoted TOML keys because the package names contain d
 Then import by package path:
 
 ```ql
-use std.core.in_range_int as in_range_int
-use std.test.expect_true as expect_true
+use std.core.is_divisible_by_int as is_divisible_by_int
+use std.test.expect_bool_eq as expect_bool_eq
 ```
 
 To create a new package or workspace member that already consumes this stdlib:
