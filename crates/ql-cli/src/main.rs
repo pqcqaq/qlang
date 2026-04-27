@@ -12411,8 +12411,15 @@ fn main() -> Int {
     let odd_check = expect_int_odd(21)
     let test_implies_check = expect_bool_implies(false, false)
     let true_check = expect_true(true)
+    let failed_range_check = expect_int_eq(expect_int_between(19, 20, 22), 1)
+    let failed_exclusive_range_check = expect_int_eq(expect_int_exclusive_between(20, 20, 22), 1)
+    let failed_outside_check = expect_int_eq(expect_int_outside(21, 20, 22), 1)
+    let failed_divisible_check = expect_int_eq(expect_int_divisible_by(21, 0), 1)
+    let failed_even_check = expect_int_eq(expect_int_even(21), 1)
+    let failed_odd_check = expect_int_eq(expect_int_odd(22), 1)
+    let failed_implies_check = expect_int_eq(expect_bool_implies(true, false), 1)
 
-    return expect_zero(max_check + compare_check + and_check + xor_check + core_implies_check + range_check + exclusive_range_check + outside_check + divisible_check + even_check + odd_check + test_implies_check + true_check)
+    return expect_zero(max_check + compare_check + and_check + xor_check + core_implies_check + range_check + exclusive_range_check + outside_check + divisible_check + even_check + odd_check + test_implies_check + true_check + failed_range_check + failed_exclusive_range_check + failed_outside_check + failed_divisible_check + failed_even_check + failed_odd_check + failed_implies_check)
 }
 "#
 }

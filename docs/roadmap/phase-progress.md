@@ -102,7 +102,7 @@
 
 ## 下一轮
 
-- stdlib：普通 Qlang package 形态的 `stdlib` 已开始落地，当前已有 `std.core` 的基础整数/布尔 helper 与 `std.test` 的 smoke-test 断言；本轮补齐开区间、基础布尔组合、区间/奇偶/整除/蕴含断言，并让 `ql project init --stdlib <path>` 生成的 package 与 workspace member smoke test 直接消费这些新增 helper。下一步继续扩只依赖稳定语言面的基础 helper。
+- stdlib：普通 Qlang package 形态的 `stdlib` 已开始落地，当前已有 `std.core` 的基础整数/布尔 helper 与 `std.test` 的 smoke-test 断言；本轮补齐开区间、基础布尔组合、区间/奇偶/整除/蕴含断言，并让 `ql project init --stdlib <path>` 生成的 package 与 workspace member smoke test 直接消费这些新增 helper 的成功和失败返回路径。下一步继续扩只依赖稳定语言面的基础 helper。
 - build/backend：继续优先补真实项目里高频的 direct local dependency value/type/member 调用面；本轮已把 public 非泛型、非 opaque type alias 纳入 direct dependency type declaration bridge，并用 build/run/test 真实 consumer 锁住函数签名自动补齐 alias 的路径。后续若 `stdlib` 继续暴露阻塞项，优先修阻塞项而不是扩新语法。
 - LSP：继续把 `textDocument/implementation` 从已完成的 trait/type surface、workspace root/source-backed type definition surface、workspace root/source-backed concrete / trait-typed method call、source-backed dependency concrete / trait-typed method call、dependency non-import type-driven positions、trait method definition，以及 broken current-buffer concrete / trait-typed method call / broken-source open dependency member-type surface，扩到更宽的 implementation index；更广的全局聚合继续后置。
 - 文档：入口页继续只保留结论、边界和最近 checkpoint，不再追加流水账。
