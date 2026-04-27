@@ -108,9 +108,16 @@
 - broken-source 下，workspace root import/use 的 `prepareRename` 与 workspace import alias rename 现在也会读取已打开但未落盘的 workspace 源码；consumer 文件暂时可不保存就能继续做这两条重命名路径。
 - rename 仍然以 same-file 为默认保守面；source-backed dependency `method / field / enum variant` 和 workspace root `function / const / static / struct / enum / trait / type alias` 已开放受限 workspace rename / workspace edits。import / local 等其余符号仍未开放更广义的跨文件重命名。
 
+## 最小 `stdlib`
+
+- 仓库内已有普通 Qlang workspace 形态的 `stdlib`，当前包含 `stdlib/packages/core` 与 `stdlib/packages/test` 两个 package。
+- `std.core` 当前提供第一批稳定整数/布尔 helper：`max_int`、`min_int`、`clamp_int`、`abs_int`、`bool_to_int`。
+- `std.test` 当前提供 smoke-test 友好的 `expect_true` 与 `expect_int_eq`，返回 `0` 表示通过，非零表示失败。
+- 用户项目可以用本地 `[dependencies]` 显式依赖；带点的包名需要写 quoted TOML key，例如 `"std.core" = "../path/to/stdlib/packages/core"`。
+- `stdlib` 仍是普通 package，不是编译器内置 prelude；泛型集合、IO、字符串完整库面和 registry 分发仍后置。
+
 ## 当前明确未支持
 
-- 随仓库分发的最小 `stdlib` 尚未落地；当前用户项目仍需自己声明基础 helper，或用本地 package 临时承载。
 - 普通跨包 Qlang free function / member / const 的完整 dependency-aware backend
 - escaping / higher-order dependency method values、超出当前不可变局部 alias direct-call slice 的 dependency receiver method codegen
 - 自动 prelude、泛型集合库、IO / 字符串完整库面

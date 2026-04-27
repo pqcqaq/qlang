@@ -218,6 +218,96 @@ dep = "../dep"
 }
 
 #[test]
+fn test_workspace_path_prebuilds_selected_members_that_are_also_dependencies() {
+    if !toolchain_available("`ql test` selected dependency member test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-selected-dependency-member");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/core/src"))
+        .expect("create core package source tree");
+    std::fs::create_dir_all(project_root.join("packages/core/tests"))
+        .expect("create core package tests");
+    std::fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create app package source tree");
+    std::fs::create_dir_all(project_root.join("packages/app/tests"))
+        .expect("create app package tests");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/core", "packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/src/lib.ql",
+        "pub fn answer() -> Int { return 42 }\n",
+    );
+    temp.write(
+        "workspace/packages/core/tests/smoke.ql",
+        "fn main() -> Int { return 0 }\n",
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+core = "../core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn helper() -> Int { return 1 }\n",
+    );
+    temp.write(
+        "workspace/packages/app/tests/smoke.ql",
+        "use core.answer as answer\n\nfn main() -> Int {\n    return answer() - 42\n}\n",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test` selected dependency member workspace",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-selected-dependency-member",
+        "workspace selected dependency member test",
+        &output,
+    )
+    .expect("workspace `ql test` should prebuild selected members that are also dependencies");
+    expect_empty_stderr(
+        "project-test-selected-dependency-member",
+        "workspace selected dependency member test",
+        &stderr,
+    )
+    .expect("selected dependency member test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-selected-dependency-member",
+        &stdout.replace('\\', "/"),
+        &[
+            "test packages/core/tests/smoke.ql ... ok",
+            "test packages/app/tests/smoke.ql ... ok",
+            "test result: ok. 2 passed; 0 failed",
+        ],
+    )
+    .expect("workspace selected dependency member test should report two passing tests");
+}
+
+#[test]
 fn test_package_path_supports_direct_dependency_public_struct_methods() {
     if !toolchain_available("`ql test` dependency public struct method test") {
         return;

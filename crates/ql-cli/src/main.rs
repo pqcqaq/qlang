@@ -56,9 +56,7 @@ fn run() -> Result<(), u8> {
 
     if is_version_command(&command) {
         if let Some(extra) = args.next() {
-            eprintln!(
-                "error: `ql {command}` does not accept additional argument `{extra}`"
-            );
+            eprintln!("error: `ql {command}` does not accept additional argument `{extra}`");
             return Err(1);
         }
         println!("{}", version_text(CLI_NAME));
@@ -6114,8 +6112,16 @@ fn prepare_project_dependency_builds(
 ) -> Result<(), u8> {
     let build_plan =
         resolve_project_build_plan_members(workspace_members, selected_members, command_label)?;
+    let dependency_manifest_paths = dependency_manifest_paths_for_selected_roots(
+        workspace_members,
+        selected_members,
+        command_label,
+    )?;
     for plan_member in &build_plan {
-        if plan_member.require_targets || plan_member.member.targets.is_empty() {
+        let manifest_path = normalize_path(&plan_member.member.member_manifest_path);
+        if !dependency_manifest_paths.contains(&manifest_path)
+            || plan_member.member.targets.is_empty()
+        {
             continue;
         }
         for target in &plan_member.member.targets {
@@ -6140,6 +6146,28 @@ fn prepare_project_dependency_builds(
         }
     }
     Ok(())
+}
+
+fn dependency_manifest_paths_for_selected_roots(
+    workspace_members: &[WorkspaceBuildTargets],
+    selected_members: &[WorkspaceBuildTargets],
+    command_label: &str,
+) -> Result<BTreeSet<String>, u8> {
+    let mut dependency_manifest_paths = BTreeSet::new();
+    for selected_member in selected_members {
+        let selected_plan = resolve_project_build_plan_members(
+            workspace_members,
+            std::slice::from_ref(selected_member),
+            command_label,
+        )?;
+        for plan_member in selected_plan {
+            if !plan_member.require_targets {
+                dependency_manifest_paths
+                    .insert(normalize_path(&plan_member.member.member_manifest_path));
+            }
+        }
+    }
+    Ok(dependency_manifest_paths)
 }
 
 fn collect_project_build_plan_member(

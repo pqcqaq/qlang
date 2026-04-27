@@ -116,15 +116,15 @@
 
 完成标准：
 
-- `stdlib/packages/core` 能被 `ql check/build/test` 验证，并提供第一批稳定基础函数。
-- `stdlib/packages/test` 能提供 smoke-test 友好的断言辅助。
+- `stdlib/packages/core` 能被 `ql check/build/test` 验证，并提供第一批稳定基础函数。（已落地首批整数/布尔 helper）
+- `stdlib/packages/test` 能提供 smoke-test 友好的断言辅助。（已落地 `expect_true` / `expect_int_eq`）
 - 用户项目模板能依赖 `std.core` / `std.test` 并通过 `ql test`。
 - `stdlib` API 只使用当前稳定语言面；泛型、IO、字符串、自动 prelude 和 registry 发布继续后置。
 
 ## 下一轮（已排定）
 
-- stdlib：先落 `stdlib` workspace 骨架与 `std.core` / `std.test` 的最小可验证 API；用真实依赖项目回归证明它能被消费。
-- backend：继续扩 direct local dependency 下真实项目高频的 public value/type/member 调用面，但优先修 `stdlib` 和项目模板真实阻塞的路径。
+- stdlib：把外部项目模板切到本地依赖 `std.core` / `std.test`，继续扩 smoke-test 友好的基础 helper，并补齐模板级 `ql test` 回归。
+- backend：继续扩 direct local dependency 下真实项目高频的 public value/type/member 调用面；本轮已修 `ql test` 对“同时被选中又作为依赖”的 workspace member 预构建阻塞，后续仍优先修 `stdlib` / 模板暴露的真实阻塞。
 - LSP：`textDocument/implementation` 的已完成基线已明显超出这里最初记录，当前准确支持面以 `current-supported-surface.md` 为准；继续扩更宽的 implementation index，但不压过 P0 stdlib / backend 阻塞项。
 - 文档：继续只保留入口结论、支持边界和最近 checkpoint；不再追加长流水账。
 
