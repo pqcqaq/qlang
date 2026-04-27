@@ -6000,7 +6000,12 @@ impl<'a> ModuleEmitter<'a> {
                     ctx.diagnostics,
                     span,
                 )?;
-                if !target_ty.compatible_with(&value_ty) {
+                if !backend_value_compatible(
+                    self.input.hir,
+                    self.input.resolution,
+                    &target_ty,
+                    &value_ty,
+                ) {
                     ctx.diagnostics.push(unsupported(
                         span,
                         "LLVM IR backend foundation currently requires assignment expressions to store a value compatible with the target place",
@@ -6038,7 +6043,7 @@ impl<'a> ModuleEmitter<'a> {
                         ctx.diagnostics,
                         span,
                     )?;
-                    if operand_ty.is_bool() {
+                    if backend_value_is_bool(self.input.hir, self.input.resolution, &operand_ty) {
                         Some(Ty::Builtin(BuiltinType::Bool))
                     } else {
                         ctx.diagnostics.push(unsupported(
@@ -6057,6 +6062,11 @@ impl<'a> ModuleEmitter<'a> {
                         ctx.diagnostics,
                         span,
                     )?;
+                    let operand_ty = transparent_backend_value_ty(
+                        self.input.hir,
+                        self.input.resolution,
+                        &operand_ty,
+                    );
                     if is_numeric_ty(&operand_ty) {
                         Some(operand_ty)
                     } else {
@@ -6312,7 +6322,12 @@ impl<'a> ModuleEmitter<'a> {
             ) else {
                 continue;
             };
-            if !expected_field.ty.compatible_with(&actual_ty) {
+            if !backend_value_compatible(
+                self.input.hir,
+                self.input.resolution,
+                &expected_field.ty,
+                &actual_ty,
+            ) {
                 ctx.diagnostics.push(unsupported(
                     span,
                     "LLVM IR backend foundation encountered a struct field value whose lowered type did not match the declaration",
@@ -6389,7 +6404,12 @@ impl<'a> ModuleEmitter<'a> {
             ) else {
                 continue;
             };
-            if !expected_field.ty.compatible_with(&actual_ty) {
+            if !backend_value_compatible(
+                self.input.hir,
+                self.input.resolution,
+                &expected_field.ty,
+                &actual_ty,
+            ) {
                 ctx.diagnostics.push(unsupported(
                     span,
                     "LLVM IR backend foundation encountered an enum variant value whose lowered type did not match the declaration",
@@ -6455,7 +6475,12 @@ impl<'a> ModuleEmitter<'a> {
                 .as_ref()
                 .map(|(element, _)| element)
                 .unwrap_or(&element_ty);
-            if !expected_element.compatible_with(&item_ty) {
+            if !backend_value_compatible(
+                self.input.hir,
+                self.input.resolution,
+                expected_element,
+                &item_ty,
+            ) {
                 ctx.diagnostics.push(unsupported(
                     span,
                     "LLVM IR backend foundation currently requires array literals to lower to one compatible element type",
@@ -6582,7 +6607,12 @@ impl<'a> ModuleEmitter<'a> {
                     span,
                 )?;
                 if !index_ty.is_unknown()
-                    && !Ty::Builtin(BuiltinType::Int).compatible_with(&index_ty)
+                    && !backend_value_compatible(
+                        self.input.hir,
+                        self.input.resolution,
+                        &Ty::Builtin(BuiltinType::Int),
+                        &index_ty,
+                    )
                 {
                     diagnostics.push(unsupported(
                         span,
@@ -6804,6 +6834,10 @@ impl<'a> ModuleEmitter<'a> {
         span: Span,
         diagnostics: &mut Vec<Diagnostic>,
     ) -> Option<Ty> {
+        let left_ty = transparent_backend_value_ty(self.input.hir, self.input.resolution, left_ty);
+        let right_ty =
+            transparent_backend_value_ty(self.input.hir, self.input.resolution, right_ty);
+
         if left_ty != right_ty {
             diagnostics.push(unsupported(
                 span,
@@ -6817,8 +6851,8 @@ impl<'a> ModuleEmitter<'a> {
                 panic!("short-circuit boolean operators should lower structurally in MIR")
             }
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
-                if is_numeric_ty(left_ty) {
-                    Some(left_ty.clone())
+                if is_numeric_ty(&left_ty) {
+                    Some(left_ty)
                 } else {
                     diagnostics.push(unsupported(
                         span,
@@ -6828,7 +6862,7 @@ impl<'a> ModuleEmitter<'a> {
                 }
             }
             BinaryOp::EqEq | BinaryOp::BangEq => {
-                if is_comparable_ty(left_ty) || matches!(left_ty, Ty::Builtin(BuiltinType::String))
+                if is_comparable_ty(&left_ty) || matches!(left_ty, Ty::Builtin(BuiltinType::String))
                 {
                     Some(Ty::Builtin(BuiltinType::Bool))
                 } else {
@@ -6840,7 +6874,7 @@ impl<'a> ModuleEmitter<'a> {
                 }
             }
             BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Lt | BinaryOp::LtEq => {
-                if is_comparable_ty(left_ty) || matches!(left_ty, Ty::Builtin(BuiltinType::String))
+                if is_comparable_ty(&left_ty) || matches!(left_ty, Ty::Builtin(BuiltinType::String))
                 {
                     Some(Ty::Builtin(BuiltinType::Bool))
                 } else {
@@ -6898,7 +6932,12 @@ impl<'a> ModuleEmitter<'a> {
                     span,
                 )?;
                 if !index_ty.is_unknown()
-                    && !Ty::Builtin(BuiltinType::Int).compatible_with(&index_ty)
+                    && !backend_value_compatible(
+                        self.input.hir,
+                        self.input.resolution,
+                        &Ty::Builtin(BuiltinType::Int),
+                        &index_ty,
+                    )
                 {
                     diagnostics.push(unsupported(
                         span,
@@ -13883,7 +13922,12 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                         .map(|(arg, param_ty)| {
                             let value = self.render_operand(output, &arg.value, span);
                             assert!(
-                                param_ty.compatible_with(&value.ty),
+                                backend_value_compatible(
+                                    self.emitter.input.hir,
+                                    self.emitter.input.resolution,
+                                    param_ty,
+                                    &value.ty,
+                                ),
                                 "prepared indirect calls at {span:?} should preserve callable argument types"
                             );
                             format!("{} {}", value.llvm_ty, value.repr)
@@ -13937,7 +13981,12 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 });
                 let rendered = self.render_operand(output, right, span);
                 assert!(
-                    target_ty.compatible_with(&rendered.ty),
+                    backend_value_compatible(
+                        self.emitter.input.hir,
+                        self.emitter.input.resolution,
+                        &target_ty,
+                        &rendered.ty,
+                    ),
                     "prepared assignment expressions at {span:?} should preserve value compatibility with the target place"
                 );
                 let target_ptr = if place.projections.is_empty() {
@@ -14590,9 +14639,19 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         &mut self,
         output: &mut String,
         op: BinaryOp,
-        left: LoweredValue,
-        right: LoweredValue,
+        mut left: LoweredValue,
+        mut right: LoweredValue,
     ) -> Option<LoweredValue> {
+        left.ty = transparent_backend_value_ty(
+            self.emitter.input.hir,
+            self.emitter.input.resolution,
+            &left.ty,
+        );
+        right.ty = transparent_backend_value_ty(
+            self.emitter.input.hir,
+            self.emitter.input.resolution,
+            &right.ty,
+        );
         match op {
             BinaryOp::OrOr | BinaryOp::AndAnd => {
                 panic!("short-circuit boolean operators should lower structurally in MIR")
@@ -22938,6 +22997,242 @@ fn integer_signedness(ty: &Ty) -> Option<Signedness> {
         | Ty::Builtin(BuiltinType::Bool) => Some(Signedness::Unsigned),
         _ => None,
     }
+}
+
+const MAX_TRANSPARENT_BACKEND_ALIAS_DEPTH: usize = 32;
+
+fn backend_value_compatible(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    expected: &Ty,
+    actual: &Ty,
+) -> bool {
+    backend_value_compatible_inner(module, resolution, expected, actual, 0)
+}
+
+fn backend_value_compatible_inner(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    expected: &Ty,
+    actual: &Ty,
+    depth: usize,
+) -> bool {
+    if expected.compatible_with(actual) {
+        return true;
+    }
+    if depth >= MAX_TRANSPARENT_BACKEND_ALIAS_DEPTH {
+        return false;
+    }
+
+    if let Some(expected_target) =
+        transparent_backend_value_alias_target(module, resolution, expected)
+        && backend_value_compatible_inner(module, resolution, &expected_target, actual, depth + 1)
+    {
+        return true;
+    }
+    if let Some(actual_target) = transparent_backend_value_alias_target(module, resolution, actual)
+        && backend_value_compatible_inner(module, resolution, expected, &actual_target, depth + 1)
+    {
+        return true;
+    }
+
+    match (expected, actual) {
+        (
+            Ty::Array {
+                element: expected_element,
+                len: expected_len,
+            },
+            Ty::Array {
+                element: actual_element,
+                len: actual_len,
+            },
+        ) => {
+            expected_len == actual_len
+                && backend_value_compatible_inner(
+                    module,
+                    resolution,
+                    expected_element,
+                    actual_element,
+                    depth + 1,
+                )
+        }
+        (
+            Ty::Item {
+                item_id: expected_item,
+                args: expected_args,
+                ..
+            },
+            Ty::Item {
+                item_id: actual_item,
+                args: actual_args,
+                ..
+            },
+        ) => {
+            expected_item == actual_item
+                && expected_args.len() == actual_args.len()
+                && expected_args
+                    .iter()
+                    .zip(actual_args)
+                    .all(|(expected, actual)| {
+                        backend_value_compatible_inner(
+                            module,
+                            resolution,
+                            expected,
+                            actual,
+                            depth + 1,
+                        )
+                    })
+        }
+        (
+            Ty::Import {
+                path: expected_path,
+                args: expected_args,
+            },
+            Ty::Import {
+                path: actual_path,
+                args: actual_args,
+            },
+        )
+        | (
+            Ty::Named {
+                path: expected_path,
+                args: expected_args,
+            },
+            Ty::Named {
+                path: actual_path,
+                args: actual_args,
+            },
+        ) => {
+            expected_path == actual_path
+                && expected_args.len() == actual_args.len()
+                && expected_args
+                    .iter()
+                    .zip(actual_args)
+                    .all(|(expected, actual)| {
+                        backend_value_compatible_inner(
+                            module,
+                            resolution,
+                            expected,
+                            actual,
+                            depth + 1,
+                        )
+                    })
+        }
+        (
+            Ty::Pointer {
+                is_const: expected_const,
+                inner: expected_inner,
+            },
+            Ty::Pointer {
+                is_const: actual_const,
+                inner: actual_inner,
+            },
+        ) => {
+            expected_const == actual_const
+                && backend_value_compatible_inner(
+                    module,
+                    resolution,
+                    expected_inner,
+                    actual_inner,
+                    depth + 1,
+                )
+        }
+        (Ty::Tuple(expected_items), Ty::Tuple(actual_items)) => {
+            expected_items.len() == actual_items.len()
+                && expected_items
+                    .iter()
+                    .zip(actual_items)
+                    .all(|(expected, actual)| {
+                        backend_value_compatible_inner(
+                            module,
+                            resolution,
+                            expected,
+                            actual,
+                            depth + 1,
+                        )
+                    })
+        }
+        (Ty::TaskHandle(expected), Ty::TaskHandle(actual)) => {
+            backend_value_compatible_inner(module, resolution, expected, actual, depth + 1)
+        }
+        (
+            Ty::Callable {
+                params: expected_params,
+                ret: expected_ret,
+            },
+            Ty::Callable {
+                params: actual_params,
+                ret: actual_ret,
+            },
+        ) => {
+            expected_params.len() == actual_params.len()
+                && expected_params
+                    .iter()
+                    .zip(actual_params)
+                    .all(|(expected, actual)| {
+                        backend_value_compatible_inner(
+                            module,
+                            resolution,
+                            expected,
+                            actual,
+                            depth + 1,
+                        )
+                    })
+                && backend_value_compatible_inner(
+                    module,
+                    resolution,
+                    expected_ret,
+                    actual_ret,
+                    depth + 1,
+                )
+        }
+        _ => false,
+    }
+}
+
+fn transparent_backend_value_alias_target(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    ty: &Ty,
+) -> Option<Ty> {
+    let Ty::Item { item_id, args, .. } = ty else {
+        return None;
+    };
+    if !args.is_empty() {
+        return None;
+    }
+
+    match &module.item(*item_id).kind {
+        ItemKind::TypeAlias(alias) if !alias.is_opaque && alias.generics.is_empty() => {
+            Some(lower_type(module, resolution, alias.ty))
+        }
+        _ => None,
+    }
+}
+
+fn transparent_backend_value_ty(module: &hir::Module, resolution: &ResolutionMap, ty: &Ty) -> Ty {
+    transparent_backend_value_ty_inner(module, resolution, ty, 0)
+}
+
+fn transparent_backend_value_ty_inner(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    ty: &Ty,
+    depth: usize,
+) -> Ty {
+    if depth >= MAX_TRANSPARENT_BACKEND_ALIAS_DEPTH {
+        return ty.clone();
+    }
+
+    if let Some(target) = transparent_backend_value_alias_target(module, resolution, ty) {
+        transparent_backend_value_ty_inner(module, resolution, &target, depth + 1)
+    } else {
+        ty.clone()
+    }
+}
+
+fn backend_value_is_bool(module: &hir::Module, resolution: &ResolutionMap, ty: &Ty) -> bool {
+    transparent_backend_value_ty(module, resolution, ty).is_bool()
 }
 
 fn is_float_ty(ty: &Ty) -> bool {

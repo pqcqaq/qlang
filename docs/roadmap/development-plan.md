@@ -124,7 +124,7 @@
 ## 下一轮（已排定）
 
 - stdlib：继续扩只依赖稳定语言面的基础 helper，并让 package / workspace 初始化模板优先覆盖真实 consumer 路径。
-- backend：继续扩 direct local dependency 下真实项目高频的 public value/member 调用面；public 非泛型、非 opaque type alias 已进入 type declaration bridge，后续仍优先修 `stdlib` / 模板暴露的真实阻塞。
+- backend：继续扩 direct local dependency 下真实项目高频的 public value/member 调用面；public 非泛型、非 opaque type alias 已进入 type declaration bridge，并已在普通值上下文支持 alias 透明的跨包函数签名、alias 算术与 wrapper 调用。后续仍优先修 `stdlib` / 模板暴露的真实阻塞。
 - LSP：`textDocument/implementation` 的已完成基线已明显超出这里最初记录，当前准确支持面以 `current-supported-surface.md` 为准；继续扩更宽的 implementation index，但不压过 P0 stdlib / backend 阻塞项。
 - 文档：继续只保留入口结论、支持边界和最近 checkpoint；不再追加长流水账。
 

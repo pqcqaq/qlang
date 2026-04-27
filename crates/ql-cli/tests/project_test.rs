@@ -239,7 +239,7 @@ name = "dep"
     );
     temp.write(
         "dep/src/lib.ql",
-        "pub type Count = Int\npub type Score = Count\npub fn pass_score(value: Score) -> Score { return value }\npub fn exit_code() -> Int { return 7 }\n",
+        "pub type Count = Int\npub type Score = Count\npub fn make_score(value: Count) -> Score { return value + 2 }\npub fn unwrap_score(value: Score) -> Int { return value }\n",
     );
     temp.write(
         "app/qlang.toml",
@@ -254,7 +254,7 @@ dep = "../dep"
     temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
     temp.write(
         "app/tests/smoke.ql",
-        "use dep.exit_code as exit_code\nuse dep.pass_score as pass_score\n\nfn main() -> Int {\n    return exit_code() - 7\n}\n",
+        "use dep.make_score as make_score\nuse dep.unwrap_score as unwrap_score\n\nfn main() -> Int {\n    return unwrap_score(make_score(5)) - 7\n}\n",
     );
 
     let interface_output = dep_root.join("dep.qi");

@@ -121,6 +121,8 @@ struct Checker<'a> {
 }
 
 impl<'a> Checker<'a> {
+    const MAX_TRANSPARENT_ALIAS_DEPTH: usize = 32;
+
     fn new(module: &'a Module, resolution: &'a ResolutionMap) -> Self {
         Self {
             module,
@@ -139,6 +141,185 @@ impl<'a> Checker<'a> {
             in_async_function: false,
             loop_depth: 0,
         }
+    }
+
+    fn value_compatible(&self, expected: &Ty, actual: &Ty) -> bool {
+        self.value_compatible_inner(expected, actual, 0)
+    }
+
+    fn value_compatible_inner(&self, expected: &Ty, actual: &Ty, depth: usize) -> bool {
+        if expected.compatible_with(actual) {
+            return true;
+        }
+        if depth >= Self::MAX_TRANSPARENT_ALIAS_DEPTH {
+            return false;
+        }
+
+        if let Some(expected_target) = self.transparent_value_alias_target(expected)
+            && self.value_compatible_inner(&expected_target, actual, depth + 1)
+        {
+            return true;
+        }
+        if let Some(actual_target) = self.transparent_value_alias_target(actual)
+            && self.value_compatible_inner(expected, &actual_target, depth + 1)
+        {
+            return true;
+        }
+
+        match (expected, actual) {
+            (
+                Ty::Array {
+                    element: expected_element,
+                    len: expected_len,
+                },
+                Ty::Array {
+                    element: actual_element,
+                    len: actual_len,
+                },
+            ) => {
+                expected_len == actual_len
+                    && self.value_compatible_inner(expected_element, actual_element, depth + 1)
+            }
+            (
+                Ty::Item {
+                    item_id: expected_item,
+                    args: expected_args,
+                    ..
+                },
+                Ty::Item {
+                    item_id: actual_item,
+                    args: actual_args,
+                    ..
+                },
+            ) => {
+                expected_item == actual_item
+                    && expected_args.len() == actual_args.len()
+                    && expected_args
+                        .iter()
+                        .zip(actual_args)
+                        .all(|(expected, actual)| {
+                            self.value_compatible_inner(expected, actual, depth + 1)
+                        })
+            }
+            (
+                Ty::Import {
+                    path: expected_path,
+                    args: expected_args,
+                },
+                Ty::Import {
+                    path: actual_path,
+                    args: actual_args,
+                },
+            )
+            | (
+                Ty::Named {
+                    path: expected_path,
+                    args: expected_args,
+                },
+                Ty::Named {
+                    path: actual_path,
+                    args: actual_args,
+                },
+            ) => {
+                expected_path == actual_path
+                    && expected_args.len() == actual_args.len()
+                    && expected_args
+                        .iter()
+                        .zip(actual_args)
+                        .all(|(expected, actual)| {
+                            self.value_compatible_inner(expected, actual, depth + 1)
+                        })
+            }
+            (
+                Ty::Pointer {
+                    is_const: expected_const,
+                    inner: expected_inner,
+                },
+                Ty::Pointer {
+                    is_const: actual_const,
+                    inner: actual_inner,
+                },
+            ) => {
+                expected_const == actual_const
+                    && self.value_compatible_inner(expected_inner, actual_inner, depth + 1)
+            }
+            (Ty::Tuple(expected_items), Ty::Tuple(actual_items)) => {
+                expected_items.len() == actual_items.len()
+                    && expected_items
+                        .iter()
+                        .zip(actual_items)
+                        .all(|(expected, actual)| {
+                            self.value_compatible_inner(expected, actual, depth + 1)
+                        })
+            }
+            (Ty::TaskHandle(expected), Ty::TaskHandle(actual)) => {
+                self.value_compatible_inner(expected, actual, depth + 1)
+            }
+            (
+                Ty::Callable {
+                    params: expected_params,
+                    ret: expected_ret,
+                },
+                Ty::Callable {
+                    params: actual_params,
+                    ret: actual_ret,
+                },
+            ) => {
+                expected_params.len() == actual_params.len()
+                    && expected_params
+                        .iter()
+                        .zip(actual_params)
+                        .all(|(expected, actual)| {
+                            self.value_compatible_inner(expected, actual, depth + 1)
+                        })
+                    && self.value_compatible_inner(expected_ret, actual_ret, depth + 1)
+            }
+            _ => false,
+        }
+    }
+
+    fn transparent_value_alias_target(&self, ty: &Ty) -> Option<Ty> {
+        let Ty::Item { item_id, args, .. } = ty else {
+            return None;
+        };
+        if !args.is_empty() {
+            return None;
+        }
+
+        match &self.module.item(*item_id).kind {
+            ItemKind::TypeAlias(alias) if !alias.is_opaque && alias.generics.is_empty() => {
+                Some(lower_type(self.module, self.resolution, alias.ty))
+            }
+            _ => None,
+        }
+    }
+
+    fn transparent_value_ty(&self, ty: &Ty) -> Ty {
+        self.transparent_value_ty_inner(ty, 0)
+    }
+
+    fn transparent_value_ty_inner(&self, ty: &Ty, depth: usize) -> Ty {
+        if depth >= Self::MAX_TRANSPARENT_ALIAS_DEPTH {
+            return ty.clone();
+        }
+
+        if let Some(target) = self.transparent_value_alias_target(ty) {
+            self.transparent_value_ty_inner(&target, depth + 1)
+        } else {
+            ty.clone()
+        }
+    }
+
+    fn value_is_bool(&self, ty: &Ty) -> bool {
+        self.transparent_value_ty(ty).is_bool()
+    }
+
+    fn value_is_numeric(&self, ty: &Ty) -> bool {
+        self.transparent_value_ty(ty).is_numeric()
+    }
+
+    fn value_is_string(&self, ty: &Ty) -> bool {
+        self.transparent_value_ty(ty) == Ty::Builtin(ql_resolve::BuiltinType::String)
     }
 
     fn check_module(&mut self) {
@@ -448,7 +629,7 @@ impl<'a> Checker<'a> {
                 if operand_ty.is_unknown() {
                     return Ty::Unknown;
                 }
-                if operand_ty.is_bool() {
+                if self.value_is_bool(&operand_ty) {
                     return Ty::Builtin(ql_resolve::BuiltinType::Bool);
                 }
 
@@ -585,7 +766,7 @@ impl<'a> Checker<'a> {
 
     fn check_bool_condition(&mut self, expr_id: ExprId, context: &str) {
         let ty = self.check_expr(expr_id, Some(&Ty::Builtin(ql_resolve::BuiltinType::Bool)));
-        if !ty.is_unknown() && !ty.is_bool() {
+        if !ty.is_unknown() && !self.value_is_bool(&ty) {
             self.diagnostics.push(
                 Diagnostic::error(format!("{context} must have type `Bool`, found `{ty}`"))
                     .with_label(
@@ -627,7 +808,7 @@ impl<'a> Checker<'a> {
             let expected_element = expected_array
                 .map(|(element, _)| element)
                 .unwrap_or(&element_ty);
-            if !expected_element.compatible_with(&item_ty) {
+            if !self.value_compatible(expected_element, &item_ty) {
                 self.report_type_mismatch(item, expected_element, &item_ty, "array literal item");
             }
         }
@@ -670,7 +851,7 @@ impl<'a> Checker<'a> {
                 let index_ty =
                     self.check_expr(index_expr, Some(&Ty::Builtin(ql_resolve::BuiltinType::Int)));
                 if !index_ty.is_unknown()
-                    && !index_ty.compatible_with(&Ty::Builtin(ql_resolve::BuiltinType::Int))
+                    && !self.value_compatible(&index_ty, &Ty::Builtin(ql_resolve::BuiltinType::Int))
                 {
                     self.diagnostics.push(
                         Diagnostic::error(format!(
@@ -690,7 +871,7 @@ impl<'a> Checker<'a> {
                 let index_ty =
                     self.check_expr(index_expr, Some(&Ty::Builtin(ql_resolve::BuiltinType::Int)));
                 if !index_ty.is_unknown()
-                    && !index_ty.compatible_with(&Ty::Builtin(ql_resolve::BuiltinType::Int))
+                    && !self.value_compatible(&index_ty, &Ty::Builtin(ql_resolve::BuiltinType::Int))
                 {
                     self.diagnostics.push(
                         Diagnostic::error(format!(
@@ -1617,7 +1798,7 @@ impl<'a> Checker<'a> {
             return false;
         };
 
-        if value_ty.is_bool() {
+        if self.value_is_bool(value_ty) {
             return self.match_covers_all_bool_patterns(arms);
         }
 
@@ -2371,8 +2552,8 @@ impl<'a> Checker<'a> {
             BinaryOp::OrOr | BinaryOp::AndAnd => {
                 let right_ty =
                     self.check_expr(right, Some(&Ty::Builtin(ql_resolve::BuiltinType::Bool)));
-                if (left_ty.is_bool() || left_ty.is_unknown())
-                    && (right_ty.is_bool() || right_ty.is_unknown())
+                if (self.value_is_bool(&left_ty) || left_ty.is_unknown())
+                    && (self.value_is_bool(&right_ty) || right_ty.is_unknown())
                 {
                     Ty::Builtin(ql_resolve::BuiltinType::Bool)
                 } else {
@@ -2411,7 +2592,7 @@ impl<'a> Checker<'a> {
             }
             BinaryOp::EqEq | BinaryOp::BangEq => {
                 let right_ty = self.check_expr(right, None);
-                if left_ty.compatible_with(&right_ty) {
+                if self.value_compatible(&left_ty, &right_ty) {
                     Ty::Builtin(ql_resolve::BuiltinType::Bool)
                 } else {
                     self.diagnostics.push(
@@ -2432,8 +2613,7 @@ impl<'a> Checker<'a> {
             BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Lt | BinaryOp::LtEq => {
                 let right_ty = self.check_expr(right, None);
                 if self.has_compatible_numeric_operands(&left_ty, &right_ty)
-                    || (left_ty == Ty::Builtin(ql_resolve::BuiltinType::String)
-                        && right_ty == Ty::Builtin(ql_resolve::BuiltinType::String))
+                    || (self.value_is_string(&left_ty) && self.value_is_string(&right_ty))
                 {
                     Ty::Builtin(ql_resolve::BuiltinType::Bool)
                 } else {
@@ -2590,18 +2770,21 @@ impl<'a> Checker<'a> {
         if left_ty.is_unknown() && right_ty.is_unknown() {
             return Some(Ty::Unknown);
         }
-        if left_ty.is_numeric() && right_ty.is_numeric() && left_ty.compatible_with(right_ty) {
+        if self.value_is_numeric(left_ty)
+            && self.value_is_numeric(right_ty)
+            && self.value_compatible(left_ty, right_ty)
+        {
             return Some(if left_ty.is_unknown() {
-                right_ty.clone()
+                self.transparent_value_ty(right_ty)
             } else {
-                left_ty.clone()
+                self.transparent_value_ty(left_ty)
             });
         }
-        if left_ty.is_unknown() && right_ty.is_numeric() {
-            return Some(right_ty.clone());
+        if left_ty.is_unknown() && self.value_is_numeric(right_ty) {
+            return Some(self.transparent_value_ty(right_ty));
         }
-        if right_ty.is_unknown() && left_ty.is_numeric() {
-            return Some(left_ty.clone());
+        if right_ty.is_unknown() && self.value_is_numeric(left_ty) {
+            return Some(self.transparent_value_ty(left_ty));
         }
         None
     }
@@ -2610,13 +2793,15 @@ impl<'a> Checker<'a> {
         if left_ty.is_unknown() && right_ty.is_unknown() {
             return true;
         }
-        if left_ty.is_unknown() && right_ty.is_numeric() {
+        if left_ty.is_unknown() && self.value_is_numeric(right_ty) {
             return true;
         }
-        if right_ty.is_unknown() && left_ty.is_numeric() {
+        if right_ty.is_unknown() && self.value_is_numeric(left_ty) {
             return true;
         }
-        left_ty.is_numeric() && right_ty.is_numeric() && left_ty.compatible_with(right_ty)
+        self.value_is_numeric(left_ty)
+            && self.value_is_numeric(right_ty)
+            && self.value_compatible(left_ty, right_ty)
     }
 
     fn check_match(
@@ -2657,7 +2842,8 @@ impl<'a> Checker<'a> {
             Ty::Tuple(items)
                 if !items.is_empty()
                     && items.iter().skip(1).all(|item| {
-                        item.compatible_with(&items[0]) && items[0].compatible_with(item)
+                        self.value_compatible(item, &items[0])
+                            && self.value_compatible(&items[0], item)
                     }) =>
             {
                 let element_ty = items[0].clone();
@@ -2904,7 +3090,7 @@ impl<'a> Checker<'a> {
             return;
         };
 
-        if expected.compatible_with(&actual) {
+        if self.value_compatible(expected, &actual) {
             return;
         }
 
@@ -3137,7 +3323,7 @@ impl<'a> Checker<'a> {
         actual: &Ty,
         context: &str,
     ) {
-        if expected.compatible_with(actual) {
+        if self.value_compatible(expected, actual) {
             return;
         }
 
@@ -3267,7 +3453,7 @@ impl<'a> Checker<'a> {
     }
 
     fn unify_branch_types(&mut self, expr_id: ExprId, left: Ty, right: Ty, context: &str) -> Ty {
-        if left.compatible_with(&right) {
+        if self.value_compatible(&left, &right) {
             if left.is_unknown() { right } else { left }
         } else {
             self.diagnostics.push(
@@ -3283,7 +3469,7 @@ impl<'a> Checker<'a> {
     }
 
     fn report_type_mismatch(&mut self, expr_id: ExprId, expected: &Ty, actual: &Ty, context: &str) {
-        if expected.compatible_with(actual) {
+        if self.value_compatible(expected, actual) {
             return;
         }
 
@@ -3315,7 +3501,7 @@ impl<'a> Checker<'a> {
         actual: &Ty,
         context: &str,
     ) {
-        if expected.compatible_with(actual) {
+        if self.value_compatible(expected, actual) {
             return;
         }
 
@@ -3334,7 +3520,7 @@ impl<'a> Checker<'a> {
         actual: &Ty,
         context: &str,
     ) {
-        if expected.compatible_with(actual) {
+        if self.value_compatible(expected, actual) {
             return;
         }
 

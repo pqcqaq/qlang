@@ -2750,6 +2750,129 @@ fn main(command: Command) -> Int {
 }
 
 #[test]
+fn accepts_non_opaque_type_alias_values_at_function_boundaries() {
+    let diagnostics = diagnostic_messages(
+        r#"
+type Count = Int
+type Score = Count
+
+fn make_count(value: Int) -> Count {
+    return value
+}
+
+fn lift_score(value: Count) -> Score {
+    return value
+}
+
+fn read_count(value: Count) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    return read_count(lift_score(make_count(3)))
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected non-opaque alias values to be compatible at function boundaries, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_non_opaque_type_alias_values_in_value_expressions() {
+    let diagnostics = diagnostic_messages(
+        r#"
+type Count = Int
+
+fn choose(flag: Bool, value: Count) -> Count {
+    if flag {
+        return value + 1
+    } else {
+        return 0
+    }
+}
+
+fn main(count: Count) -> Int {
+    let values: [Count; 2] = [count, 2]
+    if values[0] == 2 {
+        return choose(true, values[1])
+    }
+    return count
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected non-opaque alias values to be compatible in ordinary value expressions, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn opaque_type_alias_values_remain_distinct() {
+    let diagnostics = diagnostic_messages(
+        r#"
+opaque type UserId = Int
+
+fn make_user_id(value: Int) -> UserId {
+    return value
+}
+
+fn reveal_user_id(value: UserId) -> Int {
+    return value
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"return value has type mismatch: expected `UserId`, found `Int`".to_string()
+        ),
+        "expected opaque alias constructor mismatch, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.contains(
+            &"return value has type mismatch: expected `Int`, found `UserId`".to_string()
+        ),
+        "expected opaque alias projection mismatch, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn non_opaque_type_alias_values_do_not_inherit_target_methods() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Meter {
+    value: Int,
+}
+
+type Distance = Meter
+
+extend Meter {
+    fn read(self) -> Int {
+        return self.value
+    }
+}
+
+fn unwrap(value: Distance) -> Meter {
+    return value
+}
+
+fn main(value: Distance) -> Int {
+    return value.read()
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"unknown member `read` on type `Distance`".to_string()),
+        "expected alias method lookup to stay alias-specific, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_pattern_root_type_mismatches() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -3086,7 +3209,7 @@ fn main(point: Point, result: Result) -> Int {
 }
 
 #[test]
-fn reports_unsupported_const_static_path_patterns() {
+fn accepts_const_static_path_patterns() {
     let diagnostics = diagnostic_messages(
         r#"
 const LIMIT: Int = 1
@@ -3102,12 +3225,14 @@ fn main(value: Int) -> Int {
 "#,
     );
 
-    assert!(diagnostics.contains(&"path pattern syntax is not supported for `LIMIT`".to_string()));
-    assert!(diagnostics.contains(&"path pattern syntax is not supported for `TOTAL`".to_string()));
+    assert!(
+        diagnostics.is_empty(),
+        "expected const/static path patterns to be accepted, got {diagnostics:?}"
+    );
 }
 
 #[test]
-fn reports_unsupported_const_static_path_patterns_through_same_file_import_aliases() {
+fn accepts_const_static_path_patterns_through_same_file_import_aliases() {
     let diagnostics = diagnostic_messages(
         r#"
 use LIMIT as Bound
@@ -3126,8 +3251,10 @@ fn main(value: Int) -> Int {
 "#,
     );
 
-    assert!(diagnostics.contains(&"path pattern syntax is not supported for `Bound`".to_string()));
-    assert!(diagnostics.contains(&"path pattern syntax is not supported for `Count`".to_string()));
+    assert!(
+        diagnostics.is_empty(),
+        "expected imported const/static path patterns to be accepted, got {diagnostics:?}"
+    );
 }
 
 #[test]
@@ -3366,7 +3493,7 @@ fn main(left: Int, right: UInt) -> Bool {
 
     assert!(
         diagnostics.contains(
-            &"comparison operator `<` expects compatible numeric operands, found `Int` and `UInt`"
+            &"comparison operator `<` expects compatible numeric or string operands, found `Int` and `UInt`"
                 .to_string()
         )
     );
