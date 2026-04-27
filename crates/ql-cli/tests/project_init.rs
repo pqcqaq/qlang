@@ -1,12 +1,13 @@
 mod support;
 
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 
-use ql_driver::{ToolchainOptions, discover_toolchain};
+use ql_driver::{discover_toolchain, ToolchainOptions};
 use support::{
-    TempDir, executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
+    executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
     expect_file_exists, expect_silent_output, expect_stderr_contains, expect_stdout_contains_all,
-    expect_success, ql_command, read_normalized_file, run_command_capture, workspace_root,
+    expect_success, ql_command, read_normalized_file, run_command_capture, workspace_root, TempDir,
 };
 
 fn toolchain_available(context: &str) -> bool {
@@ -19,39 +20,23 @@ fn toolchain_available(context: &str) -> bool {
     true
 }
 
-fn write_minimal_stdlib(temp: &TempDir) -> PathBuf {
-    temp.write(
-        "stdlib/qlang.toml",
-        r#"
-[workspace]
-members = ["packages/core", "packages/test"]
-"#,
-    );
-    temp.write(
-        "stdlib/packages/core/qlang.toml",
-        r#"
-[package]
-name = "std.core"
-"#,
-    );
-    temp.write(
-        "stdlib/packages/core/src/lib.ql",
-        "package std.core\n\npub fn max_int(left: Int, right: Int) -> Int {\n    if left > right {\n        return left\n    }\n    return right\n}\n\npub fn clamp_int(value: Int, low: Int, high: Int) -> Int {\n    if value < low {\n        return low\n    }\n    if value > high {\n        return high\n    }\n    return value\n}\n\npub fn compare_int(left: Int, right: Int) -> Int {\n    if left < right {\n        return 0 - 1\n    }\n    if left > right {\n        return 1\n    }\n    return 0\n}\n\npub fn is_even_int(value: Int) -> Bool {\n    return value % 2 == 0\n}\n\npub fn is_odd_int(value: Int) -> Bool {\n    return value % 2 != 0\n}\n\npub fn is_positive_int(value: Int) -> Bool {\n    return value > 0\n}\n\npub fn is_negative_int(value: Int) -> Bool {\n    return value < 0\n}\n\npub fn in_range_int(value: Int, low: Int, high: Int) -> Bool {\n    return value >= low && value <= high\n}\n\npub fn is_divisible_by_int(value: Int, divisor: Int) -> Bool {\n    return divisor != 0 && value % divisor == 0\n}\n\npub fn bool_to_int(value: Bool) -> Int {\n    if value {\n        return 1\n    }\n    return 0\n}\n",
-    );
-    temp.write(
-        "stdlib/packages/test/qlang.toml",
-        r#"
-[package]
-name = "std.test"
-
-[dependencies]
-"std.core" = "../core"
-"#,
-    );
-    temp.write(
-        "stdlib/packages/test/src/lib.ql",
-        "package std.test\n\npub fn expect_true(value: Bool) -> Int {\n    if value {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_false(value: Bool) -> Int {\n    if value {\n        return 1\n    }\n    return 0\n}\n\npub fn expect_bool_eq(actual: Bool, expected: Bool) -> Int {\n    if actual == expected {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_int_eq(actual: Int, expected: Int) -> Int {\n    if actual == expected {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_int_ne(actual: Int, unexpected: Int) -> Int {\n    if actual != unexpected {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_int_gt(actual: Int, threshold: Int) -> Int {\n    if actual > threshold {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_int_ge(actual: Int, threshold: Int) -> Int {\n    if actual >= threshold {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_int_lt(actual: Int, threshold: Int) -> Int {\n    if actual < threshold {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_int_le(actual: Int, threshold: Int) -> Int {\n    if actual <= threshold {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_zero(value: Int) -> Int {\n    if value == 0 {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_nonzero(value: Int) -> Int {\n    if value != 0 {\n        return 0\n    }\n    return 1\n}\n",
-    );
+fn write_repo_stdlib_fixture(temp: &TempDir, repo_root: &Path) -> PathBuf {
+    let source_root = repo_root.join("stdlib");
+    for relative in [
+        "qlang.toml",
+        "packages/core/qlang.toml",
+        "packages/core/src/lib.ql",
+        "packages/core/tests/smoke.ql",
+        "packages/test/qlang.toml",
+        "packages/test/src/lib.ql",
+        "packages/test/tests/smoke.ql",
+    ] {
+        let source_path = source_root.join(relative);
+        let contents = fs::read_to_string(&source_path).unwrap_or_else(|error| {
+            panic!("read stdlib fixture `{}`: {error}", source_path.display())
+        });
+        temp.write(&format!("stdlib/{relative}"), &contents);
+    }
     temp.path().join("stdlib")
 }
 
@@ -143,7 +128,7 @@ fn project_init_creates_package_scaffold_and_check_succeeds() {
 fn project_init_with_stdlib_creates_consuming_package_scaffold_and_check_succeeds() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-init-stdlib-package");
-    let stdlib_root = write_minimal_stdlib(&temp);
+    let stdlib_root = write_repo_stdlib_fixture(&temp, &workspace_root);
     let project_root = temp.path().join("demo-package");
 
     let mut init = ql_command(&workspace_root);
@@ -283,7 +268,7 @@ fn project_init_with_stdlib_creates_runnable_and_testable_package_scaffold() {
 
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-init-stdlib-package-run");
-    let stdlib_root = write_minimal_stdlib(&temp);
+    let stdlib_root = write_repo_stdlib_fixture(&temp, &workspace_root);
     let project_root = temp.path().join("demo-package");
 
     let mut init = ql_command(&workspace_root);
@@ -488,7 +473,7 @@ fn project_init_creates_workspace_scaffold_and_graph_succeeds() {
 fn project_init_with_stdlib_creates_consuming_workspace_scaffold_and_check_succeeds() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-init-stdlib-workspace");
-    let stdlib_root = write_minimal_stdlib(&temp);
+    let stdlib_root = write_repo_stdlib_fixture(&temp, &workspace_root);
     let project_root = temp.path().join("demo-workspace");
     let member_root = project_root.join("packages/app");
 
@@ -618,7 +603,7 @@ fn project_init_with_stdlib_creates_runnable_and_testable_workspace_scaffold() {
 
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-init-stdlib-workspace-run");
-    let stdlib_root = write_minimal_stdlib(&temp);
+    let stdlib_root = write_repo_stdlib_fixture(&temp, &workspace_root);
     let project_root = temp.path().join("demo-workspace");
 
     let mut init = ql_command(&workspace_root);
