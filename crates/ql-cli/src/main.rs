@@ -12361,15 +12361,60 @@ fn default_package_test_source() -> &'static str {
 }
 
 fn stdlib_package_source() -> &'static str {
-    "use std.core.clamp_int as clamp_int\n\npub fn run() -> Int {\n    return clamp_int(42, 0, 100)\n}\n"
+    r#"use std.core.clamp_int as clamp_int
+
+pub fn run() -> Int {
+    return clamp_int(42, 0, 100)
+}
+"#
 }
 
 fn stdlib_package_main_source() -> &'static str {
-    "use std.core.bool_to_int as bool_to_int\n\nfn main() -> Int {\n    return 1 - bool_to_int(true)\n}\n"
+    r#"use std.core.bool_to_int as bool_to_int
+
+fn main() -> Int {
+    return 1 - bool_to_int(true)
+}
+"#
 }
 
 fn stdlib_package_test_source() -> &'static str {
-    "use std.core.compare_int as compare_int\nuse std.core.in_range_int as in_range_int\nuse std.core.is_divisible_by_int as is_divisible_by_int\nuse std.core.is_even_int as is_even_int\nuse std.core.is_negative_int as is_negative_int\nuse std.core.is_odd_int as is_odd_int\nuse std.core.is_positive_int as is_positive_int\nuse std.core.max_int as max_int\nuse std.test.expect_bool_eq as expect_bool_eq\nuse std.test.expect_false as expect_false\nuse std.test.expect_int_eq as expect_int_eq\nuse std.test.expect_int_ge as expect_int_ge\nuse std.test.expect_int_gt as expect_int_gt\nuse std.test.expect_int_le as expect_int_le\nuse std.test.expect_int_lt as expect_int_lt\nuse std.test.expect_int_ne as expect_int_ne\nuse std.test.expect_nonzero as expect_nonzero\nuse std.test.expect_true as expect_true\nuse std.test.expect_zero as expect_zero\n\nfn main() -> Int {\n    let max_check = expect_int_eq(max_int(20, 22), 22)\n    let compare_check = expect_int_eq(compare_int(9, 3), 1)\n    let range_check = expect_true(in_range_int(22, 20, 22))\n    let divisible_check = expect_bool_eq(is_divisible_by_int(21, 7), true)\n    let zero_divisor_check = expect_false(is_divisible_by_int(21, 0))\n    let positive_check = expect_true(is_positive_int(22))\n    let negative_check = expect_true(is_negative_int(0 - 1))\n    let odd_check = expect_true(is_odd_int(21))\n    let even_check = expect_false(is_even_int(9))\n    let ne_check = expect_int_ne(20, 22)\n    let gt_check = expect_int_gt(22, 20)\n    let ge_check = expect_int_ge(22, 22)\n    let lt_check = expect_int_lt(20, 22)\n    let le_check = expect_int_le(22, 22)\n    let nonzero_check = expect_nonzero(1)\n\n    return expect_zero(max_check + compare_check + range_check + divisible_check + zero_divisor_check + positive_check + negative_check + odd_check + even_check + ne_check + gt_check + ge_check + lt_check + le_check + nonzero_check)\n}\n"
+    r#"use std.core.and_bool as and_bool
+use std.core.compare_int as compare_int
+use std.core.implies_bool as implies_bool
+use std.core.max_int as max_int
+use std.core.xor_bool as xor_bool
+use std.test.expect_bool_eq as expect_bool_eq
+use std.test.expect_bool_implies as expect_bool_implies
+use std.test.expect_false as expect_false
+use std.test.expect_int_between as expect_int_between
+use std.test.expect_int_divisible_by as expect_int_divisible_by
+use std.test.expect_int_eq as expect_int_eq
+use std.test.expect_int_even as expect_int_even
+use std.test.expect_int_exclusive_between as expect_int_exclusive_between
+use std.test.expect_int_odd as expect_int_odd
+use std.test.expect_int_outside as expect_int_outside
+use std.test.expect_true as expect_true
+use std.test.expect_zero as expect_zero
+
+fn main() -> Int {
+    let max_check = expect_int_eq(max_int(20, 22), 22)
+    let compare_check = expect_int_eq(compare_int(9, 3), 1)
+    let and_check = expect_false(and_bool(true, false))
+    let xor_check = expect_bool_eq(xor_bool(true, false), true)
+    let core_implies_check = expect_bool_eq(implies_bool(true, false), false)
+    let range_check = expect_int_between(22, 20, 22)
+    let exclusive_range_check = expect_int_exclusive_between(21, 20, 22)
+    let outside_check = expect_int_outside(19, 20, 22)
+    let divisible_check = expect_int_divisible_by(21, 7)
+    let even_check = expect_int_even(22)
+    let odd_check = expect_int_odd(21)
+    let test_implies_check = expect_bool_implies(false, false)
+    let true_check = expect_true(true)
+
+    return expect_zero(max_check + compare_check + and_check + xor_check + core_implies_check + range_check + exclusive_range_check + outside_check + divisible_check + even_check + odd_check + test_implies_check + true_check)
+}
+"#
 }
 
 fn resolve_project_workspace_member_command_request_root(path: &Path) -> Option<PathBuf> {

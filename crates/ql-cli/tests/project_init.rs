@@ -3,11 +3,11 @@ mod support;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use ql_driver::{discover_toolchain, ToolchainOptions};
+use ql_driver::{ToolchainOptions, discover_toolchain};
 use support::{
-    executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
+    TempDir, executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
     expect_file_exists, expect_silent_output, expect_stderr_contains, expect_stdout_contains_all,
-    expect_success, ql_command, read_normalized_file, run_command_capture, workspace_root, TempDir,
+    expect_success, ql_command, read_normalized_file, run_command_capture, workspace_root,
 };
 
 fn toolchain_available(context: &str) -> bool {
@@ -38,6 +38,45 @@ fn write_repo_stdlib_fixture(temp: &TempDir, repo_root: &Path) -> PathBuf {
         temp.write(&format!("stdlib/{relative}"), &contents);
     }
     temp.path().join("stdlib")
+}
+
+fn expected_stdlib_package_smoke_source() -> &'static str {
+    r#"use std.core.and_bool as and_bool
+use std.core.compare_int as compare_int
+use std.core.implies_bool as implies_bool
+use std.core.max_int as max_int
+use std.core.xor_bool as xor_bool
+use std.test.expect_bool_eq as expect_bool_eq
+use std.test.expect_bool_implies as expect_bool_implies
+use std.test.expect_false as expect_false
+use std.test.expect_int_between as expect_int_between
+use std.test.expect_int_divisible_by as expect_int_divisible_by
+use std.test.expect_int_eq as expect_int_eq
+use std.test.expect_int_even as expect_int_even
+use std.test.expect_int_exclusive_between as expect_int_exclusive_between
+use std.test.expect_int_odd as expect_int_odd
+use std.test.expect_int_outside as expect_int_outside
+use std.test.expect_true as expect_true
+use std.test.expect_zero as expect_zero
+
+fn main() -> Int {
+    let max_check = expect_int_eq(max_int(20, 22), 22)
+    let compare_check = expect_int_eq(compare_int(9, 3), 1)
+    let and_check = expect_false(and_bool(true, false))
+    let xor_check = expect_bool_eq(xor_bool(true, false), true)
+    let core_implies_check = expect_bool_eq(implies_bool(true, false), false)
+    let range_check = expect_int_between(22, 20, 22)
+    let exclusive_range_check = expect_int_exclusive_between(21, 20, 22)
+    let outside_check = expect_int_outside(19, 20, 22)
+    let divisible_check = expect_int_divisible_by(21, 7)
+    let even_check = expect_int_even(22)
+    let odd_check = expect_int_odd(21)
+    let test_implies_check = expect_bool_implies(false, false)
+    let true_check = expect_true(true)
+
+    return expect_zero(max_check + compare_check + and_check + xor_check + core_implies_check + range_check + exclusive_range_check + outside_check + divisible_check + even_check + odd_check + test_implies_check + true_check)
+}
+"#
 }
 
 #[test]
@@ -166,7 +205,7 @@ fn project_init_with_stdlib_creates_consuming_package_scaffold_and_check_succeed
             &project_root.join("tests/smoke.ql"),
             "stdlib package smoke test"
         ),
-        "use std.core.compare_int as compare_int\nuse std.core.in_range_int as in_range_int\nuse std.core.is_divisible_by_int as is_divisible_by_int\nuse std.core.is_even_int as is_even_int\nuse std.core.is_negative_int as is_negative_int\nuse std.core.is_odd_int as is_odd_int\nuse std.core.is_positive_int as is_positive_int\nuse std.core.max_int as max_int\nuse std.test.expect_bool_eq as expect_bool_eq\nuse std.test.expect_false as expect_false\nuse std.test.expect_int_eq as expect_int_eq\nuse std.test.expect_int_ge as expect_int_ge\nuse std.test.expect_int_gt as expect_int_gt\nuse std.test.expect_int_le as expect_int_le\nuse std.test.expect_int_lt as expect_int_lt\nuse std.test.expect_int_ne as expect_int_ne\nuse std.test.expect_nonzero as expect_nonzero\nuse std.test.expect_true as expect_true\nuse std.test.expect_zero as expect_zero\n\nfn main() -> Int {\n    let max_check = expect_int_eq(max_int(20, 22), 22)\n    let compare_check = expect_int_eq(compare_int(9, 3), 1)\n    let range_check = expect_true(in_range_int(22, 20, 22))\n    let divisible_check = expect_bool_eq(is_divisible_by_int(21, 7), true)\n    let zero_divisor_check = expect_false(is_divisible_by_int(21, 0))\n    let positive_check = expect_true(is_positive_int(22))\n    let negative_check = expect_true(is_negative_int(0 - 1))\n    let odd_check = expect_true(is_odd_int(21))\n    let even_check = expect_false(is_even_int(9))\n    let ne_check = expect_int_ne(20, 22)\n    let gt_check = expect_int_gt(22, 20)\n    let ge_check = expect_int_ge(22, 22)\n    let lt_check = expect_int_lt(20, 22)\n    let le_check = expect_int_le(22, 22)\n    let nonzero_check = expect_nonzero(1)\n\n    return expect_zero(max_check + compare_check + range_check + divisible_check + zero_divisor_check + positive_check + negative_check + odd_check + even_check + ne_check + gt_check + ge_check + lt_check + le_check + nonzero_check)\n}\n"
+        expected_stdlib_package_smoke_source()
     );
 
     let mut check = ql_command(&workspace_root);
@@ -556,7 +595,7 @@ fn project_init_with_stdlib_creates_consuming_workspace_scaffold_and_check_succe
             &member_root.join("tests/smoke.ql"),
             "stdlib workspace member smoke test"
         ),
-        "use std.core.compare_int as compare_int\nuse std.core.in_range_int as in_range_int\nuse std.core.is_divisible_by_int as is_divisible_by_int\nuse std.core.is_even_int as is_even_int\nuse std.core.is_negative_int as is_negative_int\nuse std.core.is_odd_int as is_odd_int\nuse std.core.is_positive_int as is_positive_int\nuse std.core.max_int as max_int\nuse std.test.expect_bool_eq as expect_bool_eq\nuse std.test.expect_false as expect_false\nuse std.test.expect_int_eq as expect_int_eq\nuse std.test.expect_int_ge as expect_int_ge\nuse std.test.expect_int_gt as expect_int_gt\nuse std.test.expect_int_le as expect_int_le\nuse std.test.expect_int_lt as expect_int_lt\nuse std.test.expect_int_ne as expect_int_ne\nuse std.test.expect_nonzero as expect_nonzero\nuse std.test.expect_true as expect_true\nuse std.test.expect_zero as expect_zero\n\nfn main() -> Int {\n    let max_check = expect_int_eq(max_int(20, 22), 22)\n    let compare_check = expect_int_eq(compare_int(9, 3), 1)\n    let range_check = expect_true(in_range_int(22, 20, 22))\n    let divisible_check = expect_bool_eq(is_divisible_by_int(21, 7), true)\n    let zero_divisor_check = expect_false(is_divisible_by_int(21, 0))\n    let positive_check = expect_true(is_positive_int(22))\n    let negative_check = expect_true(is_negative_int(0 - 1))\n    let odd_check = expect_true(is_odd_int(21))\n    let even_check = expect_false(is_even_int(9))\n    let ne_check = expect_int_ne(20, 22)\n    let gt_check = expect_int_gt(22, 20)\n    let ge_check = expect_int_ge(22, 22)\n    let lt_check = expect_int_lt(20, 22)\n    let le_check = expect_int_le(22, 22)\n    let nonzero_check = expect_nonzero(1)\n\n    return expect_zero(max_check + compare_check + range_check + divisible_check + zero_divisor_check + positive_check + negative_check + odd_check + even_check + ne_check + gt_check + ge_check + lt_check + le_check + nonzero_check)\n}\n"
+        expected_stdlib_package_smoke_source()
     );
 
     let mut check = ql_command(&workspace_root);
