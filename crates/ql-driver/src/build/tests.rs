@@ -3296,6 +3296,50 @@ fn add_two(value: Int) -> Int {
     }
 
     #[test]
+    fn build_file_replaces_existing_static_library_before_archiving() {
+        let dir = TestDir::new("ql-driver-staticlib-replace");
+        let source = dir.write(
+            "math.ql",
+            r#"
+fn answer() -> Int {
+    return 42
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/math.lib"
+        } else {
+            "artifacts/libmath.a"
+        });
+        dir.write(
+            if cfg!(windows) {
+                "artifacts/math.lib"
+            } else {
+                "artifacts/libmath.a"
+            },
+            "stale",
+        );
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_append_archiver_invocation(&dir)),
+            },
+        };
+
+        let artifact =
+            build_file(&source, &options).expect("static library rebuild should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "fresh-staticlib");
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_extern_c_calls() {
         let dir = TestDir::new("ql-driver-staticlib-extern");
         let source = dir.write(
@@ -20809,6 +20853,49 @@ Set-Content -Path $out -NoNewline -Value "mock-staticlib"
                 "mock-archiver-success.sh",
                 r#"out="$2"
 printf 'mock-staticlib' > "$out"
+"#,
+            );
+            ArchiverInvocation {
+                program: ProgramInvocation::new("/bin/sh")
+                    .with_args_prefix(vec![script.display().to_string()]),
+                flavor: ArchiverFlavor::Ar,
+            }
+        }
+    }
+
+    fn mock_append_archiver_invocation(dir: &TestDir) -> ArchiverInvocation {
+        if cfg!(windows) {
+            let script = dir.write(
+                "mock-archiver-append.ps1",
+                r#"
+$ErrorActionPreference = 'Stop'
+$out = $null
+for ($i = 0; $i -lt $args.Count; $i++) {
+    if ($args[$i] -like '/OUT:*') {
+        $out = $args[$i].Substring(5)
+    }
+}
+if ($null -eq $out) {
+    Write-Error "missing /OUT"
+    exit 1
+}
+Add-Content -Path $out -NoNewline -Value "fresh-staticlib"
+"#,
+            );
+            ArchiverInvocation {
+                program: ProgramInvocation::new("powershell.exe").with_args_prefix(vec![
+                    "-ExecutionPolicy".to_owned(),
+                    "Bypass".to_owned(),
+                    "-File".to_owned(),
+                    script.display().to_string(),
+                ]),
+                flavor: ArchiverFlavor::Lib,
+            }
+        } else {
+            let script = dir.write(
+                "mock-archiver-append.sh",
+                r#"out="$2"
+printf 'fresh-staticlib' >> "$out"
 "#,
             );
             ArchiverInvocation {

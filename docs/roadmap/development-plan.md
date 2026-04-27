@@ -116,15 +116,15 @@
 
 完成标准：
 
-- `stdlib/packages/core` 能被 `ql check/build/test` 验证，并提供第一批稳定基础函数。（已落地首批整数/布尔 helper）
-- `stdlib/packages/test` 能提供 smoke-test 友好的断言辅助。（已落地 `expect_true` / `expect_int_eq`）
-- 用户项目模板能依赖 `std.core` / `std.test` 并通过 `ql test`。（已落地 `ql project init --stdlib <path>` 生成路径）
+- `stdlib/packages/core` 能被 `ql check/build/test` 验证，并提供第一批稳定基础函数。（已落地整数/布尔 helper，含符号、奇偶和范围检查）
+- `stdlib/packages/test` 能提供 smoke-test 友好的断言辅助。（已落地 true/false、int equality、zero/nonzero 断言）
+- 用户项目模板能依赖 `std.core` / `std.test` 并通过 `ql test`。（已落地 `ql project init --stdlib <path>` 的 package 与 workspace member 生成路径）
 - `stdlib` API 只使用当前稳定语言面；泛型、IO、字符串、自动 prelude 和 registry 发布继续后置。
 
 ## 下一轮（已排定）
 
-- stdlib：把外部 `D:\Projects\qlang-template` 同步到 `ql project init --stdlib` 生成形态，继续扩 smoke-test 友好的基础 helper。
-- backend：继续扩 direct local dependency 下真实项目高频的 public value/type/member 调用面；本轮已修 `ql test` 对“同时被选中又作为依赖”的 workspace member 预构建阻塞，后续仍优先修 `stdlib` / 模板暴露的真实阻塞。
+- stdlib：继续扩只依赖稳定语言面的基础 helper，并让 package / workspace 初始化模板优先覆盖真实 consumer 路径。
+- backend：继续扩 direct local dependency 下真实项目高频的 public value/type/member 调用面；本轮已修 staticlib 重复归档导致的 duplicate symbol，后续仍优先修 `stdlib` / 模板暴露的真实阻塞。
 - LSP：`textDocument/implementation` 的已完成基线已明显超出这里最初记录，当前准确支持面以 `current-supported-surface.md` 为准；继续扩更宽的 implementation index，但不压过 P0 stdlib / backend 阻塞项。
 - 文档：继续只保留入口结论、支持边界和最近 checkpoint；不再追加长流水账。
 

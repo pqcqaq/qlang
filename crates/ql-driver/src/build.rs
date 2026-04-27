@@ -660,6 +660,18 @@ fn build_static_library_file(
         return Err(toolchain_failure(error, vec![intermediate_ir]));
     }
 
+    match fs::remove_file(output_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            let _ = fs::remove_file(&intermediate_object);
+            return Err(BuildError::Io {
+                path: output_path.to_path_buf(),
+                error,
+            });
+        }
+    }
+
     if let Err(error) =
         toolchain.archive_object_to_static_library(&intermediate_object, output_path)
     {

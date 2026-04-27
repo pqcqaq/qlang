@@ -12346,7 +12346,7 @@ fn stdlib_package_main_source() -> &'static str {
 }
 
 fn stdlib_package_test_source() -> &'static str {
-    "use std.core.max_int as max_int\nuse std.test.expect_int_eq as expect_int_eq\n\nfn main() -> Int {\n    return expect_int_eq(max_int(20, 22), 22)\n}\n"
+    "use std.core.in_range_int as in_range_int\nuse std.core.is_even_int as is_even_int\nuse std.core.is_odd_int as is_odd_int\nuse std.core.max_int as max_int\nuse std.test.expect_false as expect_false\nuse std.test.expect_int_eq as expect_int_eq\nuse std.test.expect_nonzero as expect_nonzero\nuse std.test.expect_true as expect_true\nuse std.test.expect_zero as expect_zero\n\nfn main() -> Int {\n    let max_check = expect_int_eq(max_int(20, 22), 22)\n    let range_check = expect_true(in_range_int(22, 20, 22))\n    let odd_check = expect_true(is_odd_int(21))\n    let even_check = expect_false(is_even_int(9))\n    let nonzero_check = expect_nonzero(1)\n\n    return expect_zero(max_check + range_check + odd_check + even_check + nonzero_check)\n}\n"
 }
 
 fn resolve_project_workspace_member_command_request_root(path: &Path) -> Option<PathBuf> {

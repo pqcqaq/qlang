@@ -102,8 +102,8 @@
 
 ## 下一轮
 
-- stdlib：普通 Qlang package 形态的 `stdlib` 已开始落地，当前已有 `std.core` / `std.test` 最小 API；`ql project init --stdlib <path>` 已能生成本地依赖消费模板。下一步同步外部 `D:\Projects\qlang-template`，并继续扩 smoke-test 友好的基础 helper。
-- build/backend：继续优先补真实项目里高频的 direct local dependency value/type/member 调用面；本轮已修 `ql test` 对“同时被选中又作为依赖”的 workspace member 预构建阻塞，后续若 `stdlib` 继续暴露阻塞项，优先修阻塞项而不是扩新语法。
+- stdlib：普通 Qlang package 形态的 `stdlib` 已开始落地，当前已有 `std.core` / `std.test` 的基础整数/布尔 helper 与 smoke-test 断言；`ql project init --stdlib <path>` 已能生成 package 与 workspace member 的本地依赖消费模板。下一步继续扩只依赖稳定语言面的基础 helper。
+- build/backend：继续优先补真实项目里高频的 direct local dependency value/type/member 调用面；本轮已修 staticlib 重复归档导致的 duplicate symbol，后续若 `stdlib` 继续暴露阻塞项，优先修阻塞项而不是扩新语法。
 - LSP：继续把 `textDocument/implementation` 从已完成的 trait/type surface、workspace root/source-backed type definition surface、workspace root/source-backed concrete / trait-typed method call、source-backed dependency concrete / trait-typed method call、dependency non-import type-driven positions、trait method definition，以及 broken current-buffer concrete / trait-typed method call / broken-source open dependency member-type surface，扩到更宽的 implementation index；更广的全局聚合继续后置。
 - 文档：入口页继续只保留结论、边界和最近 checkpoint，不再追加流水账。
 

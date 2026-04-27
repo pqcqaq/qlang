@@ -36,7 +36,7 @@ name = "std.core"
     );
     temp.write(
         "stdlib/packages/core/src/lib.ql",
-        "package std.core\n\npub fn max_int(left: Int, right: Int) -> Int {\n    if left > right {\n        return left\n    }\n    return right\n}\n\npub fn clamp_int(value: Int, low: Int, high: Int) -> Int {\n    if value < low {\n        return low\n    }\n    if value > high {\n        return high\n    }\n    return value\n}\n\npub fn bool_to_int(value: Bool) -> Int {\n    if value {\n        return 1\n    }\n    return 0\n}\n",
+        "package std.core\n\npub fn max_int(left: Int, right: Int) -> Int {\n    if left > right {\n        return left\n    }\n    return right\n}\n\npub fn clamp_int(value: Int, low: Int, high: Int) -> Int {\n    if value < low {\n        return low\n    }\n    if value > high {\n        return high\n    }\n    return value\n}\n\npub fn is_even_int(value: Int) -> Bool {\n    return value % 2 == 0\n}\n\npub fn is_odd_int(value: Int) -> Bool {\n    return value % 2 != 0\n}\n\npub fn in_range_int(value: Int, low: Int, high: Int) -> Bool {\n    return value >= low && value <= high\n}\n\npub fn bool_to_int(value: Bool) -> Int {\n    if value {\n        return 1\n    }\n    return 0\n}\n",
     );
     temp.write(
         "stdlib/packages/test/qlang.toml",
@@ -50,7 +50,7 @@ name = "std.test"
     );
     temp.write(
         "stdlib/packages/test/src/lib.ql",
-        "package std.test\n\npub fn expect_int_eq(actual: Int, expected: Int) -> Int {\n    if actual == expected {\n        return 0\n    }\n    return 1\n}\n",
+        "package std.test\n\npub fn expect_true(value: Bool) -> Int {\n    if value {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_false(value: Bool) -> Int {\n    if value {\n        return 1\n    }\n    return 0\n}\n\npub fn expect_int_eq(actual: Int, expected: Int) -> Int {\n    if actual == expected {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_zero(value: Int) -> Int {\n    if value == 0 {\n        return 0\n    }\n    return 1\n}\n\npub fn expect_nonzero(value: Int) -> Int {\n    if value != 0 {\n        return 0\n    }\n    return 1\n}\n",
     );
     temp.path().join("stdlib")
 }
@@ -181,7 +181,7 @@ fn project_init_with_stdlib_creates_consuming_package_scaffold_and_check_succeed
             &project_root.join("tests/smoke.ql"),
             "stdlib package smoke test"
         ),
-        "use std.core.max_int as max_int\nuse std.test.expect_int_eq as expect_int_eq\n\nfn main() -> Int {\n    return expect_int_eq(max_int(20, 22), 22)\n}\n"
+        "use std.core.in_range_int as in_range_int\nuse std.core.is_even_int as is_even_int\nuse std.core.is_odd_int as is_odd_int\nuse std.core.max_int as max_int\nuse std.test.expect_false as expect_false\nuse std.test.expect_int_eq as expect_int_eq\nuse std.test.expect_nonzero as expect_nonzero\nuse std.test.expect_true as expect_true\nuse std.test.expect_zero as expect_zero\n\nfn main() -> Int {\n    let max_check = expect_int_eq(max_int(20, 22), 22)\n    let range_check = expect_true(in_range_int(22, 20, 22))\n    let odd_check = expect_true(is_odd_int(21))\n    let even_check = expect_false(is_even_int(9))\n    let nonzero_check = expect_nonzero(1)\n\n    return expect_zero(max_check + range_check + odd_check + even_check + nonzero_check)\n}\n"
     );
 
     let mut check = ql_command(&workspace_root);
@@ -479,6 +479,132 @@ fn project_init_creates_workspace_scaffold_and_graph_succeeds() {
             "  - member: packages/app",
             "    package: app",
             "    status: missing",
+        ],
+    )
+    .unwrap();
+}
+
+#[test]
+fn project_init_with_stdlib_creates_consuming_workspace_scaffold_and_check_succeeds() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-init-stdlib-workspace");
+    let stdlib_root = write_minimal_stdlib(&temp);
+    let project_root = temp.path().join("demo-workspace");
+    let member_root = project_root.join("packages/app");
+
+    let mut init = ql_command(&workspace_root);
+    init.args([
+        "project",
+        "init",
+        &project_root.to_string_lossy(),
+        "--workspace",
+        "--name",
+        "app",
+        "--stdlib",
+        &stdlib_root.to_string_lossy(),
+    ]);
+    let output = run_command_capture(&mut init, "`ql project init --workspace --stdlib`");
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-workspace",
+        "stdlib workspace init",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-workspace",
+        "stdlib workspace init",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "project-init-stdlib-workspace",
+        &stdout,
+        &[
+            &format!(
+                "created: {}",
+                project_root
+                    .join("qlang.toml")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+            &format!(
+                "created: {}",
+                member_root
+                    .join("qlang.toml")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+            &format!(
+                "created: {}",
+                member_root
+                    .join("tests/smoke.ql")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("qlang.toml"),
+            "stdlib workspace manifest"
+        ),
+        "[workspace]\nmembers = [\"packages/app\"]\n"
+    );
+    assert_eq!(
+        read_normalized_file(
+            &member_root.join("qlang.toml"),
+            "stdlib workspace member manifest"
+        ),
+        "[package]\nname = \"app\"\n\n[dependencies]\n\"std.core\" = \"../../../stdlib/packages/core\"\n\"std.test\" = \"../../../stdlib/packages/test\"\n"
+    );
+    assert_eq!(
+        read_normalized_file(
+            &member_root.join("src/lib.ql"),
+            "stdlib workspace member source"
+        ),
+        "use std.core.clamp_int as clamp_int\n\npub fn run() -> Int {\n    return clamp_int(42, 0, 100)\n}\n"
+    );
+    assert_eq!(
+        read_normalized_file(
+            &member_root.join("tests/smoke.ql"),
+            "stdlib workspace member smoke test"
+        ),
+        "use std.core.in_range_int as in_range_int\nuse std.core.is_even_int as is_even_int\nuse std.core.is_odd_int as is_odd_int\nuse std.core.max_int as max_int\nuse std.test.expect_false as expect_false\nuse std.test.expect_int_eq as expect_int_eq\nuse std.test.expect_nonzero as expect_nonzero\nuse std.test.expect_true as expect_true\nuse std.test.expect_zero as expect_zero\n\nfn main() -> Int {\n    let max_check = expect_int_eq(max_int(20, 22), 22)\n    let range_check = expect_true(in_range_int(22, 20, 22))\n    let odd_check = expect_true(is_odd_int(21))\n    let even_check = expect_false(is_even_int(9))\n    let nonzero_check = expect_nonzero(1)\n\n    return expect_zero(max_check + range_check + odd_check + even_check + nonzero_check)\n}\n"
+    );
+
+    let mut check = ql_command(&workspace_root);
+    check.args([
+        "check",
+        "--sync-interfaces",
+        &project_root.to_string_lossy(),
+    ]);
+    let output = run_command_capture(&mut check, "`ql check --sync-interfaces` stdlib workspace");
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-workspace",
+        "check initialized stdlib workspace",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-workspace",
+        "check initialized stdlib workspace",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "project-init-stdlib-workspace",
+        &stdout.replace('\\', "/"),
+        &[
+            &format!(
+                "ok: {}",
+                member_root
+                    .join("src/lib.ql")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+            "loaded interface:",
         ],
     )
     .unwrap();

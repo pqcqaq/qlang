@@ -31,6 +31,28 @@ pub fn abs_int(value: Int) -> Int {
     return value
 }
 
+pub fn sign_int(value: Int) -> Int {
+    if value < 0 {
+        return 0 - 1
+    }
+    if value > 0 {
+        return 1
+    }
+    return 0
+}
+
+pub fn is_even_int(value: Int) -> Bool {
+    return value % 2 == 0
+}
+
+pub fn is_odd_int(value: Int) -> Bool {
+    return value % 2 != 0
+}
+
+pub fn in_range_int(value: Int, low: Int, high: Int) -> Bool {
+    return value >= low && value <= high
+}
+
 pub fn bool_to_int(value: Bool) -> Int {
     if value {
         return 1
