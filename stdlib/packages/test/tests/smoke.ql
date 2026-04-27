@@ -9,6 +9,8 @@ use std.core.in_range_int as in_range_int
 use std.core.is_divisible_by_int as is_divisible_by_int
 use std.core.is_even_int as is_even_int
 use std.core.is_negative_int as is_negative_int
+use std.core.is_nonnegative_int as is_nonnegative_int
+use std.core.is_nonpositive_int as is_nonpositive_int
 use std.core.is_nonzero_int as is_nonzero_int
 use std.core.is_odd_int as is_odd_int
 use std.core.is_positive_int as is_positive_int
@@ -58,7 +60,9 @@ fn main() -> Int {
     let zero_result = expect_bool_eq(is_zero_int(0), true)
     let nonzero_result = expect_bool_eq(is_nonzero_int(5), true)
     let positive_result = expect_bool_eq(is_positive_int(5), true)
+    let nonnegative_result = expect_bool_eq(is_nonnegative_int(0), true)
     let negative_result = expect_bool_eq(is_negative_int(0 - 5), true)
+    let nonpositive_result = expect_bool_eq(is_nonpositive_int(0), true)
     let divisible_result = expect_bool_eq(is_divisible_by_int(21, 7), true)
     let zero_divisor_result = expect_bool_eq(is_divisible_by_int(21, 0), false)
     let not_result = expect_bool_eq(not_bool(false), true)
@@ -67,5 +71,5 @@ fn main() -> Int {
     let xor_result = expect_bool_eq(xor_bool(true, false), true)
     let implies_result = expect_bool_eq(implies_bool(true, false), false)
 
-    return max_result + min_result + clamp_low + clamp_mid + clamp_high + abs_result + bool_result + sign_negative + sign_zero + sign_positive + compare_less + compare_equal + compare_greater + expect_int_eq(even_result, 1) + expect_int_eq(odd_result, 1) + expect_int_eq(range_mid, 1) + expect_int_eq(range_low, 0) + exclusive_mid + exclusive_edge + zero_result + nonzero_result + positive_result + negative_result + divisible_result + zero_divisor_result + not_result + and_result + or_result + xor_result + implies_result
+    return max_result + min_result + clamp_low + clamp_mid + clamp_high + abs_result + bool_result + sign_negative + sign_zero + sign_positive + compare_less + compare_equal + compare_greater + expect_int_eq(even_result, 1) + expect_int_eq(odd_result, 1) + expect_int_eq(range_mid, 1) + expect_int_eq(range_low, 0) + exclusive_mid + exclusive_edge + zero_result + nonzero_result + positive_result + nonnegative_result + negative_result + nonpositive_result + divisible_result + zero_divisor_result + not_result + and_result + or_result + xor_result + implies_result
 }

@@ -63,8 +63,16 @@ pub fn is_positive_int(value: Int) -> Bool {
     return value > 0
 }
 
+pub fn is_nonnegative_int(value: Int) -> Bool {
+    return value >= 0
+}
+
 pub fn is_negative_int(value: Int) -> Bool {
     return value < 0
+}
+
+pub fn is_nonpositive_int(value: Int) -> Bool {
+    return value <= 0
 }
 
 pub fn is_even_int(value: Int) -> Bool {

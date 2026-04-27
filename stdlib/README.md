@@ -4,8 +4,8 @@
 
 Current packages:
 
-- `std.core`: integer and boolean helpers such as `max_int`, `min_int`, `clamp_int`, `abs_int`, `sign_int`, `compare_int`, `is_zero_int`, `is_nonzero_int`, `is_positive_int`, `is_negative_int`, `is_even_int`, `is_odd_int`, `in_range_int`, `in_exclusive_range_int`, `is_divisible_by_int`, `bool_to_int`, `not_bool`, `and_bool`, `or_bool`, `xor_bool`, and `implies_bool`.
-- `std.test`: smoke-test helpers `expect_true`, `expect_false`, `expect_bool_eq`, `expect_int_eq`, `expect_int_ne`, `expect_int_gt`, `expect_int_ge`, `expect_int_lt`, `expect_int_le`, `expect_zero`, `expect_nonzero`, `expect_int_between`, `expect_int_exclusive_between`, `expect_int_outside`, `expect_int_even`, `expect_int_odd`, `expect_int_divisible_by`, and `expect_bool_implies`; helpers return `0` for pass and non-zero for failure.
+- `std.core`: integer and boolean helpers such as `max_int`, `min_int`, `clamp_int`, `abs_int`, `sign_int`, `compare_int`, `is_zero_int`, `is_nonzero_int`, `is_positive_int`, `is_nonnegative_int`, `is_negative_int`, `is_nonpositive_int`, `is_even_int`, `is_odd_int`, `in_range_int`, `in_exclusive_range_int`, `is_divisible_by_int`, `bool_to_int`, `not_bool`, `and_bool`, `or_bool`, `xor_bool`, and `implies_bool`.
+- `std.test`: smoke-test helpers `expect_true`, `expect_false`, `expect_bool_eq`, `expect_int_eq`, `expect_int_ne`, `expect_int_gt`, `expect_int_ge`, `expect_int_lt`, `expect_int_le`, `expect_zero`, `expect_nonzero`, `expect_int_between`, `expect_int_exclusive_between`, `expect_int_outside`, `expect_int_even`, `expect_int_odd`, `expect_int_divisible_by`, `expect_int_positive`, `expect_int_negative`, `expect_int_nonnegative`, `expect_int_nonpositive`, and `expect_bool_implies`; helpers return `0` for pass and non-zero for failure.
 
 Use local dependencies with quoted TOML keys because the package names contain dots:
 

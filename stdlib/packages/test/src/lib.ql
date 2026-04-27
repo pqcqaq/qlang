@@ -5,7 +5,11 @@ use std.core.in_exclusive_range_int as in_exclusive_range_int
 use std.core.in_range_int as in_range_int
 use std.core.is_divisible_by_int as is_divisible_by_int
 use std.core.is_even_int as is_even_int
+use std.core.is_negative_int as is_negative_int
+use std.core.is_nonnegative_int as is_nonnegative_int
+use std.core.is_nonpositive_int as is_nonpositive_int
 use std.core.is_odd_int as is_odd_int
+use std.core.is_positive_int as is_positive_int
 use std.core.not_bool as not_bool
 
 pub fn expect_true(value: Bool) -> Int {
@@ -122,6 +126,34 @@ pub fn expect_int_odd(actual: Int) -> Int {
 
 pub fn expect_int_divisible_by(actual: Int, divisor: Int) -> Int {
     if is_divisible_by_int(actual, divisor) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_positive(actual: Int) -> Int {
+    if is_positive_int(actual) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_negative(actual: Int) -> Int {
+    if is_negative_int(actual) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_nonnegative(actual: Int) -> Int {
+    if is_nonnegative_int(actual) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_nonpositive(actual: Int) -> Int {
+    if is_nonpositive_int(actual) {
         return 0
     }
     return 1

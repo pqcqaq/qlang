@@ -12392,8 +12392,12 @@ use std.test.expect_int_divisible_by as expect_int_divisible_by
 use std.test.expect_int_eq as expect_int_eq
 use std.test.expect_int_even as expect_int_even
 use std.test.expect_int_exclusive_between as expect_int_exclusive_between
+use std.test.expect_int_negative as expect_int_negative
+use std.test.expect_int_nonnegative as expect_int_nonnegative
+use std.test.expect_int_nonpositive as expect_int_nonpositive
 use std.test.expect_int_odd as expect_int_odd
 use std.test.expect_int_outside as expect_int_outside
+use std.test.expect_int_positive as expect_int_positive
 use std.test.expect_true as expect_true
 use std.test.expect_zero as expect_zero
 
@@ -12409,6 +12413,10 @@ fn main() -> Int {
     let divisible_check = expect_int_divisible_by(21, 7)
     let even_check = expect_int_even(22)
     let odd_check = expect_int_odd(21)
+    let positive_check = expect_int_positive(22)
+    let negative_check = expect_int_negative(0 - 1)
+    let nonnegative_check = expect_int_nonnegative(0)
+    let nonpositive_check = expect_int_nonpositive(0)
     let test_implies_check = expect_bool_implies(false, false)
     let true_check = expect_true(true)
     let failed_range_check = expect_int_eq(expect_int_between(19, 20, 22), 1)
@@ -12417,9 +12425,13 @@ fn main() -> Int {
     let failed_divisible_check = expect_int_eq(expect_int_divisible_by(21, 0), 1)
     let failed_even_check = expect_int_eq(expect_int_even(21), 1)
     let failed_odd_check = expect_int_eq(expect_int_odd(22), 1)
+    let failed_positive_check = expect_int_eq(expect_int_positive(0), 1)
+    let failed_negative_check = expect_int_eq(expect_int_negative(0), 1)
+    let failed_nonnegative_check = expect_int_eq(expect_int_nonnegative(0 - 1), 1)
+    let failed_nonpositive_check = expect_int_eq(expect_int_nonpositive(1), 1)
     let failed_implies_check = expect_int_eq(expect_bool_implies(true, false), 1)
 
-    return expect_zero(max_check + compare_check + and_check + xor_check + core_implies_check + range_check + exclusive_range_check + outside_check + divisible_check + even_check + odd_check + test_implies_check + true_check + failed_range_check + failed_exclusive_range_check + failed_outside_check + failed_divisible_check + failed_even_check + failed_odd_check + failed_implies_check)
+    return expect_zero(max_check + compare_check + and_check + xor_check + core_implies_check + range_check + exclusive_range_check + outside_check + divisible_check + even_check + odd_check + positive_check + negative_check + nonnegative_check + nonpositive_check + test_implies_check + true_check + failed_range_check + failed_exclusive_range_check + failed_outside_check + failed_divisible_check + failed_even_check + failed_odd_check + failed_positive_check + failed_negative_check + failed_nonnegative_check + failed_nonpositive_check + failed_implies_check)
 }
 "#
 }
