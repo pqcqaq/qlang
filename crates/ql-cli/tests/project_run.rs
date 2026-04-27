@@ -1476,6 +1476,98 @@ dep = "../dep"
 }
 
 #[test]
+fn run_package_path_supports_direct_dependency_public_type_alias_functions() {
+    if !toolchain_available("`ql run` dependency public type alias function test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-dependency-public-type-alias-function");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source tree");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+    temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        "pub type Count = Int\npub type Score = Count\npub fn pass_score(value: Score) -> Score { return value }\npub fn exit_code() -> Int { return 7 }\n",
+    );
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "app/src/main.ql",
+        "use dep.exit_code as exit_code\nuse dep.pass_score as pass_score\n\nfn main() -> Int {\n    return exit_code()\n}\n",
+    );
+
+    let interface_output = dep_root.join("dep.qi");
+    let dependency_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let executable_output = executable_output_path(&project_root.join("target/ql/debug"), "main");
+    assert!(
+        !interface_output.exists(),
+        "dependency interface should start missing for direct dependency public type alias function test"
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql run` dependency public type alias function",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-dependency-public-type-alias-function",
+        "package path run with dependency public type alias function",
+        &output,
+        7,
+    )
+    .expect("package-path `ql run` should support direct dependency public type alias functions");
+    expect_silent_output(
+        "project-run-dependency-public-type-alias-function",
+        "package path run with dependency public type alias function",
+        &stdout,
+        &stderr,
+    )
+    .expect("dependency public type alias function run should leave stdout/stderr to the program");
+    expect_file_exists(
+        "project-run-dependency-public-type-alias-function",
+        &interface_output,
+        "synced dependency interface",
+        "package path run with dependency public type alias function",
+    )
+    .expect("dependency public type alias function run should emit the dependency interface");
+    expect_file_exists(
+        "project-run-dependency-public-type-alias-function",
+        &dependency_output,
+        "dependency package artifact",
+        "package path run with dependency public type alias function",
+    )
+    .expect(
+        "dependency public type alias function run should also build the dependency package artifact",
+    );
+    expect_file_exists(
+        "project-run-dependency-public-type-alias-function",
+        &executable_output,
+        "package executable",
+        "package path run with dependency public type alias function",
+    )
+    .expect("dependency public type alias function run should still emit the executable artifact");
+}
+
+#[test]
 fn run_package_path_supports_direct_dependency_public_struct_methods() {
     if !toolchain_available("`ql run` dependency public struct method test") {
         return;

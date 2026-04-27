@@ -218,6 +218,111 @@ dep = "../dep"
 }
 
 #[test]
+fn test_package_path_supports_direct_dependency_public_type_alias_functions() {
+    if !toolchain_available("`ql test` dependency public type alias function test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-dependency-public-type-alias-function");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source tree");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+
+    let dep_manifest = temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        "pub type Count = Int\npub type Score = Count\npub fn pass_score(value: Score) -> Score { return value }\npub fn exit_code() -> Int { return 7 }\n",
+    );
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    temp.write(
+        "app/tests/smoke.ql",
+        "use dep.exit_code as exit_code\nuse dep.pass_score as pass_score\n\nfn main() -> Int {\n    return exit_code() - 7\n}\n",
+    );
+
+    let interface_output = dep_root.join("dep.qi");
+    let dependency_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+    assert!(
+        !interface_output.exists(),
+        "dependency interface should start missing for dependency public type alias function test"
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test` dependency public type alias function",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-dependency-public-type-alias-function",
+        "package dependency public type alias function test",
+        &output,
+    )
+    .expect("package-path `ql test` should support direct dependency public type alias functions");
+    expect_empty_stderr(
+        "project-test-dependency-public-type-alias-function",
+        "package dependency public type alias function test",
+        &stderr,
+    )
+    .expect("dependency public type alias function test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-dependency-public-type-alias-function",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("dependency public type alias function test should report one passing smoke test");
+    expect_file_exists(
+        "project-test-dependency-public-type-alias-function",
+        &interface_output,
+        "synced dependency interface",
+        "package dependency public type alias function test",
+    )
+    .expect("dependency public type alias function test should emit the dependency interface");
+    expect_file_exists(
+        "project-test-dependency-public-type-alias-function",
+        &dependency_output,
+        "dependency package artifact",
+        "package dependency public type alias function test",
+    )
+    .expect(
+        "dependency public type alias function test should also build the dependency package artifact",
+    );
+    expect_file_exists(
+        "project-test-dependency-public-type-alias-function",
+        &smoke_output,
+        "smoke test executable",
+        "package dependency public type alias function test",
+    )
+    .expect("dependency public type alias function test should emit the smoke test executable");
+    assert!(
+        dep_manifest.exists(),
+        "dependency manifest should remain present after dependency public type alias function test"
+    );
+}
+
+#[test]
 fn test_workspace_path_prebuilds_selected_members_that_are_also_dependencies() {
     if !toolchain_available("`ql test` selected dependency member test") {
         return;

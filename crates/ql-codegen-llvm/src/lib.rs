@@ -7804,7 +7804,7 @@ impl<'a> ModuleEmitter<'a> {
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(format!("{{ {} }}", field_types.join(", ")))
             }
-            Ty::Item { item_id, .. } => match &self.input.hir.item(*item_id).kind {
+            Ty::Item { item_id, args, .. } => match &self.input.hir.item(*item_id).kind {
                 ItemKind::Struct(_) => {
                     let fields = self.struct_field_lowerings(ty, span, context)?;
                     Ok(format!(
@@ -7817,6 +7817,10 @@ impl<'a> ModuleEmitter<'a> {
                     ))
                 }
                 ItemKind::Enum(_) => Ok(self.enum_lowering(ty, span, context)?.llvm_ty),
+                ItemKind::TypeAlias(alias) if args.is_empty() => {
+                    let target_ty = lower_type(self.input.hir, self.input.resolution, alias.ty);
+                    self.lower_llvm_type(&target_ty, span, context)
+                }
                 _ => lower_llvm_type(ty, span, context),
             },
             _ => lower_llvm_type(ty, span, context),
@@ -7859,7 +7863,7 @@ impl<'a> ModuleEmitter<'a> {
                     align,
                 })
             }
-            Ty::Item { item_id, .. } => match &self.input.hir.item(*item_id).kind {
+            Ty::Item { item_id, args, .. } => match &self.input.hir.item(*item_id).kind {
                 ItemKind::Struct(_) => {
                     // Keep struct layout recursive so async payloads and projected reads share
                     // one aggregate contract instead of growing per-shape special cases.
@@ -7877,6 +7881,10 @@ impl<'a> ModuleEmitter<'a> {
                     })
                 }
                 ItemKind::Enum(_) => Ok(self.enum_lowering(ty, span, context)?.layout),
+                ItemKind::TypeAlias(alias) if args.is_empty() => {
+                    let target_ty = lower_type(self.input.hir, self.input.resolution, alias.ty);
+                    self.loadable_abi_layout(&target_ty, span, context)
+                }
                 _ => {
                     let layout = scalar_abi_layout(ty, span, context)?;
                     Ok(LoadableAbiLayout {

@@ -8291,6 +8291,7 @@ struct DependencyPublicTypeBridgeCandidate<'a> {
 enum DependencyPublicTypeDecl<'a> {
     Struct(&'a ql_ast::StructDecl),
     Enum(&'a ql_ast::EnumDecl),
+    TypeAlias(&'a ql_ast::TypeAliasDecl),
 }
 
 impl<'a> DependencyPublicTypeDecl<'a> {
@@ -8298,6 +8299,7 @@ impl<'a> DependencyPublicTypeDecl<'a> {
         match self {
             Self::Struct(struct_decl) => struct_decl.name.as_str(),
             Self::Enum(enum_decl) => enum_decl.name.as_str(),
+            Self::TypeAlias(alias) => alias.name.as_str(),
         }
     }
 }
@@ -8345,6 +8347,13 @@ fn dependency_public_type_bridge_candidates<'a>(
                 if enum_decl.visibility == Visibility::Public && enum_decl.generics.is_empty() =>
             {
                 DependencyPublicTypeDecl::Enum(enum_decl)
+            }
+            ItemKind::TypeAlias(alias)
+                if alias.visibility == Visibility::Public
+                    && !alias.is_opaque
+                    && alias.generics.is_empty() =>
+            {
+                DependencyPublicTypeDecl::TypeAlias(alias)
             }
             _ => continue,
         };
@@ -8551,6 +8560,13 @@ fn dependency_public_type_dependencies<'a>(
                     }
                 }
             }
+        }
+        DependencyPublicTypeDecl::TypeAlias(alias) => {
+            collect_dependency_public_type_expr_dependencies(
+                &alias.ty,
+                type_candidates,
+                &mut dependencies,
+            );
         }
     }
     Some(dependencies)
@@ -9303,6 +9319,13 @@ fn collect_dependency_module_public_type_declarations(
                 if enum_decl.visibility == Visibility::Public && enum_decl.generics.is_empty() =>
             {
                 enum_decl.name.as_str()
+            }
+            ItemKind::TypeAlias(alias)
+                if alias.visibility == Visibility::Public
+                    && !alias.is_opaque
+                    && alias.generics.is_empty() =>
+            {
+                alias.name.as_str()
             }
             _ => continue,
         };
