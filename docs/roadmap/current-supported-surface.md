@@ -110,8 +110,10 @@
 
 ## 当前明确未支持
 
+- 随仓库分发的最小 `stdlib` 尚未落地；当前用户项目仍需自己声明基础 helper，或用本地 package 临时承载。
 - 普通跨包 Qlang free function / member / const 的完整 dependency-aware backend
 - escaping / higher-order dependency method values、超出当前不可变局部 alias direct-call slice 的 dependency receiver method codegen
+- 自动 prelude、泛型集合库、IO / 字符串完整库面
 - registry / version solving / publish workflow
 - 预编译 release / VSCode Marketplace 分发
 - 更广义的 cross-file rename / workspace edits（超出 source-backed dependency `method / field / enum variant` 与 workspace root `function / const / static / struct / enum / trait / type alias` 的受限切片）

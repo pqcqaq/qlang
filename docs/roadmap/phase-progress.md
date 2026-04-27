@@ -96,13 +96,15 @@
 ## 当前主线
 
 1. 先把 qlang 做到“可真实使用的最小项目语言”，而不是继续扩语言表面。
-2. 主线先做 manifest、dependency-aware build/backend、真实 workspace LSP、安装与分发；P0 未完成前，不再把新语法和更宽 runtime 当主线。
+2. 主线先做 manifest、dependency-aware build/backend、最小 `stdlib`、真实 workspace LSP、安装与分发；P0 未完成前，不再把新语法和更宽 runtime 当主线。
 3. 每一轮功能推进必须先落生产代码，再补测试和文档；只有测试或文档改动，不再计作一轮功能迭代。
+4. 不再按固定日期承诺完成；每轮选择当前最能提升真实项目可用性的切片，做到实现、回归、文档一起收口。
 
 ## 下一轮
 
+- stdlib：开始落普通 Qlang package 形态的 `stdlib`，先做 `std.core` / `std.test` 最小 API，并用真实本地依赖项目回归验证消费路径。
+- build/backend：继续优先补真实项目里高频的 direct local dependency value/type/member 调用面；若 `stdlib` 暴露阻塞项，优先修阻塞项，而不是扩新语法。
 - LSP：继续把 `textDocument/implementation` 从已完成的 trait/type surface、workspace root/source-backed type definition surface、workspace root/source-backed concrete / trait-typed method call、source-backed dependency concrete / trait-typed method call、dependency non-import type-driven positions、trait method definition，以及 broken current-buffer concrete / trait-typed method call / broken-source open dependency member-type surface，扩到更宽的 implementation index；更广的全局聚合继续后置。
-- build/backend：继续优先补真实项目里高频的 direct local dependency value/type/member 调用面，而不是扩新语法。
 - 文档：入口页继续只保留结论、边界和最近 checkpoint，不再追加流水账。
 
 ## 明确后置

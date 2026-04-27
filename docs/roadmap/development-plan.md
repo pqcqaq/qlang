@@ -14,7 +14,9 @@
 - Phase 1 到 Phase 6 的编译器地基已经够用，当前不是“语言前端还没搭起来”，而是“做不出真实可用项目”。
 - 如果语言现在还无法稳定支撑小型真实项目，继续扩语法、类型系统或 runtime 表面价值很低。
 - 从现在开始，主线改为“先把语言做到可真实使用，再恢复语言扩面”；P0 未完成前，不再把新语法和更宽语言能力当主线。
+- 最小 `stdlib` 属于 P0 可用性，不属于后置语言扩面；没有可依赖的 `core/test` 包，真实项目仍会退化成手写样例集合。
 - 从现在开始，每一轮功能迭代必须优先落到生产代码；只有测试或文档改动，不再计作一轮功能推进。
+- 不再用固定日期承诺完成 P0；节奏改为每一轮尽力交付一个可验证切片，并用回归和文档更新收口。
 
 ## 优先级
 
@@ -32,9 +34,17 @@
 
 - 能从 `ql project init` / `add` 建出 workspace，并直接从 workspace 根目录执行 `check/build/run/test`。
 - 本地路径依赖不再只停在窄的 public free function / `extern "c"`；至少要覆盖真实项目常见的 public value/type/member 使用路径。
+- 仓库内存在最小 `stdlib`，至少包含普通 Qlang package 形态的 `std.core` 与 `std.test`，并能被真实项目通过本地依赖消费。
 - VSCode 中打开真实 workspace 时，definition / references / hover / completion / semantic tokens / `workspace/symbol` 不再只在理想样例里工作。
 - `ql`、`qlsp`、VSIX 的安装和版本绑定有明确、稳定、可复现的路径。
 - README、支持页、开发计划三者描述一致，不再出现“文档说可用，但真实项目一碰就碎”。
+
+## 执行节奏
+
+- 不按日期倒排，不承诺某个自然日完成整条主线。
+- 每一轮都选择当前最能提升可用性的切片，做到实现、回归、文档一起提交。
+- 每轮结束时必须能说明本轮让真实项目多走通了哪条路径，不能只报告“清理了一些代码”。
+- 如果 `stdlib` 暴露出 backend / project / LSP 缺口，优先修真实阻塞项；不为绕过缺口而降低 `stdlib` 设计边界。
 
 ## 当前 Checkpoints
 
@@ -96,10 +106,26 @@
 - `ql` / `qlsp` / VSIX 的安装与版本绑定有清晰文档。
 - 仓库外用户可以按文档完成 CLI 安装、LSP 连接和 VSIX 安装，而不是必须读源码猜流程。
 
+### E. 最小标准库
+
+目标：
+
+- 先以普通 Qlang workspace/package 形态落地 `stdlib`，不先做编译器内置 prelude。
+- 让用户项目能通过本地 `[dependencies]` 显式依赖 `std.core` / `std.test`。
+- 用 `stdlib` 反向驱动 dependency-aware backend、项目模板和文档收口。
+
+完成标准：
+
+- `stdlib/packages/core` 能被 `ql check/build/test` 验证，并提供第一批稳定基础函数。
+- `stdlib/packages/test` 能提供 smoke-test 友好的断言辅助。
+- 用户项目模板能依赖 `std.core` / `std.test` 并通过 `ql test`。
+- `stdlib` API 只使用当前稳定语言面；泛型、IO、字符串、自动 prelude 和 registry 发布继续后置。
+
 ## 下一轮（已排定）
 
-- LSP：`textDocument/implementation` 的已完成基线已明显超出这里最初记录，当前准确支持面以 `current-supported-surface.md` 为准；下一轮继续扩更宽的 implementation index，并优先收口 request/helper 尚未完全对齐的边界。`goto_implementation` 分发已先拆成 analyzed source 与 broken-source fallback 两条路径，source-backed dependency concrete method response 尾部、package source snapshot 读取、implementation location/response normalization、以及 workspace type / trait-method response 构造已共享；后续继续在各自分支内收口 target resolution / response normalization。
-- backend：继续扩 direct local dependency 下真实项目高频的 public value/type/member 调用面，优先补会直接阻断 workspace `build/run/test` 的路径。
+- stdlib：先落 `stdlib` workspace 骨架与 `std.core` / `std.test` 的最小可验证 API；用真实依赖项目回归证明它能被消费。
+- backend：继续扩 direct local dependency 下真实项目高频的 public value/type/member 调用面，但优先修 `stdlib` 和项目模板真实阻塞的路径。
+- LSP：`textDocument/implementation` 的已完成基线已明显超出这里最初记录，当前准确支持面以 `current-supported-surface.md` 为准；继续扩更宽的 implementation index，但不压过 P0 stdlib / backend 阻塞项。
 - 文档：继续只保留入口结论、支持边界和最近 checkpoint；不再追加长流水账。
 
 ## 明确后置
@@ -107,6 +133,7 @@
 - cross-file rename / workspace edits / 更完整 code actions
 - 更宽的 async/runtime/Rust interop 扩面
 - 新语法糖和更远的类型系统能力
+- 自动 prelude、泛型集合库、IO / 字符串完整库面
 - registry / publish workflow
 
 ## 交付规则
@@ -114,5 +141,6 @@
 - 入口文档只写结论和边界，不写长流水账。
 - 任何用户可见能力都必须同时具备：实现、回归、文档入口。
 - 没有 `crates/*/src/*.rs` 的生产代码改动，不再计作一轮功能迭代；测试和文档只能跟随真实实现收口。
+- `stdlib/**/*.ql` 属于用户可见生产代码；但纯文档调整仍只算计划维护，不算功能推进。
 - 同一组 project-aware 命令的 workspace member 目录/源码路径入口语义必须保持一致；补一条入口时，要同时审计 `check/build/run/test` 和 `ql project *` 的相邻命令。
 - 文档与实现冲突时，先修正文档，不在入口页预告“即将支持”。
