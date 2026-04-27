@@ -22,6 +22,12 @@ use std.core.max_int as max_int
 use std.test.expect_int_eq as expect_int_eq
 ```
 
+To create a new package that already consumes this stdlib:
+
+```powershell
+cargo run -q -p ql-cli -- project init D:\Projects\my-qlang-app --stdlib D:\Projects\language_q\stdlib
+```
+
 Verify from the repository root:
 
 ```powershell

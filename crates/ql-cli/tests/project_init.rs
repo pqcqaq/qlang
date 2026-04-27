@@ -1,5 +1,7 @@
 mod support;
 
+use std::path::PathBuf;
+
 use ql_driver::{ToolchainOptions, discover_toolchain};
 use support::{
     TempDir, executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
@@ -15,6 +17,42 @@ fn toolchain_available(context: &str) -> bool {
         return false;
     };
     true
+}
+
+fn write_minimal_stdlib(temp: &TempDir) -> PathBuf {
+    temp.write(
+        "stdlib/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/core", "packages/test"]
+"#,
+    );
+    temp.write(
+        "stdlib/packages/core/qlang.toml",
+        r#"
+[package]
+name = "std.core"
+"#,
+    );
+    temp.write(
+        "stdlib/packages/core/src/lib.ql",
+        "package std.core\n\npub fn max_int(left: Int, right: Int) -> Int {\n    if left > right {\n        return left\n    }\n    return right\n}\n\npub fn clamp_int(value: Int, low: Int, high: Int) -> Int {\n    if value < low {\n        return low\n    }\n    if value > high {\n        return high\n    }\n    return value\n}\n\npub fn bool_to_int(value: Bool) -> Int {\n    if value {\n        return 1\n    }\n    return 0\n}\n",
+    );
+    temp.write(
+        "stdlib/packages/test/qlang.toml",
+        r#"
+[package]
+name = "std.test"
+
+[dependencies]
+"std.core" = "../core"
+"#,
+    );
+    temp.write(
+        "stdlib/packages/test/src/lib.ql",
+        "package std.test\n\npub fn expect_int_eq(actual: Int, expected: Int) -> Int {\n    if actual == expected {\n        return 0\n    }\n    return 1\n}\n",
+    );
+    temp.path().join("stdlib")
 }
 
 #[test]
@@ -102,6 +140,88 @@ fn project_init_creates_package_scaffold_and_check_succeeds() {
 }
 
 #[test]
+fn project_init_with_stdlib_creates_consuming_package_scaffold_and_check_succeeds() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-init-stdlib-package");
+    let stdlib_root = write_minimal_stdlib(&temp);
+    let project_root = temp.path().join("demo-package");
+
+    let mut init = ql_command(&workspace_root);
+    init.args([
+        "project",
+        "init",
+        &project_root.to_string_lossy(),
+        "--stdlib",
+        &stdlib_root.to_string_lossy(),
+    ]);
+    let output = run_command_capture(&mut init, "`ql project init --stdlib` package");
+    let (_stdout, stderr) = expect_success(
+        "project-init-stdlib-package",
+        "stdlib package init",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-package",
+        "stdlib package init",
+        &stderr,
+    )
+    .unwrap();
+
+    assert_eq!(
+        read_normalized_file(&project_root.join("qlang.toml"), "stdlib package manifest"),
+        "[package]\nname = \"demo-package\"\n\n[dependencies]\n\"std.core\" = \"../stdlib/packages/core\"\n\"std.test\" = \"../stdlib/packages/test\"\n"
+    );
+    assert_eq!(
+        read_normalized_file(&project_root.join("src/lib.ql"), "stdlib package source"),
+        "use std.core.clamp_int as clamp_int\n\npub fn run() -> Int {\n    return clamp_int(42, 0, 100)\n}\n"
+    );
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("tests/smoke.ql"),
+            "stdlib package smoke test"
+        ),
+        "use std.core.max_int as max_int\nuse std.test.expect_int_eq as expect_int_eq\n\nfn main() -> Int {\n    return expect_int_eq(max_int(20, 22), 22)\n}\n"
+    );
+
+    let mut check = ql_command(&workspace_root);
+    check.args([
+        "check",
+        "--sync-interfaces",
+        &project_root.to_string_lossy(),
+    ]);
+    let output = run_command_capture(&mut check, "`ql check --sync-interfaces` stdlib package");
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-package",
+        "check initialized stdlib package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-package",
+        "check initialized stdlib package",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "project-init-stdlib-package",
+        &stdout.replace('\\', "/"),
+        &[
+            &format!(
+                "ok: {}",
+                project_root
+                    .join("src")
+                    .join("lib.ql")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+            "loaded interface:",
+        ],
+    )
+    .unwrap();
+}
+
+#[test]
 fn project_init_creates_runnable_package_scaffold() {
     if !toolchain_available("`ql project init` runnable package test") {
         return;
@@ -151,6 +271,85 @@ fn project_init_creates_runnable_package_scaffold() {
         &output_path,
         "initialized package executable",
         "run initialized package",
+    )
+    .unwrap();
+}
+
+#[test]
+fn project_init_with_stdlib_creates_runnable_and_testable_package_scaffold() {
+    if !toolchain_available("`ql project init --stdlib` runnable package test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-init-stdlib-package-run");
+    let stdlib_root = write_minimal_stdlib(&temp);
+    let project_root = temp.path().join("demo-package");
+
+    let mut init = ql_command(&workspace_root);
+    init.args([
+        "project",
+        "init",
+        &project_root.to_string_lossy(),
+        "--stdlib",
+        &stdlib_root.to_string_lossy(),
+    ]);
+    let output = run_command_capture(&mut init, "`ql project init --stdlib` runnable package");
+    let (_stdout, stderr) = expect_success(
+        "project-init-stdlib-package-run",
+        "stdlib package init for runnable scaffold",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-package-run",
+        "stdlib package init for runnable scaffold",
+        &stderr,
+    )
+    .unwrap();
+
+    let mut run = ql_command(&workspace_root);
+    run.current_dir(temp.path());
+    run.args(["run"]).arg(&project_root);
+    let output = run_command_capture(&mut run, "`ql run` initialized stdlib package");
+    let (stdout, stderr) = expect_exit_code(
+        "project-init-stdlib-package-run",
+        "run initialized stdlib package",
+        &output,
+        0,
+    )
+    .unwrap();
+    expect_silent_output(
+        "project-init-stdlib-package-run",
+        "run initialized stdlib package",
+        &stdout,
+        &stderr,
+    )
+    .unwrap();
+
+    let mut test = ql_command(&workspace_root);
+    test.current_dir(temp.path());
+    test.args(["test"]).arg(&project_root);
+    let output = run_command_capture(&mut test, "`ql test` initialized stdlib package");
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-package-run",
+        "test initialized stdlib package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-package-run",
+        "test initialized stdlib package",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "project-init-stdlib-package-run",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
     )
     .unwrap();
 }

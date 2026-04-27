@@ -890,6 +890,7 @@ fn run() -> Result<(), u8> {
                     let mut path = None;
                     let mut workspace = false;
                     let mut package_name = None;
+                    let mut stdlib_path = None;
                     let mut index = 0;
 
                     while index < remaining.len() {
@@ -913,6 +914,22 @@ fn run() -> Result<(), u8> {
                                 }
                                 package_name = Some(value.clone());
                             }
+                            "--stdlib" => {
+                                index += 1;
+                                let Some(value) = remaining.get(index) else {
+                                    eprintln!(
+                                        "error: `ql project init --stdlib` expects a stdlib workspace path"
+                                    );
+                                    return Err(1);
+                                };
+                                if stdlib_path.is_some() {
+                                    eprintln!(
+                                        "error: `ql project init` received `--stdlib` more than once"
+                                    );
+                                    return Err(1);
+                                }
+                                stdlib_path = Some(PathBuf::from(value));
+                            }
                             other if other.starts_with('-') => {
                                 eprintln!("error: unknown `ql project init` option `{other}`");
                                 return Err(1);
@@ -934,7 +951,12 @@ fn run() -> Result<(), u8> {
                     let path = path
                         .or_else(|| env::current_dir().ok())
                         .unwrap_or_else(|| PathBuf::from("."));
-                    project_init_path(&path, workspace, package_name.as_deref())
+                    project_init_path(
+                        &path,
+                        workspace,
+                        package_name.as_deref(),
+                        stdlib_path.as_deref(),
+                    )
                 }
                 "add" => {
                     let remaining = args.collect::<Vec<_>>();
@@ -10824,7 +10846,12 @@ fn emit_c_header_path(path: &Path, options: &CHeaderOptions) -> Result<(), u8> {
     }
 }
 
-fn project_init_path(path: &Path, workspace: bool, package_name: Option<&str>) -> Result<(), u8> {
+fn project_init_path(
+    path: &Path,
+    workspace: bool,
+    package_name: Option<&str>,
+    stdlib_path: Option<&Path>,
+) -> Result<(), u8> {
     let target_root = path.to_path_buf();
     let package_name = match project_init_package_name(&target_root, workspace, package_name) {
         Ok(package_name) => package_name,
@@ -10835,9 +10862,9 @@ fn project_init_path(path: &Path, workspace: bool, package_name: Option<&str>) -
     };
 
     let created_paths = if workspace {
-        init_workspace_project(&target_root, &package_name)
+        init_workspace_project(&target_root, &package_name, stdlib_path)
     } else {
-        init_package_project(&target_root, &package_name)
+        init_package_project(&target_root, &package_name, stdlib_path)
     }
     .map_err(|message| {
         eprintln!("error: `ql project init` {message}");
@@ -11274,12 +11301,86 @@ fn validate_project_package_name(package_name: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn init_package_project(target_root: &Path, package_name: &str) -> Result<Vec<PathBuf>, String> {
-    ensure_project_init_target_root(target_root)?;
-    create_package_scaffold(target_root, package_name, &[])
+fn resolve_project_init_stdlib_dependencies(
+    package_root: &Path,
+    stdlib_path: Option<&Path>,
+) -> Result<Vec<(String, String)>, String> {
+    let Some(stdlib_path) = stdlib_path else {
+        return Ok(Vec::new());
+    };
+
+    let stdlib_root = absolute_user_path(stdlib_path);
+    let package_root = absolute_user_path(package_root);
+    let core_root = stdlib_root.join("packages").join("core");
+    let test_root = stdlib_root.join("packages").join("test");
+
+    validate_stdlib_package(&core_root, "std.core")?;
+    validate_stdlib_package(&test_root, "std.test")?;
+
+    Ok(vec![
+        (
+            "std.core".to_owned(),
+            relative_path_from(&package_root, &core_root),
+        ),
+        (
+            "std.test".to_owned(),
+            relative_path_from(&package_root, &test_root),
+        ),
+    ])
 }
 
-fn init_workspace_project(target_root: &Path, package_name: &str) -> Result<Vec<PathBuf>, String> {
+fn validate_stdlib_package(package_root: &Path, expected_name: &str) -> Result<(), String> {
+    let manifest = load_project_manifest(package_root).map_err(|error| {
+        format!(
+            "stdlib package `{expected_name}` is not available at `{}`: {error}",
+            normalize_path(package_root)
+        )
+    })?;
+    let actual_name = package_name(&manifest).map_err(|error| {
+        format!(
+            "stdlib package manifest `{}` is invalid: {error}",
+            normalize_path(&manifest.manifest_path)
+        )
+    })?;
+    if actual_name != expected_name {
+        return Err(format!(
+            "stdlib package manifest `{}` must declare `[package].name = \"{expected_name}\"`, found `{actual_name}`",
+            normalize_path(&manifest.manifest_path)
+        ));
+    }
+    Ok(())
+}
+
+fn absolute_user_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    }
+}
+
+fn init_package_project(
+    target_root: &Path,
+    package_name: &str,
+    stdlib_path: Option<&Path>,
+) -> Result<Vec<PathBuf>, String> {
+    ensure_project_init_target_root(target_root)?;
+    let dependencies = resolve_project_init_stdlib_dependencies(target_root, stdlib_path)?;
+    create_package_scaffold(
+        target_root,
+        package_name,
+        &dependencies,
+        stdlib_path.is_some(),
+    )
+}
+
+fn init_workspace_project(
+    target_root: &Path,
+    package_name: &str,
+    stdlib_path: Option<&Path>,
+) -> Result<Vec<PathBuf>, String> {
     ensure_project_init_target_root(target_root)?;
 
     let workspace_manifest_path = target_root.join("qlang.toml");
@@ -11288,7 +11389,13 @@ fn init_workspace_project(target_root: &Path, package_name: &str) -> Result<Vec<
 
     write_new_project_file(&workspace_manifest_path, &workspace_manifest)?;
     let mut created_paths = vec![workspace_manifest_path];
-    created_paths.extend(create_package_scaffold(&member_dir, package_name, &[])?);
+    let dependencies = resolve_project_init_stdlib_dependencies(&member_dir, stdlib_path)?;
+    created_paths.extend(create_package_scaffold(
+        &member_dir,
+        package_name,
+        &dependencies,
+        stdlib_path.is_some(),
+    )?);
     Ok(created_paths)
 }
 
@@ -11452,7 +11559,7 @@ fn add_workspace_project_member(
             normalize_path(&workspace_manifest.manifest_path)
         )
     })?;
-    let created_paths = create_package_scaffold(&member_root, package_name, dependencies)?;
+    let created_paths = create_package_scaffold(&member_root, package_name, dependencies, false)?;
 
     Ok((workspace_manifest.manifest_path.clone(), created_paths))
 }
@@ -12112,17 +12219,33 @@ fn create_package_scaffold(
     target_root: &Path,
     package_name: &str,
     dependencies: &[(String, String)],
+    stdlib_template: bool,
 ) -> Result<Vec<PathBuf>, String> {
     let manifest_path = target_root.join("qlang.toml");
     let source_path = target_root.join("src").join("lib.ql");
     let main_path = target_root.join("src").join("main.ql");
     let test_path = target_root.join("tests").join("smoke.ql");
     let manifest = render_package_manifest(package_name, dependencies);
+    let package_source = if stdlib_template {
+        stdlib_package_source()
+    } else {
+        default_package_source()
+    };
+    let main_source = if stdlib_template {
+        stdlib_package_main_source()
+    } else {
+        default_package_main_source()
+    };
+    let test_source = if stdlib_template {
+        stdlib_package_test_source()
+    } else {
+        default_package_test_source()
+    };
 
     write_new_project_file(&manifest_path, &manifest)?;
-    write_new_project_file(&source_path, default_package_source())?;
-    write_new_project_file(&main_path, default_package_main_source())?;
-    write_new_project_file(&test_path, default_package_test_source())?;
+    write_new_project_file(&source_path, package_source)?;
+    write_new_project_file(&main_path, main_source)?;
+    write_new_project_file(&test_path, test_source)?;
 
     Ok(vec![manifest_path, source_path, main_path, test_path])
 }
@@ -12157,14 +12280,45 @@ fn write_new_project_file(path: &Path, contents: &str) -> Result<(), String> {
 }
 
 fn render_package_manifest(package_name: &str, dependencies: &[(String, String)]) -> String {
-    let mut manifest = format!("[package]\nname = \"{package_name}\"\n");
+    let mut manifest = format!("[package]\nname = {}\n", toml_string_literal(package_name));
     if !dependencies.is_empty() {
         manifest.push_str("\n[dependencies]\n");
         for (dependency_name, dependency_path) in dependencies {
-            manifest.push_str(&format!("{dependency_name} = \"{dependency_path}\"\n"));
+            manifest.push_str(&format!(
+                "{} = {}\n",
+                toml_key(dependency_name),
+                toml_string_literal(dependency_path)
+            ));
         }
     }
     manifest
+}
+
+fn toml_key(key: &str) -> String {
+    if key
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        key.to_owned()
+    } else {
+        toml_string_literal(key)
+    }
+}
+
+fn toml_string_literal(value: &str) -> String {
+    let mut rendered = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '\\' => rendered.push_str("\\\\"),
+            '"' => rendered.push_str("\\\""),
+            '\n' => rendered.push_str("\\n"),
+            '\r' => rendered.push_str("\\r"),
+            '\t' => rendered.push_str("\\t"),
+            _ => rendered.push(ch),
+        }
+    }
+    rendered.push('"');
+    rendered
 }
 
 fn render_workspace_manifest(package_name: &str) -> String {
@@ -12181,6 +12335,18 @@ fn default_package_main_source() -> &'static str {
 
 fn default_package_test_source() -> &'static str {
     "fn main() -> Int {\n    return 0\n}\n"
+}
+
+fn stdlib_package_source() -> &'static str {
+    "use std.core.clamp_int as clamp_int\n\npub fn run() -> Int {\n    return clamp_int(42, 0, 100)\n}\n"
+}
+
+fn stdlib_package_main_source() -> &'static str {
+    "use std.core.bool_to_int as bool_to_int\n\nfn main() -> Int {\n    return 1 - bool_to_int(true)\n}\n"
+}
+
+fn stdlib_package_test_source() -> &'static str {
+    "use std.core.max_int as max_int\nuse std.test.expect_int_eq as expect_int_eq\n\nfn main() -> Int {\n    return expect_int_eq(max_int(20, 22), 22)\n}\n"
 }
 
 fn resolve_project_workspace_member_command_request_root(path: &Path) -> Option<PathBuf> {
@@ -15311,7 +15477,7 @@ fn print_usage() {
     eprintln!("  ql project dependents [file-or-dir] [--name <package>] [--json]");
     eprintln!("  ql project dependencies [file-or-dir] [--name <package>] [--json]");
     eprintln!("  ql project lock [file-or-dir] [--check] [--json]");
-    eprintln!("  ql project init [dir] [--workspace] [--name <package>]");
+    eprintln!("  ql project init [dir] [--workspace] [--name <package>] [--stdlib <path>]");
     eprintln!("  ql project add [file-or-dir] --name <package> [--dependency <package> ...]");
     eprintln!("  ql project add [file-or-dir] --existing <file-or-dir>");
     eprintln!("  ql project remove [file-or-dir] --name <package> [--cascade]");

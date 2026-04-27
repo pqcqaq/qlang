@@ -20,6 +20,7 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - `ql project dependents` 已能直接查询某个 workspace package 当前被哪些 members 依赖，便于清理依赖边或定位删除阻塞；现在从 package / workspace member 目录或源码路径进入时也可自动推断目标包，不必每次手写 `--name`。
 - `ql project dependencies` 已能直接查询某个 workspace package 当前依赖了哪些 workspace members，并支持 `--json`；正反向依赖审计都不必再手读 manifest 或 `project graph`，现在从 package / workspace member 目录或源码路径进入时也可自动推断目标包。
 - `ql project targets` 现在也支持 `--package`、`--lib`、`--bin`、`--target` 过滤；项目级 target 查询不再只能全量输出，真实 workspace 下排查目标会更直接。
+- `ql project init` 现在支持 `--stdlib <path>`；会把 `std.core` / `std.test` 作为 quoted-key 本地依赖写入新 package，并生成直接消费 stdlib 的 `src/lib.ql`、`src/main.ql` 和 `tests/smoke.ql`。
 - `ql project target add --bin <name>` 现在也已落地；新增 bin target 时会自动创建 `src/bin/<name>.ql`，并在第一次显式写入 `[[bin]]` 时保留当前默认发现到的 `src/main.ql` / `src/bin/**/*.ql` targets，workspace 根也可配合 `--package` 直接改指定 member。
 - `ql project graph` 现在也支持 `--package` 聚焦到单个 workspace member 的包图；workspace 根图查询不再只能看全量成员展开。
 - `ql project emit-interface` 现在也支持在 workspace 入口配合 `--package <name>` 只发射或检查单个 member；plain / `--changed-only` / `--check` 继续可用，定向发射时也可配合 `--output` 导出到自定义路径，`--check` 仍不支持 `--output`。

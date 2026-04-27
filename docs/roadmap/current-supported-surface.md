@@ -114,6 +114,7 @@
 - `std.core` 当前提供第一批稳定整数/布尔 helper：`max_int`、`min_int`、`clamp_int`、`abs_int`、`bool_to_int`。
 - `std.test` 当前提供 smoke-test 友好的 `expect_true` 与 `expect_int_eq`，返回 `0` 表示通过，非零表示失败。
 - 用户项目可以用本地 `[dependencies]` 显式依赖；带点的包名需要写 quoted TOML key，例如 `"std.core" = "../path/to/stdlib/packages/core"`。
+- `ql project init --stdlib <path>` 可以直接生成依赖 `std.core` / `std.test` 的 package 或 workspace member scaffold，并生成消费这些 helper 的 `src/lib.ql`、`src/main.ql` 与 `tests/smoke.ql`。
 - `stdlib` 仍是普通 package，不是编译器内置 prelude；泛型集合、IO、字符串完整库面和 registry 分发仍后置。
 
 ## 当前明确未支持
