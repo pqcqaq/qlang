@@ -131,7 +131,7 @@ return match 1 {
 
     assert!(rendered.contains("call ptr @qlrt_task_await"));
     assert!(rendered.matches("call ptr %t").count() >= 2);
-    assert!(rendered.contains("guard_match_arm"));
+    assert!(rendered.contains("guard_call_match_arm"));
     assert!(!rendered.contains("does not support `match` lowering yet"));
     assert!(!rendered.contains("does not support imported value lowering yet"));
 }
@@ -337,7 +337,7 @@ return match 1 {
 
     assert!(rendered.contains("call ptr @qlrt_task_await"));
     assert!(rendered.matches("call ptr %t").count() >= 2);
-    assert!(rendered.contains("guard_match_arm"));
+    assert!(rendered.contains("guard_call_match_arm"));
     assert!(!rendered.contains("does not support `match` lowering yet"));
     assert!(!rendered.contains("does not support field projection lowering yet"));
 }
@@ -390,7 +390,7 @@ return match 1 {
     assert!(rendered.contains("call ptr @qlrt_task_await"));
     assert!(rendered.matches("call ptr %t").count() >= 2);
     assert!(rendered.contains("call i1 @ql_3_matches"));
-    assert!(rendered.contains("guard_match_arm"));
+    assert!(rendered.contains("guard_call_match_arm"));
     assert!(!rendered.contains("does not support `match` lowering yet"));
     assert!(!rendered.contains("does not support imported value lowering yet"));
 }
@@ -448,7 +448,7 @@ return match 1 {
     assert!(rendered.matches("call ptr %t").count() >= 2);
     assert!(rendered.contains("call i1 @ql_4_wraps_match"));
     assert!(rendered.contains("call i1 @ql_3_matches"));
-    assert!(rendered.contains("guard_match_arm"));
+    assert!(rendered.contains("guard_call_match_arm"));
     assert!(!rendered.contains("does not support `match` lowering yet"));
     assert!(!rendered.contains("does not support imported value lowering yet"));
 }
@@ -502,7 +502,7 @@ return match 1 {
     assert!(rendered.contains("call ptr @qlrt_task_await"));
     assert!(rendered.matches("call ptr %t").count() >= 2);
     assert!(rendered.contains("call i1 @ql_3_matches"));
-    assert!(rendered.contains("guard_match_arm"));
+    assert!(rendered.contains("guard_call_match_arm"));
     assert!(!rendered.contains("does not support `match` lowering yet"));
     assert!(!rendered.contains("does not support imported value lowering yet"));
 }
@@ -564,7 +564,7 @@ return match 1 {
     assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 3);
     assert!(rendered.matches("call ptr %t").count() >= 3);
     assert!(rendered.matches("call i1 @ql_").count() >= 1);
-    assert!(rendered.contains("guard_match_arm"));
+    assert!(rendered.contains("guard_call_match_arm"));
     assert!(!rendered.contains("does not support `match` lowering yet"));
     assert!(!rendered.contains("does not support field projection lowering yet"));
 }
@@ -618,7 +618,7 @@ return match 1 {
     assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 3);
     assert!(rendered.matches("call ptr %t").count() >= 3);
     assert!(rendered.matches("call i1 @ql_").count() >= 2);
-    assert!(rendered.contains("guard_match_arm"));
+    assert!(rendered.contains("guard_call_match_arm"));
     assert!(!rendered.contains("does not support `match` lowering yet"));
     assert!(!rendered.contains("does not support field projection lowering yet"));
 }
@@ -1167,9 +1167,10 @@ return 0
 "#,
     );
 
-    assert!(rendered.matches("call void %t").count() >= 2);
-    assert!(rendered.contains("call i1 %t"));
-    assert!(rendered.contains("store ptr @first"));
+    assert!(rendered.contains("cleanup_call_if_then"));
+    assert!(rendered.contains("cleanup_call_match_arm"));
+    assert!(rendered.matches("call void @first()").count() >= 2);
+    assert!(rendered.contains("call i1 @ql_"));
     assert!(!rendered.contains("does not support cleanup lowering yet"));
     assert!(!rendered.contains("does not support imported value lowering yet"));
 }
@@ -1431,8 +1432,8 @@ return 0
     );
 
     assert!(rendered.matches("__closure").count() >= 2);
-    assert!(rendered.contains("call i64 %t"));
-    assert!(rendered.contains("call i1 %t"));
+    assert!(rendered.contains("call i64 @ql_"));
+    assert!(rendered.contains("call i1 @ql_"));
     assert!(!rendered.contains("does not support cleanup lowering yet"));
     assert!(
         !rendered.contains("currently only supports a narrow non-`move` capturing-closure subset")

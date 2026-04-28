@@ -1215,9 +1215,9 @@ return match 1 {
     );
 
     assert!(rendered.contains("bb0_match_guard0:"));
-    assert!(rendered.contains("guard_if_then"));
-    assert!(rendered.contains("guard_if_else"));
-    assert!(rendered.contains("call i1 %t"));
+    assert!(rendered.contains("guard_call_if_then"));
+    assert!(rendered.contains("guard_call_if_else"));
+    assert!(rendered.matches("call i1 @ql_").count() >= 2);
     assert!(!rendered.contains("does not support `match` lowering yet"));
 }
 
@@ -1253,8 +1253,8 @@ return match 1 {
 "#,
     );
 
-    assert!(rendered.contains("guard_if_then"));
-    assert!(rendered.contains("guard_match_arm"));
+    assert!(rendered.contains("guard_call_if_then"));
+    assert!(rendered.contains("guard_call_match_arm"));
     assert!(rendered.matches("call i64 %t").count() >= 4);
     assert!(!rendered.contains("does not support imported value lowering yet"));
     assert!(!rendered.contains("does not support cleanup lowering yet"));
