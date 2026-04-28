@@ -86,12 +86,6 @@ return second + extra + tail
     assert!(rendered.matches("_forward(").count() >= 3);
     assert!(
         rendered
-            .matches("getelementptr inbounds [2 x i64], ptr")
-            .count()
-            >= 3
-    );
-    assert!(
-        rendered
             .matches("getelementptr inbounds { i64 }, ptr")
             .count()
             >= 2

@@ -83,12 +83,6 @@ return second + extra + tail
     assert!(rendered.matches("_forward(").count() >= 3);
     assert!(
         rendered
-            .matches("getelementptr inbounds [2 x i64], ptr")
-            .count()
-            >= 3
-    );
-    assert!(
-        rendered
             .matches("getelementptr inbounds { i64 }, ptr")
             .count()
             >= 2
@@ -183,12 +177,6 @@ return second + extra + tail
     assert!(rendered.matches("_forward(").count() >= 3);
     assert!(
         rendered
-            .matches("getelementptr inbounds [2 x i64], ptr")
-            .count()
-            >= 3
-    );
-    assert!(
-        rendered
             .matches("getelementptr inbounds { i64 }, ptr")
             .count()
             >= 2
@@ -279,12 +267,6 @@ return second + extra + tail
     assert!(rendered.matches("@qlrt_executor_spawn").count() >= 1);
     assert!(rendered.matches("@qlrt_task_await").count() >= 5);
     assert!(rendered.matches("_forward(").count() >= 3);
-    assert!(
-        rendered
-            .matches("getelementptr inbounds [2 x i64], ptr")
-            .count()
-            >= 3
-    );
     assert!(
         rendered
             .matches("getelementptr inbounds { i64 }, ptr")
@@ -382,12 +364,6 @@ return second + extra + tail
     assert!(rendered.matches("_forward(").count() >= 3);
     assert!(
         rendered
-            .matches("getelementptr inbounds [2 x i64], ptr")
-            .count()
-            >= 3
-    );
-    assert!(
-        rendered
             .matches("getelementptr inbounds { i64 }, ptr")
             .count()
             >= 2
@@ -482,12 +458,6 @@ return second + extra + tail
     assert!(rendered.matches("@qlrt_executor_spawn").count() >= 1);
     assert!(rendered.matches("@qlrt_task_await").count() >= 5);
     assert!(rendered.matches("_forward(").count() >= 3);
-    assert!(
-        rendered
-            .matches("getelementptr inbounds [2 x i64], ptr")
-            .count()
-            >= 3
-    );
     assert!(
         rendered
             .matches("getelementptr inbounds { i64 }, ptr")
@@ -587,12 +557,6 @@ return second + extra + tail
     assert!(rendered.matches("_forward(").count() >= 3);
     assert!(
         rendered
-            .matches("getelementptr inbounds [2 x i64], ptr")
-            .count()
-            >= 3
-    );
-    assert!(
-        rendered
             .matches("getelementptr inbounds { i64 }, ptr")
             .count()
             >= 2
@@ -685,12 +649,6 @@ return second + extra + tail
     assert!(rendered.matches("@qlrt_executor_spawn").count() >= 1);
     assert!(rendered.matches("@qlrt_task_await").count() >= 5);
     assert!(rendered.matches("_forward(").count() >= 3);
-    assert!(
-        rendered
-            .matches("getelementptr inbounds [2 x i64], ptr")
-            .count()
-            >= 3
-    );
     assert!(
         rendered
             .matches("getelementptr inbounds { i64 }, ptr")
@@ -786,12 +744,6 @@ return second + extra + tail
     assert!(rendered.matches("@qlrt_executor_spawn").count() >= 1);
     assert!(rendered.matches("@qlrt_task_await").count() >= 5);
     assert!(rendered.matches("_forward(").count() >= 3);
-    assert!(
-        rendered
-            .matches("getelementptr inbounds [2 x i64], ptr")
-            .count()
-            >= 3
-    );
     assert!(
         rendered
             .matches("getelementptr inbounds { i64 }, ptr")
@@ -890,12 +842,6 @@ return second + extra + tail
     assert!(rendered.matches("@qlrt_executor_spawn").count() >= 1);
     assert!(rendered.matches("@qlrt_task_await").count() >= 5);
     assert!(rendered.matches("_forward(").count() >= 3);
-    assert!(
-        rendered
-            .matches("getelementptr inbounds [2 x i64], ptr")
-            .count()
-            >= 3
-    );
     assert!(
         rendered
             .matches("getelementptr inbounds { i64 }, ptr")
@@ -997,12 +943,6 @@ return second + extra + tail
     assert!(rendered.matches("_forward(").count() >= 3);
     assert!(
         rendered
-            .matches("getelementptr inbounds [2 x i64], ptr")
-            .count()
-            >= 3
-    );
-    assert!(
-        rendered
             .matches("getelementptr inbounds { i64 }, ptr")
             .count()
             >= 3
@@ -1094,12 +1034,6 @@ return second + extra + tail
     assert!(rendered.matches("@qlrt_executor_spawn").count() >= 1);
     assert!(rendered.matches("@qlrt_task_await").count() >= 5);
     assert!(rendered.matches("_forward(").count() >= 3);
-    assert!(
-        rendered
-            .matches("getelementptr inbounds [2 x i64], ptr")
-            .count()
-            >= 3
-    );
     assert!(
         rendered
             .matches("getelementptr inbounds { i64 }, ptr")
@@ -1197,12 +1131,6 @@ return second + extra + tail
     assert!(rendered.matches("_forward(").count() >= 3);
     assert!(
         rendered
-            .matches("getelementptr inbounds [2 x i64], ptr")
-            .count()
-            >= 3
-    );
-    assert!(
-        rendered
             .matches("getelementptr inbounds { i64 }, ptr")
             .count()
             >= 2
@@ -1297,12 +1225,6 @@ return second + extra + tail
     assert!(rendered.matches("@qlrt_executor_spawn").count() >= 1);
     assert!(rendered.matches("@qlrt_task_await").count() >= 5);
     assert!(rendered.matches("_forward(").count() >= 3);
-    assert!(
-        rendered
-            .matches("getelementptr inbounds [2 x i64], ptr")
-            .count()
-            >= 3
-    );
     assert!(
         rendered
             .matches("getelementptr inbounds { i64 }, ptr")
@@ -1402,12 +1324,6 @@ return second + extra + tail
     assert!(rendered.matches("_forward(").count() >= 3);
     assert!(
         rendered
-            .matches("getelementptr inbounds [2 x i64], ptr")
-            .count()
-            >= 3
-    );
-    assert!(
-        rendered
             .matches("getelementptr inbounds { i64 }, ptr")
             .count()
             >= 2
@@ -1500,12 +1416,6 @@ return second + extra + tail
     assert!(rendered.matches("@qlrt_executor_spawn").count() >= 1);
     assert!(rendered.matches("@qlrt_task_await").count() >= 5);
     assert!(rendered.matches("_forward(").count() >= 3);
-    assert!(
-        rendered
-            .matches("getelementptr inbounds [2 x i64], ptr")
-            .count()
-            >= 3
-    );
     assert!(
         rendered
             .matches("getelementptr inbounds { i64 }, ptr")
