@@ -1,8 +1,8 @@
 use super::*;
 
 #[test]
-fn dedupes_cleanup_lowering_diagnostics() {
-    let messages = emit_error(
+fn emits_simple_defer_call_cleanup_lowering() {
+    let rendered = emit(
         r#"
 extern "c" fn first()
 
@@ -13,16 +13,10 @@ return 0
 "#,
     );
 
-    assert_eq!(
-        messages
-            .iter()
-            .filter(|message| {
-                message.as_str()
-                    == "LLVM IR backend foundation does not support cleanup lowering yet"
-            })
-            .count(),
-        1
-    );
+    assert!(rendered.contains("define i64 @ql_1_main()"));
+    assert!(rendered.contains("define i32 @main()"));
+    assert!(rendered.contains("call void @first()"));
+    assert!(!rendered.contains("does not support cleanup lowering yet"));
 }
 
 #[test]
