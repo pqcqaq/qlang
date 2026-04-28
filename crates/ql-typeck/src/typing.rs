@@ -599,7 +599,14 @@ impl<'a> Checker<'a> {
                 let then_ty = self.check_block(*then_branch);
                 if let Some(else_expr) = else_branch {
                     let else_ty = self.check_expr(*else_expr, expected);
-                    self.unify_branch_types(expr_id, then_ty, else_ty, "if branches")
+                    self.unify_flowing_branch_types(
+                        expr_id,
+                        then_ty,
+                        self.block_flow(*then_branch),
+                        else_ty,
+                        self.expr_flow(*else_expr),
+                        "if branches",
+                    )
                 } else {
                     void_ty()
                 }
@@ -3465,6 +3472,23 @@ impl<'a> Checker<'a> {
                 ),
             );
             Ty::Unknown
+        }
+    }
+
+    fn unify_flowing_branch_types(
+        &mut self,
+        expr_id: ExprId,
+        left: Ty,
+        left_flow: ControlFlowSummary,
+        right: Ty,
+        right_flow: ControlFlowSummary,
+        context: &str,
+    ) -> Ty {
+        match (left_flow.falls_through, right_flow.falls_through) {
+            (true, true) => self.unify_branch_types(expr_id, left, right, context),
+            (true, false) => left,
+            (false, true) => right,
+            (false, false) => void_ty(),
         }
     }
 

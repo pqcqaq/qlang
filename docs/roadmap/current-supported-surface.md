@@ -1,6 +1,6 @@
 # 当前支持基线
 
-> 最后同步：2026-04-25
+> 最后同步：2026-04-28
 
 这页只记录今天真实可依赖的能力边界。
 
@@ -18,6 +18,7 @@
 ### 编译器主路径
 
 - lexer、parser、formatter、diagnostics、HIR、resolve、typeck、MIR、borrowck 已在主路径工作。
+- `if` 表达式的分支值统一现在只纳入会继续执行的分支；另一侧已经 `return` / `break` / `continue` / 不可贯通时，不再要求它与贯通分支产生相同值类型。
 - LLVM 产物当前稳定开放：`llvm-ir`、`asm`、`obj`、`exe`、`dylib`、`staticlib`。
 - LLVM 可执行主路径现在已支持本地 `impl` / `extend` receiver method 的直接调用，以及经不可变局部 alias 的 method value 直接调用（如 `let add = value.add; add(1)`）；更广义的 escaping / higher-order method value 仍未打通。
 - 当前稳定互操作边界仍是 C ABI。

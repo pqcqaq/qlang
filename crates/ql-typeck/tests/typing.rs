@@ -181,6 +181,28 @@ fn choose() -> Int {
 }
 
 #[test]
+fn accepts_if_branches_when_only_one_side_falls_through() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn choose(flag: Bool) -> Int {
+    var value = 1
+    if flag {
+        value = 2
+    } else {
+        return 0
+    }
+    return value
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected non-returning if branch to be ignored for branch value unification, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_if_false_then_only_bodies_as_non_returning() {
     let diagnostics = diagnostic_messages(
         r#"

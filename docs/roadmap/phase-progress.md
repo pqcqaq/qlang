@@ -1,6 +1,6 @@
 # P1-P8 阶段总览
 
-> 最后同步：2026-04-25
+> 最后同步：2026-04-28
 
 这页只保留阶段级结论和当前焦点。
 
@@ -20,6 +20,7 @@
 ## 已完成的关键进展
 
 - 编译器主路径已经稳定为 AST -> HIR -> resolve -> typeck -> MIR -> LLVM。
+- typeck 的 `if` 表达式分支统一已对齐 control-flow summary：只有会继续执行的分支参与值类型统一；另一侧已经不可贯通时，不再把 `return` 等分支的 `Void`/任务值误报为分支类型不一致。
 - package/workspace 基础能力已落地：`ql project init`、`add`、`targets`、`graph`、`lock`、`emit-interface`。
 - `ql project add` 现在也可在创建 member 时直接写入 workspace 内本地依赖；`--existing` 还能把现有 package 或已移出的 member 重新纳入 workspace，真实 workspace 已不再只能“先手写 manifest 再接依赖图”。
 - `ql project remove` 现在会先审计反向本地依赖；仍被其他 members 引用的包会直接拒绝删除，同时保留磁盘上的包目录；真实项目里 workspace 成员已形成更安全的 `init/add/remove` 闭环。
@@ -104,6 +105,7 @@
 
 - stdlib：普通 Qlang package 形态的 `stdlib` 已开始落地，当前已有 `std.core` 的基础整数/布尔 helper 与 `std.test` 的 smoke-test 断言；本轮补齐非正/非负 helper 与正负/非正/非负断言，并让 `ql project init --stdlib <path>` 生成的 package 与 workspace member smoke test 直接消费这些新增 helper 的成功和失败返回路径。下一步继续扩只依赖稳定语言面的基础 helper。
 - build/backend：继续优先补真实项目里高频的 direct local dependency value/type/member 调用面；本轮已把 public 非泛型、非 opaque type alias 从 declaration bridge 推到普通值兼容，typeck 现在覆盖 return、call argument、assignment、数组/分支统一、pattern literal、bool/numeric/string 操作里的透明 alias target；LLVM backend 已跟进 direct lowering 所需的 alias 赋值、数组/字段值检查、二元操作和 callable 参数断言，并用 build/run/test 真实 consumer 锁住 `Count -> Score -> Int` 的跨包签名、alias 算术与 wrapper 调用。`opaque type`、泛型 alias、`impl` / `extend` 身份匹配继续保持不透明；后续若 `stdlib` 继续暴露阻塞项，优先修阻塞项而不是扩新语法。
+- typeck/backend 回归清理：`ql-codegen-llvm` 中仍有一批 IR 形状耦合测试需要分组收敛。本轮已先修正真实语义问题：`if` 一侧不可贯通时不再强制与可贯通分支统一值类型；剩余失败优先改成语义级断言或更稳定的 IR helper，而不是继续追加脆弱字符串匹配。
 - LSP：继续把 `textDocument/implementation` 从已完成的 trait/type surface、workspace root/source-backed type definition surface、workspace root/source-backed concrete / trait-typed method call、source-backed dependency concrete / trait-typed method call、dependency non-import type-driven positions、trait method definition，以及 broken current-buffer concrete / trait-typed method call / broken-source open dependency member-type surface，扩到更宽的 implementation index；更广的全局聚合继续后置。
 - 文档：入口页继续只保留结论、边界和最近 checkpoint，不再追加流水账。
 
