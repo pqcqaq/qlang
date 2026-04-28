@@ -10,6 +10,7 @@ use std.core.is_nonnegative_int as is_nonnegative_int
 use std.core.is_nonpositive_int as is_nonpositive_int
 use std.core.is_odd_int as is_odd_int
 use std.core.is_positive_int as is_positive_int
+use std.core.is_within_int as is_within_int
 use std.core.not_bool as not_bool
 
 pub fn expect_true(value: Bool) -> Int {
@@ -126,6 +127,20 @@ pub fn expect_int_odd(actual: Int) -> Int {
 
 pub fn expect_int_divisible_by(actual: Int, divisor: Int) -> Int {
     if is_divisible_by_int(actual, divisor) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_within(actual: Int, target: Int, tolerance: Int) -> Int {
+    if is_within_int(actual, target, tolerance) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_not_within(actual: Int, target: Int, tolerance: Int) -> Int {
+    if not_bool(is_within_int(actual, target, tolerance)) {
         return 0
     }
     return 1

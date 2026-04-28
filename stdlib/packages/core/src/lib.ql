@@ -24,11 +24,32 @@ pub fn clamp_int(value: Int, low: Int, high: Int) -> Int {
     return value
 }
 
+pub fn clamp_min_int(value: Int, low: Int) -> Int {
+    if value < low {
+        return low
+    }
+    return value
+}
+
+pub fn clamp_max_int(value: Int, high: Int) -> Int {
+    if value > high {
+        return high
+    }
+    return value
+}
+
 pub fn abs_int(value: Int) -> Int {
     if value < 0 {
         return 0 - value
     }
     return value
+}
+
+pub fn abs_diff_int(left: Int, right: Int) -> Int {
+    if left > right {
+        return left - right
+    }
+    return right - left
 }
 
 pub fn sign_int(value: Int) -> Int {
@@ -93,6 +114,10 @@ pub fn in_exclusive_range_int(value: Int, low: Int, high: Int) -> Bool {
 
 pub fn is_divisible_by_int(value: Int, divisor: Int) -> Bool {
     return divisor != 0 && value % divisor == 0
+}
+
+pub fn is_within_int(value: Int, target: Int, tolerance: Int) -> Bool {
+    return tolerance >= 0 && abs_diff_int(value, target) <= tolerance
 }
 
 pub fn bool_to_int(value: Bool) -> Int {
