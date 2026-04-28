@@ -12397,8 +12397,13 @@ use std.core.median3_int as median3_int
 use std.core.min3_int as min3_int
 use std.core.range_span_int as range_span_int
 use std.core.xor_bool as xor_bool
+use std.test.expect_bool_and as expect_bool_and
 use std.test.expect_bool_eq as expect_bool_eq
 use std.test.expect_bool_implies as expect_bool_implies
+use std.test.expect_bool_ne as expect_bool_ne
+use std.test.expect_bool_not as expect_bool_not
+use std.test.expect_bool_or as expect_bool_or
+use std.test.expect_bool_xor as expect_bool_xor
 use std.test.expect_false as expect_false
 use std.test.expect_status_failed as expect_status_failed
 use std.test.expect_status_ok as expect_status_ok
@@ -12421,7 +12426,6 @@ use std.test.expect_int_positive as expect_int_positive
 use std.test.expect_int_strictly_ascending as expect_int_strictly_ascending
 use std.test.expect_int_within as expect_int_within
 use std.test.expect_true as expect_true
-use std.test.expect_zero as expect_zero
 use std.test.is_status_failed as is_status_failed
 use std.test.is_status_ok as is_status_ok
 use std.test.merge_status as merge_status
@@ -12441,6 +12445,11 @@ fn main() -> Int {
     let compare_check = expect_int_eq(compare_int(9, 3), 1)
     let and_check = expect_false(and_bool(true, false))
     let xor_check = expect_bool_eq(xor_bool(true, false), true)
+    let bool_ne_check = expect_bool_ne(true, false)
+    let bool_not_check = expect_bool_not(false, true)
+    let bool_and_check = expect_bool_and(true, false, false)
+    let bool_or_check = expect_bool_or(false, true, true)
+    let bool_xor_check = expect_bool_xor(true, true, false)
     let core_implies_check = expect_bool_eq(implies_bool(true, false), false)
     let core_ascending_check = expect_bool_eq(is_ascending_int(20, 21, 22), true)
     let core_strict_ascending_check = expect_bool_eq(is_strictly_ascending_int(20, 20, 22), false)
@@ -12475,6 +12484,11 @@ fn main() -> Int {
     let status_failed_check = expect_status_failed(merge_status(0, 1))
     let failed_status_ok_check = expect_int_eq(expect_status_ok(1), 1)
     let failed_status_failed_check = expect_int_eq(expect_status_failed(0), 1)
+    let failed_bool_ne_check = expect_int_eq(expect_bool_ne(true, true), 1)
+    let failed_bool_not_check = expect_int_eq(expect_bool_not(false, false), 1)
+    let failed_bool_and_check = expect_int_eq(expect_bool_and(true, false, true), 1)
+    let failed_bool_or_check = expect_int_eq(expect_bool_or(false, false, true), 1)
+    let failed_bool_xor_check = expect_int_eq(expect_bool_xor(true, false, false), 1)
     let failed_range_check = expect_int_eq(expect_int_between(19, 20, 22), 1)
     let failed_exclusive_range_check = expect_int_eq(expect_int_exclusive_between(20, 20, 22), 1)
     let failed_outside_check = expect_int_eq(expect_int_outside(21, 20, 22), 1)
@@ -12494,7 +12508,13 @@ fn main() -> Int {
     let failed_nonpositive_check = expect_int_eq(expect_int_nonpositive(1), 1)
     let failed_implies_check = expect_int_eq(expect_bool_implies(true, false), 1)
 
-    return expect_zero(max_check + max3_check + min3_check + median3_check + clamp_min_check + clamp_max_check + clamp_bounds_check + abs_diff_check + range_span_check + compare_check + and_check + xor_check + core_implies_check + core_ascending_check + core_strict_ascending_check + core_bounds_check + core_exclusive_bounds_check + core_within_check + range_check + exclusive_range_check + outside_check + bounds_check + exclusive_bounds_check + outside_bounds_check + ascending_check + strict_ascending_check + divisible_check + within_check + not_within_check + even_check + odd_check + positive_check + negative_check + nonnegative_check + nonpositive_check + test_implies_check + true_check + status_ok_bool_check + status_failed_bool_check + merged_status_check + merged_status3_check + merged_status4_check + status_ok_check + status_failed_check + failed_status_ok_check + failed_status_failed_check + failed_range_check + failed_exclusive_range_check + failed_outside_check + failed_bounds_check + failed_exclusive_bounds_check + failed_outside_bounds_check + failed_ascending_check + failed_strict_ascending_check + failed_divisible_check + failed_within_check + failed_not_within_check + failed_even_check + failed_odd_check + failed_positive_check + failed_negative_check + failed_nonnegative_check + failed_nonpositive_check + failed_implies_check)
+    let core_status = merge_status4(max_check + max3_check + min3_check + median3_check, clamp_min_check + clamp_max_check + clamp_bounds_check + abs_diff_check, range_span_check + compare_check + and_check + xor_check, bool_ne_check + bool_not_check + bool_and_check + bool_or_check)
+    let bool_status = merge_status4(bool_xor_check + core_implies_check + core_ascending_check + core_strict_ascending_check, core_bounds_check + core_exclusive_bounds_check + core_within_check + range_check, failed_bool_ne_check + failed_bool_not_check + failed_bool_and_check + failed_bool_or_check, failed_bool_xor_check + exclusive_range_check + outside_check + bounds_check)
+    let range_status = merge_status4(exclusive_bounds_check + outside_bounds_check + ascending_check + strict_ascending_check, divisible_check + within_check + not_within_check + even_check, odd_check + positive_check + negative_check + nonnegative_check, nonpositive_check + test_implies_check + true_check + status_ok_bool_check)
+    let status_helper_status = merge_status4(status_failed_bool_check + merged_status_check + merged_status3_check + merged_status4_check, status_ok_check + status_failed_check + failed_status_ok_check + failed_status_failed_check, failed_range_check + failed_exclusive_range_check + failed_outside_check + failed_bounds_check, failed_exclusive_bounds_check + failed_outside_bounds_check + failed_ascending_check + failed_strict_ascending_check)
+    let failure_status = merge_status4(failed_divisible_check + failed_within_check + failed_not_within_check + failed_even_check, failed_odd_check + failed_positive_check + failed_negative_check + failed_nonnegative_check, failed_nonpositive_check + failed_implies_check, 0)
+
+    return expect_status_ok(merge_status4(core_status, bool_status, range_status, merge_status(status_helper_status, failure_status)))
 }
 "#
 }

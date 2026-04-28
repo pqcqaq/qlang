@@ -1,5 +1,6 @@
 package std.test
 
+use std.core.and_bool as and_bool
 use std.core.implies_bool as implies_bool
 use std.core.in_bounds_int as in_bounds_int
 use std.core.in_exclusive_bounds_int as in_exclusive_bounds_int
@@ -16,6 +17,8 @@ use std.core.is_positive_int as is_positive_int
 use std.core.is_strictly_ascending_int as is_strictly_ascending_int
 use std.core.is_within_int as is_within_int
 use std.core.not_bool as not_bool
+use std.core.or_bool as or_bool
+use std.core.xor_bool as xor_bool
 
 pub fn expect_true(value: Bool) -> Int {
     if value {
@@ -33,6 +36,41 @@ pub fn expect_false(value: Bool) -> Int {
 
 pub fn expect_bool_eq(actual: Bool, expected: Bool) -> Int {
     if actual == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_bool_ne(actual: Bool, unexpected: Bool) -> Int {
+    if actual != unexpected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_bool_not(value: Bool, expected: Bool) -> Int {
+    if not_bool(value) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_bool_and(left: Bool, right: Bool, expected: Bool) -> Int {
+    if and_bool(left, right) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_bool_or(left: Bool, right: Bool, expected: Bool) -> Int {
+    if or_bool(left, right) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_bool_xor(left: Bool, right: Bool, expected: Bool) -> Int {
+    if xor_bool(left, right) == expected {
         return 0
     }
     return 1
