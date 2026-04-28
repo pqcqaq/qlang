@@ -94,6 +94,40 @@ pub fn expect_nonzero(value: Int) -> Int {
     return 1
 }
 
+pub fn is_status_ok(status: Int) -> Bool {
+    return status == 0
+}
+
+pub fn is_status_failed(status: Int) -> Bool {
+    return status != 0
+}
+
+pub fn merge_status(left: Int, right: Int) -> Int {
+    return left + right
+}
+
+pub fn merge_status3(first: Int, second: Int, third: Int) -> Int {
+    return merge_status(merge_status(first, second), third)
+}
+
+pub fn merge_status4(first: Int, second: Int, third: Int, fourth: Int) -> Int {
+    return merge_status(merge_status3(first, second, third), fourth)
+}
+
+pub fn expect_status_ok(status: Int) -> Int {
+    if is_status_ok(status) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_status_failed(status: Int) -> Int {
+    if is_status_failed(status) {
+        return 0
+    }
+    return 1
+}
+
 pub fn expect_int_between(actual: Int, low: Int, high: Int) -> Int {
     if in_range_int(actual, low, high) {
         return 0
