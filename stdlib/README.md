@@ -30,6 +30,7 @@ cargo run -q -p ql-cli -- project init D:\Projects\my-qlang-workspace --workspac
 ```
 
 Generated smoke tests group assertion statuses with `merge_status4` and return `expect_status_ok(...)` so larger tests can keep the same `0` pass / non-zero failure contract without one long status expression.
+`std.test` also uses a package-aware smoke test that imports its own public helpers through `use std.test...`, so the assertion package is checked through the same surface as downstream users.
 
 Verify from the repository root:
 

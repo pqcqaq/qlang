@@ -5113,6 +5113,13 @@ fn execute_test_targets(
             options,
             profile_overridden,
         )?;
+        prepare_project_test_package_builds(
+            &workspace_members,
+            &selected_members,
+            "`ql test`",
+            options,
+            profile_overridden,
+        )?;
         Some(workspace_members)
     } else {
         None
@@ -5136,7 +5143,7 @@ fn execute_test_targets(
                 (workspace_members.as_ref(), package_manifest_path.as_ref())
             {
                 if json {
-                    build_project_source_target_quiet(
+                    build_project_test_source_target_quiet(
                         workspace_members,
                         "`ql test`",
                         package_manifest_path,
@@ -5144,11 +5151,9 @@ fn execute_test_targets(
                         build_options,
                         options,
                         profile_overridden,
-                        false,
-                        false,
                     )
                 } else {
-                    build_project_source_target_silent(
+                    build_project_test_source_target_silent(
                         workspace_members,
                         "`ql test`",
                         package_manifest_path,
@@ -5156,8 +5161,6 @@ fn execute_test_targets(
                         build_options,
                         options,
                         profile_overridden,
-                        false,
-                        false,
                     )
                 }
             } else if json {
@@ -6170,6 +6173,46 @@ fn prepare_project_dependency_builds(
     Ok(())
 }
 
+fn prepare_project_test_package_builds(
+    workspace_members: &[WorkspaceBuildTargets],
+    selected_members: &[WorkspaceBuildTargets],
+    command_label: &str,
+    options: &BuildOptions,
+    profile_overridden: bool,
+) -> Result<(), u8> {
+    let build_plan =
+        resolve_project_build_plan_members(workspace_members, selected_members, command_label)?;
+    for plan_member in &build_plan {
+        if !plan_member.require_targets {
+            continue;
+        }
+        for target in &plan_member.member.targets {
+            if target.kind != BuildTargetKind::Library {
+                continue;
+            }
+            let target_options = project_dependency_target_build_options(
+                &plan_member.member,
+                target,
+                options,
+                false,
+                profile_overridden,
+            );
+            build_project_source_target_silent(
+                workspace_members,
+                command_label,
+                &plan_member.member.member_manifest_path,
+                &target.path,
+                &target_options,
+                options,
+                profile_overridden,
+                false,
+                true,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn dependency_manifest_paths_for_selected_roots(
     workspace_members: &[WorkspaceBuildTargets],
     selected_members: &[WorkspaceBuildTargets],
@@ -6605,7 +6648,7 @@ fn build_project_source_target_result(
     .map_err(BuildTargetJsonError::Build)
 }
 
-fn build_project_source_target_quiet(
+fn build_project_test_source_target_silent(
     workspace_members: &[WorkspaceBuildTargets],
     command_label: &str,
     manifest_path: &Path,
@@ -6613,10 +6656,8 @@ fn build_project_source_target_quiet(
     options: &BuildOptions,
     dependency_options: &BuildOptions,
     profile_overridden: bool,
-    emit_interface: bool,
-    include_public_function_exports: bool,
 ) -> Result<BuildArtifact, u8> {
-    build_project_source_target_impl(
+    build_project_test_source_target_impl(
         workspace_members,
         command_label,
         manifest_path,
@@ -6624,10 +6665,58 @@ fn build_project_source_target_quiet(
         options,
         dependency_options,
         profile_overridden,
-        emit_interface,
-        include_public_function_exports,
+        true,
+    )
+}
+
+fn build_project_test_source_target_quiet(
+    workspace_members: &[WorkspaceBuildTargets],
+    command_label: &str,
+    manifest_path: &Path,
+    path: &Path,
+    options: &BuildOptions,
+    dependency_options: &BuildOptions,
+    profile_overridden: bool,
+) -> Result<BuildArtifact, u8> {
+    build_project_test_source_target_impl(
+        workspace_members,
+        command_label,
+        manifest_path,
+        path,
+        options,
+        dependency_options,
+        profile_overridden,
+        false,
+    )
+}
+
+fn build_project_test_source_target_impl(
+    workspace_members: &[WorkspaceBuildTargets],
+    command_label: &str,
+    manifest_path: &Path,
+    path: &Path,
+    options: &BuildOptions,
+    dependency_options: &BuildOptions,
+    profile_overridden: bool,
+    report_failure: bool,
+) -> Result<BuildArtifact, u8> {
+    let prepared = prepare_project_test_target_build(
+        workspace_members,
+        command_label,
+        manifest_path,
+        path,
+        dependency_options,
+        profile_overridden,
+        report_failure,
+    )?;
+    build_single_source_target_with_inputs_impl(
+        path,
+        options,
         false,
         false,
+        report_failure,
+        prepared.source_override.as_deref(),
+        &prepared.additional_link_inputs,
     )
 }
 
@@ -6766,6 +6855,69 @@ fn prepare_project_target_build(
     })
 }
 
+fn prepare_project_test_target_build(
+    workspace_members: &[WorkspaceBuildTargets],
+    command_label: &str,
+    manifest_path: &Path,
+    path: &Path,
+    dependency_options: &BuildOptions,
+    profile_overridden: bool,
+    report_failure: bool,
+) -> Result<PreparedProjectTargetBuild, u8> {
+    let selected_members =
+        select_project_build_plan_root_members(workspace_members, &[manifest_path.to_path_buf()]);
+    let build_plan =
+        resolve_project_build_plan_members(workspace_members, &selected_members, command_label)?;
+    let mut additional_link_inputs =
+        project_dependency_link_inputs(&build_plan, dependency_options, profile_overridden);
+    additional_link_inputs.extend(project_selected_library_link_inputs(
+        &build_plan,
+        dependency_options,
+        profile_overridden,
+    ));
+    let source = fs::read_to_string(path).map_err(|error| {
+        if report_failure {
+            eprintln!(
+                "error: failed to access `{}`: {error}",
+                normalize_path(path)
+            );
+        }
+        1
+    })?;
+    let dependency_bridge_items = match render_direct_dependency_bridge_items(
+        command_label,
+        manifest_path,
+        &source,
+        report_failure,
+    ) {
+        Ok(items) => items,
+        Err(code) => return Err(code),
+    };
+    let package_bridge_items = match render_package_under_test_bridge_items(
+        command_label,
+        workspace_members,
+        manifest_path,
+        &source,
+        report_failure,
+    ) {
+        Ok(items) => items,
+        Err(code) => return Err(code),
+    };
+    let bridge_code =
+        join_dependency_bridge_sections(&dependency_bridge_items, &package_bridge_items);
+
+    let source_override = if bridge_code.is_empty() {
+        None
+    } else {
+        Some(append_dependency_declarations(&source, &bridge_code))
+    };
+
+    Ok(PreparedProjectTargetBuild {
+        source_override,
+        additional_link_inputs,
+    })
+}
+
 fn append_dependency_declarations(source: &str, dependency_declarations: &str) -> String {
     let mut combined = source.trim_end_matches(['\r', '\n']).to_owned();
     combined.push_str("\n\n");
@@ -6795,6 +6947,35 @@ fn project_dependency_link_inputs(
     let mut outputs = Vec::new();
     for plan_member in build_plan.iter().rev() {
         if plan_member.require_targets {
+            continue;
+        }
+        for target in &plan_member.member.targets {
+            if target.kind != BuildTargetKind::Library {
+                continue;
+            }
+            let target_options = project_dependency_target_build_options(
+                &plan_member.member,
+                target,
+                dependency_options,
+                false,
+                profile_overridden,
+            );
+            if let Some(path) = target_options.output {
+                outputs.push(path);
+            }
+        }
+    }
+    outputs
+}
+
+fn project_selected_library_link_inputs(
+    build_plan: &[ProjectBuildPlanMember],
+    dependency_options: &BuildOptions,
+    profile_overridden: bool,
+) -> Vec<PathBuf> {
+    let mut outputs = Vec::new();
+    for plan_member in build_plan.iter().rev() {
+        if !plan_member.require_targets {
             continue;
         }
         for target in &plan_member.member.targets {
@@ -7060,6 +7241,163 @@ fn render_direct_dependency_bridge_items_quiet(
     Ok(join_dependency_bridge_sections(
         &declarations,
         &method_forwarders.forwarders,
+    ))
+}
+
+struct PackageBridgeModule {
+    source: String,
+    module: Module,
+}
+
+fn package_under_test_bridge_modules(
+    command_label: &str,
+    member: &WorkspaceBuildTargets,
+    report_failure: bool,
+) -> Result<Vec<PackageBridgeModule>, u8> {
+    let mut modules = Vec::new();
+    for target in &member.targets {
+        if target.kind != BuildTargetKind::Library {
+            continue;
+        }
+        let source = fs::read_to_string(&target.path).map_err(|error| {
+            if report_failure {
+                eprintln!(
+                    "error: {command_label} failed to access package-under-test source `{}`: {error}",
+                    normalize_path(&target.path)
+                );
+            }
+            1
+        })?;
+        let module = parse_source(&source).map_err(|_| {
+            if report_failure {
+                eprintln!(
+                    "error: {command_label} failed to parse package-under-test source `{}` while preparing test bridges",
+                    normalize_path(&target.path)
+                );
+            }
+            1
+        })?;
+        modules.push(PackageBridgeModule { source, module });
+    }
+    Ok(modules)
+}
+
+fn render_package_under_test_bridge_items(
+    command_label: &str,
+    workspace_members: &[WorkspaceBuildTargets],
+    manifest_path: &Path,
+    source: &str,
+    report_failure: bool,
+) -> Result<String, u8> {
+    let Some(member) = workspace_members.iter().find(|member| {
+        normalize_path(&member.member_manifest_path) == normalize_path(manifest_path)
+    }) else {
+        return Ok(String::new());
+    };
+    let root_source_module = match parse_source(source) {
+        Ok(module) => module,
+        Err(_) => return Ok(String::new()),
+    };
+    let bridge_modules = package_under_test_bridge_modules(command_label, member, report_failure)?;
+    if bridge_modules.is_empty() {
+        return Ok(String::new());
+    }
+
+    let package_name = member.package_name.as_str();
+    let module_import_paths = bridge_modules
+        .iter()
+        .map(|module| dependency_interface_module_import_path(package_name, &module.module))
+        .collect::<BTreeSet<_>>();
+    let imported_externs =
+        collect_imported_dependency_externs(&root_source_module, &module_import_paths);
+    let occupied_root_names = collect_top_level_definition_names(&root_source_module);
+
+    let mut forwarders = Vec::new();
+    let mut required_types_by_module_path = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
+    let mut function_owners = BTreeMap::<String, DependencyExternOwner>::new();
+    for module in &bridge_modules {
+        collect_dependency_module_public_function_forwarders(
+            package_name,
+            manifest_path,
+            &module.module,
+            &module.source,
+            Some(&imported_externs),
+            None,
+            &occupied_root_names,
+            &mut required_types_by_module_path,
+            &mut function_owners,
+            &mut forwarders,
+        )
+        .map_err(|error| {
+            if report_failure {
+                match error {
+                    DependencyPublicFunctionForwarderError::DependencyConflict {
+                        symbol,
+                        owner,
+                    } => {
+                        eprintln!(
+                            "error: {command_label} found conflicting package-under-test public function imports for `{symbol}`"
+                        );
+                        eprintln!("note: first package: `{}`", owner.package_name);
+                        eprintln!("note: package under test: `{package_name}`");
+                    }
+                    DependencyPublicFunctionForwarderError::LocalConflict { symbol } => {
+                        eprintln!(
+                            "error: {command_label} cannot synthesize package-under-test public function bridge for `{symbol}` because the test source already defines the same top-level name"
+                        );
+                        eprintln!(
+                            "hint: rename the local top-level item or avoid importing the package-under-test public function with the same original symbol name"
+                        );
+                    }
+                }
+            }
+            1
+        })?;
+    }
+
+    let mut type_declarations = Vec::new();
+    let mut type_owners = BTreeMap::<String, DependencyExternOwner>::new();
+    for module in &bridge_modules {
+        let module_import_path =
+            dependency_interface_module_import_path(package_name, &module.module);
+        collect_dependency_module_public_type_declarations(
+            package_name,
+            manifest_path,
+            &module.module,
+            &module.source,
+            Some(&imported_externs),
+            required_types_by_module_path.get(&module_import_path),
+            &occupied_root_names,
+            &mut type_owners,
+            &mut type_declarations,
+        )
+        .map_err(|error| {
+            if report_failure {
+                match error {
+                    DependencyPublicTypeBridgeError::DependencyConflict { symbol, owner } => {
+                        eprintln!(
+                            "error: {command_label} found conflicting package-under-test public type imports for `{symbol}`"
+                        );
+                        eprintln!("note: first package: `{}`", owner.package_name);
+                        eprintln!("note: package under test: `{package_name}`");
+                    }
+                    DependencyPublicTypeBridgeError::LocalConflict { symbol } => {
+                        eprintln!(
+                            "error: {command_label} cannot synthesize package-under-test public type bridge for `{symbol}` because the test source already defines the same top-level name"
+                        );
+                        eprintln!(
+                            "hint: rename the local top-level item or avoid importing a package-under-test public type with the same original symbol name"
+                        );
+                    }
+                }
+            }
+            1
+        })?;
+    }
+
+    Ok(join_dependency_bridge_sections(
+        &type_declarations.join("\n\n"),
+        &forwarders.join("\n\n"),
     ))
 }
 

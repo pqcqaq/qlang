@@ -116,6 +116,78 @@ name = "app"
 }
 
 #[test]
+fn test_package_tests_can_import_current_package_public_functions() {
+    if !toolchain_available("`ql test` current package public function test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-current-package-function");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source root");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "app/src/lib.ql",
+        "pub fn pass_status(value: Int) -> Int {\n    if value == 42 {\n        return 0\n    }\n    return 1\n}\n",
+    );
+    temp.write(
+        "app/tests/smoke.ql",
+        "use app.pass_status as pass\n\nfn main() -> Int {\n    return pass(42)\n}\n",
+    );
+
+    let package_output = static_library_output_path(&project_root.join("target/ql/debug"), "lib");
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql test` current package public function");
+    let (stdout, stderr) = expect_success(
+        "project-test-current-package-function",
+        "package tests importing current package public function",
+        &output,
+    )
+    .expect(
+        "package-path `ql test` should let smoke tests import current package public functions",
+    );
+    expect_empty_stderr(
+        "project-test-current-package-function",
+        "package tests importing current package public function",
+        &stderr,
+    )
+    .expect("current package public function tests should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-current-package-function",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("package-path `ql test` should report the current-package smoke test");
+    expect_file_exists(
+        "project-test-current-package-function",
+        &package_output,
+        "current package library",
+        "`ql test` current package public function",
+    )
+    .expect("current package library should be prebuilt for tests");
+    expect_file_exists(
+        "project-test-current-package-function",
+        &smoke_output,
+        "current package test executable",
+        "`ql test` current package public function",
+    )
+    .expect("current package test executable should be emitted");
+}
+
+#[test]
 fn test_package_path_supports_direct_dependency_public_struct_functions() {
     if !toolchain_available("`ql test` dependency public struct function test") {
         return;
