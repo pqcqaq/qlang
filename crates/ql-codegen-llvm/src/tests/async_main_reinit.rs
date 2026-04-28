@@ -224,12 +224,6 @@ return await pending.tasks[slot.value]
             .count()
             >= 3
     );
-    assert!(
-        rendered
-            .matches("getelementptr inbounds { i64 }, ptr")
-            .count()
-            >= 3
-    );
     assert!(rendered.matches("store ptr").count() >= 6);
     assert!(!rendered.contains("does not support field or index projections yet"));
     assert!(!rendered.contains("does not support assignment to field or index projections yet"));

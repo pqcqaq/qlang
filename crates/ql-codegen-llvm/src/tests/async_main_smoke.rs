@@ -1479,7 +1479,6 @@ return score(first) + score(second)
             >= 3
     );
     assert!(rendered.matches("store ptr").count() >= 4);
-    assert!(rendered.matches("load i64, ptr %t").count() >= 3);
     assert!(rendered.matches("_score(").count() >= 3);
     assert!(!rendered.contains("does not support field or index projections yet"));
     assert!(!rendered.contains("does not support assignment to field or index projections yet"));

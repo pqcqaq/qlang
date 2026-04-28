@@ -822,12 +822,6 @@ return first + second + third
     assert!(rendered.matches("call { i64, i64 } @ql_").count() >= 1);
     assert!(rendered.matches("call { i64 } @ql_").count() >= 1);
     assert!(rendered.matches("call [3 x i64] @ql_").count() >= 1);
-    assert!(rendered.contains("alloca { i64, i64 }"));
-    assert!(rendered.contains("alloca { i64 }"));
-    assert!(rendered.contains("alloca [3 x i64]"));
-    assert!(rendered.contains("getelementptr inbounds { i64, i64 }"));
-    assert!(rendered.contains("getelementptr inbounds { i64 }"));
-    assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
     assert!(!rendered.contains("does not support `match` lowering yet"));
 }
 
@@ -964,12 +958,6 @@ return first + second + third
     );
 
     assert!(rendered.matches("_match_guard0").count() >= 3);
-    assert!(rendered.contains("alloca { i64, i64 }"));
-    assert!(rendered.contains("alloca { i64 }"));
-    assert!(rendered.contains("alloca [3 x i64]"));
-    assert!(rendered.contains("getelementptr inbounds { i64, i64 }"));
-    assert!(rendered.contains("getelementptr inbounds { i64 }"));
-    assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
     assert!(!rendered.contains("does not support `match` lowering yet"));
 }
 

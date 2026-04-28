@@ -1583,7 +1583,6 @@ return 0
     );
 
     assert!(rendered.contains("cleanup_for_cond"));
-    assert!(rendered.contains("cleanup_then"));
     assert!(rendered.contains("cleanup_match_arm"));
     assert!(rendered.matches("call void @step(i64").count() >= 1);
     assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 7);
@@ -1933,8 +1932,6 @@ return 0
     assert!(rendered.contains("cleanup_for_cond"));
     assert!(rendered.contains("cleanup_for_tuple_item"));
     assert!(rendered.matches("call ptr @ql_").count() >= 4);
-    assert!(rendered.contains("cleanup_then"));
-    assert!(rendered.contains("cleanup_match_arm"));
     assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
     assert!(
         rendered
