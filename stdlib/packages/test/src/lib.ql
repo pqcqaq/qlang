@@ -1,6 +1,8 @@
 package std.test
 
 use std.core.implies_bool as implies_bool
+use std.core.in_bounds_int as in_bounds_int
+use std.core.in_exclusive_bounds_int as in_exclusive_bounds_int
 use std.core.in_exclusive_range_int as in_exclusive_range_int
 use std.core.in_range_int as in_range_int
 use std.core.is_ascending_int as is_ascending_int
@@ -108,6 +110,27 @@ pub fn expect_int_exclusive_between(actual: Int, low: Int, high: Int) -> Int {
 
 pub fn expect_int_outside(actual: Int, low: Int, high: Int) -> Int {
     if not_bool(in_range_int(actual, low, high)) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_between_bounds(actual: Int, first_bound: Int, second_bound: Int) -> Int {
+    if in_bounds_int(actual, first_bound, second_bound) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_exclusive_between_bounds(actual: Int, first_bound: Int, second_bound: Int) -> Int {
+    if in_exclusive_bounds_int(actual, first_bound, second_bound) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_outside_bounds(actual: Int, first_bound: Int, second_bound: Int) -> Int {
+    if not_bool(in_bounds_int(actual, first_bound, second_bound)) {
         return 0
     }
     return 1

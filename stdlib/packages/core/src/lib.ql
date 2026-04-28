@@ -46,6 +46,10 @@ pub fn clamp_max_int(value: Int, high: Int) -> Int {
     return value
 }
 
+pub fn clamp_bounds_int(value: Int, first_bound: Int, second_bound: Int) -> Int {
+    return clamp_int(value, min_int(first_bound, second_bound), max_int(first_bound, second_bound))
+}
+
 pub fn abs_int(value: Int) -> Int {
     if value < 0 {
         return 0 - value
@@ -58,6 +62,10 @@ pub fn abs_diff_int(left: Int, right: Int) -> Int {
         return left - right
     }
     return right - left
+}
+
+pub fn range_span_int(first_bound: Int, second_bound: Int) -> Int {
+    return abs_diff_int(first_bound, second_bound)
 }
 
 pub fn sign_int(value: Int) -> Int {
@@ -128,6 +136,14 @@ pub fn in_range_int(value: Int, low: Int, high: Int) -> Bool {
 
 pub fn in_exclusive_range_int(value: Int, low: Int, high: Int) -> Bool {
     return value > low && value < high
+}
+
+pub fn in_bounds_int(value: Int, first_bound: Int, second_bound: Int) -> Bool {
+    return in_range_int(value, min_int(first_bound, second_bound), max_int(first_bound, second_bound))
+}
+
+pub fn in_exclusive_bounds_int(value: Int, first_bound: Int, second_bound: Int) -> Bool {
+    return in_exclusive_range_int(value, min_int(first_bound, second_bound), max_int(first_bound, second_bound))
 }
 
 pub fn is_ascending_int(first: Int, second: Int, third: Int) -> Bool {
