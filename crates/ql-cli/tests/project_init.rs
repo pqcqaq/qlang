@@ -47,12 +47,18 @@ use std.core.clamp_max_int as clamp_max_int
 use std.core.clamp_min_int as clamp_min_int
 use std.core.compare_int as compare_int
 use std.core.implies_bool as implies_bool
+use std.core.is_ascending_int as is_ascending_int
+use std.core.is_strictly_ascending_int as is_strictly_ascending_int
 use std.core.is_within_int as is_within_int
+use std.core.max3_int as max3_int
 use std.core.max_int as max_int
+use std.core.median3_int as median3_int
+use std.core.min3_int as min3_int
 use std.core.xor_bool as xor_bool
 use std.test.expect_bool_eq as expect_bool_eq
 use std.test.expect_bool_implies as expect_bool_implies
 use std.test.expect_false as expect_false
+use std.test.expect_int_ascending as expect_int_ascending
 use std.test.expect_int_between as expect_int_between
 use std.test.expect_int_divisible_by as expect_int_divisible_by
 use std.test.expect_int_eq as expect_int_eq
@@ -65,12 +71,16 @@ use std.test.expect_int_nonpositive as expect_int_nonpositive
 use std.test.expect_int_odd as expect_int_odd
 use std.test.expect_int_outside as expect_int_outside
 use std.test.expect_int_positive as expect_int_positive
+use std.test.expect_int_strictly_ascending as expect_int_strictly_ascending
 use std.test.expect_int_within as expect_int_within
 use std.test.expect_true as expect_true
 use std.test.expect_zero as expect_zero
 
 fn main() -> Int {
     let max_check = expect_int_eq(max_int(20, 22), 22)
+    let max3_check = expect_int_eq(max3_int(20, 22, 21), 22)
+    let min3_check = expect_int_eq(min3_int(20, 22, 21), 20)
+    let median3_check = expect_int_eq(median3_int(22, 20, 21), 21)
     let clamp_min_check = expect_int_eq(clamp_min_int(19, 20), 20)
     let clamp_max_check = expect_int_eq(clamp_max_int(23, 22), 22)
     let abs_diff_check = expect_int_eq(abs_diff_int(22, 19), 3)
@@ -78,10 +88,14 @@ fn main() -> Int {
     let and_check = expect_false(and_bool(true, false))
     let xor_check = expect_bool_eq(xor_bool(true, false), true)
     let core_implies_check = expect_bool_eq(implies_bool(true, false), false)
+    let core_ascending_check = expect_bool_eq(is_ascending_int(20, 21, 22), true)
+    let core_strict_ascending_check = expect_bool_eq(is_strictly_ascending_int(20, 20, 22), false)
     let core_within_check = expect_bool_eq(is_within_int(21, 22, 1), true)
     let range_check = expect_int_between(22, 20, 22)
     let exclusive_range_check = expect_int_exclusive_between(21, 20, 22)
     let outside_check = expect_int_outside(19, 20, 22)
+    let ascending_check = expect_int_ascending(20, 21, 22)
+    let strict_ascending_check = expect_int_strictly_ascending(20, 21, 22)
     let divisible_check = expect_int_divisible_by(21, 7)
     let within_check = expect_int_within(21, 22, 1)
     let not_within_check = expect_int_not_within(19, 22, 1)
@@ -96,6 +110,8 @@ fn main() -> Int {
     let failed_range_check = expect_int_eq(expect_int_between(19, 20, 22), 1)
     let failed_exclusive_range_check = expect_int_eq(expect_int_exclusive_between(20, 20, 22), 1)
     let failed_outside_check = expect_int_eq(expect_int_outside(21, 20, 22), 1)
+    let failed_ascending_check = expect_int_eq(expect_int_ascending(22, 21, 20), 1)
+    let failed_strict_ascending_check = expect_int_eq(expect_int_strictly_ascending(20, 20, 22), 1)
     let failed_divisible_check = expect_int_eq(expect_int_divisible_by(21, 0), 1)
     let failed_within_check = expect_int_eq(expect_int_within(19, 22, 1), 1)
     let failed_not_within_check = expect_int_eq(expect_int_not_within(22, 22, 0), 1)
@@ -107,7 +123,7 @@ fn main() -> Int {
     let failed_nonpositive_check = expect_int_eq(expect_int_nonpositive(1), 1)
     let failed_implies_check = expect_int_eq(expect_bool_implies(true, false), 1)
 
-    return expect_zero(max_check + clamp_min_check + clamp_max_check + abs_diff_check + compare_check + and_check + xor_check + core_implies_check + core_within_check + range_check + exclusive_range_check + outside_check + divisible_check + within_check + not_within_check + even_check + odd_check + positive_check + negative_check + nonnegative_check + nonpositive_check + test_implies_check + true_check + failed_range_check + failed_exclusive_range_check + failed_outside_check + failed_divisible_check + failed_within_check + failed_not_within_check + failed_even_check + failed_odd_check + failed_positive_check + failed_negative_check + failed_nonnegative_check + failed_nonpositive_check + failed_implies_check)
+    return expect_zero(max_check + max3_check + min3_check + median3_check + clamp_min_check + clamp_max_check + abs_diff_check + compare_check + and_check + xor_check + core_implies_check + core_ascending_check + core_strict_ascending_check + core_within_check + range_check + exclusive_range_check + outside_check + ascending_check + strict_ascending_check + divisible_check + within_check + not_within_check + even_check + odd_check + positive_check + negative_check + nonnegative_check + nonpositive_check + test_implies_check + true_check + failed_range_check + failed_exclusive_range_check + failed_outside_check + failed_ascending_check + failed_strict_ascending_check + failed_divisible_check + failed_within_check + failed_not_within_check + failed_even_check + failed_odd_check + failed_positive_check + failed_negative_check + failed_nonnegative_check + failed_nonpositive_check + failed_implies_check)
 }
 "#
 }

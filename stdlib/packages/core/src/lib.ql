@@ -14,6 +14,14 @@ pub fn min_int(left: Int, right: Int) -> Int {
     return right
 }
 
+pub fn max3_int(first: Int, second: Int, third: Int) -> Int {
+    return max_int(max_int(first, second), third)
+}
+
+pub fn min3_int(first: Int, second: Int, third: Int) -> Int {
+    return min_int(min_int(first, second), third)
+}
+
 pub fn clamp_int(value: Int, low: Int, high: Int) -> Int {
     if value < low {
         return low
@@ -72,6 +80,16 @@ pub fn compare_int(left: Int, right: Int) -> Int {
     return 0
 }
 
+pub fn median3_int(first: Int, second: Int, third: Int) -> Int {
+    if is_ascending_int(first, second, third) || is_ascending_int(third, second, first) {
+        return second
+    }
+    if is_ascending_int(second, first, third) || is_ascending_int(third, first, second) {
+        return first
+    }
+    return third
+}
+
 pub fn is_zero_int(value: Int) -> Bool {
     return value == 0
 }
@@ -110,6 +128,14 @@ pub fn in_range_int(value: Int, low: Int, high: Int) -> Bool {
 
 pub fn in_exclusive_range_int(value: Int, low: Int, high: Int) -> Bool {
     return value > low && value < high
+}
+
+pub fn is_ascending_int(first: Int, second: Int, third: Int) -> Bool {
+    return first <= second && second <= third
+}
+
+pub fn is_strictly_ascending_int(first: Int, second: Int, third: Int) -> Bool {
+    return first < second && second < third
 }
 
 pub fn is_divisible_by_int(value: Int, divisor: Int) -> Bool {
