@@ -25,6 +25,12 @@ use std.test.expect_int_ge as expect_int_ge
 use std.test.expect_int_gt as expect_int_gt
 use std.test.expect_int_le as expect_int_le
 use std.test.expect_int_lt as expect_int_lt
+use std.test.expect_int_max as expect_int_max
+use std.test.expect_int_max3 as expect_int_max3
+use std.test.expect_int_max4 as expect_int_max4
+use std.test.expect_int_min as expect_int_min
+use std.test.expect_int_min3 as expect_int_min3
+use std.test.expect_int_min4 as expect_int_min4
 use std.test.expect_int_ne as expect_int_ne
 use std.test.expect_int_negative as expect_int_negative
 use std.test.expect_int_nonnegative as expect_int_nonnegative
@@ -95,6 +101,10 @@ fn main() -> Int {
     let average_pass = sum4(check_int(expect_int_average2(5, 8, 6), 0), check_int(expect_int_average3(3, 6, 9, 6), 0), 0, 0)
     let aggregate_failure = sum4(check_int(expect_int_sum3(2, 3, 4, 10), 1), check_int(expect_int_sum4(2, 3, 4, 5, 15), 1), check_int(expect_int_product3(2, 3, 4, 25), 1), check_int(expect_int_product4(2, 3, 4, 5, 121), 1))
     let average_failure = sum4(check_int(expect_int_average2(5, 8, 7), 1), check_int(expect_int_average3(3, 6, 9, 7), 1), 0, 0)
+    let extrema_pass = sum4(check_int(expect_int_max(20, 22, 22), 0), check_int(expect_int_min(20, 22, 20), 0), check_int(expect_int_max3(20, 22, 21, 22), 0), check_int(expect_int_min3(20, 22, 21, 20), 0))
+    let extrema4_pass = sum4(check_int(expect_int_max4(20, 22, 21, 19, 22), 0), check_int(expect_int_min4(20, 22, 21, 19, 19), 0), 0, 0)
+    let extrema_failure = sum4(check_int(expect_int_max(20, 22, 20), 1), check_int(expect_int_min(20, 22, 22), 1), check_int(expect_int_max3(20, 22, 21, 21), 1), check_int(expect_int_min3(20, 22, 21, 21), 1))
+    let extrema4_failure = sum4(check_int(expect_int_max4(20, 22, 21, 19, 21), 1), check_int(expect_int_min4(20, 22, 21, 19, 20), 1), 0, 0)
 
     let number_pass = sum4(check_int(expect_int_even(8), 0), check_int(expect_int_odd(9), 0), check_int(expect_int_divisible_by(21, 7), 0), check_int(expect_int_within(11, 10, 1), 0))
     let sign_pass = sum4(check_int(expect_int_not_within(12, 10, 1), 0), check_int(expect_int_positive(1), 0), check_int(expect_int_negative(0 - 1), 0), check_int(expect_int_nonnegative(0), 0))
@@ -114,5 +124,5 @@ fn main() -> Int {
     let number_status = sum4(number_pass, sign_pass, number_failure, sign_failure)
     let status_status = sum4(status_bool, status_merge, status_merge_large, status_expect)
 
-    return check_int(sum4(bool_status, int_status, range_status, sum4(order_status, number_status, status_status, sum4(sign_boundary, transform_pass, transform_failure, sum4(aggregate_pass, average_pass, aggregate_failure, average_failure)))), 0)
+    return check_int(sum4(bool_status, int_status, range_status, sum4(order_status, number_status, status_status, sum4(sign_boundary, transform_pass, transform_failure, sum4(aggregate_pass + extrema_pass, average_pass + extrema4_pass, aggregate_failure + extrema_failure, average_failure + extrema4_failure)))), 0)
 }

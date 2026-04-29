@@ -27,6 +27,12 @@ use std.core.is_positive_int as is_positive_int
 use std.core.is_strictly_descending_int as is_strictly_descending_int
 use std.core.is_strictly_ascending_int as is_strictly_ascending_int
 use std.core.is_within_int as is_within_int
+use std.core.max3_int as max3_int
+use std.core.max4_int as max4_int
+use std.core.max_int as max_int
+use std.core.min3_int as min3_int
+use std.core.min4_int as min4_int
+use std.core.min_int as min_int
 use std.core.not_bool as not_bool
 use std.core.or_bool as or_bool
 use std.core.product3_int as product3_int
@@ -142,6 +148,48 @@ pub fn expect_zero(value: Int) -> Int {
 
 pub fn expect_nonzero(value: Int) -> Int {
     if value != 0 {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_max(left: Int, right: Int, expected: Int) -> Int {
+    if max_int(left, right) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_min(left: Int, right: Int, expected: Int) -> Int {
+    if min_int(left, right) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_max3(first: Int, second: Int, third: Int, expected: Int) -> Int {
+    if max3_int(first, second, third) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_min3(first: Int, second: Int, third: Int, expected: Int) -> Int {
+    if min3_int(first, second, third) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_max4(first: Int, second: Int, third: Int, fourth: Int, expected: Int) -> Int {
+    if max4_int(first, second, third, fourth) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_min4(first: Int, second: Int, third: Int, fourth: Int, expected: Int) -> Int {
+    if min4_int(first, second, third, fourth) == expected {
         return 0
     }
     return 1

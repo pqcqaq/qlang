@@ -18,8 +18,16 @@ pub fn max3_int(first: Int, second: Int, third: Int) -> Int {
     return max_int(max_int(first, second), third)
 }
 
+pub fn max4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
+    return max_int(max3_int(first, second, third), fourth)
+}
+
 pub fn min3_int(first: Int, second: Int, third: Int) -> Int {
     return min_int(min_int(first, second), third)
+}
+
+pub fn min4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
+    return min_int(min3_int(first, second, third), fourth)
 }
 
 pub fn sum3_int(first: Int, second: Int, third: Int) -> Int {
