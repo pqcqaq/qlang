@@ -1,6 +1,10 @@
 package std.test
 
 use std.core.and_bool as and_bool
+use std.core.clamp_bounds_int as clamp_bounds_int
+use std.core.clamp_int as clamp_int
+use std.core.distance_to_bounds_int as distance_to_bounds_int
+use std.core.distance_to_range_int as distance_to_range_int
 use std.core.implies_bool as implies_bool
 use std.core.in_bounds_int as in_bounds_int
 use std.core.in_exclusive_bounds_int as in_exclusive_bounds_int
@@ -216,6 +220,34 @@ pub fn expect_int_exclusive_between_bounds(actual: Int, first_bound: Int, second
 
 pub fn expect_int_outside_bounds(actual: Int, first_bound: Int, second_bound: Int) -> Int {
     if is_outside_bounds_int(actual, first_bound, second_bound) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_clamped(actual: Int, low: Int, high: Int, expected: Int) -> Int {
+    if clamp_int(actual, low, high) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_clamped_bounds(actual: Int, first_bound: Int, second_bound: Int, expected: Int) -> Int {
+    if clamp_bounds_int(actual, first_bound, second_bound) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_distance_to_range(actual: Int, low: Int, high: Int, expected: Int) -> Int {
+    if distance_to_range_int(actual, low, high) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_distance_to_bounds(actual: Int, first_bound: Int, second_bound: Int, expected: Int) -> Int {
+    if distance_to_bounds_int(actual, first_bound, second_bound) == expected {
         return 0
     }
     return 1

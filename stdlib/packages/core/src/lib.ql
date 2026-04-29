@@ -50,6 +50,14 @@ pub fn clamp_bounds_int(value: Int, first_bound: Int, second_bound: Int) -> Int 
     return clamp_int(value, min_int(first_bound, second_bound), max_int(first_bound, second_bound))
 }
 
+pub fn lower_bound_int(first_bound: Int, second_bound: Int) -> Int {
+    return min_int(first_bound, second_bound)
+}
+
+pub fn upper_bound_int(first_bound: Int, second_bound: Int) -> Int {
+    return max_int(first_bound, second_bound)
+}
+
 pub fn abs_int(value: Int) -> Int {
     if value < 0 {
         return 0 - value
@@ -66,6 +74,20 @@ pub fn abs_diff_int(left: Int, right: Int) -> Int {
 
 pub fn range_span_int(first_bound: Int, second_bound: Int) -> Int {
     return abs_diff_int(first_bound, second_bound)
+}
+
+pub fn distance_to_range_int(value: Int, low: Int, high: Int) -> Int {
+    if value < low {
+        return low - value
+    }
+    if value > high {
+        return value - high
+    }
+    return 0
+}
+
+pub fn distance_to_bounds_int(value: Int, first_bound: Int, second_bound: Int) -> Int {
+    return distance_to_range_int(value, lower_bound_int(first_bound, second_bound), upper_bound_int(first_bound, second_bound))
 }
 
 pub fn sign_int(value: Int) -> Int {
