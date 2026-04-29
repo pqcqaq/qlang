@@ -16,10 +16,12 @@ use std.core.in_bounds_int as in_bounds_int
 use std.core.in_exclusive_bounds_int as in_exclusive_bounds_int
 use std.core.in_exclusive_range_int as in_exclusive_range_int
 use std.core.in_range_int as in_range_int
+use std.core.has_remainder_int as has_remainder_int
 use std.core.is_ascending_int as is_ascending_int
 use std.core.is_descending_int as is_descending_int
 use std.core.is_divisible_by_int as is_divisible_by_int
 use std.core.is_even_int as is_even_int
+use std.core.is_factor_of_int as is_factor_of_int
 use std.core.is_negative_int as is_negative_int
 use std.core.is_not_within_int as is_not_within_int
 use std.core.is_nonnegative_int as is_nonnegative_int
@@ -43,6 +45,8 @@ use std.core.not_bool as not_bool
 use std.core.or_bool as or_bool
 use std.core.product3_int as product3_int
 use std.core.product4_int as product4_int
+use std.core.quotient_or_zero_int as quotient_or_zero_int
+use std.core.remainder_or_zero_int as remainder_or_zero_int
 use std.core.sum3_int as sum3_int
 use std.core.sum4_int as sum4_int
 use std.core.xor_bool as xor_bool
@@ -280,6 +284,34 @@ pub fn expect_int_average2(left: Int, right: Int, expected: Int) -> Int {
 
 pub fn expect_int_average3(first: Int, second: Int, third: Int, expected: Int) -> Int {
     if average3_int(first, second, third) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_quotient_or_zero(value: Int, divisor: Int, expected: Int) -> Int {
+    if quotient_or_zero_int(value, divisor) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_remainder_or_zero(value: Int, divisor: Int, expected: Int) -> Int {
+    if remainder_or_zero_int(value, divisor) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_has_remainder(value: Int, divisor: Int) -> Int {
+    if has_remainder_int(value, divisor) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_factor_of(factor: Int, value: Int) -> Int {
+    if is_factor_of_int(factor, value) {
         return 0
     }
     return 1

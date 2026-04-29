@@ -54,6 +54,20 @@ pub fn average3_int(first: Int, second: Int, third: Int) -> Int {
     return sum3_int(first, second, third) / 3
 }
 
+pub fn quotient_or_zero_int(value: Int, divisor: Int) -> Int {
+    if divisor == 0 {
+        return 0
+    }
+    return value / divisor
+}
+
+pub fn remainder_or_zero_int(value: Int, divisor: Int) -> Int {
+    if divisor == 0 {
+        return 0
+    }
+    return value % divisor
+}
+
 pub fn clamp_int(value: Int, low: Int, high: Int) -> Int {
     if value < low {
         return low
@@ -226,6 +240,14 @@ pub fn is_strictly_descending_int(first: Int, second: Int, third: Int) -> Bool {
 
 pub fn is_divisible_by_int(value: Int, divisor: Int) -> Bool {
     return divisor != 0 && value % divisor == 0
+}
+
+pub fn has_remainder_int(value: Int, divisor: Int) -> Bool {
+    return divisor != 0 && value % divisor != 0
+}
+
+pub fn is_factor_of_int(factor: Int, value: Int) -> Bool {
+    return is_divisible_by_int(value, factor)
 }
 
 pub fn is_within_int(value: Int, target: Int, tolerance: Int) -> Bool {

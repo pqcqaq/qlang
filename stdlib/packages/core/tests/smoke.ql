@@ -10,8 +10,10 @@ use std.core.clamp_bounds_int as clamp_bounds_int
 use std.core.compare_int as compare_int
 use std.core.distance_to_bounds_int as distance_to_bounds_int
 use std.core.distance_to_range_int as distance_to_range_int
+use std.core.has_remainder_int as has_remainder_int
 use std.core.in_bounds_int as in_bounds_int
 use std.core.is_descending_int as is_descending_int
+use std.core.is_factor_of_int as is_factor_of_int
 use std.core.is_not_within_int as is_not_within_int
 use std.core.is_outside_bounds_int as is_outside_bounds_int
 use std.core.is_outside_range_int as is_outside_range_int
@@ -27,6 +29,8 @@ use std.core.none3_bool as none3_bool
 use std.core.none4_bool as none4_bool
 use std.core.product3_int as product3_int
 use std.core.product4_int as product4_int
+use std.core.quotient_or_zero_int as quotient_or_zero_int
+use std.core.remainder_or_zero_int as remainder_or_zero_int
 use std.core.sum3_int as sum3_int
 use std.core.sum4_int as sum4_int
 use std.core.upper_bound_int as upper_bound_int
@@ -56,7 +60,8 @@ fn main() -> Int {
     let transform_status = sum6(check_int(clamp_bounds_int(12, 9, 3), 9), check_int(abs_diff_int(3, 9), 6), check_int(lower_bound_int(9, 3), 3), check_int(upper_bound_int(9, 3), 9), check_int(distance_to_range_int(2, 3, 9), 1), check_int(distance_to_bounds_int(10, 9, 3), 1))
     let boundary_status = sum6(check_int(distance_to_range_int(5, 3, 9), 0), check_int(distance_to_bounds_int(5, 9, 3), 0), 0, 0, 0, 0)
     let aggregate_status = sum6(check_int(sum3_int(2, 3, 4), 9), check_int(sum4_int(2, 3, 4, 5), 14), check_int(product3_int(2, 3, 4), 24), check_int(product4_int(2, 3, 4, 5), 120), check_int(average2_int(5, 8), 6), check_int(average3_int(3, 6, 9), 6))
+    let division_status = sum6(check_int(quotient_or_zero_int(21, 7), 3), check_int(quotient_or_zero_int(21, 0), 0), check_int(remainder_or_zero_int(22, 7), 1), check_int(remainder_or_zero_int(22, 0), 0), check_bool(has_remainder_int(22, 7), true), check_bool(is_factor_of_int(7, 21), true))
     let bool_aggregate_status = sum6(check_bool(all3_bool(true, true, true), true), check_bool(all4_bool(true, true, true, false), false), check_bool(any3_bool(false, false, true), true), check_bool(any4_bool(false, false, false, false), false), check_bool(none3_bool(false, false, false), true), check_bool(none4_bool(false, false, true, false), false))
 
-    return extrema_status + range_status + order_status + transform_status + boundary_status + aggregate_status + bool_aggregate_status + check_int(bool_to_int(true), 1)
+    return extrema_status + range_status + order_status + transform_status + boundary_status + aggregate_status + division_status + bool_aggregate_status + check_int(bool_to_int(true), 1)
 }
