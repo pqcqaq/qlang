@@ -9,6 +9,7 @@ use std.core.average2_int as average2_int
 use std.core.average3_int as average3_int
 use std.core.clamp_bounds_int as clamp_bounds_int
 use std.core.clamp_int as clamp_int
+use std.core.compare_int as compare_int
 use std.core.distance_to_bounds_int as distance_to_bounds_int
 use std.core.distance_to_range_int as distance_to_range_int
 use std.core.implies_bool as implies_bool
@@ -47,6 +48,7 @@ use std.core.product3_int as product3_int
 use std.core.product4_int as product4_int
 use std.core.quotient_or_zero_int as quotient_or_zero_int
 use std.core.remainder_or_zero_int as remainder_or_zero_int
+use std.core.sign_int as sign_int
 use std.core.sum3_int as sum3_int
 use std.core.sum4_int as sum4_int
 use std.core.xor_bool as xor_bool
@@ -284,6 +286,20 @@ pub fn expect_int_average2(left: Int, right: Int, expected: Int) -> Int {
 
 pub fn expect_int_average3(first: Int, second: Int, third: Int, expected: Int) -> Int {
     if average3_int(first, second, third) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_sign(value: Int, expected: Int) -> Int {
+    if sign_int(value) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_compare(left: Int, right: Int, expected: Int) -> Int {
+    if compare_int(left, right) == expected {
         return 0
     }
     return 1

@@ -19,6 +19,7 @@ use std.test.expect_int_between as expect_int_between
 use std.test.expect_int_between_bounds as expect_int_between_bounds
 use std.test.expect_int_clamped as expect_int_clamped
 use std.test.expect_int_clamped_bounds as expect_int_clamped_bounds
+use std.test.expect_int_compare as expect_int_compare
 use std.test.expect_int_descending as expect_int_descending
 use std.test.expect_int_distance_to_bounds as expect_int_distance_to_bounds
 use std.test.expect_int_distance_to_range as expect_int_distance_to_range
@@ -52,6 +53,7 @@ use std.test.expect_int_product3 as expect_int_product3
 use std.test.expect_int_product4 as expect_int_product4
 use std.test.expect_int_quotient_or_zero as expect_int_quotient_or_zero
 use std.test.expect_int_remainder_or_zero as expect_int_remainder_or_zero
+use std.test.expect_int_sign as expect_int_sign
 use std.test.expect_int_strictly_descending as expect_int_strictly_descending
 use std.test.expect_int_strictly_ascending as expect_int_strictly_ascending
 use std.test.expect_int_sum3 as expect_int_sum3
@@ -119,6 +121,9 @@ fn main() -> Int {
     let division_bool_pass = sum4(check_int(expect_int_has_remainder(22, 7), 0), check_int(expect_int_factor_of(7, 21), 0), 0, 0)
     let division_failure = sum4(check_int(expect_int_quotient_or_zero(21, 7, 4), 1), check_int(expect_int_remainder_or_zero(22, 7, 2), 1), check_int(expect_int_has_remainder(21, 7), 1), check_int(expect_int_factor_of(0, 21), 1))
     let division_zero_failure = sum4(check_int(expect_int_quotient_or_zero(21, 0, 1), 1), check_int(expect_int_remainder_or_zero(21, 0, 1), 1), 0, 0)
+    let compare_sign_pass = sum4(check_int(expect_int_sign(0 - 5, 0 - 1), 0), check_int(expect_int_sign(0, 0), 0), check_int(expect_int_sign(5, 1), 0), check_int(expect_int_compare(3, 9, 0 - 1), 0))
+    let compare_sign_more_pass = sum4(check_int(expect_int_compare(9, 9, 0), 0), check_int(expect_int_compare(9, 3, 1), 0), 0, 0)
+    let compare_sign_failure = sum4(check_int(expect_int_sign(5, 0 - 1), 1), check_int(expect_int_compare(9, 9, 1), 1), check_int(expect_int_compare(3, 9, 1), 1), 0)
     let extrema_pass = sum4(check_int(expect_int_max(20, 22, 22), 0), check_int(expect_int_min(20, 22, 20), 0), check_int(expect_int_max3(20, 22, 21, 22), 0), check_int(expect_int_min3(20, 22, 21, 20), 0))
     let extrema4_pass = sum4(check_int(expect_int_max4(20, 22, 21, 19, 22), 0), check_int(expect_int_min4(20, 22, 21, 19, 19), 0), 0, 0)
     let extrema_failure = sum4(check_int(expect_int_max(20, 22, 20), 1), check_int(expect_int_min(20, 22, 22), 1), check_int(expect_int_max3(20, 22, 21, 21), 1), check_int(expect_int_min3(20, 22, 21, 21), 1))
@@ -138,7 +143,7 @@ fn main() -> Int {
     let bool_status = sum4(bool_pass + bool_aggregate_pass, bool_logic_pass + bool_none_pass, bool_failure + bool_aggregate_failure, bool_logic_failure + bool_none_failure)
     let int_status = sum4(int_order_pass, int_boundary_pass, int_order_failure, int_boundary_failure)
     let range_status = sum4(range_pass, bounds_pass, range_failure, bounds_failure)
-    let order_status = sum4(order_pass, order_failure, 0, 0)
+    let order_status = sum4(order_pass, order_failure, compare_sign_pass, compare_sign_more_pass + compare_sign_failure)
     let number_status = sum4(number_pass, sign_pass, number_failure, sign_failure)
     let status_status = sum4(status_bool, status_merge, status_merge_large, status_expect)
 
