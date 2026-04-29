@@ -7,13 +7,18 @@ use std.core.in_exclusive_bounds_int as in_exclusive_bounds_int
 use std.core.in_exclusive_range_int as in_exclusive_range_int
 use std.core.in_range_int as in_range_int
 use std.core.is_ascending_int as is_ascending_int
+use std.core.is_descending_int as is_descending_int
 use std.core.is_divisible_by_int as is_divisible_by_int
 use std.core.is_even_int as is_even_int
 use std.core.is_negative_int as is_negative_int
+use std.core.is_not_within_int as is_not_within_int
 use std.core.is_nonnegative_int as is_nonnegative_int
 use std.core.is_nonpositive_int as is_nonpositive_int
 use std.core.is_odd_int as is_odd_int
+use std.core.is_outside_bounds_int as is_outside_bounds_int
+use std.core.is_outside_range_int as is_outside_range_int
 use std.core.is_positive_int as is_positive_int
+use std.core.is_strictly_descending_int as is_strictly_descending_int
 use std.core.is_strictly_ascending_int as is_strictly_ascending_int
 use std.core.is_within_int as is_within_int
 use std.core.not_bool as not_bool
@@ -152,6 +157,14 @@ pub fn merge_status4(first: Int, second: Int, third: Int, fourth: Int) -> Int {
     return merge_status(merge_status3(first, second, third), fourth)
 }
 
+pub fn merge_status5(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
+    return merge_status(merge_status4(first, second, third, fourth), fifth)
+}
+
+pub fn merge_status6(first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int) -> Int {
+    return merge_status(merge_status5(first, second, third, fourth, fifth), sixth)
+}
+
 pub fn expect_status_ok(status: Int) -> Int {
     if is_status_ok(status) {
         return 0
@@ -181,7 +194,7 @@ pub fn expect_int_exclusive_between(actual: Int, low: Int, high: Int) -> Int {
 }
 
 pub fn expect_int_outside(actual: Int, low: Int, high: Int) -> Int {
-    if not_bool(in_range_int(actual, low, high)) {
+    if is_outside_range_int(actual, low, high) {
         return 0
     }
     return 1
@@ -202,7 +215,7 @@ pub fn expect_int_exclusive_between_bounds(actual: Int, first_bound: Int, second
 }
 
 pub fn expect_int_outside_bounds(actual: Int, first_bound: Int, second_bound: Int) -> Int {
-    if not_bool(in_bounds_int(actual, first_bound, second_bound)) {
+    if is_outside_bounds_int(actual, first_bound, second_bound) {
         return 0
     }
     return 1
@@ -217,6 +230,20 @@ pub fn expect_int_ascending(first: Int, second: Int, third: Int) -> Int {
 
 pub fn expect_int_strictly_ascending(first: Int, second: Int, third: Int) -> Int {
     if is_strictly_ascending_int(first, second, third) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_descending(first: Int, second: Int, third: Int) -> Int {
+    if is_descending_int(first, second, third) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_strictly_descending(first: Int, second: Int, third: Int) -> Int {
+    if is_strictly_descending_int(first, second, third) {
         return 0
     }
     return 1
@@ -251,7 +278,7 @@ pub fn expect_int_within(actual: Int, target: Int, tolerance: Int) -> Int {
 }
 
 pub fn expect_int_not_within(actual: Int, target: Int, tolerance: Int) -> Int {
-    if not_bool(is_within_int(actual, target, tolerance)) {
+    if is_not_within_int(actual, target, tolerance) {
         return 0
     }
     return 1

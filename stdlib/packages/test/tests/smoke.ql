@@ -9,6 +9,7 @@ use std.test.expect_false as expect_false
 use std.test.expect_int_ascending as expect_int_ascending
 use std.test.expect_int_between as expect_int_between
 use std.test.expect_int_between_bounds as expect_int_between_bounds
+use std.test.expect_int_descending as expect_int_descending
 use std.test.expect_int_divisible_by as expect_int_divisible_by
 use std.test.expect_int_eq as expect_int_eq
 use std.test.expect_int_even as expect_int_even
@@ -27,6 +28,7 @@ use std.test.expect_int_odd as expect_int_odd
 use std.test.expect_int_outside as expect_int_outside
 use std.test.expect_int_outside_bounds as expect_int_outside_bounds
 use std.test.expect_int_positive as expect_int_positive
+use std.test.expect_int_strictly_descending as expect_int_strictly_descending
 use std.test.expect_int_strictly_ascending as expect_int_strictly_ascending
 use std.test.expect_int_within as expect_int_within
 use std.test.expect_nonzero as expect_nonzero
@@ -39,6 +41,8 @@ use std.test.is_status_ok as is_status_ok
 use std.test.merge_status as merge_status
 use std.test.merge_status3 as merge_status3
 use std.test.merge_status4 as merge_status4
+use std.test.merge_status5 as merge_status5
+use std.test.merge_status6 as merge_status6
 
 fn check_int(actual: Int, expected: Int) -> Int {
     if actual == expected {
@@ -70,9 +74,11 @@ fn main() -> Int {
     let int_boundary_failure = sum4(check_int(expect_int_lt(8, 8), 1), check_int(expect_int_le(9, 8), 1), check_int(expect_zero(1), 1), check_int(expect_nonzero(0), 1))
 
     let range_pass = sum4(check_int(expect_int_between(5, 3, 9), 0), check_int(expect_int_exclusive_between(5, 3, 9), 0), check_int(expect_int_outside(2, 3, 9), 0), check_int(expect_int_between_bounds(5, 9, 3), 0))
-    let bounds_pass = sum4(check_int(expect_int_exclusive_between_bounds(5, 9, 3), 0), check_int(expect_int_outside_bounds(2, 9, 3), 0), check_int(expect_int_ascending(3, 3, 9), 0), check_int(expect_int_strictly_ascending(3, 5, 9), 0))
+    let bounds_pass = sum4(check_int(expect_int_exclusive_between_bounds(5, 9, 3), 0), check_int(expect_int_outside_bounds(2, 9, 3), 0), check_int(expect_int_ascending(3, 3, 9), 0), check_int(expect_int_descending(9, 9, 3), 0))
+    let order_pass = sum4(check_int(expect_int_strictly_ascending(3, 5, 9), 0), check_int(expect_int_strictly_descending(9, 5, 3), 0), 0, 0)
     let range_failure = sum4(check_int(expect_int_between(2, 3, 9), 1), check_int(expect_int_exclusive_between(3, 3, 9), 1), check_int(expect_int_outside(5, 3, 9), 1), check_int(expect_int_between_bounds(10, 9, 3), 1))
-    let bounds_failure = sum4(check_int(expect_int_exclusive_between_bounds(9, 9, 3), 1), check_int(expect_int_outside_bounds(5, 9, 3), 1), check_int(expect_int_ascending(9, 5, 3), 1), check_int(expect_int_strictly_ascending(3, 3, 9), 1))
+    let bounds_failure = sum4(check_int(expect_int_exclusive_between_bounds(9, 9, 3), 1), check_int(expect_int_outside_bounds(5, 9, 3), 1), check_int(expect_int_ascending(9, 5, 3), 1), check_int(expect_int_descending(3, 9, 5), 1))
+    let order_failure = sum4(check_int(expect_int_strictly_ascending(3, 3, 9), 1), check_int(expect_int_strictly_descending(9, 9, 3), 1), 0, 0)
 
     let number_pass = sum4(check_int(expect_int_even(8), 0), check_int(expect_int_odd(9), 0), check_int(expect_int_divisible_by(21, 7), 0), check_int(expect_int_within(11, 10, 1), 0))
     let sign_pass = sum4(check_int(expect_int_not_within(12, 10, 1), 0), check_int(expect_int_positive(1), 0), check_int(expect_int_negative(0 - 1), 0), check_int(expect_int_nonnegative(0), 0))
@@ -80,15 +86,17 @@ fn main() -> Int {
     let sign_failure = sum4(check_int(expect_int_not_within(10, 10, 0), 1), check_int(expect_int_positive(0), 1), check_int(expect_int_negative(0), 1), check_int(expect_int_nonnegative(0 - 1), 1))
 
     let status_bool = sum4(check_bool(is_status_ok(0), true), check_bool(is_status_ok(1), false), check_bool(is_status_failed(1), true), check_bool(is_status_failed(0), false))
-    let status_merge = sum4(check_int(merge_status(1, 2), 3), check_int(merge_status3(1, 2, 3), 6), check_int(merge_status4(1, 2, 3, 4), 10), check_int(expect_bool_implies(false, false), 0))
+    let status_merge = sum4(check_int(merge_status(1, 2), 3), check_int(merge_status3(1, 2, 3), 6), check_int(merge_status4(1, 2, 3, 4), 10), check_int(merge_status5(1, 2, 3, 4, 5), 15))
+    let status_merge_large = sum4(check_int(merge_status6(1, 2, 3, 4, 5, 6), 21), check_int(expect_bool_implies(false, false), 0), 0, 0)
     let status_expect = sum4(check_int(expect_status_ok(0), 0), check_int(expect_status_ok(1), 1), check_int(expect_status_failed(1), 0), check_int(expect_status_failed(0), 1))
     let sign_boundary = sum4(check_int(expect_int_nonpositive(0), 0), check_int(expect_int_nonpositive(1), 1), check_int(expect_bool_implies(true, false), 1), 0)
 
     let bool_status = sum4(bool_pass, bool_logic_pass, bool_failure, bool_logic_failure)
     let int_status = sum4(int_order_pass, int_boundary_pass, int_order_failure, int_boundary_failure)
     let range_status = sum4(range_pass, bounds_pass, range_failure, bounds_failure)
+    let order_status = sum4(order_pass, order_failure, 0, 0)
     let number_status = sum4(number_pass, sign_pass, number_failure, sign_failure)
-    let status_status = sum4(status_bool, status_merge, status_expect, sign_boundary)
+    let status_status = sum4(status_bool, status_merge, status_merge_large, status_expect)
 
-    return check_int(sum4(bool_status, int_status, range_status, sum4(number_status, status_status, 0, 0)), 0)
+    return check_int(sum4(bool_status, int_status, range_status, sum4(order_status, number_status, status_status, sign_boundary)), 0)
 }

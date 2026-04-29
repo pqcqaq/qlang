@@ -146,6 +146,14 @@ pub fn in_exclusive_bounds_int(value: Int, first_bound: Int, second_bound: Int) 
     return in_exclusive_range_int(value, min_int(first_bound, second_bound), max_int(first_bound, second_bound))
 }
 
+pub fn is_outside_range_int(value: Int, low: Int, high: Int) -> Bool {
+    return value < low || value > high
+}
+
+pub fn is_outside_bounds_int(value: Int, first_bound: Int, second_bound: Int) -> Bool {
+    return is_outside_range_int(value, min_int(first_bound, second_bound), max_int(first_bound, second_bound))
+}
+
 pub fn is_ascending_int(first: Int, second: Int, third: Int) -> Bool {
     return first <= second && second <= third
 }
@@ -154,12 +162,24 @@ pub fn is_strictly_ascending_int(first: Int, second: Int, third: Int) -> Bool {
     return first < second && second < third
 }
 
+pub fn is_descending_int(first: Int, second: Int, third: Int) -> Bool {
+    return first >= second && second >= third
+}
+
+pub fn is_strictly_descending_int(first: Int, second: Int, third: Int) -> Bool {
+    return first > second && second > third
+}
+
 pub fn is_divisible_by_int(value: Int, divisor: Int) -> Bool {
     return divisor != 0 && value % divisor == 0
 }
 
 pub fn is_within_int(value: Int, target: Int, tolerance: Int) -> Bool {
     return tolerance >= 0 && abs_diff_int(value, target) <= tolerance
+}
+
+pub fn is_not_within_int(value: Int, target: Int, tolerance: Int) -> Bool {
+    return !is_within_int(value, target, tolerance)
 }
 
 pub fn bool_to_int(value: Bool) -> Int {
