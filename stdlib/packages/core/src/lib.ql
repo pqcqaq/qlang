@@ -243,6 +243,30 @@ pub fn bool_to_int(value: Bool) -> Int {
     return 0
 }
 
+pub fn all3_bool(first: Bool, second: Bool, third: Bool) -> Bool {
+    return first && second && third
+}
+
+pub fn all4_bool(first: Bool, second: Bool, third: Bool, fourth: Bool) -> Bool {
+    return all3_bool(first, second, third) && fourth
+}
+
+pub fn any3_bool(first: Bool, second: Bool, third: Bool) -> Bool {
+    return first || second || third
+}
+
+pub fn any4_bool(first: Bool, second: Bool, third: Bool, fourth: Bool) -> Bool {
+    return any3_bool(first, second, third) || fourth
+}
+
+pub fn none3_bool(first: Bool, second: Bool, third: Bool) -> Bool {
+    return !any3_bool(first, second, third)
+}
+
+pub fn none4_bool(first: Bool, second: Bool, third: Bool, fourth: Bool) -> Bool {
+    return !any4_bool(first, second, third, fourth)
+}
+
 pub fn not_bool(value: Bool) -> Bool {
     return !value
 }

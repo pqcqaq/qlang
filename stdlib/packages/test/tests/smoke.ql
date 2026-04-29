@@ -1,7 +1,13 @@
+use std.test.expect_bool_all3 as expect_bool_all3
+use std.test.expect_bool_all4 as expect_bool_all4
 use std.test.expect_bool_and as expect_bool_and
+use std.test.expect_bool_any3 as expect_bool_any3
+use std.test.expect_bool_any4 as expect_bool_any4
 use std.test.expect_bool_eq as expect_bool_eq
 use std.test.expect_bool_implies as expect_bool_implies
 use std.test.expect_bool_ne as expect_bool_ne
+use std.test.expect_bool_none3 as expect_bool_none3
+use std.test.expect_bool_none4 as expect_bool_none4
 use std.test.expect_bool_not as expect_bool_not
 use std.test.expect_bool_or as expect_bool_or
 use std.test.expect_bool_xor as expect_bool_xor
@@ -83,6 +89,10 @@ fn main() -> Int {
     let bool_logic_pass = sum4(check_int(expect_bool_not(false, true), 0), check_int(expect_bool_and(true, false, false), 0), check_int(expect_bool_or(false, true, true), 0), check_int(expect_bool_xor(true, true, false), 0))
     let bool_failure = sum4(check_int(expect_true(false), 1), check_int(expect_false(true), 1), check_int(expect_bool_eq(true, false), 1), check_int(expect_bool_ne(true, true), 1))
     let bool_logic_failure = sum4(check_int(expect_bool_not(false, false), 1), check_int(expect_bool_and(true, false, true), 1), check_int(expect_bool_or(false, false, true), 1), check_int(expect_bool_xor(true, false, false), 1))
+    let bool_aggregate_pass = sum4(check_int(expect_bool_all3(true, true, true, true), 0), check_int(expect_bool_all4(true, true, false, true, false), 0), check_int(expect_bool_any3(false, false, true, true), 0), check_int(expect_bool_any4(false, false, false, false, false), 0))
+    let bool_none_pass = sum4(check_int(expect_bool_none3(false, false, false, true), 0), check_int(expect_bool_none4(false, false, true, false, false), 0), 0, 0)
+    let bool_aggregate_failure = sum4(check_int(expect_bool_all3(true, true, false, true), 1), check_int(expect_bool_all4(true, true, true, true, false), 1), check_int(expect_bool_any3(false, false, false, true), 1), check_int(expect_bool_any4(false, false, true, false, false), 1))
+    let bool_none_failure = sum4(check_int(expect_bool_none3(false, true, false, true), 1), check_int(expect_bool_none4(false, false, false, false, false), 1), 0, 0)
 
     let int_order_pass = sum4(check_int(expect_int_eq(8, 8), 0), check_int(expect_int_ne(8, 9), 0), check_int(expect_int_gt(9, 8), 0), check_int(expect_int_ge(8, 8), 0))
     let int_boundary_pass = sum4(check_int(expect_int_lt(7, 8), 0), check_int(expect_int_le(8, 8), 0), check_int(expect_zero(0), 0), check_int(expect_nonzero(1), 0))
@@ -117,7 +127,7 @@ fn main() -> Int {
     let status_expect = sum4(check_int(expect_status_ok(0), 0), check_int(expect_status_ok(1), 1), check_int(expect_status_failed(1), 0), check_int(expect_status_failed(0), 1))
     let sign_boundary = sum4(check_int(expect_int_nonpositive(0), 0), check_int(expect_int_nonpositive(1), 1), check_int(expect_bool_implies(true, false), 1), 0)
 
-    let bool_status = sum4(bool_pass, bool_logic_pass, bool_failure, bool_logic_failure)
+    let bool_status = sum4(bool_pass + bool_aggregate_pass, bool_logic_pass + bool_none_pass, bool_failure + bool_aggregate_failure, bool_logic_failure + bool_none_failure)
     let int_status = sum4(int_order_pass, int_boundary_pass, int_order_failure, int_boundary_failure)
     let range_status = sum4(range_pass, bounds_pass, range_failure, bounds_failure)
     let order_status = sum4(order_pass, order_failure, 0, 0)

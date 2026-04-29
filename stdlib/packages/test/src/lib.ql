@@ -1,6 +1,10 @@
 package std.test
 
+use std.core.all3_bool as all3_bool
+use std.core.all4_bool as all4_bool
 use std.core.and_bool as and_bool
+use std.core.any3_bool as any3_bool
+use std.core.any4_bool as any4_bool
 use std.core.average2_int as average2_int
 use std.core.average3_int as average3_int
 use std.core.clamp_bounds_int as clamp_bounds_int
@@ -33,6 +37,8 @@ use std.core.max_int as max_int
 use std.core.min3_int as min3_int
 use std.core.min4_int as min4_int
 use std.core.min_int as min_int
+use std.core.none3_bool as none3_bool
+use std.core.none4_bool as none4_bool
 use std.core.not_bool as not_bool
 use std.core.or_bool as or_bool
 use std.core.product3_int as product3_int
@@ -92,6 +98,48 @@ pub fn expect_bool_or(left: Bool, right: Bool, expected: Bool) -> Int {
 
 pub fn expect_bool_xor(left: Bool, right: Bool, expected: Bool) -> Int {
     if xor_bool(left, right) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_bool_all3(first: Bool, second: Bool, third: Bool, expected: Bool) -> Int {
+    if all3_bool(first, second, third) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_bool_all4(first: Bool, second: Bool, third: Bool, fourth: Bool, expected: Bool) -> Int {
+    if all4_bool(first, second, third, fourth) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_bool_any3(first: Bool, second: Bool, third: Bool, expected: Bool) -> Int {
+    if any3_bool(first, second, third) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_bool_any4(first: Bool, second: Bool, third: Bool, fourth: Bool, expected: Bool) -> Int {
+    if any4_bool(first, second, third, fourth) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_bool_none3(first: Bool, second: Bool, third: Bool, expected: Bool) -> Int {
+    if none3_bool(first, second, third) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_bool_none4(first: Bool, second: Bool, third: Bool, fourth: Bool, expected: Bool) -> Int {
+    if none4_bool(first, second, third, fourth) == expected {
         return 0
     }
     return 1

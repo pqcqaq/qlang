@@ -1,4 +1,8 @@
 use std.core.abs_diff_int as abs_diff_int
+use std.core.all3_bool as all3_bool
+use std.core.all4_bool as all4_bool
+use std.core.any3_bool as any3_bool
+use std.core.any4_bool as any4_bool
 use std.core.average2_int as average2_int
 use std.core.average3_int as average3_int
 use std.core.bool_to_int as bool_to_int
@@ -19,6 +23,8 @@ use std.core.max4_int as max4_int
 use std.core.median3_int as median3_int
 use std.core.min3_int as min3_int
 use std.core.min4_int as min4_int
+use std.core.none3_bool as none3_bool
+use std.core.none4_bool as none4_bool
 use std.core.product3_int as product3_int
 use std.core.product4_int as product4_int
 use std.core.sum3_int as sum3_int
@@ -50,6 +56,7 @@ fn main() -> Int {
     let transform_status = sum6(check_int(clamp_bounds_int(12, 9, 3), 9), check_int(abs_diff_int(3, 9), 6), check_int(lower_bound_int(9, 3), 3), check_int(upper_bound_int(9, 3), 9), check_int(distance_to_range_int(2, 3, 9), 1), check_int(distance_to_bounds_int(10, 9, 3), 1))
     let boundary_status = sum6(check_int(distance_to_range_int(5, 3, 9), 0), check_int(distance_to_bounds_int(5, 9, 3), 0), 0, 0, 0, 0)
     let aggregate_status = sum6(check_int(sum3_int(2, 3, 4), 9), check_int(sum4_int(2, 3, 4, 5), 14), check_int(product3_int(2, 3, 4), 24), check_int(product4_int(2, 3, 4, 5), 120), check_int(average2_int(5, 8), 6), check_int(average3_int(3, 6, 9), 6))
+    let bool_aggregate_status = sum6(check_bool(all3_bool(true, true, true), true), check_bool(all4_bool(true, true, true, false), false), check_bool(any3_bool(false, false, true), true), check_bool(any4_bool(false, false, false, false), false), check_bool(none3_bool(false, false, false), true), check_bool(none4_bool(false, false, true, false), false))
 
-    return extrema_status + range_status + order_status + transform_status + boundary_status + aggregate_status + check_int(bool_to_int(true), 1)
+    return extrema_status + range_status + order_status + transform_status + boundary_status + aggregate_status + bool_aggregate_status + check_int(bool_to_int(true), 1)
 }
