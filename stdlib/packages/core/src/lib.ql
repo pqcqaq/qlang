@@ -22,6 +22,30 @@ pub fn min3_int(first: Int, second: Int, third: Int) -> Int {
     return min_int(min_int(first, second), third)
 }
 
+pub fn sum3_int(first: Int, second: Int, third: Int) -> Int {
+    return first + second + third
+}
+
+pub fn sum4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
+    return sum3_int(first, second, third) + fourth
+}
+
+pub fn product3_int(first: Int, second: Int, third: Int) -> Int {
+    return first * second * third
+}
+
+pub fn product4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
+    return product3_int(first, second, third) * fourth
+}
+
+pub fn average2_int(left: Int, right: Int) -> Int {
+    return (left + right) / 2
+}
+
+pub fn average3_int(first: Int, second: Int, third: Int) -> Int {
+    return sum3_int(first, second, third) / 3
+}
+
 pub fn clamp_int(value: Int, low: Int, high: Int) -> Int {
     if value < low {
         return low

@@ -1,6 +1,8 @@
 package std.test
 
 use std.core.and_bool as and_bool
+use std.core.average2_int as average2_int
+use std.core.average3_int as average3_int
 use std.core.clamp_bounds_int as clamp_bounds_int
 use std.core.clamp_int as clamp_int
 use std.core.distance_to_bounds_int as distance_to_bounds_int
@@ -27,6 +29,10 @@ use std.core.is_strictly_ascending_int as is_strictly_ascending_int
 use std.core.is_within_int as is_within_int
 use std.core.not_bool as not_bool
 use std.core.or_bool as or_bool
+use std.core.product3_int as product3_int
+use std.core.product4_int as product4_int
+use std.core.sum3_int as sum3_int
+use std.core.sum4_int as sum4_int
 use std.core.xor_bool as xor_bool
 
 pub fn expect_true(value: Bool) -> Int {
@@ -136,6 +142,48 @@ pub fn expect_zero(value: Int) -> Int {
 
 pub fn expect_nonzero(value: Int) -> Int {
     if value != 0 {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_sum3(first: Int, second: Int, third: Int, expected: Int) -> Int {
+    if sum3_int(first, second, third) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_sum4(first: Int, second: Int, third: Int, fourth: Int, expected: Int) -> Int {
+    if sum4_int(first, second, third, fourth) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_product3(first: Int, second: Int, third: Int, expected: Int) -> Int {
+    if product3_int(first, second, third) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_product4(first: Int, second: Int, third: Int, fourth: Int, expected: Int) -> Int {
+    if product4_int(first, second, third, fourth) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_average2(left: Int, right: Int, expected: Int) -> Int {
+    if average2_int(left, right) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_average3(first: Int, second: Int, third: Int, expected: Int) -> Int {
+    if average3_int(first, second, third) == expected {
         return 0
     }
     return 1

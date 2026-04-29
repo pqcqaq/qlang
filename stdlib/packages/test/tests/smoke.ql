@@ -6,6 +6,8 @@ use std.test.expect_bool_not as expect_bool_not
 use std.test.expect_bool_or as expect_bool_or
 use std.test.expect_bool_xor as expect_bool_xor
 use std.test.expect_false as expect_false
+use std.test.expect_int_average2 as expect_int_average2
+use std.test.expect_int_average3 as expect_int_average3
 use std.test.expect_int_ascending as expect_int_ascending
 use std.test.expect_int_between as expect_int_between
 use std.test.expect_int_between_bounds as expect_int_between_bounds
@@ -32,8 +34,12 @@ use std.test.expect_int_odd as expect_int_odd
 use std.test.expect_int_outside as expect_int_outside
 use std.test.expect_int_outside_bounds as expect_int_outside_bounds
 use std.test.expect_int_positive as expect_int_positive
+use std.test.expect_int_product3 as expect_int_product3
+use std.test.expect_int_product4 as expect_int_product4
 use std.test.expect_int_strictly_descending as expect_int_strictly_descending
 use std.test.expect_int_strictly_ascending as expect_int_strictly_ascending
+use std.test.expect_int_sum3 as expect_int_sum3
+use std.test.expect_int_sum4 as expect_int_sum4
 use std.test.expect_int_within as expect_int_within
 use std.test.expect_nonzero as expect_nonzero
 use std.test.expect_status_failed as expect_status_failed
@@ -85,6 +91,10 @@ fn main() -> Int {
     let order_failure = sum4(check_int(expect_int_strictly_ascending(3, 3, 9), 1), check_int(expect_int_strictly_descending(9, 9, 3), 1), 0, 0)
     let transform_pass = sum4(check_int(expect_int_clamped(12, 3, 9, 9), 0), check_int(expect_int_clamped_bounds(2, 9, 3, 3), 0), check_int(expect_int_distance_to_range(2, 3, 9, 1), 0), check_int(expect_int_distance_to_bounds(10, 9, 3, 1), 0))
     let transform_failure = sum4(check_int(expect_int_clamped(12, 3, 9, 12), 1), check_int(expect_int_clamped_bounds(2, 9, 3, 2), 1), check_int(expect_int_distance_to_range(5, 3, 9, 1), 1), check_int(expect_int_distance_to_bounds(5, 9, 3, 1), 1))
+    let aggregate_pass = sum4(check_int(expect_int_sum3(2, 3, 4, 9), 0), check_int(expect_int_sum4(2, 3, 4, 5, 14), 0), check_int(expect_int_product3(2, 3, 4, 24), 0), check_int(expect_int_product4(2, 3, 4, 5, 120), 0))
+    let average_pass = sum4(check_int(expect_int_average2(5, 8, 6), 0), check_int(expect_int_average3(3, 6, 9, 6), 0), 0, 0)
+    let aggregate_failure = sum4(check_int(expect_int_sum3(2, 3, 4, 10), 1), check_int(expect_int_sum4(2, 3, 4, 5, 15), 1), check_int(expect_int_product3(2, 3, 4, 25), 1), check_int(expect_int_product4(2, 3, 4, 5, 121), 1))
+    let average_failure = sum4(check_int(expect_int_average2(5, 8, 7), 1), check_int(expect_int_average3(3, 6, 9, 7), 1), 0, 0)
 
     let number_pass = sum4(check_int(expect_int_even(8), 0), check_int(expect_int_odd(9), 0), check_int(expect_int_divisible_by(21, 7), 0), check_int(expect_int_within(11, 10, 1), 0))
     let sign_pass = sum4(check_int(expect_int_not_within(12, 10, 1), 0), check_int(expect_int_positive(1), 0), check_int(expect_int_negative(0 - 1), 0), check_int(expect_int_nonnegative(0), 0))
@@ -104,5 +114,5 @@ fn main() -> Int {
     let number_status = sum4(number_pass, sign_pass, number_failure, sign_failure)
     let status_status = sum4(status_bool, status_merge, status_merge_large, status_expect)
 
-    return check_int(sum4(bool_status, int_status, range_status, sum4(order_status, number_status, status_status, sum4(sign_boundary, transform_pass, transform_failure, 0))), 0)
+    return check_int(sum4(bool_status, int_status, range_status, sum4(order_status, number_status, status_status, sum4(sign_boundary, transform_pass, transform_failure, sum4(aggregate_pass, average_pass, aggregate_failure, average_failure)))), 0)
 }
