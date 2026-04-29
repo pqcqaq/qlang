@@ -1,5 +1,7 @@
 package std.test
 
+use std.core.abs_diff_int as abs_diff_int
+use std.core.abs_int as abs_int
 use std.core.all3_bool as all3_bool
 use std.core.all4_bool as all4_bool
 use std.core.and_bool as and_bool
@@ -34,6 +36,7 @@ use std.core.is_positive_int as is_positive_int
 use std.core.is_strictly_descending_int as is_strictly_descending_int
 use std.core.is_strictly_ascending_int as is_strictly_ascending_int
 use std.core.is_within_int as is_within_int
+use std.core.lower_bound_int as lower_bound_int
 use std.core.max3_int as max3_int
 use std.core.max4_int as max4_int
 use std.core.max_int as max_int
@@ -47,10 +50,12 @@ use std.core.or_bool as or_bool
 use std.core.product3_int as product3_int
 use std.core.product4_int as product4_int
 use std.core.quotient_or_zero_int as quotient_or_zero_int
+use std.core.range_span_int as range_span_int
 use std.core.remainder_or_zero_int as remainder_or_zero_int
 use std.core.sign_int as sign_int
 use std.core.sum3_int as sum3_int
 use std.core.sum4_int as sum4_int
+use std.core.upper_bound_int as upper_bound_int
 use std.core.xor_bool as xor_bool
 
 pub fn expect_true(value: Bool) -> Int {
@@ -300,6 +305,41 @@ pub fn expect_int_sign(value: Int, expected: Int) -> Int {
 
 pub fn expect_int_compare(left: Int, right: Int, expected: Int) -> Int {
     if compare_int(left, right) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_abs(value: Int, expected: Int) -> Int {
+    if abs_int(value) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_abs_diff(left: Int, right: Int, expected: Int) -> Int {
+    if abs_diff_int(left, right) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_range_span(first_bound: Int, second_bound: Int, expected: Int) -> Int {
+    if range_span_int(first_bound, second_bound) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_lower_bound(first_bound: Int, second_bound: Int, expected: Int) -> Int {
+    if lower_bound_int(first_bound, second_bound) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_upper_bound(first_bound: Int, second_bound: Int, expected: Int) -> Int {
+    if upper_bound_int(first_bound, second_bound) == expected {
         return 0
     }
     return 1
