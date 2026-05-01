@@ -64,7 +64,7 @@
 - `textDocument/codeAction` 现在也有 unresolved type 的真实 LSP request 回归，直接覆盖已有依赖的 auto-import，以及 sibling workspace member 缺依赖时“插 `use` + 补 `qlang.toml`”的组合 quick fix。
 - 这一轮把 `textDocument/references` 与 `textDocument/documentHighlight` 也补进了真实 `LspService` request smoke；当前已把 workspace dependency references、current-file documentHighlight 的入口级合同锁住。
 - 这一轮把 `textDocument/typeDefinition`、`textDocument/documentSymbol`、`textDocument/semanticTokens/full` 也补进了真实 `LspService` request smoke；当前 same-file 显式类型名跳转、document symbol 嵌套返回、semantic token full data 的协议入口已被锁住。
-- 这一轮把 `textDocument/prepareRename` / `rename` 也补进真实 `LspService` request 回归；当前 same-file rename 的 range/placeholder 与同文件 `WorkspaceEdit` 返回合同已经直接覆盖协议入口。
+- 这一轮把 `textDocument/prepareRename` / `rename` 也补进真实 `LspService` request 回归；当前 same-file rename 的 range/placeholder 与同文件 `WorkspaceEdit` 返回合同已经直接覆盖协议入口，workspace source-root function rename 也已锁住从 import use 发起并返回 app / sibling consumer / defining source 三侧 edits 的真实 request 路径。
 - 这一轮把 full-sync 文档生命周期也补进真实 `LspService` notification 回归；当前已锁住 valid `didOpen` 发布空 diagnostics、parse-error `didChange` 发布 parser diagnostics、`didClose` 清空 diagnostics 三条编辑器入口合同。
 - source-preferred dependency definition / typeDefinition / references / current-document `documentHighlight` / completion 现在也按 manifest 身份区分同名本地依赖；真实项目里不会再把 navigation、高亮、completion 或 references 解析到另一个同名依赖实例。
 - 这一轮把 `qlsp` 的 `textDocument/formatting` 也补上了；VSCode 现在可直接通过 `Format Document` 复用 `ql fmt` 背后的格式化实现做整文档格式化。当前仅对可成功解析的源码返回编辑，parse-error 文档会保守跳过并给 warning；真实 `LspService` request 测试已覆盖需要格式化、已格式化、parse-error 三条返回路径。
