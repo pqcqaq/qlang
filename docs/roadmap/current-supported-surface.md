@@ -69,6 +69,7 @@
 - same-file 语义已经接通：hover、definition、declaration、typeDefinition、references、documentHighlight、completion、semanticTokens、documentSymbol、rename。
 - `workspace/symbol` 已落地。
 - `textDocument/codeAction` 第一版已落地：当前会对 unresolved value/type 提供 quick fix，并从 workspace member / 本地依赖源码或 `.qi` 的 `package ...` 声明推导完整 `use ...` 路径；若候选来自未声明的 sibling workspace member，还会同时给当前 package `qlang.toml` 补本地 `[dependencies]` 项。显式 `use demo.xxx...` 指向未声明的 sibling workspace member 时，也会直接提供只改 manifest 的 missing-dependency quick fix。真实 LSP request 回归已锁住 unresolved type auto-import 和“插 `use` + 补 manifest”两条入口。
+- 真实 `LspService` request smoke 现在也继续补宽了 `textDocument/references` 与 `textDocument/documentHighlight` 主入口；workspace / dependency 边界仍由专题 request 回归锁住。
 - healthy package/workspace 下，dependency-backed navigation 已能提供一批可依赖能力：
   - import root / dependency value / enum variant / struct field / method member 的 hover / definition / declaration / references / typeDefinition / current-document `documentHighlight`
   - dependency enum variant / struct field / member field / method completion 的源码优先返回

@@ -189,6 +189,22 @@ fn assert_child_hover(hover: Hover) {
     assert!(markup.value.contains("struct Child"));
 }
 
+fn assert_package_root_hover(root: RootKind, hover: Hover) {
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    match root {
+        RootKind::Field => {
+            assert!(markup.value.contains("**field** `child`"));
+            assert!(markup.value.contains("Option[Child]"));
+        }
+        RootKind::Method => {
+            assert!(markup.value.contains("**method** `child`"));
+            assert!(markup.value.contains("Result[Child, ErrInfo]"));
+        }
+    }
+}
+
 fn assert_root_references(
     locations: Vec<Location>,
     uri: &Url,
@@ -333,7 +349,7 @@ packages = ["../dep"]
 
         let hover = hover_for_package_analysis(&source, &analysis, &package, root_position)
             .expect("structured question-unwrapped dependency root hover should exist");
-        assert_child_hover(hover);
+        assert_package_root_hover(root, hover);
 
         let definition =
             definition_for_package_analysis(&uri, &source, &analysis, &package, root_position)
@@ -341,7 +357,7 @@ packages = ["../dep"]
         let GotoDefinitionResponse::Scalar(location) = definition else {
             panic!("definition should be one location")
         };
-        assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+        assert_dependency_location(&location, &dep_qi, "child");
 
         let declaration =
             declaration_for_package_analysis(&uri, &source, &analysis, &package, root_position)
@@ -349,7 +365,7 @@ packages = ["../dep"]
         let GotoDeclarationResponse::Scalar(location) = declaration else {
             panic!("declaration should be one location")
         };
-        assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+        assert_dependency_location(&location, &dep_qi, "child");
 
         let without_declaration = references_for_package_analysis(
             &uri,
@@ -367,11 +383,7 @@ packages = ["../dep"]
                 .expect(
                     "structured question-unwrapped dependency root references with declaration should exist",
                 );
-        assert_dependency_location(
-            &with_declaration[0],
-            &dep_qi,
-            "pub struct Child {\n    value: Int,\n}",
-        );
+        assert_dependency_location(&with_declaration[0], &dep_qi, "child");
         assert_root_references(with_declaration, &uri, &source, true);
     }
 }

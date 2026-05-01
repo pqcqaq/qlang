@@ -17,8 +17,9 @@ use tower_lsp::lsp_types::request::{
 };
 use tower_lsp::lsp_types::{
     CodeActionOrCommand, CompletionParams, CompletionResponse, Diagnostic,
-    DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
-    InitializeParams, Position, Range, SymbolInformation, TextDocumentIdentifier, TextDocumentItem,
+    DidOpenTextDocumentParams, DocumentHighlight, GotoDefinitionParams, GotoDefinitionResponse,
+    Hover, HoverParams, InitializeParams, Location, Position, Range, ReferenceContext,
+    ReferenceParams, SymbolInformation, TextDocumentIdentifier, TextDocumentItem,
     TextDocumentPositionParams, Url, WorkspaceFolder,
 };
 
@@ -318,6 +319,47 @@ pub async fn code_action_via_request(
     )
     .await;
     serde_json::from_value(value).expect("textDocument/codeAction result should deserialize")
+}
+
+pub async fn references_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+    position: Position,
+    include_declaration: bool,
+) -> Option<Vec<Location>> {
+    let value = request_value(
+        service,
+        "textDocument/references",
+        json!(ReferenceParams {
+            text_document_position: text_document_position(uri, position),
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+            context: ReferenceContext {
+                include_declaration,
+            },
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("textDocument/references result should deserialize")
+}
+
+pub async fn document_highlight_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+    position: Position,
+) -> Option<Vec<DocumentHighlight>> {
+    let value = request_value(
+        service,
+        "textDocument/documentHighlight",
+        json!({
+            "textDocument": {
+                "uri": uri,
+            },
+            "position": position,
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("textDocument/documentHighlight result should deserialize")
 }
 
 pub async fn workspace_symbol_via_request(

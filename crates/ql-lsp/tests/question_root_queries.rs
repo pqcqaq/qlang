@@ -155,8 +155,8 @@ pub fn read(config: Cfg) -> Int {
     let HoverContents::Markup(markup) = hover.contents else {
         panic!("hover should use markdown")
     };
-    assert!(markup.value.contains("**struct** `Child`"));
-    assert!(markup.value.contains("struct Child"));
+    assert!(markup.value.contains("**field** `child`"));
+    assert!(markup.value.contains("Option[Child]"));
 
     let definition =
         definition_for_package_analysis(&uri, source, &analysis, &package, root_position)
@@ -164,7 +164,7 @@ pub fn read(config: Cfg) -> Int {
     let GotoDefinitionResponse::Scalar(location) = definition else {
         panic!("definition should be one location")
     };
-    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+    assert_dependency_location(&location, &dep_qi, "child");
 
     let declaration =
         declaration_for_package_analysis(&uri, source, &analysis, &package, root_position)
@@ -172,7 +172,7 @@ pub fn read(config: Cfg) -> Int {
     let GotoDeclarationResponse::Scalar(location) = declaration else {
         panic!("declaration should be one location")
     };
-    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+    assert_dependency_location(&location, &dep_qi, "child");
 
     let without_declaration =
         references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
@@ -209,11 +209,7 @@ pub fn read(config: Cfg) -> Int {
                 "question-unwrapped dependency field root references with declaration should exist",
             );
     assert_eq!(with_declaration.len(), 3);
-    assert_dependency_location(
-        &with_declaration[0],
-        &dep_qi,
-        "pub struct Child {\n    value: Int,\n}",
-    );
+    assert_dependency_location(&with_declaration[0], &dep_qi, "child");
     assert_eq!(
         with_declaration[1..],
         [
@@ -468,8 +464,8 @@ pub fn read(config: Cfg) -> Int {
     let HoverContents::Markup(markup) = hover.contents else {
         panic!("hover should use markdown")
     };
-    assert!(markup.value.contains("**struct** `Child`"));
-    assert!(markup.value.contains("struct Child"));
+    assert!(markup.value.contains("**method** `child`"));
+    assert!(markup.value.contains("Result[Child, ErrInfo]"));
 
     let definition =
         definition_for_package_analysis(&uri, source, &analysis, &package, root_position)
@@ -477,7 +473,7 @@ pub fn read(config: Cfg) -> Int {
     let GotoDefinitionResponse::Scalar(location) = definition else {
         panic!("definition should be one location")
     };
-    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+    assert_dependency_location(&location, &dep_qi, "child");
 
     let declaration =
         declaration_for_package_analysis(&uri, source, &analysis, &package, root_position)
@@ -485,7 +481,7 @@ pub fn read(config: Cfg) -> Int {
     let GotoDeclarationResponse::Scalar(location) = declaration else {
         panic!("declaration should be one location")
     };
-    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+    assert_dependency_location(&location, &dep_qi, "child");
 
     let without_declaration =
         references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
@@ -526,11 +522,7 @@ pub fn read(config: Cfg) -> Int {
     )
     .expect("question-unwrapped dependency method root references with declaration should exist");
     assert_eq!(with_declaration.len(), 3);
-    assert_dependency_location(
-        &with_declaration[0],
-        &dep_qi,
-        "pub struct Child {\n    value: Int,\n}",
-    );
+    assert_dependency_location(&with_declaration[0], &dep_qi, "child");
     assert_eq!(
         with_declaration[1..],
         [

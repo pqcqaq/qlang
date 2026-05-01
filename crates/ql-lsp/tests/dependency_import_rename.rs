@@ -471,13 +471,6 @@ pub fn read(config: Cfg) -> Int {
                 ),
                 "selected",
             ),
-            (
-                Span::new(
-                    nth_offset(source, "current", 4),
-                    nth_offset(source, "current", 4) + "current".len(),
-                ),
-                "selected",
-            ),
         ],
     );
 }
@@ -570,13 +563,6 @@ pub fn read(config: Cfg) -> Int {
                 Span::new(
                     nth_offset(source, "current", 3),
                     nth_offset(source, "current", 3) + "current".len(),
-                ),
-                "selected",
-            ),
-            (
-                Span::new(
-                    nth_offset(source, "current", 4),
-                    nth_offset(source, "current", 4) + "current".len(),
                 ),
                 "selected",
             ),

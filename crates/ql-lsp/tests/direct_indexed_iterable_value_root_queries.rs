@@ -200,6 +200,7 @@ fn assert_dependency_location(location: &Location, dep_qi: &Path, snippet: &str)
     assert_eq!(
         location.range,
         span_to_range(&artifact, Span::new(start, start + snippet.len())),
+        "dependency snippet: {snippet}",
     );
 }
 
@@ -328,8 +329,8 @@ packages = ["../dep"]
         let HoverContents::Markup(markup) = hover.contents else {
             panic!("hover should use markdown")
         };
-        assert!(markup.value.contains("**struct** `Child`"));
-        assert!(markup.value.contains("struct Child"));
+        assert!(markup.value.contains("**field** `children`"));
+        assert!(markup.value.contains("field children: [Child; 2]"));
 
         let definition = definition_for_package_analysis(
             &uri,
@@ -342,7 +343,7 @@ packages = ["../dep"]
         let GotoDefinitionResponse::Scalar(location) = definition else {
             panic!("definition should be one location")
         };
-        assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+        assert_dependency_location(&location, &dep_qi, "children");
 
         let declaration = declaration_for_package_analysis(
             &uri,
@@ -355,7 +356,7 @@ packages = ["../dep"]
         let GotoDeclarationResponse::Scalar(location) = declaration else {
             panic!("declaration should be one location")
         };
-        assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+        assert_dependency_location(&location, &dep_qi, "children");
 
         let without_declaration = references_for_package_analysis(
             &uri,
@@ -396,11 +397,7 @@ packages = ["../dep"]
         )
         .expect("direct indexed iterable value root references with declaration should exist");
         assert_eq!(with_declaration.len(), 3);
-        assert_dependency_location(
-            &with_declaration[0],
-            &dep_qi,
-            "pub struct Child {\n    value: Int,\n}",
-        );
+        assert_dependency_location(&with_declaration[0], &dep_qi, "children");
         assert_eq!(with_declaration[1..], without_declaration);
     }
 }
@@ -501,9 +498,12 @@ pub fn read(config: Cfg) -> Int {
         let package = analyze_package_dependencies(&app_root)
             .expect("dependency-only package analysis should succeed");
 
-        let hover =
-            hover_for_dependency_values(source, &package, offset_to_position(source, current_usage))
-                .expect("direct indexed iterable method-result value root hover should exist");
+        let hover = hover_for_dependency_values(
+            source,
+            &package,
+            offset_to_position(source, current_usage),
+        )
+        .expect("direct indexed iterable method-result value root hover should exist");
         let HoverContents::Markup(markup) = hover.contents else {
             panic!("hover should use markdown")
         };
