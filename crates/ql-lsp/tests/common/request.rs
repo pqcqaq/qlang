@@ -17,10 +17,10 @@ use tower_lsp::lsp_types::request::{
 };
 use tower_lsp::lsp_types::{
     CodeActionOrCommand, CompletionParams, CompletionResponse, Diagnostic,
-    DidOpenTextDocumentParams, DocumentHighlight, GotoDefinitionParams, GotoDefinitionResponse,
-    Hover, HoverParams, InitializeParams, Location, Position, Range, ReferenceContext,
-    ReferenceParams, SymbolInformation, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, Url, WorkspaceFolder,
+    DidOpenTextDocumentParams, DocumentFormattingParams, DocumentHighlight, FormattingOptions,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, InitializeParams, Location,
+    Position, Range, ReferenceContext, ReferenceParams, SymbolInformation, TextDocumentIdentifier,
+    TextDocumentItem, TextDocumentPositionParams, TextEdit, Url, WorkspaceFolder,
 };
 
 static NEXT_REQUEST_ID: AtomicI64 = AtomicI64::new(2);
@@ -360,6 +360,27 @@ pub async fn document_highlight_via_request(
     )
     .await;
     serde_json::from_value(value).expect("textDocument/documentHighlight result should deserialize")
+}
+
+pub async fn formatting_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+) -> Option<Vec<TextEdit>> {
+    let value = request_value(
+        service,
+        "textDocument/formatting",
+        json!(DocumentFormattingParams {
+            text_document: TextDocumentIdentifier { uri },
+            options: FormattingOptions {
+                tab_size: 4,
+                insert_spaces: true,
+                ..FormattingOptions::default()
+            },
+            work_done_progress_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("textDocument/formatting result should deserialize")
 }
 
 pub async fn workspace_symbol_via_request(
