@@ -14,7 +14,7 @@
 - Phase 1 到 Phase 6 的编译器地基已经够用，当前不是“语言前端还没搭起来”，而是“做不出真实可用项目”。
 - 如果语言现在还无法稳定支撑小型真实项目，继续扩语法、类型系统或 runtime 表面价值很低。
 - 从现在开始，主线改为“先把语言做到可真实使用，再恢复语言扩面”；P0 未完成前，不再把新语法和更宽语言能力当主线。
-- 最小 `stdlib` 属于 P0 可用性，不属于后置语言扩面；没有可依赖的 `core/option/test` 包，真实项目仍会退化成手写样例集合。
+- 最小 `stdlib` 属于 P0 可用性，不属于后置语言扩面；没有可依赖的 `core/option/result/test` 包，真实项目仍会退化成手写样例集合。
 - 从现在开始，每一轮功能迭代必须优先落到生产代码；只有测试或文档改动，不再计作一轮功能推进。
 - 不再用固定日期承诺完成 P0；节奏改为每一轮尽力交付一个可验证切片，并用回归和文档更新收口。
 
@@ -34,7 +34,7 @@
 
 - 能从 `ql project init` / `add` 建出 workspace，并直接从 workspace 根目录执行 `check/build/run/test`。
 - 本地路径依赖不再只停在窄的 public free function / `extern "c"`；至少要覆盖真实项目常见的 public value/type/member 使用路径。
-- 仓库内存在最小 `stdlib`，至少包含普通 Qlang package 形态的 `std.core`、`std.option` 与 `std.test`，并能被真实项目通过本地依赖消费。
+- 仓库内存在最小 `stdlib`，至少包含普通 Qlang package 形态的 `std.core`、`std.option`、`std.result` 与 `std.test`，并能被真实项目通过本地依赖消费。
 - VSCode 中打开真实 workspace 时，definition / references / hover / completion / semantic tokens / `workspace/symbol` 不再只在理想样例里工作。
 - `ql`、`qlsp`、VSIX 的安装和版本绑定有明确、稳定、可复现的路径。
 - README、支持页、开发计划三者描述一致，不再出现“文档说可用，但真实项目一碰就碎”。
@@ -111,15 +111,16 @@
 目标：
 
 - 先以普通 Qlang workspace/package 形态落地 `stdlib`，不先做编译器内置 prelude。
-- 让用户项目能通过本地 `[dependencies]` 显式依赖 `std.core` / `std.option` / `std.test`。
+- 让用户项目能通过本地 `[dependencies]` 显式依赖 `std.core` / `std.option` / `std.result` / `std.test`。
 - 用 `stdlib` 反向驱动 dependency-aware backend、项目模板和文档收口。
 
 完成标准：
 
 - `stdlib/packages/core` 能被 `ql check/build/test` 验证，并提供第一批稳定基础函数。（已落地整数/布尔 helper，含符号、比较、三/四值 extrema、三值 median、3/4 项整数聚合、2/3 项均值、安全 quotient/remainder、3/4 项 Bool all/any/none 聚合、单边/双边/无序边界 clamp、边界归一化、绝对差、range span、range/bounds 距离、零值/正负/非正/非负、奇偶、闭/开区间、无序边界区间、区间外/无序边界外、升/降序判断、整除、余数、因子、容差内/外检查和基础布尔组合）
 - `stdlib/packages/option` 能被 `ql check/build/test` 验证，并提供当前 dependency bridge 可执行的 concrete option surface。（已落地 `IntOption` / `BoolOption` 的 some/none 构造、is_some/is_none 判定、unwrap_or、or 与默认值 helper；泛型 `Option[T]` / prelude 集成继续后置）
+- `stdlib/packages/result` 能被 `ql check/build/test` 验证，并提供当前 dependency bridge 可执行的 concrete result surface。（已落地 `IntResult` / `BoolResult` 的 ok/err 构造、is_ok/is_err 判定、`unwrap_result_or_*`、`or_result_*` 与 error-code helper；泛型 `Result[T, E]` / prelude 集成继续后置）
 - `stdlib/packages/test` 能提供 smoke-test 友好的断言辅助，并通过 package-aware smoke test 直接导入自身 public helpers。（已落地 true/false、bool equality/ne/logic/implies、Bool all/any/none、Bool-to-Int、int equality/order、zero/nonzero、max/min/median、sum/product/average、sign/compare、abs/abs-diff/range-span/bounds、quotient/remainder/has-remainder/factor、2-6 路 status 组合、正负/非正/非负、区间、无序边界区间、单边/双边 clamp / range-distance、升/降序、奇偶、整除和容差内/外断言）
-- 用户项目模板能依赖 `std.core` / `std.option` / `std.test` 并通过 `ql test`。（已落地 `ql project init --stdlib <path>` 的 package 与 workspace member 生成路径）
+- 用户项目模板能依赖 `std.core` / `std.option` / `std.result` / `std.test` 并通过 `ql test`。（已落地 `ql project init --stdlib <path>` 的 package 与 workspace member 生成路径）
 - `stdlib` API 只使用当前稳定语言面；泛型 `Option[T]` / `Result[T, E]` 执行面、IO、字符串、自动 prelude 和 registry 发布继续后置。
 
 ## 下一轮（已排定）

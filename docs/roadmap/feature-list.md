@@ -38,7 +38,7 @@
 
 | 功能 | 级别 | 说明 |
 | --- | --- | --- |
-| `Option[T]` / `Result[T, E]` | P0 | 错误和缺失值的统一载体；当前仅先落地 `std.option` concrete `IntOption` / `BoolOption` |
+| `Option[T]` / `Result[T, E]` | P0 | 错误和缺失值的统一载体；当前先落地 `std.option` / `std.result` concrete `IntOption` / `BoolOption` / `IntResult` / `BoolResult` |
 | 本地类型推断 | P0 | 降低样板但不牺牲可读性 |
 | 公共 API 显式返回类型 | P0 | 文档和审查友好 |
 | 穷尽性检查 | P0 | `match` 安全性基础 |
