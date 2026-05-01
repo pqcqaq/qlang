@@ -61,6 +61,28 @@ use std.core.sum3_int as sum3_int
 use std.core.sum4_int as sum4_int
 use std.core.upper_bound_int as upper_bound_int
 use std.core.xor_bool as xor_bool
+use std.option.BoolOption as BoolOption
+use std.option.is_none_bool as option_is_none_bool
+use std.option.is_none_int as option_is_none_int
+use std.option.is_some_bool as option_is_some_bool
+use std.option.is_some_int as option_is_some_int
+use std.option.or_option_bool as option_or_bool
+use std.option.or_int as option_or_int
+use std.option.unwrap_or_bool as option_unwrap_or_bool
+use std.option.unwrap_or_int as option_unwrap_or_int
+use std.option.IntOption as IntOption
+use std.result.BoolResult as BoolResult
+use std.result.error_or_zero_bool as result_error_or_zero_bool
+use std.result.error_or_zero_int as result_error_or_zero_int
+use std.result.is_err_bool as result_is_err_bool
+use std.result.is_err_int as result_is_err_int
+use std.result.is_ok_bool as result_is_ok_bool
+use std.result.is_ok_int as result_is_ok_int
+use std.result.or_result_bool as result_or_bool
+use std.result.or_result_int as result_or_int
+use std.result.unwrap_result_or_bool as result_unwrap_or_bool
+use std.result.unwrap_result_or_int as result_unwrap_or_int
+use std.result.IntResult as IntResult
 
 pub fn expect_true(value: Bool) -> Int {
     if value {
@@ -610,6 +632,90 @@ pub fn expect_int_nonpositive(actual: Int) -> Int {
 
 pub fn expect_bool_implies(left: Bool, right: Bool) -> Int {
     if implies_bool(left, right) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_option_some(value: IntOption, expected: Int) -> Int {
+    if option_is_some_int(value) && option_unwrap_or_int(value, expected) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_option_none(value: IntOption) -> Int {
+    if option_is_none_int(value) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_bool_option_some(value: BoolOption, expected: Bool) -> Int {
+    if option_is_some_bool(value) && option_unwrap_or_bool(value, expected) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_bool_option_none(value: BoolOption) -> Int {
+    if option_is_none_bool(value) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_option_or(value: IntOption, fallback: IntOption, expected: Int) -> Int {
+    if option_unwrap_or_int(option_or_int(value, fallback), expected) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_bool_option_or(value: BoolOption, fallback: BoolOption, expected: Bool) -> Int {
+    if option_unwrap_or_bool(option_or_bool(value, fallback), expected) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_result_ok(value: IntResult, expected: Int) -> Int {
+    if result_is_ok_int(value) && result_unwrap_or_int(value, expected) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_result_err(value: IntResult, expected_error: Int) -> Int {
+    if result_is_err_int(value) && result_error_or_zero_int(value) == expected_error {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_bool_result_ok(value: BoolResult, expected: Bool) -> Int {
+    if result_is_ok_bool(value) && result_unwrap_or_bool(value, expected) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_bool_result_err(value: BoolResult, expected_error: Int) -> Int {
+    if result_is_err_bool(value) && result_error_or_zero_bool(value) == expected_error {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_result_or(value: IntResult, fallback: IntResult, expected: Int) -> Int {
+    if result_unwrap_or_int(result_or_int(value, fallback), expected) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_bool_result_or(value: BoolResult, fallback: BoolResult, expected: Bool) -> Int {
+    if result_unwrap_or_bool(result_or_bool(value, fallback), expected) == expected {
         return 0
     }
     return 1

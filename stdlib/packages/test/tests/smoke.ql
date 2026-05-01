@@ -12,6 +12,12 @@ use std.test.expect_bool_not as expect_bool_not
 use std.test.expect_bool_or as expect_bool_or
 use std.test.expect_bool_to_int as expect_bool_to_int
 use std.test.expect_bool_xor as expect_bool_xor
+use std.test.expect_bool_option_none as expect_bool_option_none
+use std.test.expect_bool_option_or as expect_bool_option_or
+use std.test.expect_bool_option_some as expect_bool_option_some
+use std.test.expect_bool_result_err as expect_bool_result_err
+use std.test.expect_bool_result_ok as expect_bool_result_ok
+use std.test.expect_bool_result_or as expect_bool_result_or
 use std.test.expect_false as expect_false
 use std.test.expect_int_abs as expect_int_abs
 use std.test.expect_int_abs_diff as expect_int_abs_diff
@@ -34,6 +40,12 @@ use std.test.expect_int_even as expect_int_even
 use std.test.expect_int_exclusive_between as expect_int_exclusive_between
 use std.test.expect_int_exclusive_between_bounds as expect_int_exclusive_between_bounds
 use std.test.expect_int_factor_of as expect_int_factor_of
+use std.test.expect_int_option_none as expect_int_option_none
+use std.test.expect_int_option_or as expect_int_option_or
+use std.test.expect_int_option_some as expect_int_option_some
+use std.test.expect_int_result_err as expect_int_result_err
+use std.test.expect_int_result_ok as expect_int_result_ok
+use std.test.expect_int_result_or as expect_int_result_or
 use std.test.expect_int_ge as expect_int_ge
 use std.test.expect_int_gt as expect_int_gt
 use std.test.expect_int_has_remainder as expect_int_has_remainder
@@ -80,6 +92,14 @@ use std.test.merge_status3 as merge_status3
 use std.test.merge_status4 as merge_status4
 use std.test.merge_status5 as merge_status5
 use std.test.merge_status6 as merge_status6
+use std.option.none_bool as option_none_bool
+use std.option.none_int as option_none_int
+use std.option.some_bool as option_some_bool
+use std.option.some_int as option_some_int
+use std.result.err_bool as result_err_bool
+use std.result.err_int as result_err_int
+use std.result.ok_bool as result_ok_bool
+use std.result.ok_int as result_ok_int
 
 fn check_int(actual: Int, expected: Int) -> Int {
     if actual == expected {
@@ -156,6 +176,12 @@ fn main() -> Int {
     let status_merge_large = sum4(check_int(merge_status6(1, 2, 3, 4, 5, 6), 21), check_int(expect_bool_implies(false, false), 0), 0, 0)
     let status_expect = sum4(check_int(expect_status_ok(0), 0), check_int(expect_status_ok(1), 1), check_int(expect_status_failed(1), 0), check_int(expect_status_failed(0), 1))
     let sign_boundary = sum4(check_int(expect_int_nonpositive(0), 0), check_int(expect_int_nonpositive(1), 1), check_int(expect_bool_implies(true, false), 1), 0)
+    let option_status = sum4(check_int(expect_int_option_some(option_some_int(7), 7), 0), check_int(expect_int_option_none(option_none_int()), 0), check_int(expect_bool_option_some(option_some_bool(true), true), 0), check_int(expect_bool_option_none(option_none_bool()), 0))
+    let option_or_status = sum4(check_int(expect_int_option_or(option_none_int(), option_some_int(9), 9), 0), check_int(expect_bool_option_or(option_none_bool(), option_some_bool(false), false), 0), 0, 0)
+    let option_failure = sum4(check_int(expect_int_option_some(option_some_int(7), 8), 1), check_int(expect_int_option_none(option_some_int(7)), 1), check_int(expect_bool_option_some(option_some_bool(true), false), 1), check_int(expect_bool_option_or(option_some_bool(true), option_none_bool(), false), 1))
+    let result_status = sum4(check_int(expect_int_result_ok(result_ok_int(7), 7), 0), check_int(expect_int_result_err(result_err_int(3), 3), 0), check_int(expect_bool_result_ok(result_ok_bool(true), true), 0), check_int(expect_bool_result_err(result_err_bool(4), 4), 0))
+    let result_or_status = sum4(check_int(expect_int_result_or(result_err_int(5), result_ok_int(11), 11), 0), check_int(expect_bool_result_or(result_err_bool(6), result_ok_bool(false), false), 0), 0, 0)
+    let result_failure = sum4(check_int(expect_int_result_ok(result_ok_int(7), 8), 1), check_int(expect_int_result_err(result_ok_int(7), 3), 1), check_int(expect_bool_result_ok(result_ok_bool(true), false), 1), check_int(expect_bool_result_or(result_ok_bool(true), result_err_bool(4), false), 1))
 
     let bool_status = sum4(bool_pass + bool_aggregate_pass + bool_conversion_pass, bool_logic_pass + bool_none_pass, bool_failure + bool_aggregate_failure + bool_conversion_failure, bool_logic_failure + bool_none_failure)
     let int_status = sum4(int_order_pass, int_boundary_pass, int_order_failure, int_boundary_failure)
@@ -164,5 +190,5 @@ fn main() -> Int {
     let number_status = sum4(number_pass, sign_pass, number_failure, sign_failure)
     let status_status = sum4(status_bool, status_merge, status_merge_large, status_expect)
 
-    return check_int(sum4(bool_status, int_status, range_status, sum4(order_status, number_status, status_status, sum4(sign_boundary, transform_pass + transform_core_pass + transform_clamp_pass, transform_failure + transform_core_failure + transform_clamp_failure, sum4(aggregate_pass + extrema_pass + division_pass, average_pass + extrema4_pass + division_bool_pass + transform_bound_pass, aggregate_failure + extrema_failure + division_failure, average_failure + extrema4_failure + division_zero_failure + transform_bound_failure)))), 0)
+    return check_int(sum4(bool_status, int_status, range_status, sum4(order_status, number_status, status_status, sum4(sign_boundary, transform_pass + transform_core_pass + transform_clamp_pass, transform_failure + transform_core_failure + transform_clamp_failure, sum4(aggregate_pass + extrema_pass + division_pass, average_pass + extrema4_pass + division_bool_pass + transform_bound_pass, aggregate_failure + extrema_failure + division_failure, average_failure + extrema4_failure + division_zero_failure + transform_bound_failure)))), 0) + option_status + option_or_status + option_failure + result_status + result_or_status + result_failure
 }

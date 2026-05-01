@@ -3,3 +3,5 @@ name = "std.test"
 
 [dependencies]
 "std.core" = "../core"
+"std.option" = "../option"
+"std.result" = "../result"

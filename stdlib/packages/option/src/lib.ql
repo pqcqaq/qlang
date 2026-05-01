@@ -79,7 +79,7 @@ pub fn unwrap_or_bool(value: BoolOption, fallback: Bool) -> Bool {
     }
 }
 
-pub fn or_bool(value: BoolOption, fallback: BoolOption) -> BoolOption {
+pub fn or_option_bool(value: BoolOption, fallback: BoolOption) -> BoolOption {
     return match value {
         BoolOption.Some(inner) => BoolOption.Some(inner),
         BoolOption.None => fallback,
