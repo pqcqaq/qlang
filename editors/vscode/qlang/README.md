@@ -84,6 +84,7 @@ Changing either setting restarts the client.
 
 - no bundled `qlsp` binary
 - no Marketplace publish flow
-- ships a minimal TextMate grammar fallback for base syntax coloring
+- ships a TextMate grammar that mirrors the current lexer keyword set for base syntax coloring
+- relies on `qlsp` for keyword hover, semantic tokens full/range, completion resolve, completion, signature help, inlay hints, folding, and selection ranges
 
 The reliable editor surface is still conservative: current-document diagnostics with package preflight, same-file semantics, and the source-backed workspace/dependency slices already covered by `qlsp`.

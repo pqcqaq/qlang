@@ -24,19 +24,22 @@ use tower_lsp::lsp_types::request::{
 };
 use tower_lsp::lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
-    CodeActionProviderCapability, CompletionOptions, CompletionParams, CompletionResponse,
-    DeclarationCapability, Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
-    DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse,
+    CodeActionProviderCapability, CompletionItem as LspCompletionItem, CompletionOptions,
+    CompletionParams, CompletionResponse, DeclarationCapability, Diagnostic, DiagnosticSeverity,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DocumentFormattingParams, DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams,
+    DocumentSymbolResponse, FoldingRange, FoldingRangeParams, FoldingRangeProviderCapability,
     GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
     ImplementationProviderCapability, InitializeParams, InitializeResult, InitializedParams,
-    Location, MessageType, NumberOrString, OneOf, Position, PrepareRenameResponse, Range,
-    ReferenceParams, RenameOptions, RenameParams, SemanticTokensFullOptions, SemanticTokensOptions,
-    SemanticTokensParams, SemanticTokensResult, SemanticTokensServerCapabilities,
-    ServerCapabilities, ServerInfo, SymbolInformation, SymbolKind as LspSymbolKind,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextEdit, TypeDefinitionProviderCapability, Url, WorkspaceEdit,
-    WorkspaceSymbolParams,
+    InlayHint, InlayHintParams, Location, MessageType, NumberOrString, OneOf, Position,
+    PrepareRenameResponse, Range, ReferenceParams, RenameOptions, RenameParams, SelectionRange,
+    SelectionRangeParams, SelectionRangeProviderCapability, SemanticTokensFullOptions,
+    SemanticTokensOptions, SemanticTokensParams, SemanticTokensRangeParams,
+    SemanticTokensRangeResult, SemanticTokensResult, SemanticTokensServerCapabilities,
+    ServerCapabilities, ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
+    SymbolInformation, SymbolKind as LspSymbolKind, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit,
+    TypeDefinitionProviderCapability, Url, WorkspaceEdit, WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -58,12 +61,19 @@ use crate::bridge::{
     references_for_dependency_imports, references_for_dependency_methods,
     references_for_dependency_struct_fields, references_for_dependency_values,
     references_for_dependency_variants, references_for_package_analysis, rename_for_analysis,
-    rename_for_dependency_imports, semantic_tokens_for_analysis, semantic_tokens_legend,
-    semantic_tokens_result_from_occurrences, span_to_range, symbol_information,
+    rename_for_dependency_imports, semantic_tokens_for_analysis,
+    semantic_tokens_for_analysis_range, semantic_tokens_legend,
+    semantic_tokens_result_from_occurrences_with_lexical,
+    semantic_tokens_result_from_occurrences_with_lexical_range, span_to_range, symbol_information,
     type_definition_for_analysis, type_definition_for_dependency_imports,
     type_definition_for_dependency_method_types, type_definition_for_dependency_struct_field_types,
     type_definition_for_dependency_values, type_definition_for_dependency_variants,
     type_definition_for_package_analysis, workspace_symbols_for_analysis,
+};
+use crate::editor_features::{
+    completion_for_keywords, folding_ranges_for_source, hover_for_keyword,
+    inlay_hints_for_analysis, resolve_completion_item, selection_ranges_for_source,
+    signature_help_for_analysis,
 };
 use crate::store::DocumentStore;
 
@@ -180,6 +190,13 @@ fn package_analysis_for_path(path: &Path) -> Option<ql_analysis::PackageAnalysis
             analyze_package_with_available_dependencies(path).ok()
         }
         Err(_) => None,
+    }
+}
+
+fn semantic_tokens_range_result(result: SemanticTokensResult) -> SemanticTokensRangeResult {
+    match result {
+        SemanticTokensResult::Tokens(tokens) => SemanticTokensRangeResult::Tokens(tokens),
+        SemanticTokensResult::Partial(partial) => SemanticTokensRangeResult::Partial(partial),
     }
 }
 
@@ -2713,6 +2730,33 @@ fn semantic_tokens_for_workspace_package_analysis_with_open_docs(
     package: &ql_analysis::PackageAnalysis,
     open_docs: &OpenDocuments,
 ) -> SemanticTokensResult {
+    let tokens = workspace_package_semantic_token_occurrences_with_open_docs(
+        uri, source, analysis, package, open_docs,
+    );
+    semantic_tokens_result_from_occurrences_with_lexical(source, tokens)
+}
+
+fn semantic_tokens_for_workspace_package_analysis_range_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    range: Range,
+) -> SemanticTokensResult {
+    let tokens = workspace_package_semantic_token_occurrences_with_open_docs(
+        uri, source, analysis, package, open_docs,
+    );
+    semantic_tokens_result_from_occurrences_with_lexical_range(source, tokens, range)
+}
+
+fn workspace_package_semantic_token_occurrences_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+) -> Vec<ql_analysis::SemanticTokenOccurrence> {
     let mut tokens = analysis.semantic_tokens();
     let dependency_import_root_tokens =
         package.dependency_import_root_semantic_tokens_in_source(source);
@@ -2748,7 +2792,7 @@ fn semantic_tokens_for_workspace_package_analysis_with_open_docs(
     tokens.extend(dependency_import_root_tokens);
     tokens.extend(workspace_import_root_tokens);
     sort_and_dedup_semantic_tokens(&mut tokens);
-    semantic_tokens_result_from_occurrences(source, tokens)
+    tokens
 }
 
 #[cfg(test)]
@@ -2769,6 +2813,31 @@ fn semantic_tokens_for_workspace_dependency_fallback_with_open_docs(
     package: &ql_analysis::PackageAnalysis,
     open_docs: &OpenDocuments,
 ) -> SemanticTokensResult {
+    let tokens = workspace_dependency_fallback_semantic_token_occurrences_with_open_docs(
+        uri, source, package, open_docs,
+    );
+    semantic_tokens_result_from_occurrences_with_lexical(source, tokens)
+}
+
+fn semantic_tokens_for_workspace_dependency_fallback_range_with_open_docs(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    range: Range,
+) -> SemanticTokensResult {
+    let tokens = workspace_dependency_fallback_semantic_token_occurrences_with_open_docs(
+        uri, source, package, open_docs,
+    );
+    semantic_tokens_result_from_occurrences_with_lexical_range(source, tokens, range)
+}
+
+fn workspace_dependency_fallback_semantic_token_occurrences_with_open_docs(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+) -> Vec<ql_analysis::SemanticTokenOccurrence> {
     let mut tokens = package.dependency_fallback_semantic_tokens_in_source(source);
     let dependency_member_tokens =
         dependency_member_semantic_tokens_with_open_docs(source, None, package, open_docs);
@@ -2786,7 +2855,7 @@ fn semantic_tokens_for_workspace_dependency_fallback_with_open_docs(
         ),
     );
     sort_and_dedup_semantic_tokens(&mut tokens);
-    semantic_tokens_result_from_occurrences(source, tokens)
+    tokens
 }
 
 fn broken_source_import_binding_at(
@@ -3106,9 +3175,8 @@ fn broken_source_public_struct_field_type_span_in_source(
                     index += 1;
                     continue;
                 };
-                let close_index =
-                    token_index_after_balanced_braces_in_tokens(&tokens, open_index)
-                        .unwrap_or(tokens.len());
+                let close_index = token_index_after_balanced_braces_in_tokens(&tokens, open_index)
+                    .unwrap_or(tokens.len());
                 let mut field_index = open_index + 1;
                 let mut nested_depth = 0usize;
                 while field_index < close_index.saturating_sub(1) {
@@ -3134,9 +3202,7 @@ fn broken_source_public_struct_field_type_span_in_source(
                                     TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => {
                                         type_depth += 1;
                                     }
-                                    TokenKind::RParen
-                                    | TokenKind::RBracket
-                                    | TokenKind::RBrace => {
+                                    TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
                                         if type_depth == 0 {
                                             type_end = cursor;
                                             break;
@@ -3198,7 +3264,8 @@ fn broken_source_public_struct_method_return_type_span_in_source(
                             continue;
                         };
                         let (target_name, after_target_index) =
-                            if tokens.get(next_index).map(|token| token.kind) == Some(TokenKind::For)
+                            if tokens.get(next_index).map(|token| token.kind)
+                                == Some(TokenKind::For)
                             {
                                 let Some((target_name, after_target_index)) =
                                     broken_source_path_last_ident_token(&tokens, next_index + 1)
@@ -3237,9 +3304,8 @@ fn broken_source_public_struct_method_return_type_span_in_source(
                     index += 1;
                     continue;
                 }
-                let close_index =
-                    token_index_after_balanced_braces_in_tokens(&tokens, open_index)
-                        .unwrap_or(tokens.len());
+                let close_index = token_index_after_balanced_braces_in_tokens(&tokens, open_index)
+                    .unwrap_or(tokens.len());
                 let mut method_index = open_index + 1;
                 let mut nested_depth = 0usize;
                 while method_index < close_index.saturating_sub(1) {
@@ -3266,9 +3332,9 @@ fn broken_source_public_struct_method_return_type_span_in_source(
                                 method_index += 1;
                                 continue;
                             }
-                            let Some(params_open_index) =
-                                ((fn_index + 2)..close_index.saturating_sub(1))
-                                    .find(|candidate| tokens[*candidate].kind == TokenKind::LParen)
+                            let Some(params_open_index) = ((fn_index + 2)
+                                ..close_index.saturating_sub(1))
+                                .find(|candidate| tokens[*candidate].kind == TokenKind::LParen)
                             else {
                                 return None;
                             };
@@ -3290,8 +3356,9 @@ fn broken_source_public_struct_method_return_type_span_in_source(
                                 cursor += 1;
                             }
                             let Some(type_start) = after_params_index.and_then(|cursor| {
-                                (tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::Arrow))
-                                    .then_some(cursor + 1)
+                                (tokens.get(cursor).map(|token| token.kind)
+                                    == Some(TokenKind::Arrow))
+                                .then_some(cursor + 1)
                             }) else {
                                 return None;
                             };
@@ -3363,7 +3430,8 @@ fn broken_source_public_struct_method_name_span_in_source(
                             continue;
                         };
                         let (target_name, after_target_index) =
-                            if tokens.get(next_index).map(|token| token.kind) == Some(TokenKind::For)
+                            if tokens.get(next_index).map(|token| token.kind)
+                                == Some(TokenKind::For)
                             {
                                 let Some((target_name, after_target_index)) =
                                     broken_source_path_last_ident_token(&tokens, next_index + 1)
@@ -3402,9 +3470,8 @@ fn broken_source_public_struct_method_name_span_in_source(
                     index += 1;
                     continue;
                 }
-                let close_index =
-                    token_index_after_balanced_braces_in_tokens(&tokens, open_index)
-                        .unwrap_or(tokens.len());
+                let close_index = token_index_after_balanced_braces_in_tokens(&tokens, open_index)
+                    .unwrap_or(tokens.len());
                 let mut method_index = open_index + 1;
                 let mut nested_depth = 0usize;
                 while method_index < close_index.saturating_sub(1) {
@@ -3794,11 +3861,13 @@ fn broken_source_definition_locations_in_source(
         ql_analysis::SymbolKind::Struct
         | ql_analysis::SymbolKind::Enum
         | ql_analysis::SymbolKind::Trait
-        | ql_analysis::SymbolKind::TypeAlias => broken_source_root_definition_sites_in_source(source)
-            .into_iter()
-            .filter(|site| site.kind == target.kind && site.name == target.name)
-            .map(|site| Location::new(uri.clone(), span_to_range(source, site.span)))
-            .collect(),
+        | ql_analysis::SymbolKind::TypeAlias => {
+            broken_source_root_definition_sites_in_source(source)
+                .into_iter()
+                .filter(|site| site.kind == target.kind && site.name == target.name)
+                .map(|site| Location::new(uri.clone(), span_to_range(source, site.span)))
+                .collect()
+        }
         ql_analysis::SymbolKind::Method => {
             broken_source_method_definition_locations_in_source(uri, source, &target.name)
         }
@@ -4007,17 +4076,19 @@ fn workspace_source_dependency_type_target_from_broken_open_docs(
         {
             continue;
         }
-        let Some((module_path, open_source)) = open_docs.iter().find_map(|(path, (_, open_source))| {
-            candidate_package.modules().iter().find_map(|module| {
-                (canonicalize_or_clone(module.path()) == canonicalize_or_clone(path)
-                    && package_module_matches_dependency_source_path(
-                        &candidate_package,
-                        module.path(),
-                        target_source_path,
-                    ))
-                .then_some((module.path(), open_source.as_str()))
+        let Some((module_path, open_source)) =
+            open_docs.iter().find_map(|(path, (_, open_source))| {
+                candidate_package.modules().iter().find_map(|module| {
+                    (canonicalize_or_clone(module.path()) == canonicalize_or_clone(path)
+                        && package_module_matches_dependency_source_path(
+                            &candidate_package,
+                            module.path(),
+                            target_source_path,
+                        ))
+                    .then_some((module.path(), open_source.as_str()))
+                })
             })
-        }) else {
+        else {
             continue;
         };
         let Some(type_span) = f(open_source) else {
@@ -4068,17 +4139,19 @@ fn workspace_source_dependency_method_target_from_broken_open_docs(
         {
             continue;
         }
-        let Some((module_path, open_source)) = open_docs.iter().find_map(|(path, (_, open_source))| {
-            candidate_package.modules().iter().find_map(|module| {
-                (canonicalize_or_clone(module.path()) == canonicalize_or_clone(path)
-                    && package_module_matches_dependency_source_path(
-                        &candidate_package,
-                        module.path(),
-                        target_source_path,
-                    ))
-                .then_some((module.path(), open_source.as_str()))
+        let Some((module_path, open_source)) =
+            open_docs.iter().find_map(|(path, (_, open_source))| {
+                candidate_package.modules().iter().find_map(|module| {
+                    (canonicalize_or_clone(module.path()) == canonicalize_or_clone(path)
+                        && package_module_matches_dependency_source_path(
+                            &candidate_package,
+                            module.path(),
+                            target_source_path,
+                        ))
+                    .then_some((module.path(), open_source.as_str()))
+                })
             })
-        }) else {
+        else {
             continue;
         };
         let Some(span) = broken_source_public_struct_method_name_span_in_source(
@@ -4089,7 +4162,9 @@ fn workspace_source_dependency_method_target_from_broken_open_docs(
             continue;
         };
         return Some(DependencyDefinitionTarget {
-            package_name: manifest_package_name(candidate_package.manifest()).ok()?.to_owned(),
+            package_name: manifest_package_name(candidate_package.manifest())
+                .ok()?
+                .to_owned(),
             manifest_path: candidate_package.manifest().manifest_path.clone(),
             source_path: target_source_path.to_owned(),
             kind: ql_analysis::SymbolKind::Method,
@@ -4905,8 +4980,10 @@ fn trait_method_call_implementation_query_for_type_id(
         ql_resolve::TypeResolution::Import(_) => package
             .dependency_type_definition_at(analysis, analysis.hir().ty(type_id).span.start)
             .or_else(|| {
-                package
-                    .dependency_type_definition_in_source_at(source, analysis.hir().ty(type_id).span.start)
+                package.dependency_type_definition_in_source_at(
+                    source,
+                    analysis.hir().ty(type_id).span.start,
+                )
             })?,
         ql_resolve::TypeResolution::Generic(_) | ql_resolve::TypeResolution::Builtin(_) => {
             return None;
@@ -4973,8 +5050,8 @@ fn trait_method_call_implementation_query_in_expr(
     offset: usize,
 ) -> Option<TraitMethodImplementationQuery> {
     match &analysis.hir().expr(expr_id).kind {
-        ql_hir::ExprKind::Tuple(items) | ql_hir::ExprKind::Array(items) => items.iter().find_map(
-            |item| {
+        ql_hir::ExprKind::Tuple(items) | ql_hir::ExprKind::Array(items) => {
+            items.iter().find_map(|item| {
                 trait_method_call_implementation_query_in_expr(
                     current_path,
                     source,
@@ -4984,8 +5061,8 @@ fn trait_method_call_implementation_query_in_expr(
                     *item,
                     offset,
                 )
-            },
-        ),
+            })
+        }
         ql_hir::ExprKind::Block(block) | ql_hir::ExprKind::Unsafe(block) => {
             trait_method_call_implementation_query_in_block(
                 current_path,
@@ -5070,17 +5147,15 @@ fn trait_method_call_implementation_query_in_expr(
                     })
             })
         }),
-        ql_hir::ExprKind::Closure { body, .. } => {
-            trait_method_call_implementation_query_in_expr(
-                current_path,
-                source,
-                analysis,
-                package,
-                function,
-                *body,
-                offset,
-            )
-        }
+        ql_hir::ExprKind::Closure { body, .. } => trait_method_call_implementation_query_in_expr(
+            current_path,
+            source,
+            analysis,
+            package,
+            function,
+            *body,
+            offset,
+        ),
         ql_hir::ExprKind::Call { callee, args } => {
             if let ql_hir::ExprKind::Member {
                 object,
@@ -5299,9 +5374,9 @@ fn trait_method_call_implementation_query_in_stmt(
                 )
             })
         }
-        ql_hir::StmtKind::Return(None)
-        | ql_hir::StmtKind::Break
-        | ql_hir::StmtKind::Continue => None,
+        ql_hir::StmtKind::Return(None) | ql_hir::StmtKind::Break | ql_hir::StmtKind::Continue => {
+            None
+        }
     }
 }
 
@@ -5353,46 +5428,52 @@ fn trait_method_call_implementation_query_for_source(
 ) -> Option<TraitMethodImplementationQuery> {
     let offset = position_to_offset(source, position)?;
 
-    analysis.hir().items.iter().find_map(|item_id| match &analysis.hir().item(*item_id).kind {
-        ql_hir::ItemKind::Function(function) => function.body.and_then(|body| {
-            trait_method_call_implementation_query_in_block(
-                current_path,
-                source,
-                analysis,
-                package,
-                function,
-                body,
-                offset,
-            )
-        }),
-        ql_hir::ItemKind::Impl(impl_block) => impl_block.methods.iter().find_map(|method| {
-            method.body.and_then(|body| {
+    analysis
+        .hir()
+        .items
+        .iter()
+        .find_map(|item_id| match &analysis.hir().item(*item_id).kind {
+            ql_hir::ItemKind::Function(function) => function.body.and_then(|body| {
                 trait_method_call_implementation_query_in_block(
                     current_path,
                     source,
                     analysis,
                     package,
-                    method,
+                    function,
                     body,
                     offset,
                 )
-            })
-        }),
-        ql_hir::ItemKind::Extend(extend_block) => extend_block.methods.iter().find_map(|method| {
-            method.body.and_then(|body| {
-                trait_method_call_implementation_query_in_block(
-                    current_path,
-                    source,
-                    analysis,
-                    package,
-                    method,
-                    body,
-                    offset,
-                )
-            })
-        }),
-        _ => None,
-    })
+            }),
+            ql_hir::ItemKind::Impl(impl_block) => impl_block.methods.iter().find_map(|method| {
+                method.body.and_then(|body| {
+                    trait_method_call_implementation_query_in_block(
+                        current_path,
+                        source,
+                        analysis,
+                        package,
+                        method,
+                        body,
+                        offset,
+                    )
+                })
+            }),
+            ql_hir::ItemKind::Extend(extend_block) => {
+                extend_block.methods.iter().find_map(|method| {
+                    method.body.and_then(|body| {
+                        trait_method_call_implementation_query_in_block(
+                            current_path,
+                            source,
+                            analysis,
+                            package,
+                            method,
+                            body,
+                            offset,
+                        )
+                    })
+                })
+            }
+            _ => None,
+        })
 }
 
 fn workspace_trait_method_implementation_sites_with_open_docs(
@@ -5663,10 +5744,9 @@ fn extend_workspace_dependency_implementation_locations_with_open_docs(
                 analysis,
             } => (uri, source, analysis),
             PackageSourceSnapshot::BrokenOpen { uri, source } => {
-                let mut module_locations =
-                    broken_source_implementation_locations_in_source(
-                        &uri, &source, package, target,
-                    );
+                let mut module_locations = broken_source_implementation_locations_in_source(
+                    &uri, &source, package, target,
+                );
                 normalize_locations_in_source_order(&mut module_locations);
                 locations.extend(module_locations);
                 continue;
@@ -5680,8 +5760,8 @@ fn extend_workspace_dependency_implementation_locations_with_open_docs(
             .filter_map(|item| match (&target.kind, &item.kind) {
                 (
                     ql_analysis::SymbolKind::Struct
-                        | ql_analysis::SymbolKind::Enum
-                        | ql_analysis::SymbolKind::TypeAlias,
+                    | ql_analysis::SymbolKind::Enum
+                    | ql_analysis::SymbolKind::TypeAlias,
                     AstItemKind::Impl(impl_block),
                 ) if implementation_target_matches_dependency_type_expr(
                     package,
@@ -5698,8 +5778,8 @@ fn extend_workspace_dependency_implementation_locations_with_open_docs(
                 }
                 (
                     ql_analysis::SymbolKind::Struct
-                        | ql_analysis::SymbolKind::Enum
-                        | ql_analysis::SymbolKind::TypeAlias,
+                    | ql_analysis::SymbolKind::Enum
+                    | ql_analysis::SymbolKind::TypeAlias,
                     AstItemKind::Extend(extend_block),
                 ) if implementation_target_matches_dependency_type_expr(
                     package,
@@ -5862,7 +5942,10 @@ fn method_definition_location_at(
         return None;
     }
 
-    Some(Location::new(uri.clone(), span_to_range(source, definition.span)))
+    Some(Location::new(
+        uri.clone(),
+        span_to_range(source, definition.span),
+    ))
 }
 
 fn source_backed_method_implementation_for_dependency_target_with_open_docs(
@@ -6053,9 +6136,13 @@ fn map_implementation_response_after_repaired_method_call_insert(
     inserted_position: tower_lsp::lsp_types::Position,
 ) -> GotoImplementationResponse {
     match response {
-        GotoImplementationResponse::Scalar(location) => GotoImplementationResponse::Scalar(
-            map_location_after_repaired_method_call_insert(current_uri, location, inserted_position),
-        ),
+        GotoImplementationResponse::Scalar(location) => {
+            GotoImplementationResponse::Scalar(map_location_after_repaired_method_call_insert(
+                current_uri,
+                location,
+                inserted_position,
+            ))
+        }
         GotoImplementationResponse::Array(locations) => GotoImplementationResponse::Array(
             locations
                 .into_iter()
@@ -6090,11 +6177,13 @@ fn workspace_source_method_implementation_for_broken_source_with_open_docs(
         position,
     )?;
 
-    Some(map_implementation_response_after_repaired_method_call_insert(
-        uri,
-        implementation,
-        inserted_position,
-    ))
+    Some(
+        map_implementation_response_after_repaired_method_call_insert(
+            uri,
+            implementation,
+            inserted_position,
+        ),
+    )
 }
 
 fn workspace_source_method_implementation_for_local_source_in_broken_source_with_open_docs(
@@ -6171,11 +6260,7 @@ fn workspace_source_implementation_for_broken_source_with_open_docs(
     })
     .or_else(|| {
         workspace_source_implementation_for_dependency_with_open_docs(
-            source,
-            None,
-            package,
-            open_docs,
-            position,
+            source, None, package, open_docs, position,
         )
     })
     .or_else(|| {
@@ -8842,7 +8927,13 @@ fn fallback_document_highlights_for_package_at_with_open_docs(
 
 fn completion_options() -> CompletionOptions {
     CompletionOptions {
-        trigger_characters: Some(vec![".".to_owned()]),
+        trigger_characters: Some(
+            [".", ":", "\"", "/", "@", "<"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+        ),
+        resolve_provider: Some(true),
         ..CompletionOptions::default()
     }
 }
@@ -8864,6 +8955,7 @@ impl LanguageServer for Backend {
                         ..Default::default()
                     },
                 )),
+                selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 declaration_provider: Some(DeclarationCapability::Simple(true)),
@@ -8874,18 +8966,27 @@ impl LanguageServer for Backend {
                 document_symbol_provider: Some(OneOf::Left(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
                 completion_provider: Some(completion_options()),
+                signature_help_provider: Some(SignatureHelpOptions {
+                    trigger_characters: Some(
+                        ["(", ",", "<"].into_iter().map(str::to_owned).collect(),
+                    ),
+                    retrigger_characters: Some([")"].into_iter().map(str::to_owned).collect()),
+                    work_done_progress_options: Default::default(),
+                }),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
+                folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 semantic_tokens_provider: Some(
                     SemanticTokensServerCapabilities::SemanticTokensOptions(
                         SemanticTokensOptions {
                             legend: semantic_tokens_legend(),
-                            range: None,
+                            range: Some(true),
                             full: Some(SemanticTokensFullOptions::Bool(true)),
                             ..Default::default()
                         },
                     ),
                 ),
+                inlay_hint_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     prepare_provider: Some(true),
                     work_done_progress_options: Default::default(),
@@ -8977,19 +9078,22 @@ impl LanguageServer for Backend {
                 return Ok(Some(hover));
             }
             let Some(analysis) = analysis else {
-                return Ok(hover_for_dependency_values(&source, &package, position));
+                return Ok(hover_for_dependency_values(&source, &package, position)
+                    .or_else(|| hover_for_keyword(&source, position)));
             };
-            return Ok(hover_for_package_analysis(
-                &source, &analysis, &package, position,
-            ));
+            return Ok(
+                hover_for_package_analysis(&source, &analysis, &package, position)
+                    .or_else(|| hover_for_keyword(&source, position)),
+            );
         }
 
         let Ok(analysis) = analyze_source(&source) else {
-            return Ok(None);
+            return Ok(hover_for_keyword(&source, position));
         };
-        Ok(crate::bridge::hover_for_analysis(
-            &source, &analysis, position,
-        ))
+        Ok(
+            crate::bridge::hover_for_analysis(&source, &analysis, position)
+                .or_else(|| hover_for_keyword(&source, position)),
+        )
     }
 
     async fn goto_definition(
@@ -9420,16 +9524,63 @@ impl LanguageServer for Backend {
         }
 
         let Ok(analysis) = analyze_source(&source) else {
-            return Ok(None);
+            return Ok(completion_for_keywords(&source, position));
         };
 
         if let Some(package) = package.as_ref() {
-            return Ok(completion_for_package_analysis(
-                &source, &analysis, package, position,
-            ));
+            let completion = completion_for_package_analysis(&source, &analysis, package, position)
+                .or_else(|| completion_for_keywords(&source, position));
+            return Ok(completion);
         }
 
-        Ok(completion_for_analysis(&source, &analysis, position))
+        Ok(completion_for_analysis(&source, &analysis, position)
+            .or_else(|| completion_for_keywords(&source, position)))
+    }
+
+    async fn completion_resolve(&self, params: LspCompletionItem) -> Result<LspCompletionItem> {
+        Ok(resolve_completion_item(params))
+    }
+
+    async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
+        Ok(signature_help_for_analysis(&source, &analysis, position))
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let uri = params.text_document.uri;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
+        Ok(inlay_hints_for_analysis(&source, &analysis, params.range))
+    }
+
+    async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
+        let uri = params.text_document.uri;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+        Ok(folding_ranges_for_source(&source))
+    }
+
+    async fn selection_range(
+        &self,
+        params: SelectionRangeParams,
+    ) -> Result<Option<Vec<SelectionRange>>> {
+        let uri = params.text_document.uri;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+        Ok(selection_ranges_for_source(&source, params.positions))
     }
 
     async fn code_action(
@@ -9529,6 +9680,46 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         Ok(Some(semantic_tokens_for_analysis(&source, &analysis)))
+    }
+
+    async fn semantic_tokens_range(
+        &self,
+        params: SemanticTokensRangeParams,
+    ) -> Result<Option<SemanticTokensRangeResult>> {
+        let uri = params.text_document.uri;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+        if let Some(package) = self.package_analysis_for_uri(&uri) {
+            let open_docs = self.open_file_documents().await;
+            if let Ok(analysis) = analyze_source(&source) {
+                return Ok(Some(semantic_tokens_range_result(
+                    semantic_tokens_for_workspace_package_analysis_range_with_open_docs(
+                        &uri,
+                        &source,
+                        &analysis,
+                        &package,
+                        &open_docs,
+                        params.range,
+                    ),
+                )));
+            }
+            return Ok(Some(semantic_tokens_range_result(
+                semantic_tokens_for_workspace_dependency_fallback_range_with_open_docs(
+                    &uri,
+                    &source,
+                    &package,
+                    &open_docs,
+                    params.range,
+                ),
+            )));
+        }
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
+        Ok(Some(semantic_tokens_range_result(
+            semantic_tokens_for_analysis_range(&source, &analysis, params.range),
+        )))
     }
 
     async fn prepare_rename(

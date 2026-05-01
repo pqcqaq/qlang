@@ -67,7 +67,7 @@
 
 ### LSP 与 VSCode
 
-- same-file 语义已经接通：hover、definition、declaration、typeDefinition、references、documentHighlight、completion、semanticTokens、documentSymbol、rename。
+- same-file 语义已经接通：hover、keyword hover、definition、declaration、typeDefinition、references、documentHighlight、completion、completion resolve（补齐缺失文档/detail）、signatureHelp、inlayHint、foldingRange、selectionRange、semanticTokens/full、semanticTokens/range、documentSymbol、rename。
 - `workspace/symbol` 已落地。
 - `textDocument/codeAction` 第一版已落地：当前会对 unresolved value/type 提供 quick fix，并从 workspace member / 本地依赖源码或 `.qi` 的 `package ...` 声明推导完整 `use ...` 路径；若候选来自未声明的 sibling workspace member，还会同时给当前 package `qlang.toml` 补本地 `[dependencies]` 项。显式 `use demo.xxx...` 指向未声明的 sibling workspace member 时，也会直接提供只改 manifest 的 missing-dependency quick fix。真实 LSP request 回归已锁住 unresolved type auto-import 和“插 `use` + 补 manifest”两条入口。
 - 真实 `LspService` request smoke 现在也继续补宽了 `textDocument/references` 与 `textDocument/documentHighlight` 主入口；workspace / dependency 边界仍由专题 request 回归锁住。
@@ -80,7 +80,7 @@
 - healthy workspace / 本地路径依赖下，source-backed dependency `method / field` 的 `hover / definition / typeDefinition / references / current-document documentHighlight / semantic tokens / prepareRename / workspace rename` 现在也会在成员只存在于未保存源码、磁盘 `.qi` 仍旧过期时继续优先读取 open docs；当已成功回到 workspace 源码定义时，rename 不再额外改写生成 `.qi`。
 - healthy workspace 下，workspace import `hover/definition/declaration/typeDefinition` 现在也会读取已打开但未落盘的导出 workspace 源码，不再要求先保存文件才能看到正确导航结果。
 - healthy workspace 下，workspace import `documentHighlight` 现在也会读取已打开但未落盘的导出 workspace 源码；当前文件 import/use 高亮不再落回磁盘旧版本。
-- healthy workspace 下，workspace import semantic tokens 现在也会读取已打开但未落盘的导出 workspace 源码；healthy 与 parse-error fallback 两条着色路径都不再落回磁盘旧版本。
+- healthy workspace 下，workspace import semantic tokens 现在也会读取已打开但未落盘的导出 workspace 源码；full 与 range、healthy 与 parse-error fallback 着色路径都不再落回磁盘旧版本。
 - healthy workspace 下，workspace import references 现在同时覆盖 value import 和 analyzed-source type import 的 alias/use；当前文件、已打开但未落盘的导出源码，以及同 workspace 其他 consumer 文件的 import/use 都会一起回收。
 - workspace root `function / const / static / struct / enum / trait / type alias` 现在也补上了 references 聚合：无论从源码定义点还是同文件使用点发起，都会保留当前文件内引用，并联动返回 workspace 中对应 import alias/use 位置；这条 import/use 聚合会读取 open docs；对当前 package 可见的 broken consumers，也会保守补回 import/use。
 - healthy workspace 下，workspace root source-backed `enum variant / struct field / receiver method` 的 references 现在也会补回当前 package 可见的 analyzed workspace consumers；当前已锁住从导出包源码定义点或同文件使用点发起的 variant/member references 聚合。
@@ -90,7 +90,7 @@
 - source-preferred dependency tooling 现在按 manifest 身份区分同名本地依赖；definition / typeDefinition / references / current-document `documentHighlight` / dependency completion / `workspace/symbol` 不会再串到另一个依赖实例。
 - `workspace/symbol` 对 workspace 外本地路径依赖在源码可用时会优先返回源码里的 value / method / trait / extend symbols；源码不可用时仍回退到 `.qi`。这条行为现在也覆盖 `workspace_roots` / 无打开文档入口；同名本地依赖也不会再因为 source-preferred 排除而误丢另一个依赖的 `.qi` 符号。
 - 同名本地依赖的 type / enum / enum member、method / trait method / extend method 组合场景现在也有显式回归保护；`[dependencies]` 本地路径依赖在 open document 和 `workspace_roots` 入口上也都锁住了“源码优先 + 兄弟依赖 `.qi` 保留”这条 `workspace/symbol` 合同；真实 LSP request 入口也已覆盖 workspace root 无打开文档、open unsaved 本地依赖源码优先与同名本地依赖隔离。
-- `qlsp` 现在会声明 `.` completion trigger，VSCode 中输入成员访问和点分 dependency 路径时可直接自动触发补全。
+- `qlsp` 现在会声明 `.`, `:`, `"`, `/`, `@`, `<` completion triggers；VSCode 中输入成员访问、点分 dependency 路径、基础 keyword/snippet 场景时可直接自动触发补全。
 - VSCode 扩展现在会读取 LSP `serverInfo.version`；若扩展版本与 `qlsp` 版本不一致，会直接给出 warning，避免 repo 开发产物和安装产物混用时静默漂移。
 - `textDocument/formatting` 已落地：当前复用 `ql fmt` 背后的格式化实现提供整文档格式化；仅在源码可成功解析时返回编辑，parse-error 文档会保守跳过并记录 warning。真实 `LspService` request 回归已锁住返回整文档 edit、已格式化源码返回空 edit、parse-error 返回 `None` 三条入口合同。
 - full-sync document lifecycle 现在也有真实 `LspService` notification 回归；`didOpen` / `didChange` 会优先发布当前 buffer 的 parser / semantic diagnostics，当前 buffer 干净时再补 package preflight 的 manifest / interface 错误（例如缺失 dependency `.qi`），`didClose` 会清空该文档 diagnostics。当前仍只发布打开文档本身的 diagnostics，不做 workspace-wide 推送。

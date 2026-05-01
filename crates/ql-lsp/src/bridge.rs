@@ -10,6 +10,7 @@ use ql_analysis::{
 use ql_diagnostics::{
     Diagnostic as CompilerDiagnostic, DiagnosticSeverity as CompilerSeverity, Label,
 };
+use ql_lexer::{TokenKind, lex};
 use ql_span::Span;
 use tower_lsp::lsp_types::request::{
     GotoDeclarationResponse, GotoImplementationResponse, GotoTypeDefinitionResponse,
@@ -19,8 +20,9 @@ use tower_lsp::lsp_types::{
     CompletionTextEdit, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
     DocumentSymbol, DocumentSymbolResponse, Documentation, GotoDefinitionResponse, Hover,
     HoverContents, Location, MarkupContent, MarkupKind, NumberOrString, Position,
-    PrepareRenameResponse, Range, SemanticToken, SemanticTokenType, SemanticTokens,
-    SemanticTokensLegend, SemanticTokensResult, SymbolInformation, TextEdit, Url, WorkspaceEdit,
+    PrepareRenameResponse, Range, SemanticToken, SemanticTokenModifier, SemanticTokenType,
+    SemanticTokens, SemanticTokensLegend, SemanticTokensResult, SymbolInformation, TextEdit, Url,
+    WorkspaceEdit,
 };
 
 pub fn position_to_offset(source: &str, position: Position) -> Option<usize> {
@@ -1114,13 +1116,32 @@ pub fn semantic_tokens_legend() -> SemanticTokensLegend {
             SemanticTokenType::PROPERTY,
             SemanticTokenType::FUNCTION,
             SemanticTokenType::METHOD,
+            SemanticTokenType::KEYWORD,
+            SemanticTokenType::MODIFIER,
+            SemanticTokenType::STRING,
+            SemanticTokenType::NUMBER,
+            SemanticTokenType::OPERATOR,
         ],
-        token_modifiers: Vec::new(),
+        token_modifiers: vec![
+            SemanticTokenModifier::DECLARATION,
+            SemanticTokenModifier::STATIC,
+            SemanticTokenModifier::READONLY,
+            SemanticTokenModifier::ASYNC,
+            SemanticTokenModifier::new("unsafe"),
+        ],
     }
 }
 
 pub fn semantic_tokens_for_analysis(source: &str, analysis: &Analysis) -> SemanticTokensResult {
-    semantic_tokens_result(source, analysis.semantic_tokens())
+    semantic_tokens_result_for_occurrences(source, analysis.semantic_tokens(), None, true)
+}
+
+pub fn semantic_tokens_for_analysis_range(
+    source: &str,
+    analysis: &Analysis,
+    range: Range,
+) -> SemanticTokensResult {
+    semantic_tokens_result_for_occurrences(source, analysis.semantic_tokens(), Some(range), true)
 }
 
 pub fn semantic_tokens_for_package_analysis(
@@ -1149,16 +1170,61 @@ pub fn semantic_tokens_for_package_analysis(
         )
     });
     tokens.dedup_by(|left, right| left.span == right.span && left.kind == right.kind);
-    semantic_tokens_result(source, tokens)
+    semantic_tokens_result_for_occurrences(source, tokens, None, true)
+}
+
+pub fn semantic_tokens_for_package_analysis_range(
+    source: &str,
+    analysis: &Analysis,
+    package: &PackageAnalysis,
+    range: Range,
+) -> SemanticTokensResult {
+    let mut tokens = analysis.semantic_tokens();
+    let dependency_import_root_tokens =
+        package.dependency_import_root_semantic_tokens_in_source(source);
+    let dependency_import_root_spans = dependency_import_root_tokens
+        .iter()
+        .map(|token| (token.span.start, token.span.end))
+        .collect::<HashSet<_>>();
+    tokens.retain(|token| {
+        token.kind != SymbolKind::Import
+            || !dependency_import_root_spans.contains(&(token.span.start, token.span.end))
+    });
+    tokens.extend(package.dependency_semantic_tokens_in_source(source));
+    tokens.extend(dependency_import_root_tokens);
+    tokens.sort_by_key(|token| {
+        (
+            token.span.start,
+            token.span.end,
+            semantic_token_kind_index(token.kind),
+        )
+    });
+    tokens.dedup_by(|left, right| left.span == right.span && left.kind == right.kind);
+    semantic_tokens_result_for_occurrences(source, tokens, Some(range), true)
 }
 
 pub fn semantic_tokens_for_dependency_fallback(
     source: &str,
     package: &PackageAnalysis,
 ) -> SemanticTokensResult {
-    semantic_tokens_result(
+    semantic_tokens_result_for_occurrences(
         source,
         package.dependency_fallback_semantic_tokens_in_source(source),
+        None,
+        true,
+    )
+}
+
+pub fn semantic_tokens_for_dependency_fallback_range(
+    source: &str,
+    package: &PackageAnalysis,
+    range: Range,
+) -> SemanticTokensResult {
+    semantic_tokens_result_for_occurrences(
+        source,
+        package.dependency_fallback_semantic_tokens_in_source(source),
+        Some(range),
+        true,
     )
 }
 
@@ -1510,9 +1576,16 @@ fn semantic_token_length(source: &str, span: Span) -> u32 {
         .sum()
 }
 
+#[derive(Clone, Copy)]
+struct LspSemanticTokenOccurrence {
+    span: Span,
+    token_type: u32,
+    token_modifiers_bitset: u32,
+}
+
 fn semantic_tokens_result(
     source: &str,
-    tokens: Vec<ql_analysis::SemanticTokenOccurrence>,
+    tokens: Vec<LspSemanticTokenOccurrence>,
 ) -> SemanticTokensResult {
     let mut data = Vec::new();
     let mut previous_line = 0u32;
@@ -1527,14 +1600,13 @@ fn semantic_tokens_result(
             start.character
         };
         let length = semantic_token_length(source, token.span);
-        let token_type = semantic_token_kind_index(token.kind);
 
         data.push(SemanticToken {
             delta_line,
             delta_start,
             length,
-            token_type,
-            token_modifiers_bitset: 0,
+            token_type: token.token_type,
+            token_modifiers_bitset: token.token_modifiers_bitset,
         });
 
         previous_line = start.line;
@@ -1551,7 +1623,167 @@ pub fn semantic_tokens_result_from_occurrences(
     source: &str,
     tokens: Vec<ql_analysis::SemanticTokenOccurrence>,
 ) -> SemanticTokensResult {
-    semantic_tokens_result(source, tokens)
+    semantic_tokens_result_for_occurrences(source, tokens, None, false)
+}
+
+pub fn semantic_tokens_result_from_occurrences_with_lexical(
+    source: &str,
+    tokens: Vec<ql_analysis::SemanticTokenOccurrence>,
+) -> SemanticTokensResult {
+    semantic_tokens_result_for_occurrences(source, tokens, None, true)
+}
+
+pub fn semantic_tokens_result_from_occurrences_with_lexical_range(
+    source: &str,
+    tokens: Vec<ql_analysis::SemanticTokenOccurrence>,
+    range: Range,
+) -> SemanticTokensResult {
+    semantic_tokens_result_for_occurrences(source, tokens, Some(range), true)
+}
+
+fn semantic_tokens_result_for_occurrences(
+    source: &str,
+    tokens: Vec<ql_analysis::SemanticTokenOccurrence>,
+    range: Option<Range>,
+    include_lexical_tokens: bool,
+) -> SemanticTokensResult {
+    let filter = range.and_then(|range| {
+        Some((
+            position_to_offset(source, range.start)?,
+            position_to_offset(source, range.end)?,
+        ))
+    });
+    let symbol_tokens = tokens
+        .into_iter()
+        .map(|token| LspSemanticTokenOccurrence {
+            span: token.span,
+            token_type: semantic_token_kind_index(token.kind),
+            token_modifiers_bitset: semantic_token_modifier_bitset(token.kind),
+        })
+        .collect::<Vec<_>>();
+    let symbol_spans = symbol_tokens
+        .iter()
+        .map(|token| token.span)
+        .collect::<Vec<_>>();
+    let mut entries = symbol_tokens;
+    if include_lexical_tokens {
+        entries.extend(lexical_semantic_tokens(source).into_iter().filter(|token| {
+            !symbol_spans
+                .iter()
+                .any(|span| spans_overlap(*span, token.span))
+        }));
+    }
+    if let Some((start, end)) = filter {
+        entries.retain(|token| token.span.start < end && token.span.end > start);
+    }
+    entries.retain(|token| !token.span.is_empty());
+    entries.sort_by_key(|token| (token.span.start, token.span.end, token.token_type));
+    entries.dedup_by(|left, right| {
+        left.span == right.span
+            && left.token_type == right.token_type
+            && left.token_modifiers_bitset == right.token_modifiers_bitset
+    });
+    semantic_tokens_result(source, entries)
+}
+
+fn lexical_semantic_tokens(source: &str) -> Vec<LspSemanticTokenOccurrence> {
+    let (tokens, _) = lex(source);
+    tokens
+        .into_iter()
+        .filter_map(|token| {
+            let token_type = lexical_semantic_token_type(token.kind)?;
+            Some(LspSemanticTokenOccurrence {
+                span: token.span,
+                token_type,
+                token_modifiers_bitset: lexical_semantic_token_modifiers(token.kind),
+            })
+        })
+        .collect()
+}
+
+fn lexical_semantic_token_type(kind: TokenKind) -> Option<u32> {
+    Some(match kind {
+        TokenKind::Package
+        | TokenKind::Use
+        | TokenKind::Const
+        | TokenKind::Static
+        | TokenKind::Let
+        | TokenKind::Var
+        | TokenKind::Fn
+        | TokenKind::Await
+        | TokenKind::Spawn
+        | TokenKind::Defer
+        | TokenKind::Return
+        | TokenKind::Break
+        | TokenKind::Continue
+        | TokenKind::If
+        | TokenKind::Else
+        | TokenKind::Match
+        | TokenKind::For
+        | TokenKind::While
+        | TokenKind::Loop
+        | TokenKind::In
+        | TokenKind::Where
+        | TokenKind::Struct
+        | TokenKind::Data
+        | TokenKind::Enum
+        | TokenKind::Trait
+        | TokenKind::Impl
+        | TokenKind::Extend
+        | TokenKind::Type
+        | TokenKind::Opaque
+        | TokenKind::Extern
+        | TokenKind::Is
+        | TokenKind::As
+        | TokenKind::Satisfies
+        | TokenKind::NoneKw
+        | TokenKind::TrueKw
+        | TokenKind::FalseKw
+        | TokenKind::MoveKw => 12,
+        TokenKind::Pub | TokenKind::Async | TokenKind::Unsafe => 13,
+        TokenKind::String | TokenKind::FormatString => 14,
+        TokenKind::Int => 15,
+        TokenKind::Arrow
+        | TokenKind::FatArrow
+        | TokenKind::Question
+        | TokenKind::Eq
+        | TokenKind::EqEq
+        | TokenKind::AmpAmp
+        | TokenKind::PipePipe
+        | TokenKind::Bang
+        | TokenKind::BangEq
+        | TokenKind::Plus
+        | TokenKind::Minus
+        | TokenKind::Star
+        | TokenKind::Slash
+        | TokenKind::Percent
+        | TokenKind::Lt
+        | TokenKind::Gt
+        | TokenKind::LtEq
+        | TokenKind::GtEq => 16,
+        _ => return None,
+    })
+}
+
+fn semantic_token_modifier_bitset(kind: SymbolKind) -> u32 {
+    match kind {
+        SymbolKind::Const | SymbolKind::Static => 1 << 2,
+        _ => 0,
+    }
+}
+
+fn lexical_semantic_token_modifiers(kind: TokenKind) -> u32 {
+    match kind {
+        TokenKind::Const | TokenKind::Let | TokenKind::Var | TokenKind::Fn => 1,
+        TokenKind::Static => (1 << 0) | (1 << 1),
+        TokenKind::Async => 1 << 3,
+        TokenKind::Unsafe => 1 << 4,
+        _ => 0,
+    }
+}
+
+fn spans_overlap(left: Span, right: Span) -> bool {
+    left.start < right.end && right.start < left.end
 }
 
 fn is_completion_identifier_char(ch: char) -> bool {

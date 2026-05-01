@@ -62,6 +62,7 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
+    "test:grammar": "node scripts/check-grammar.js",
     "watch": "tsc -w -p ./",
     "prepublishOnly": "npm run compile",
     "package:vsix": "npm run compile && node -e \"const fs=require('fs'); const cp=require('child_process'); const pkg=require('./package.json'); fs.mkdirSync('dist',{recursive:true}); const out=`dist/qlang-${pkg.version}.vsix`; const result=cp.spawnSync('npx',['@vscode/vsce','package','--out',out],{stdio:'inherit',shell:process.platform==='win32'}); process.exit(result.status ?? 1);\""

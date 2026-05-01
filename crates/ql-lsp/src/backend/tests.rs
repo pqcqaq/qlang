@@ -3525,7 +3525,16 @@ impl Runner for AppWorker {
     #[test]
     fn completion_options_trigger_on_member_access_dot() {
         let options = completion_options();
-        assert_eq!(options.trigger_characters, Some(vec![".".to_owned()]));
+        assert_eq!(
+            options.trigger_characters,
+            Some(
+                [".", ":", "\"", "/", "@", "<"]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect()
+            )
+        );
+        assert_eq!(options.resolve_provider, Some(true));
     }
 
     fn setup_auto_import_workspace_fixture(temp: &TempDir, app_source: &str) -> (PathBuf, PathBuf) {

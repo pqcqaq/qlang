@@ -43,7 +43,7 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - broken-source / parse-error 下，workspace root source-backed `enum variant / struct field / receiver method` 的 references 现在也会补回当前 package 可见的 broken workspace consumers；从导出包源码定义点或同文件使用点发起时，不再只看到 healthy members。
 - 这一轮补齐了 open-doc 一致性：healthy workspace import/use `prepareRename`、broken-source workspace root import/use `prepareRename`，以及 broken-source workspace import alias rename，都会优先读取已打开但未落盘的 workspace 源码，而不是回退到磁盘旧内容。
 - broken-source / parse-error 下，workspace import `hover/definition/typeDefinition`、direct imported-result member hover / completion / query / `documentHighlight`、dependency enum variant / struct field 的保守 fallback、workspace import references / query，以及 source-backed dependency rename 仍保留可用；workspace root `function / const / static / struct / enum / trait / type alias` 也允许从当前 broken consumer 的 import/use 发起 rename，并保守联动当前文件、当前 package、可见 workspace consumers 与导出包源码。
-- `qlsp` 现在会声明 `.` completion trigger，VSCode 中输入成员访问或点分路径时可直接自动弹出补全。
+- `qlsp` 现在会声明 `.`, `:`, `"`, `/`, `@`, `<` completion triggers，并补上 keyword hover、keyword/snippet completion、可补齐缺失文档/detail 的 `completionItem/resolve`、与 full 共用 workspace/open-doc token 逻辑的 `semanticTokens/range`、基础 `signatureHelp`、局部类型 `inlayHint`、`foldingRange` 与 `selectionRange`；VSCode 中关键字、字面量、运算符和基础结构编辑体验不再只依赖同文件 symbol tokens。
 
 ## 先看哪些文档
 

@@ -16,15 +16,17 @@ use tower_lsp::lsp_types::request::{
     GotoImplementationResponse, GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
 };
 use tower_lsp::lsp_types::{
-    CodeActionOrCommand, CompletionParams, CompletionResponse, Diagnostic,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    CodeActionOrCommand, CompletionItem as LspCompletionItem, CompletionParams, CompletionResponse,
+    Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
     DocumentFormattingParams, DocumentHighlight, DocumentSymbolParams, DocumentSymbolResponse,
-    FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
-    InitializeParams, Location, Position, PrepareRenameResponse, Range, ReferenceContext,
-    ReferenceParams, RenameParams, SemanticTokensParams, SemanticTokensResult, SymbolInformation,
-    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, TextEdit, Url, VersionedTextDocumentIdentifier, WorkspaceEdit,
-    WorkspaceFolder,
+    FoldingRange, FoldingRangeParams, FormattingOptions, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverParams, InitializeParams, InitializeResult, InlayHint,
+    InlayHintParams, Location, Position, PrepareRenameResponse, Range, ReferenceContext,
+    ReferenceParams, RenameParams, SelectionRange, SelectionRangeParams, SemanticTokensParams,
+    SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult, SignatureHelp,
+    SignatureHelpParams, SymbolInformation, TextDocumentContentChangeEvent, TextDocumentIdentifier,
+    TextDocumentItem, TextDocumentPositionParams, TextEdit, Url, VersionedTextDocumentIdentifier,
+    WorkspaceEdit, WorkspaceFolder,
 };
 
 static NEXT_REQUEST_ID: AtomicI64 = AtomicI64::new(2);
@@ -97,7 +99,7 @@ pub fn offset_to_position(source: &str, offset: usize) -> Position {
 async fn initialize_service_with_params(
     service: &mut LspService<Backend>,
     params: InitializeParams,
-) {
+) -> InitializeResult {
     let request = Request::build("initialize")
         .params(json!(params))
         .id(1)
@@ -112,16 +114,23 @@ async fn initialize_service_with_params(
     let response = response.expect("initialize should return a response");
     assert_eq!(response.id(), &Id::Number(1));
     assert!(response.is_ok(), "initialize should succeed: {response:?}");
+    serde_json::from_value(
+        response
+            .result()
+            .cloned()
+            .expect("initialize should include result capabilities"),
+    )
+    .expect("initialize result should deserialize")
 }
 
-pub async fn initialize_service(service: &mut LspService<Backend>) {
-    initialize_service_with_params(service, InitializeParams::default()).await;
+pub async fn initialize_service(service: &mut LspService<Backend>) -> InitializeResult {
+    initialize_service_with_params(service, InitializeParams::default()).await
 }
 
 pub async fn initialize_service_with_workspace_roots(
     service: &mut LspService<Backend>,
     workspace_roots: Vec<Url>,
-) {
+) -> InitializeResult {
     let root_uri = workspace_roots.first().cloned();
     let workspace_folders = if workspace_roots.is_empty() {
         None
@@ -145,7 +154,7 @@ pub async fn initialize_service_with_workspace_roots(
             ..InitializeParams::default()
         },
     )
-    .await;
+    .await
 }
 
 pub async fn did_open_via_request(service: &mut LspService<Backend>, uri: Url, text: String) {
@@ -362,6 +371,14 @@ pub async fn completion_via_request(
     serde_json::from_value(value).expect("textDocument/completion result should deserialize")
 }
 
+pub async fn completion_resolve_via_request(
+    service: &mut LspService<Backend>,
+    item: LspCompletionItem,
+) -> LspCompletionItem {
+    let value = request_value(service, "completionItem/resolve", json!(item)).await;
+    serde_json::from_value(value).expect("completionItem/resolve result should deserialize")
+}
+
 pub async fn code_action_via_request(
     service: &mut LspService<Backend>,
     uri: Url,
@@ -513,6 +530,98 @@ pub async fn semantic_tokens_full_via_request(
     .await;
     serde_json::from_value(value)
         .expect("textDocument/semanticTokens/full result should deserialize")
+}
+
+pub async fn semantic_tokens_range_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+    range: Range,
+) -> Option<SemanticTokensRangeResult> {
+    let value = request_value(
+        service,
+        "textDocument/semanticTokens/range",
+        json!(SemanticTokensRangeParams {
+            text_document: TextDocumentIdentifier { uri },
+            range,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value)
+        .expect("textDocument/semanticTokens/range result should deserialize")
+}
+
+pub async fn signature_help_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+    position: Position,
+) -> Option<SignatureHelp> {
+    let value = request_value(
+        service,
+        "textDocument/signatureHelp",
+        json!(SignatureHelpParams {
+            text_document_position_params: text_document_position(uri, position),
+            work_done_progress_params: Default::default(),
+            context: None,
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("textDocument/signatureHelp result should deserialize")
+}
+
+pub async fn inlay_hint_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+    range: Range,
+) -> Option<Vec<InlayHint>> {
+    let value = request_value(
+        service,
+        "textDocument/inlayHint",
+        json!(InlayHintParams {
+            text_document: TextDocumentIdentifier { uri },
+            range,
+            work_done_progress_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("textDocument/inlayHint result should deserialize")
+}
+
+pub async fn folding_range_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+) -> Option<Vec<FoldingRange>> {
+    let value = request_value(
+        service,
+        "textDocument/foldingRange",
+        json!(FoldingRangeParams {
+            text_document: TextDocumentIdentifier { uri },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("textDocument/foldingRange result should deserialize")
+}
+
+pub async fn selection_range_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+    positions: Vec<Position>,
+) -> Option<Vec<SelectionRange>> {
+    let value = request_value(
+        service,
+        "textDocument/selectionRange",
+        json!(SelectionRangeParams {
+            text_document: TextDocumentIdentifier { uri },
+            positions,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("textDocument/selectionRange result should deserialize")
 }
 
 pub async fn workspace_symbol_via_request(

@@ -14,14 +14,20 @@
 
 - diagnostics（当前文档 parser / semantic + package preflight）
 - hover
+- keyword hover
 - definition / declaration / typeDefinition
 - implementation
 - references
 - documentHighlight
 - completion
+- completionItem/resolve（当前用于补齐缺失的 keyword / symbol 文档和 detail）
+- signatureHelp
+- inlayHint（当前覆盖稳定的局部变量推断类型提示）
+- foldingRange
+- selectionRange
 - documentFormatting
 - documentSymbol / workspaceSymbol
-- semanticTokens
+- semanticTokens/full / semanticTokens/range（range 与 full 共用 workspace/open-doc token 路径）
 - codeAction（unresolved symbol auto-import / missing workspace dependency quick fix）
 - conservative rename / narrow workspace rename
 
@@ -30,6 +36,7 @@
 - 这仍然不是完整 workspace-wide index。
 - diagnostics 仍只发布当前打开文档；当前 buffer 干净时才补 manifest / interface preflight 错误，不做 workspace-wide diagnostics 推送。
 - 格式化当前只支持 parseable source 的整文档 `Format Document`。
+- `signatureHelp`、`inlayHint`、`foldingRange`、`selectionRange` 已有可用基础实现，但不是 TypeScript 那种完整 workspace service。
 - rename 只开放 same-file 和一部分 source-backed dependency / workspace root 保守路径。
 - 插件不自带 `qlsp` 二进制；没有 Marketplace 发布流。
 
@@ -47,6 +54,7 @@ cargo build -p ql-lsp
 cd editors/vscode/qlang
 npm install
 npm run compile
+npm run test:grammar
 ```
 
 然后在 VSCode 打开 `editors/vscode/qlang`，运行 `Run qlang` launch configuration。

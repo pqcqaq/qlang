@@ -70,7 +70,7 @@
       "patterns": [
         {
           "name": "keyword.control.qlang",
-          "match": "\\b(if|else|match|for|while|in|return|break|continue)\\b"
+          "match": "\\b(if|else|match|for|while|loop|in|return|break|continue|await|spawn|defer)\\b"
         },
         {
           "name": "storage.modifier.qlang",
@@ -78,11 +78,15 @@
         },
         {
           "name": "storage.type.qlang",
-          "match": "\\b(fn|struct|enum|trait|impl|extend|type|opaque|data|extern)\\b"
+          "match": "\\b(fn|struct|enum|trait|impl|extend|type|opaque|data|extern|where|satisfies)\\b"
         },
         {
           "name": "keyword.declaration.qlang",
-          "match": "\\b(let|var|const|static|import|use)\\b"
+          "match": "\\b(package|let|var|const|static|use)\\b"
+        },
+        {
+          "name": "keyword.operator.qlang",
+          "match": "\\b(is|as)\\b"
         }
       ]
     },
@@ -144,6 +148,10 @@
         {
           "name": "constant.language.boolean.qlang",
           "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.none.qlang",
+          "match": "\\bnone\\b"
         }
       ]
     },

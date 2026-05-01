@@ -1,0 +1,239 @@
+mod common;
+
+use common::request::{
+    TempDir, did_open_via_request, initialize_service_with_workspace_roots,
+    initialized_service_with_open_documents, nth_offset, offset_to_position,
+    semantic_tokens_full_via_request, semantic_tokens_range_via_request,
+};
+use ql_lsp::Backend;
+use tower_lsp::LspService;
+use tower_lsp::lsp_types::{
+    Range, SemanticToken, SemanticTokenType, SemanticTokensRangeResult, SemanticTokensResult, Url,
+};
+
+fn decode(tokens: &[SemanticToken]) -> Vec<(u32, u32, u32, u32)> {
+    let mut line = 0u32;
+    let mut start = 0u32;
+    let mut decoded = Vec::new();
+    for token in tokens {
+        line += token.delta_line;
+        if token.delta_line == 0 {
+            start += token.delta_start;
+        } else {
+            start = token.delta_start;
+        }
+        decoded.push((line, start, token.length, token.token_type));
+    }
+    decoded
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn semantic_tokens_include_lexical_keyword_literal_and_operator_tokens() {
+    let temp = TempDir::new("ql-lsp-lexical-semantic-tokens");
+    let source_path = temp.write(
+        "tokens.ql",
+        r#"
+pub fn main() -> Int {
+    let value = 1 + 2
+    let text = "ok"
+    return value
+}
+"#,
+    );
+    let source = std::fs::read_to_string(&source_path).expect("source should read");
+    let uri = Url::from_file_path(&source_path).expect("source path should convert to URI");
+    let mut service =
+        initialized_service_with_open_documents(vec![(uri.clone(), source.clone())]).await;
+
+    let SemanticTokensResult::Tokens(tokens) =
+        semantic_tokens_full_via_request(&mut service, uri.clone())
+            .await
+            .expect("semanticTokens/full should return tokens")
+    else {
+        panic!("semanticTokens/full should return full tokens")
+    };
+    let decoded = decode(&tokens.data);
+    let legend = ql_lsp::bridge::semantic_tokens_legend();
+    let keyword_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::KEYWORD)
+        .expect("keyword token type should exist") as u32;
+    let modifier_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::MODIFIER)
+        .expect("modifier token type should exist") as u32;
+    let number_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::NUMBER)
+        .expect("number token type should exist") as u32;
+    let string_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::STRING)
+        .expect("string token type should exist") as u32;
+    let operator_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::OPERATOR)
+        .expect("operator token type should exist") as u32;
+
+    for (needle, token_type) in [
+        ("pub", modifier_type),
+        ("fn", keyword_type),
+        ("let", keyword_type),
+        ("1", number_type),
+        ("+", operator_type),
+        ("\"ok\"", string_type),
+        ("return", keyword_type),
+    ] {
+        let pos = offset_to_position(&source, nth_offset(&source, needle, 1));
+        assert!(
+            decoded.contains(&(pos.line, pos.character, needle.len() as u32, token_type)),
+            "{needle} should have token type {token_type}; decoded={decoded:#?}",
+        );
+    }
+
+    let range = Range::new(
+        offset_to_position(&source, nth_offset(&source, "let text", 1)),
+        offset_to_position(&source, nth_offset(&source, "return", 1)),
+    );
+    let SemanticTokensRangeResult::Tokens(range_tokens) =
+        semantic_tokens_range_via_request(&mut service, uri, range)
+            .await
+            .expect("semanticTokens/range should return tokens")
+    else {
+        panic!("semanticTokens/range should return full token data")
+    };
+    let range_decoded = decode(&range_tokens.data);
+    let string_pos = offset_to_position(&source, nth_offset(&source, "\"ok\"", 1));
+    assert!(
+        range_decoded.contains(&(
+            string_pos.line,
+            string_pos.character,
+            "\"ok\"".len() as u32,
+            string_type
+        )),
+        "range tokens should include string token inside requested range: {range_decoded:#?}",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn semantic_tokens_range_uses_workspace_open_docs_like_full() {
+    let temp = TempDir::new("ql-lsp-semantic-token-range-open-docs");
+    let app_source = r#"
+package demo.app
+
+use demo.core.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    let built = Cfg { value: 1 }
+    return built.value + config.value
+}
+"#;
+    let app_path = temp.write("workspace/packages/app/src/main.ql", app_source);
+    let core_path = temp.write(
+        "workspace/packages/core/src/lib.ql",
+        r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+"#,
+    );
+    let open_core_source = r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#;
+
+    let workspace_root_uri = Url::from_file_path(temp.path().join("workspace"))
+        .expect("workspace root path should convert to URI");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let core_uri = Url::from_file_path(&core_path).expect("core path should convert to URI");
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service_with_workspace_roots(&mut service, vec![workspace_root_uri]).await;
+    did_open_via_request(&mut service, core_uri, open_core_source.to_owned()).await;
+    did_open_via_request(&mut service, app_uri.clone(), app_source.to_owned()).await;
+
+    let legend = ql_lsp::bridge::semantic_tokens_legend();
+    let class_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::CLASS)
+        .expect("class token type should exist") as u32;
+    let cfg_position = offset_to_position(app_source, nth_offset(app_source, "Cfg", 1));
+    let cfg_entry = (
+        cfg_position.line,
+        cfg_position.character,
+        "Cfg".len() as u32,
+        class_type,
+    );
+
+    let SemanticTokensResult::Tokens(full_tokens) =
+        semantic_tokens_full_via_request(&mut service, app_uri.clone())
+            .await
+            .expect("semanticTokens/full should return tokens")
+    else {
+        panic!("semanticTokens/full should return full tokens")
+    };
+    assert!(
+        decode(&full_tokens.data).contains(&cfg_entry),
+        "full tokens should classify Cfg from the open workspace source"
+    );
+
+    let range = Range::new(
+        offset_to_position(app_source, nth_offset(app_source, "use demo.core", 1)),
+        offset_to_position(app_source, nth_offset(app_source, "return", 1)),
+    );
+    let SemanticTokensRangeResult::Tokens(range_tokens) =
+        semantic_tokens_range_via_request(&mut service, app_uri, range)
+            .await
+            .expect("semanticTokens/range should return tokens")
+    else {
+        panic!("semanticTokens/range should return token data")
+    };
+    assert!(
+        decode(&range_tokens.data).contains(&cfg_entry),
+        "range tokens should use the same open-doc workspace classification as full tokens"
+    );
+}
