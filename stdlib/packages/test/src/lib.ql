@@ -78,8 +78,12 @@ use std.result.is_err_bool as result_is_err_bool
 use std.result.is_err_int as result_is_err_int
 use std.result.is_ok_bool as result_is_ok_bool
 use std.result.is_ok_int as result_is_ok_int
+use std.result.ok_or_bool as result_ok_or_bool
+use std.result.ok_or_int as result_ok_or_int
 use std.result.or_result_bool as result_or_bool
 use std.result.or_result_int as result_or_int
+use std.result.to_option_bool as result_to_option_bool
+use std.result.to_option_int as result_to_option_int
 use std.result.unwrap_result_or_bool as result_unwrap_or_bool
 use std.result.unwrap_result_or_int as result_unwrap_or_int
 use std.result.IntResult as IntResult
@@ -719,4 +723,36 @@ pub fn expect_bool_result_or(value: BoolResult, fallback: BoolResult, expected: 
         return 0
     }
     return 1
+}
+
+pub fn expect_int_result_to_option_some(value: IntResult, expected: Int) -> Int {
+    return expect_int_option_some(result_to_option_int(value), expected)
+}
+
+pub fn expect_int_result_to_option_none(value: IntResult) -> Int {
+    return expect_int_option_none(result_to_option_int(value))
+}
+
+pub fn expect_bool_result_to_option_some(value: BoolResult, expected: Bool) -> Int {
+    return expect_bool_option_some(result_to_option_bool(value), expected)
+}
+
+pub fn expect_bool_result_to_option_none(value: BoolResult) -> Int {
+    return expect_bool_option_none(result_to_option_bool(value))
+}
+
+pub fn expect_int_option_ok_or(value: IntOption, error: Int, expected: Int) -> Int {
+    return expect_int_result_ok(result_ok_or_int(value, error), expected)
+}
+
+pub fn expect_int_option_ok_or_err(value: IntOption, error: Int) -> Int {
+    return expect_int_result_err(result_ok_or_int(value, error), error)
+}
+
+pub fn expect_bool_option_ok_or(value: BoolOption, error: Int, expected: Bool) -> Int {
+    return expect_bool_result_ok(result_ok_or_bool(value, error), expected)
+}
+
+pub fn expect_bool_option_ok_or_err(value: BoolOption, error: Int) -> Int {
+    return expect_bool_result_err(result_ok_or_bool(value, error), error)
 }

@@ -12791,12 +12791,8 @@ use std.option.some_bool as some_bool
 use std.option.some_int as some_int
 use std.result.err_bool as result_err_bool
 use std.result.err_int as result_err_int
-use std.result.ok_or_bool as result_ok_or_bool
-use std.result.ok_or_int as result_ok_or_int
 use std.result.ok_bool as result_ok_bool
 use std.result.ok_int as result_ok_int
-use std.result.to_option_bool as result_to_option_bool
-use std.result.to_option_int as result_to_option_int
 use std.test.expect_bool_all3 as expect_bool_all3
 use std.test.expect_bool_all4 as expect_bool_all4
 use std.test.expect_bool_and as expect_bool_and
@@ -12809,12 +12805,16 @@ use std.test.expect_bool_none3 as expect_bool_none3
 use std.test.expect_bool_none4 as expect_bool_none4
 use std.test.expect_bool_not as expect_bool_not
 use std.test.expect_bool_option_none as expect_bool_option_none
+use std.test.expect_bool_option_ok_or as expect_bool_option_ok_or
+use std.test.expect_bool_option_ok_or_err as expect_bool_option_ok_or_err
 use std.test.expect_bool_option_or as expect_bool_option_or
 use std.test.expect_bool_option_some as expect_bool_option_some
 use std.test.expect_bool_or as expect_bool_or
 use std.test.expect_bool_result_err as expect_bool_result_err
 use std.test.expect_bool_result_ok as expect_bool_result_ok
 use std.test.expect_bool_result_or as expect_bool_result_or
+use std.test.expect_bool_result_to_option_none as expect_bool_result_to_option_none
+use std.test.expect_bool_result_to_option_some as expect_bool_result_to_option_some
 use std.test.expect_bool_to_int as expect_bool_to_int
 use std.test.expect_bool_xor as expect_bool_xor
 use std.test.expect_false as expect_false
@@ -12842,11 +12842,15 @@ use std.test.expect_int_exclusive_between_bounds as expect_int_exclusive_between
 use std.test.expect_int_exclusive_between as expect_int_exclusive_between
 use std.test.expect_int_factor_of as expect_int_factor_of
 use std.test.expect_int_option_none as expect_int_option_none
+use std.test.expect_int_option_ok_or as expect_int_option_ok_or
+use std.test.expect_int_option_ok_or_err as expect_int_option_ok_or_err
 use std.test.expect_int_option_or as expect_int_option_or
 use std.test.expect_int_option_some as expect_int_option_some
 use std.test.expect_int_result_err as expect_int_result_err
 use std.test.expect_int_result_ok as expect_int_result_ok
 use std.test.expect_int_result_or as expect_int_result_or
+use std.test.expect_int_result_to_option_none as expect_int_result_to_option_none
+use std.test.expect_int_result_to_option_some as expect_int_result_to_option_some
 use std.test.expect_int_max as expect_int_max
 use std.test.expect_int_max3 as expect_int_max3
 use std.test.expect_int_max4 as expect_int_max4
@@ -13086,8 +13090,8 @@ fn main() -> Int {
     let option_or_status = merge_status4(expect_int_option_or(none_int(), some_int(9), 9), expect_bool_option_or(none_bool(), some_bool(false), false), 0, 0)
     let result_status = merge_status4(expect_int_result_ok(result_ok_int(22), 22), expect_int_result_err(result_err_int(7), 7), expect_bool_result_ok(result_ok_bool(true), true), expect_bool_result_err(result_err_bool(3), 3))
     let result_or_status = merge_status4(expect_int_result_or(result_err_int(5), result_ok_int(9), 9), expect_bool_result_or(result_err_bool(6), result_ok_bool(false), false), 0, 0)
-    let conversion_status = merge_status4(expect_int_option_some(result_to_option_int(result_ok_int(31)), 31), expect_int_option_none(result_to_option_int(result_err_int(8))), expect_int_result_ok(result_ok_or_int(some_int(31), 8), 31), expect_int_result_err(result_ok_or_int(none_int(), 8), 8))
-    let conversion_bool_status = merge_status4(expect_bool_option_some(result_to_option_bool(result_ok_bool(false)), false), expect_bool_option_none(result_to_option_bool(result_err_bool(9))), expect_bool_result_ok(result_ok_or_bool(some_bool(true), 9), true), expect_bool_result_err(result_ok_or_bool(none_bool(), 9), 9))
+    let conversion_status = merge_status4(expect_int_result_to_option_some(result_ok_int(31), 31), expect_int_result_to_option_none(result_err_int(8)), expect_int_option_ok_or(some_int(31), 8, 31), expect_int_option_ok_or_err(none_int(), 8))
+    let conversion_bool_status = merge_status4(expect_bool_result_to_option_some(result_ok_bool(false), false), expect_bool_result_to_option_none(result_err_bool(9)), expect_bool_option_ok_or(some_bool(true), 9, true), expect_bool_option_ok_or_err(none_bool(), 9))
 
     let core_status = merge_status6(max_check + max3_check + max4_check + min_check, min3_check + min4_check + median3_check + sum3_check, sum4_check + product3_check + product4_check + average2_check, average3_check + quotient_check + quotient_zero_check + remainder_check, remainder_zero_check + has_remainder_check + factor_check + clamp_min_check, clamp_max_check + clamp_bounds_check + abs_check + abs_diff_check + range_span_check + compare_check + sign_negative_check + sign_zero_check + sign_positive_check + and_check + xor_check + all3_check + all4_check + any3_check + any4_check + none3_check + none4_check + bool_ne_check + bool_not_check + bool_and_check + bool_or_check + core_descending_check + core_strict_descending_check + core_not_within_check + core_outside_range_check + core_outside_bounds_check + lower_bound_check + upper_bound_check + distance_range_check + distance_bounds_check)
     let bool_status = merge_status4(bool_xor_check + core_implies_check + core_ascending_check + core_strict_ascending_check, core_bounds_check + core_exclusive_bounds_check + core_within_check + range_check, bool_all3_check + bool_all4_check + bool_any3_check + bool_any4_check, bool_none3_check + bool_none4_check + bool_to_int_expect_check + failed_bool_ne_check + failed_bool_not_check + failed_bool_and_check + failed_bool_or_check + failed_bool_xor_check + failed_bool_all3_check + failed_bool_all4_check + failed_bool_any3_check + failed_bool_any4_check + failed_bool_none3_check + failed_bool_none4_check + failed_bool_to_int_check + exclusive_range_check + outside_check + bounds_check)
