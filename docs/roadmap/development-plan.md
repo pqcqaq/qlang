@@ -116,7 +116,7 @@
 
 完成标准：
 
-- `stdlib/packages/core` 能被 `ql check/build/test` 验证，并提供第一批稳定基础函数。（已落地整数/布尔 helper，含符号、比较、三/四值 extrema、三值 median、3/4 项整数聚合、2/3 项均值、安全 quotient/remainder、3/4 项 Bool all/any/none 聚合、单边/双边/无序边界 clamp、边界归一化、绝对差、range span、range/bounds 距离、零值/正负/非正/非负、奇偶、闭/开区间、无序边界区间、区间外/无序边界外、升/降序判断、整除、余数、因子、容差内/外检查和基础布尔组合）
+- `stdlib/packages/core` 能被 `ql check/build/test` 验证，并提供第一批稳定基础函数。（已落地整数/布尔 helper，含符号、比较、三/四/五值 extrema、三值 median、3/4/5 项整数聚合、2/3/4/5 项均值、安全 quotient/remainder、3/4/5 项 Bool all/any/none 聚合、单边/双边/无序边界 clamp、边界归一化、绝对差、range span、range/bounds 距离、零值/正负/非正/非负、奇偶、闭/开区间、无序边界区间、区间外/无序边界外、升/降序判断、整除、余数、因子、容差内/外检查和基础布尔组合）
 - `stdlib/packages/option` 能被 `ql check/build/test` 验证，并提供当前 dependency bridge 可执行的 concrete option surface。（已落地 `IntOption` / `BoolOption` 的 some/none 构造、is_some/is_none 判定、unwrap_or、or / or_option 与默认值 helper；泛型 `Option[T]` / prelude 集成继续后置）
 - `stdlib/packages/result` 能被 `ql check/build/test` 验证，并提供当前 dependency bridge 可执行的 concrete result surface。（已落地 `IntResult` / `BoolResult` 的 ok/err 构造、is_ok/is_err 判定、`unwrap_result_or_*`、`or_result_*`、error-code helper、无损 error-to-option helper，以及 concrete Option/Result 互转 helper；泛型 `Result[T, E]` / prelude 集成继续后置）
 - `stdlib/packages/test` 能提供 smoke-test 友好的断言辅助，并通过 package-aware smoke test 直接导入自身 public helpers。（已落地 true/false、bool equality/ne/logic/implies、Bool all/any/none、Bool-to-Int、int equality/order、zero/nonzero、max/min/median、sum/product/average、sign/compare、abs/abs-diff/range-span/bounds、quotient/remainder/has-remainder/factor、Option/Result carrier、转换与 error extraction 断言、2-6 路 status 组合、正负/非正/非负、区间、无序边界区间、单边/双边 clamp / range-distance、升/降序、奇偶、整除和容差内/外断言）

@@ -22,12 +22,20 @@ pub fn max4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
     return max_int(max3_int(first, second, third), fourth)
 }
 
+pub fn max5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
+    return max_int(max4_int(first, second, third, fourth), fifth)
+}
+
 pub fn min3_int(first: Int, second: Int, third: Int) -> Int {
     return min_int(min_int(first, second), third)
 }
 
 pub fn min4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
     return min_int(min3_int(first, second, third), fourth)
+}
+
+pub fn min5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
+    return min_int(min4_int(first, second, third, fourth), fifth)
 }
 
 pub fn sum3_int(first: Int, second: Int, third: Int) -> Int {
@@ -38,6 +46,10 @@ pub fn sum4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
     return sum3_int(first, second, third) + fourth
 }
 
+pub fn sum5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
+    return sum4_int(first, second, third, fourth) + fifth
+}
+
 pub fn product3_int(first: Int, second: Int, third: Int) -> Int {
     return first * second * third
 }
@@ -46,12 +58,24 @@ pub fn product4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
     return product3_int(first, second, third) * fourth
 }
 
+pub fn product5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
+    return product4_int(first, second, third, fourth) * fifth
+}
+
 pub fn average2_int(left: Int, right: Int) -> Int {
     return (left + right) / 2
 }
 
 pub fn average3_int(first: Int, second: Int, third: Int) -> Int {
     return sum3_int(first, second, third) / 3
+}
+
+pub fn average4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
+    return sum4_int(first, second, third, fourth) / 4
+}
+
+pub fn average5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
+    return sum5_int(first, second, third, fourth, fifth) / 5
 }
 
 pub fn quotient_or_zero_int(value: Int, divisor: Int) -> Int {
@@ -273,6 +297,10 @@ pub fn all4_bool(first: Bool, second: Bool, third: Bool, fourth: Bool) -> Bool {
     return all3_bool(first, second, third) && fourth
 }
 
+pub fn all5_bool(first: Bool, second: Bool, third: Bool, fourth: Bool, fifth: Bool) -> Bool {
+    return all4_bool(first, second, third, fourth) && fifth
+}
+
 pub fn any3_bool(first: Bool, second: Bool, third: Bool) -> Bool {
     return first || second || third
 }
@@ -281,12 +309,20 @@ pub fn any4_bool(first: Bool, second: Bool, third: Bool, fourth: Bool) -> Bool {
     return any3_bool(first, second, third) || fourth
 }
 
+pub fn any5_bool(first: Bool, second: Bool, third: Bool, fourth: Bool, fifth: Bool) -> Bool {
+    return any4_bool(first, second, third, fourth) || fifth
+}
+
 pub fn none3_bool(first: Bool, second: Bool, third: Bool) -> Bool {
     return !any3_bool(first, second, third)
 }
 
 pub fn none4_bool(first: Bool, second: Bool, third: Bool, fourth: Bool) -> Bool {
     return !any4_bool(first, second, third, fourth)
+}
+
+pub fn none5_bool(first: Bool, second: Bool, third: Bool, fourth: Bool, fifth: Bool) -> Bool {
+    return !any5_bool(first, second, third, fourth, fifth)
 }
 
 pub fn not_bool(value: Bool) -> Bool {

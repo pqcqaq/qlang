@@ -51,11 +51,15 @@ fn expected_stdlib_package_smoke_source() -> &'static str {
 use std.core.abs_int as abs_int
 use std.core.all3_bool as all3_bool
 use std.core.all4_bool as all4_bool
+use std.core.all5_bool as all5_bool
 use std.core.and_bool as and_bool
 use std.core.any3_bool as any3_bool
 use std.core.any4_bool as any4_bool
+use std.core.any5_bool as any5_bool
 use std.core.average2_int as average2_int
 use std.core.average3_int as average3_int
+use std.core.average4_int as average4_int
+use std.core.average5_int as average5_int
 use std.core.clamp_bounds_int as clamp_bounds_int
 use std.core.clamp_max_int as clamp_max_int
 use std.core.clamp_min_int as clamp_min_int
@@ -78,21 +82,26 @@ use std.core.is_within_int as is_within_int
 use std.core.lower_bound_int as lower_bound_int
 use std.core.max3_int as max3_int
 use std.core.max4_int as max4_int
+use std.core.max5_int as max5_int
 use std.core.max_int as max_int
 use std.core.median3_int as median3_int
 use std.core.min3_int as min3_int
 use std.core.min4_int as min4_int
+use std.core.min5_int as min5_int
 use std.core.min_int as min_int
 use std.core.none3_bool as none3_bool
 use std.core.none4_bool as none4_bool
+use std.core.none5_bool as none5_bool
 use std.core.product3_int as product3_int
 use std.core.product4_int as product4_int
+use std.core.product5_int as product5_int
 use std.core.quotient_or_zero_int as quotient_or_zero_int
 use std.core.range_span_int as range_span_int
 use std.core.remainder_or_zero_int as remainder_or_zero_int
 use std.core.sign_int as sign_int
 use std.core.sum3_int as sum3_int
 use std.core.sum4_int as sum4_int
+use std.core.sum5_int as sum5_int
 use std.core.upper_bound_int as upper_bound_int
 use std.core.xor_bool as xor_bool
 use std.option.none_bool as none_bool
@@ -105,14 +114,17 @@ use std.result.ok_bool as result_ok_bool
 use std.result.ok_int as result_ok_int
 use std.test.expect_bool_all3 as expect_bool_all3
 use std.test.expect_bool_all4 as expect_bool_all4
+use std.test.expect_bool_all5 as expect_bool_all5
 use std.test.expect_bool_and as expect_bool_and
 use std.test.expect_bool_any3 as expect_bool_any3
 use std.test.expect_bool_any4 as expect_bool_any4
+use std.test.expect_bool_any5 as expect_bool_any5
 use std.test.expect_bool_eq as expect_bool_eq
 use std.test.expect_bool_implies as expect_bool_implies
 use std.test.expect_bool_ne as expect_bool_ne
 use std.test.expect_bool_none3 as expect_bool_none3
 use std.test.expect_bool_none4 as expect_bool_none4
+use std.test.expect_bool_none5 as expect_bool_none5
 use std.test.expect_bool_not as expect_bool_not
 use std.test.expect_bool_option_none as expect_bool_option_none
 use std.test.expect_bool_option_ok_or as expect_bool_option_ok_or
@@ -136,6 +148,8 @@ use std.test.expect_status_failed as expect_status_failed
 use std.test.expect_status_ok as expect_status_ok
 use std.test.expect_int_average2 as expect_int_average2
 use std.test.expect_int_average3 as expect_int_average3
+use std.test.expect_int_average4 as expect_int_average4
+use std.test.expect_int_average5 as expect_int_average5
 use std.test.expect_int_ascending as expect_int_ascending
 use std.test.expect_int_between as expect_int_between
 use std.test.expect_int_between_bounds as expect_int_between_bounds
@@ -168,10 +182,12 @@ use std.test.expect_int_result_to_option_some as expect_int_result_to_option_som
 use std.test.expect_int_max as expect_int_max
 use std.test.expect_int_max3 as expect_int_max3
 use std.test.expect_int_max4 as expect_int_max4
+use std.test.expect_int_max5 as expect_int_max5
 use std.test.expect_int_median3 as expect_int_median3
 use std.test.expect_int_min as expect_int_min
 use std.test.expect_int_min3 as expect_int_min3
 use std.test.expect_int_min4 as expect_int_min4
+use std.test.expect_int_min5 as expect_int_min5
 use std.test.expect_int_has_remainder as expect_int_has_remainder
 use std.test.expect_int_negative as expect_int_negative
 use std.test.expect_int_not_within as expect_int_not_within
@@ -184,6 +200,7 @@ use std.test.expect_int_outside_bounds as expect_int_outside_bounds
 use std.test.expect_int_positive as expect_int_positive
 use std.test.expect_int_product3 as expect_int_product3
 use std.test.expect_int_product4 as expect_int_product4
+use std.test.expect_int_product5 as expect_int_product5
 use std.test.expect_int_quotient_or_zero as expect_int_quotient_or_zero
 use std.test.expect_int_range_span as expect_int_range_span
 use std.test.expect_int_remainder_or_zero as expect_int_remainder_or_zero
@@ -192,6 +209,7 @@ use std.test.expect_int_strictly_descending as expect_int_strictly_descending
 use std.test.expect_int_strictly_ascending as expect_int_strictly_ascending
 use std.test.expect_int_sum3 as expect_int_sum3
 use std.test.expect_int_sum4 as expect_int_sum4
+use std.test.expect_int_sum5 as expect_int_sum5
 use std.test.expect_int_upper_bound as expect_int_upper_bound
 use std.test.expect_int_within as expect_int_within
 use std.test.expect_true as expect_true
@@ -207,15 +225,21 @@ fn main() -> Int {
     let max_check = expect_int_eq(max_int(20, 22), 22)
     let max3_check = expect_int_eq(max3_int(20, 22, 21), 22)
     let max4_check = expect_int_eq(max4_int(20, 22, 21, 19), 22)
+    let max5_check = expect_int_eq(max5_int(20, 22, 21, 19, 23), 23)
     let min_check = expect_int_eq(min_int(20, 22), 20)
     let min3_check = expect_int_eq(min3_int(20, 22, 21), 20)
     let min4_check = expect_int_eq(min4_int(20, 22, 21, 19), 19)
+    let min5_check = expect_int_eq(min5_int(20, 22, 21, 19, 18), 18)
     let sum3_check = expect_int_eq(sum3_int(2, 3, 4), 9)
     let sum4_check = expect_int_eq(sum4_int(2, 3, 4, 5), 14)
+    let sum5_check = expect_int_eq(sum5_int(2, 3, 4, 5, 6), 20)
     let product3_check = expect_int_eq(product3_int(2, 3, 4), 24)
     let product4_check = expect_int_eq(product4_int(2, 3, 4, 5), 120)
+    let product5_check = expect_int_eq(product5_int(2, 3, 4, 5, 6), 720)
     let average2_check = expect_int_eq(average2_int(5, 8), 6)
     let average3_check = expect_int_eq(average3_int(3, 6, 9), 6)
+    let average4_check = expect_int_eq(average4_int(2, 4, 6, 8), 5)
+    let average5_check = expect_int_eq(average5_int(2, 4, 6, 8, 10), 6)
     let quotient_check = expect_int_eq(quotient_or_zero_int(21, 7), 3)
     let quotient_zero_check = expect_int_eq(quotient_or_zero_int(21, 0), 0)
     let remainder_check = expect_int_eq(remainder_or_zero_int(22, 7), 1)
@@ -241,10 +265,13 @@ fn main() -> Int {
     let xor_check = expect_bool_eq(xor_bool(true, false), true)
     let all3_check = expect_bool_eq(all3_bool(true, true, true), true)
     let all4_check = expect_bool_eq(all4_bool(true, true, true, false), false)
+    let all5_check = expect_bool_eq(all5_bool(true, true, true, true, true), true)
     let any3_check = expect_bool_eq(any3_bool(false, false, true), true)
     let any4_check = expect_bool_eq(any4_bool(false, false, false, false), false)
+    let any5_check = expect_bool_eq(any5_bool(false, false, false, false, true), true)
     let none3_check = expect_bool_eq(none3_bool(false, false, false), true)
     let none4_check = expect_bool_eq(none4_bool(false, false, true, false), false)
+    let none5_check = expect_bool_eq(none5_bool(false, false, false, false, false), true)
     let bool_ne_check = expect_bool_ne(true, false)
     let bool_not_check = expect_bool_not(false, true)
     let bool_and_check = expect_bool_and(true, false, false)
@@ -275,10 +302,13 @@ fn main() -> Int {
     let distance_bounds_expect_check = expect_int_distance_to_bounds(23, 22, 20, 1)
     let bool_all3_check = expect_bool_all3(true, true, true, true)
     let bool_all4_check = expect_bool_all4(true, true, false, true, false)
+    let bool_all5_check = expect_bool_all5(true, true, true, true, true, true)
     let bool_any3_check = expect_bool_any3(false, false, true, true)
     let bool_any4_check = expect_bool_any4(false, false, false, false, false)
+    let bool_any5_check = expect_bool_any5(false, false, false, false, true, true)
     let bool_none3_check = expect_bool_none3(false, false, false, true)
     let bool_none4_check = expect_bool_none4(false, false, true, false, false)
+    let bool_none5_check = expect_bool_none5(false, false, false, false, false, true)
     let bool_to_int_expect_check = expect_bool_to_int(true, 1)
     let max_expect_check = expect_int_max(20, 22, 22)
     let min_expect_check = expect_int_min(20, 22, 20)
@@ -286,13 +316,19 @@ fn main() -> Int {
     let min3_expect_check = expect_int_min3(20, 22, 21, 20)
     let max4_expect_check = expect_int_max4(20, 22, 21, 19, 22)
     let min4_expect_check = expect_int_min4(20, 22, 21, 19, 19)
+    let max5_expect_check = expect_int_max5(20, 22, 21, 19, 23, 23)
+    let min5_expect_check = expect_int_min5(20, 22, 21, 19, 18, 18)
     let median3_expect_check = expect_int_median3(22, 20, 21, 21)
     let sum3_expect_check = expect_int_sum3(2, 3, 4, 9)
     let sum4_expect_check = expect_int_sum4(2, 3, 4, 5, 14)
+    let sum5_expect_check = expect_int_sum5(2, 3, 4, 5, 6, 20)
     let product3_expect_check = expect_int_product3(2, 3, 4, 24)
     let product4_expect_check = expect_int_product4(2, 3, 4, 5, 120)
+    let product5_expect_check = expect_int_product5(2, 3, 4, 5, 6, 720)
     let average2_expect_check = expect_int_average2(5, 8, 6)
     let average3_expect_check = expect_int_average3(3, 6, 9, 6)
+    let average4_expect_check = expect_int_average4(2, 4, 6, 8, 5)
+    let average5_expect_check = expect_int_average5(2, 4, 6, 8, 10, 6)
     let sign_expect_check = expect_int_sign(0 - 5, 0 - 1)
     let sign_zero_expect_check = expect_int_sign(0, 0)
     let compare_less_expect_check = expect_int_compare(3, 9, 0 - 1)
@@ -342,10 +378,13 @@ fn main() -> Int {
     let failed_bool_xor_check = expect_int_eq(expect_bool_xor(true, false, false), 1)
     let failed_bool_all3_check = expect_int_eq(expect_bool_all3(true, true, false, true), 1)
     let failed_bool_all4_check = expect_int_eq(expect_bool_all4(true, true, true, true, false), 1)
+    let failed_bool_all5_check = expect_int_eq(expect_bool_all5(true, true, true, true, false, true), 1)
     let failed_bool_any3_check = expect_int_eq(expect_bool_any3(false, false, false, true), 1)
     let failed_bool_any4_check = expect_int_eq(expect_bool_any4(false, false, true, false, false), 1)
+    let failed_bool_any5_check = expect_int_eq(expect_bool_any5(false, false, false, false, false, true), 1)
     let failed_bool_none3_check = expect_int_eq(expect_bool_none3(false, true, false, true), 1)
     let failed_bool_none4_check = expect_int_eq(expect_bool_none4(false, false, false, false, false), 1)
+    let failed_bool_none5_check = expect_int_eq(expect_bool_none5(false, false, true, false, false, true), 1)
     let failed_bool_to_int_check = expect_int_eq(expect_bool_to_int(false, 1), 1)
     let failed_range_check = expect_int_eq(expect_int_between(19, 20, 22), 1)
     let failed_exclusive_range_check = expect_int_eq(expect_int_exclusive_between(20, 20, 22), 1)
@@ -365,13 +404,19 @@ fn main() -> Int {
     let failed_min3_check = expect_int_eq(expect_int_min3(20, 22, 21, 21), 1)
     let failed_max4_check = expect_int_eq(expect_int_max4(20, 22, 21, 19, 21), 1)
     let failed_min4_check = expect_int_eq(expect_int_min4(20, 22, 21, 19, 20), 1)
+    let failed_max5_check = expect_int_eq(expect_int_max5(20, 22, 21, 19, 23, 22), 1)
+    let failed_min5_check = expect_int_eq(expect_int_min5(20, 22, 21, 19, 18, 19), 1)
     let failed_median3_check = expect_int_eq(expect_int_median3(22, 20, 21, 22), 1)
     let failed_sum3_check = expect_int_eq(expect_int_sum3(2, 3, 4, 10), 1)
     let failed_sum4_check = expect_int_eq(expect_int_sum4(2, 3, 4, 5, 15), 1)
+    let failed_sum5_check = expect_int_eq(expect_int_sum5(2, 3, 4, 5, 6, 21), 1)
     let failed_product3_check = expect_int_eq(expect_int_product3(2, 3, 4, 25), 1)
     let failed_product4_check = expect_int_eq(expect_int_product4(2, 3, 4, 5, 121), 1)
+    let failed_product5_check = expect_int_eq(expect_int_product5(2, 3, 4, 5, 6, 721), 1)
     let failed_average2_check = expect_int_eq(expect_int_average2(5, 8, 7), 1)
     let failed_average3_check = expect_int_eq(expect_int_average3(3, 6, 9, 7), 1)
+    let failed_average4_check = expect_int_eq(expect_int_average4(2, 4, 6, 8, 6), 1)
+    let failed_average5_check = expect_int_eq(expect_int_average5(2, 4, 6, 8, 10, 7), 1)
     let failed_sign_check = expect_int_eq(expect_int_sign(5, 0 - 1), 1)
     let failed_compare_equal_check = expect_int_eq(expect_int_compare(9, 9, 1), 1)
     let failed_compare_order_check = expect_int_eq(expect_int_compare(3, 9, 1), 1)
@@ -408,11 +453,11 @@ fn main() -> Int {
     let conversion_bool_status = merge_status4(expect_bool_result_to_option_some(result_ok_bool(false), false), expect_bool_result_to_option_none(result_err_bool(9)), expect_bool_option_ok_or(some_bool(true), 9, true), expect_bool_option_ok_or_err(none_bool(), 9))
     let error_option_status = merge_status4(expect_int_result_error_some(result_err_int(0), 0), expect_int_result_error_none(result_ok_int(31)), expect_bool_result_error_some(result_err_bool(0), 0), expect_bool_result_error_none(result_ok_bool(false)))
 
-    let core_status = merge_status6(max_check + max3_check + max4_check + min_check, min3_check + min4_check + median3_check + sum3_check, sum4_check + product3_check + product4_check + average2_check, average3_check + quotient_check + quotient_zero_check + remainder_check, remainder_zero_check + has_remainder_check + factor_check + clamp_min_check, clamp_max_check + clamp_bounds_check + abs_check + abs_diff_check + range_span_check + compare_check + sign_negative_check + sign_zero_check + sign_positive_check + and_check + xor_check + all3_check + all4_check + any3_check + any4_check + none3_check + none4_check + bool_ne_check + bool_not_check + bool_and_check + bool_or_check + core_descending_check + core_strict_descending_check + core_not_within_check + core_outside_range_check + core_outside_bounds_check + lower_bound_check + upper_bound_check + distance_range_check + distance_bounds_check)
-    let bool_status = merge_status4(bool_xor_check + core_implies_check + core_ascending_check + core_strict_ascending_check, core_bounds_check + core_exclusive_bounds_check + core_within_check + range_check, bool_all3_check + bool_all4_check + bool_any3_check + bool_any4_check, bool_none3_check + bool_none4_check + bool_to_int_expect_check + failed_bool_ne_check + failed_bool_not_check + failed_bool_and_check + failed_bool_or_check + failed_bool_xor_check + failed_bool_all3_check + failed_bool_all4_check + failed_bool_any3_check + failed_bool_any4_check + failed_bool_none3_check + failed_bool_none4_check + failed_bool_to_int_check + exclusive_range_check + outside_check + bounds_check)
-    let range_status = merge_status5(exclusive_bounds_check + outside_bounds_check + clamp_min_expect_check + clamp_max_expect_check + clamped_check + clamped_bounds_check, distance_range_expect_check + distance_bounds_expect_check + max_expect_check + min_expect_check, max3_expect_check + min3_expect_check + max4_expect_check + min4_expect_check + median3_expect_check, sum3_expect_check + sum4_expect_check + product3_expect_check + product4_expect_check + average2_expect_check + average3_expect_check, sign_expect_check + sign_zero_expect_check + compare_less_expect_check + compare_equal_expect_check + compare_greater_expect_check + abs_expect_check + abs_diff_expect_check + range_span_expect_check + lower_bound_expect_check + upper_bound_expect_check + quotient_expect_check + quotient_zero_expect_check + remainder_expect_check + remainder_zero_expect_check + has_remainder_expect_check + factor_expect_check + ascending_check + strict_ascending_check + descending_check + strict_descending_check + divisible_check + within_check + not_within_check + even_check + odd_check + positive_check + negative_check + nonnegative_check + nonpositive_check + test_implies_check + true_check + status_ok_bool_check)
+    let core_status = merge_status6(max_check + max3_check + max4_check + max5_check + min_check, min3_check + min4_check + min5_check + median3_check + sum3_check, sum4_check + sum5_check + product3_check + product4_check, product5_check + average2_check + average3_check + average4_check + average5_check + quotient_check, quotient_zero_check + remainder_check + remainder_zero_check + has_remainder_check + factor_check + clamp_min_check, clamp_max_check + clamp_bounds_check + abs_check + abs_diff_check + range_span_check + compare_check + sign_negative_check + sign_zero_check + sign_positive_check + and_check + xor_check + all3_check + all4_check + all5_check + any3_check + any4_check + any5_check + none3_check + none4_check + none5_check + bool_ne_check + bool_not_check + bool_and_check + bool_or_check + core_descending_check + core_strict_descending_check + core_not_within_check + core_outside_range_check + core_outside_bounds_check + lower_bound_check + upper_bound_check + distance_range_check + distance_bounds_check)
+    let bool_status = merge_status4(bool_xor_check + core_implies_check + core_ascending_check + core_strict_ascending_check, core_bounds_check + core_exclusive_bounds_check + core_within_check + range_check, bool_all3_check + bool_all4_check + bool_all5_check + bool_any3_check + bool_any4_check + bool_any5_check, bool_none3_check + bool_none4_check + bool_none5_check + bool_to_int_expect_check + failed_bool_ne_check + failed_bool_not_check + failed_bool_and_check + failed_bool_or_check + failed_bool_xor_check + failed_bool_all3_check + failed_bool_all4_check + failed_bool_all5_check + failed_bool_any3_check + failed_bool_any4_check + failed_bool_any5_check + failed_bool_none3_check + failed_bool_none4_check + failed_bool_none5_check + failed_bool_to_int_check + exclusive_range_check + outside_check + bounds_check)
+    let range_status = merge_status5(exclusive_bounds_check + outside_bounds_check + clamp_min_expect_check + clamp_max_expect_check + clamped_check + clamped_bounds_check, distance_range_expect_check + distance_bounds_expect_check + max_expect_check + min_expect_check, max3_expect_check + min3_expect_check + max4_expect_check + min4_expect_check + max5_expect_check + min5_expect_check + median3_expect_check, sum3_expect_check + sum4_expect_check + sum5_expect_check + product3_expect_check + product4_expect_check + product5_expect_check + average2_expect_check + average3_expect_check + average4_expect_check + average5_expect_check, sign_expect_check + sign_zero_expect_check + compare_less_expect_check + compare_equal_expect_check + compare_greater_expect_check + abs_expect_check + abs_diff_expect_check + range_span_expect_check + lower_bound_expect_check + upper_bound_expect_check + quotient_expect_check + quotient_zero_expect_check + remainder_expect_check + remainder_zero_expect_check + has_remainder_expect_check + factor_expect_check + ascending_check + strict_ascending_check + descending_check + strict_descending_check + divisible_check + within_check + not_within_check + even_check + odd_check + positive_check + negative_check + nonnegative_check + nonpositive_check + test_implies_check + true_check + status_ok_bool_check)
     let status_helper_status = merge_status4(status_failed_bool_check + merged_status_check + merged_status3_check + merged_status4_check, merged_status5_check + merged_status6_check + status_ok_check + status_failed_check, failed_status_ok_check + failed_status_failed_check + failed_range_check + failed_exclusive_range_check, failed_outside_check + failed_bounds_check + failed_exclusive_bounds_check + failed_outside_bounds_check)
-    let failure_status = merge_status4(failed_clamp_min_check + failed_clamp_max_check + failed_clamped_check + failed_clamped_bounds_check + failed_distance_range_check + failed_distance_bounds_check, failed_max_check + failed_min_check + failed_max3_check + failed_min3_check + failed_max4_check + failed_min4_check + failed_median3_check, failed_sum3_check + failed_sum4_check + failed_product3_check + failed_product4_check + failed_average2_check + failed_average3_check + failed_sign_check + failed_compare_equal_check + failed_compare_order_check + failed_abs_check + failed_abs_diff_check + failed_range_span_check + failed_lower_bound_check + failed_upper_bound_check + failed_quotient_check + failed_quotient_zero_check, failed_remainder_check + failed_remainder_zero_check + failed_has_remainder_check + failed_factor_check + failed_ascending_check + failed_strict_ascending_check + failed_descending_check + failed_strict_descending_check + failed_divisible_check + failed_within_check + failed_not_within_check + failed_even_check + failed_odd_check + failed_positive_check + failed_negative_check + failed_nonnegative_check + failed_nonpositive_check + failed_implies_check)
+    let failure_status = merge_status4(failed_clamp_min_check + failed_clamp_max_check + failed_clamped_check + failed_clamped_bounds_check + failed_distance_range_check + failed_distance_bounds_check, failed_max_check + failed_min_check + failed_max3_check + failed_min3_check + failed_max4_check + failed_min4_check + failed_max5_check + failed_min5_check + failed_median3_check, failed_sum3_check + failed_sum4_check + failed_sum5_check + failed_product3_check + failed_product4_check + failed_product5_check + failed_average2_check + failed_average3_check + failed_average4_check + failed_average5_check + failed_sign_check + failed_compare_equal_check + failed_compare_order_check + failed_abs_check + failed_abs_diff_check + failed_range_span_check + failed_lower_bound_check + failed_upper_bound_check + failed_quotient_check + failed_quotient_zero_check, failed_remainder_check + failed_remainder_zero_check + failed_has_remainder_check + failed_factor_check + failed_ascending_check + failed_strict_ascending_check + failed_descending_check + failed_strict_descending_check + failed_divisible_check + failed_within_check + failed_not_within_check + failed_even_check + failed_odd_check + failed_positive_check + failed_negative_check + failed_nonnegative_check + failed_nonpositive_check + failed_implies_check)
 
     return expect_status_ok(merge_status6(core_status, bool_status, range_status, status_helper_status, failure_status, merge_status6(option_status, option_or_status, result_status, result_or_status, conversion_status, conversion_bool_status + error_option_status)))
 }
