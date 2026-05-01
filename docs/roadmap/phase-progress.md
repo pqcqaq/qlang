@@ -22,6 +22,7 @@
 - 编译器主路径已经稳定为 AST -> HIR -> resolve -> typeck -> MIR -> LLVM。
 - typeck 的 `if` 表达式分支统一已对齐 control-flow summary：只有会继续执行的分支参与值类型统一；另一侧已经不可贯通时，不再把 `return` 等分支的 `Void`/任务值误报为分支类型不一致。
 - package/workspace 基础能力已落地：`ql project init`、`add`、`targets`、`graph`、`lock`、`emit-interface`。
+- `ql project status` 现在也已落地为只读健康摘要；它会聚合 workspace members、targets、直接本地依赖和默认 `.qi` artifact 状态，支持 `--package` 与 `--json`，不会写 lock 或生成接口文件。
 - `ql project add` 现在也可在创建 member 时直接写入 workspace 内本地依赖；`--existing` 还能把现有 package 或已移出的 member 重新纳入 workspace，真实 workspace 已不再只能“先手写 manifest 再接依赖图”。
 - `ql project remove` 现在会先审计反向本地依赖；仍被其他 members 引用的包会直接拒绝删除，同时保留磁盘上的包目录；真实项目里 workspace 成员已形成更安全的 `init/add/remove` 闭环。
 - `ql project dependents` 现在也已落地，并支持 `--json`；当 `ql project remove` 因反向依赖阻塞时，CLI 已能直接列出依赖它的 members，便于继续清理依赖边。从 package / workspace member 路径进入时也可自动推断目标包。

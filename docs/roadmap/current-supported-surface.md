@@ -28,6 +28,7 @@
 - 已实现：`ql check`、`ql fmt`、`ql mir`、`ql ownership`、`ql runtime`、`ql build`、`ql run`、`ql test`、`ql project`、`ql ffi`。
 - `ql` 与 `qlsp` 现在都已提供 `--version` / `-V` / `version`，可直接校验当前安装的产物版本。
 - `ql project init` 已能生成最小 package / workspace 脚手架，并附带 `src/lib.ql`、`src/main.ql`、`tests/smoke.ql`。
+- `ql project status` 已提供只读 package/workspace 健康摘要；会聚合 members、targets、直接本地依赖和默认 `.qi` artifact 状态，支持 `--package` 与 `--json`，不会写 lock 或生成接口文件。
 - `ql project add` 已能向现有 workspace 增量加入 `packages/<name>` member scaffold，并可在创建时直接写入 workspace 内本地依赖到 `[dependencies]`；`--existing` 也可把现有 package 或已移出的 member 重新纳入 workspace。
 - `ql project remove` 已能按 package 名把现有 member 从 `[workspace].members` 里摘除；若仍被其他 workspace member 依赖会先拒绝删除，也支持 `--cascade` 自动清理这些 members 指向目标包的本地依赖边，并保留原包目录，先支持安全退出 dependency graph，再由用户决定是否清理文件。
 - `ql project add-dependency` / `ql project remove-dependency` 已能直接修改已有 workspace member 的本地依赖；现在从 workspace 根也可配合 `--package` 直接指定目标 member，`add-dependency --path <file-or-dir>` 可把 workspace 外本地 package 按其真实 `[package].name` 写入相对路径依赖，`remove-dependency` 还兼容清理旧的 `[references].packages` 入口，并支持 `--all` 按 package 名批量清理所有 dependents；若从依赖包自身的 package / workspace member 路径进入，`--all` 也可直接自动推断目标包名。

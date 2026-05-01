@@ -14,6 +14,7 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - rename 仍以 same-file 为主；LSP 现已开放 source-backed dependency `method / field / enum variant` 的 workspace rename，以及 workspace root `function / const / static / struct / enum / trait / type alias / enum variant / struct field / receiver method` 的受限 workspace rename。root 顶层符号会继续联动 import path/direct-use；root members 当前可从导出包源码定义点或同文件使用点发起，只联动真实 member references，不改同名顶层 import path；其余符号仍未开放更广义的 cross-file rename / workspace edits。
 - `ql build` / `ql run` 已支持从 package 根目录和已声明 target 的源码路径进入 project-aware 流程；workspace member 源码路径会继承外层 workspace profile 和输出目录语义。
 - `ql build --list` / `ql run --list` 已可直接列出当前 package / workspace 下的 build targets；workspace member 目录或源码路径也会回到外层 workspace 视角；`--json` 复用 `ql.project.targets.v1`，`ql run --list` 只展示 runnable targets。
+- `ql project status` 已提供只读 package/workspace 健康摘要；会聚合 members、targets、直接本地依赖和默认 `.qi` artifact 状态，支持 `--package` 与 `--json`，不会写 lock 或生成接口文件。
 - `ql project add` 已能向现有 workspace 增量加入 `packages/<name>` member scaffold，并可在创建时直接写入 workspace 内本地依赖到 `[dependencies]`；也支持 `--existing` 把现有 package 或已移出的 member 重新纳入 workspace。
 - `ql project remove` 已能按 package 名把现有 member 从 `[workspace].members` 里安全摘除；若仍被其他 workspace member 依赖会先拒绝删除，也可用 `--cascade` 自动清理依赖边后继续移除，并保留磁盘上的包目录，便于渐进式重构。
 - `ql project add-dependency` / `remove-dependency` 已能直接维护已有 workspace member 的本地依赖；现在从 workspace 根也可配合 `--package` 直接指定目标 member，`add-dependency --path <file-or-dir>` 可把 workspace 外本地 package 按其真实 `[package].name` 写入相对路径依赖，`remove-dependency` 同时兼容清理旧的 `[references].packages` 入口，并支持 `--all` 按 package 名一次性清理所有 dependents；若从依赖包自身的 package / workspace member 路径进入，`--all` 也可直接自动推断目标包名。
@@ -97,6 +98,7 @@ cargo run -p ql-cli -- check fixtures/parser/pass/basic.ql
 cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit llvm-ir
 cargo run -p ql-cli -- project init demo-workspace --workspace --name app
 cargo run -p ql-cli -- project add demo-workspace --name tools --dependency app
+cargo run -p ql-cli -- project status demo-workspace --json
 cargo run -p ql-cli -- project add demo-workspace --existing demo-workspace/vendor/core
 cargo run -p ql-cli -- project remove demo-workspace --name tools
 cargo run -p ql-cli -- project remove demo-workspace --name core --cascade
