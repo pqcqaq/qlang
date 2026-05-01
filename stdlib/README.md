@@ -36,7 +36,7 @@ cargo run -q -p ql-cli -- project init D:\Projects\my-qlang-workspace --workspac
 ```
 
 Generated `--stdlib` projects depend on `std.core`, `std.option`, `std.result`, and `std.test`. `std.option` and `std.result` are intentionally concrete today: generic `Option[T]` / `Result[T, E]` and automatic prelude integration remain language/runtime work, while `IntOption` / `BoolOption` and `IntResult` / `BoolResult` are executable through the current dependency bridge. `std.test` now also ships carrier-specific assertions for `std.option` and `std.result`.
-Generated smoke tests group assertion statuses with `merge_status4` / `merge_status5` / `merge_status6` and return `expect_status_ok(...)` so larger tests can keep the same `0` pass / non-zero failure contract without one long status expression.
+Generated smoke tests group assertion statuses with `merge_status4` / `merge_status5` / `merge_status6`, use carrier-specific `std.test` assertions for `std.option` / `std.result`, and return `expect_status_ok(...)` so larger tests can keep the same `0` pass / non-zero failure contract without one long status expression.
 `std.test` also uses a package-aware smoke test that imports its own public helpers through `use std.test...` and exercises `std.option` / `std.result` assertions, so the assertion package is checked through the same surface as downstream users.
 
 Verify from the repository root:

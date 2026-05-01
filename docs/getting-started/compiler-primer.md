@@ -381,7 +381,7 @@ ql project init demo-package
 ql project init demo-package --stdlib path/to/language_q/stdlib
 ```
 
-这会在新 package 的 `[dependencies]` 中写入 quoted-key 形式的 `std.core` / `std.option` / `std.result` / `std.test` 本地依赖，并生成直接消费 `std.core` / `std.option` / `std.result` / `std.test` 的 `src/lib.ql`、`src/main.ql` 与 `tests/smoke.ql`；workspace 初始化也支持同一个 `--stdlib <path>` 选项。
+这会在新 package 的 `[dependencies]` 中写入 quoted-key 形式的 `std.core` / `std.option` / `std.result` / `std.test` 本地依赖，并生成直接消费 `std.core` / `std.option` / `std.result` / `std.test` 的 `src/lib.ql`、`src/main.ql` 与 `tests/smoke.ql`；生成的 smoke test 还会直接使用 `std.test` 的 carrier 断言覆盖 `std.option` / `std.result`。workspace 初始化也支持同一个 `--stdlib <path>` 选项。
 
 初始化 workspace：
 
