@@ -1,5 +1,16 @@
 package std.result
 
+use std.option.BoolOption as BoolOption
+use std.option.IntOption as IntOption
+use std.option.is_some_bool as option_is_some_bool
+use std.option.is_some_int as option_is_some_int
+use std.option.none_bool as option_none_bool
+use std.option.none_int as option_none_int
+use std.option.some_bool as option_some_bool
+use std.option.some_int as option_some_int
+use std.option.unwrap_or_bool as option_unwrap_or_bool
+use std.option.unwrap_or_int as option_unwrap_or_int
+
 pub enum IntResult {
     Ok(Int),
     Err(Int),
@@ -93,5 +104,33 @@ pub fn error_or_zero_bool(value: BoolResult) -> Int {
     return match value {
         BoolResult.Ok(_) => 0,
         BoolResult.Err(error) => error,
+    }
+}
+
+pub fn ok_or_int(value: IntOption, error: Int) -> IntResult {
+    if option_is_some_int(value) {
+        return IntResult.Ok(option_unwrap_or_int(value, 0))
+    }
+    return IntResult.Err(error)
+}
+
+pub fn ok_or_bool(value: BoolOption, error: Int) -> BoolResult {
+    if option_is_some_bool(value) {
+        return BoolResult.Ok(option_unwrap_or_bool(value, false))
+    }
+    return BoolResult.Err(error)
+}
+
+pub fn to_option_int(value: IntResult) -> IntOption {
+    return match value {
+        IntResult.Ok(inner) => option_some_int(inner),
+        IntResult.Err(_) => option_none_int(),
+    }
+}
+
+pub fn to_option_bool(value: BoolResult) -> BoolOption {
+    return match value {
+        BoolResult.Ok(inner) => option_some_bool(inner),
+        BoolResult.Err(_) => option_none_bool(),
     }
 }

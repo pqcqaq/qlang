@@ -1,2 +1,5 @@
 [package]
 name = "std.result"
+
+[dependencies]
+"std.option" = "../option"
