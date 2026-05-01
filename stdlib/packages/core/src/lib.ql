@@ -250,16 +250,48 @@ pub fn is_ascending_int(first: Int, second: Int, third: Int) -> Bool {
     return first <= second && second <= third
 }
 
+pub fn is_ascending4_int(first: Int, second: Int, third: Int, fourth: Int) -> Bool {
+    return is_ascending_int(first, second, third) && third <= fourth
+}
+
+pub fn is_ascending5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Bool {
+    return is_ascending4_int(first, second, third, fourth) && fourth <= fifth
+}
+
 pub fn is_strictly_ascending_int(first: Int, second: Int, third: Int) -> Bool {
     return first < second && second < third
+}
+
+pub fn is_strictly_ascending4_int(first: Int, second: Int, third: Int, fourth: Int) -> Bool {
+    return is_strictly_ascending_int(first, second, third) && third < fourth
+}
+
+pub fn is_strictly_ascending5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Bool {
+    return is_strictly_ascending4_int(first, second, third, fourth) && fourth < fifth
 }
 
 pub fn is_descending_int(first: Int, second: Int, third: Int) -> Bool {
     return first >= second && second >= third
 }
 
+pub fn is_descending4_int(first: Int, second: Int, third: Int, fourth: Int) -> Bool {
+    return is_descending_int(first, second, third) && third >= fourth
+}
+
+pub fn is_descending5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Bool {
+    return is_descending4_int(first, second, third, fourth) && fourth >= fifth
+}
+
 pub fn is_strictly_descending_int(first: Int, second: Int, third: Int) -> Bool {
     return first > second && second > third
+}
+
+pub fn is_strictly_descending4_int(first: Int, second: Int, third: Int, fourth: Int) -> Bool {
+    return is_strictly_descending_int(first, second, third) && third > fourth
+}
+
+pub fn is_strictly_descending5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Bool {
+    return is_strictly_descending4_int(first, second, third, fourth) && fourth > fifth
 }
 
 pub fn is_divisible_by_int(value: Int, divisor: Int) -> Bool {

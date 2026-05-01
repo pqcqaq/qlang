@@ -29,6 +29,8 @@ use std.core.in_range_int as in_range_int
 use std.core.has_remainder_int as has_remainder_int
 use std.core.is_ascending_int as is_ascending_int
 use std.core.is_descending_int as is_descending_int
+use std.core.is_descending4_int as is_descending4_int
+use std.core.is_descending5_int as is_descending5_int
 use std.core.is_divisible_by_int as is_divisible_by_int
 use std.core.is_even_int as is_even_int
 use std.core.is_factor_of_int as is_factor_of_int
@@ -42,6 +44,12 @@ use std.core.is_outside_range_int as is_outside_range_int
 use std.core.is_positive_int as is_positive_int
 use std.core.is_strictly_descending_int as is_strictly_descending_int
 use std.core.is_strictly_ascending_int as is_strictly_ascending_int
+use std.core.is_ascending4_int as is_ascending4_int
+use std.core.is_ascending5_int as is_ascending5_int
+use std.core.is_strictly_ascending4_int as is_strictly_ascending4_int
+use std.core.is_strictly_ascending5_int as is_strictly_ascending5_int
+use std.core.is_strictly_descending4_int as is_strictly_descending4_int
+use std.core.is_strictly_descending5_int as is_strictly_descending5_int
 use std.core.is_within_int as is_within_int
 use std.core.lower_bound_int as lower_bound_int
 use std.core.max3_int as max3_int
@@ -624,8 +632,36 @@ pub fn expect_int_ascending(first: Int, second: Int, third: Int) -> Int {
     return 1
 }
 
+pub fn expect_int_ascending4(first: Int, second: Int, third: Int, fourth: Int) -> Int {
+    if is_ascending4_int(first, second, third, fourth) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_ascending5(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
+    if is_ascending5_int(first, second, third, fourth, fifth) {
+        return 0
+    }
+    return 1
+}
+
 pub fn expect_int_strictly_ascending(first: Int, second: Int, third: Int) -> Int {
     if is_strictly_ascending_int(first, second, third) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_strictly_ascending4(first: Int, second: Int, third: Int, fourth: Int) -> Int {
+    if is_strictly_ascending4_int(first, second, third, fourth) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_strictly_ascending5(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
+    if is_strictly_ascending5_int(first, second, third, fourth, fifth) {
         return 0
     }
     return 1
@@ -638,8 +674,36 @@ pub fn expect_int_descending(first: Int, second: Int, third: Int) -> Int {
     return 1
 }
 
+pub fn expect_int_descending4(first: Int, second: Int, third: Int, fourth: Int) -> Int {
+    if is_descending4_int(first, second, third, fourth) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_descending5(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
+    if is_descending5_int(first, second, third, fourth, fifth) {
+        return 0
+    }
+    return 1
+}
+
 pub fn expect_int_strictly_descending(first: Int, second: Int, third: Int) -> Int {
     if is_strictly_descending_int(first, second, third) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_strictly_descending4(first: Int, second: Int, third: Int, fourth: Int) -> Int {
+    if is_strictly_descending4_int(first, second, third, fourth) {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_strictly_descending5(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
+    if is_strictly_descending5_int(first, second, third, fourth, fifth) {
         return 0
     }
     return 1
