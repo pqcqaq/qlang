@@ -64,6 +64,13 @@ pub fn error_or_zero_int(value: IntResult) -> Int {
     }
 }
 
+pub fn error_to_option_int(value: IntResult) -> IntOption {
+    return match value {
+        IntResult.Ok(_) => option_none_int(),
+        IntResult.Err(error) => option_some_int(error),
+    }
+}
+
 pub fn ok_bool(value: Bool) -> BoolResult {
     return BoolResult.Ok(value)
 }
@@ -104,6 +111,13 @@ pub fn error_or_zero_bool(value: BoolResult) -> Int {
     return match value {
         BoolResult.Ok(_) => 0,
         BoolResult.Err(error) => error,
+    }
+}
+
+pub fn error_to_option_bool(value: BoolResult) -> IntOption {
+    return match value {
+        BoolResult.Ok(_) => option_none_int(),
+        BoolResult.Err(error) => option_some_int(error),
     }
 }
 

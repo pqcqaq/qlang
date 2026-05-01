@@ -1,5 +1,7 @@
 use std.result.err_bool as err_bool
 use std.result.err_int as err_int
+use std.result.error_to_option_bool as error_to_option_bool
+use std.result.error_to_option_int as error_to_option_int
 use std.result.error_or_zero_bool as error_or_zero_bool
 use std.result.error_or_zero_int as error_or_zero_int
 use std.result.is_err_bool as is_err_bool
@@ -48,6 +50,7 @@ fn main() -> Int {
     let bool_status = sum6(check_bool(is_ok_bool(ok_bool(true)), true), check_bool(is_err_bool(err_bool(4)), true), check_bool(unwrap_result_or_bool(ok_bool(true), false), true), check_bool(unwrap_result_or_bool(err_bool(4), true), true), check_int(error_or_zero_bool(ok_bool(false)), 0), check_int(error_or_zero_bool(err_bool(4)), 4))
     let option_status = sum6(check_int(option_unwrap_or_int(to_option_int(ok_int(13)), 0), 13), check_bool(option_is_none_int(to_option_int(err_int(3))), true), check_bool(option_unwrap_or_bool(to_option_bool(ok_bool(false)), true), false), check_bool(option_is_none_bool(to_option_bool(err_bool(4))), true), check_int(unwrap_result_or_int(ok_or_int(option_some_int(19), 5), 0), 19), check_int(error_or_zero_int(ok_or_int(option_none_int(), 5)), 5))
     let option_bool_status = sum6(check_bool(unwrap_result_or_bool(ok_or_bool(option_some_bool(true), 6), false), true), check_int(error_or_zero_bool(ok_or_bool(option_none_bool(), 6)), 6), 0, 0, 0, 0)
+    let error_option_status = sum6(check_int(option_unwrap_or_int(error_to_option_int(err_int(0)), 9), 0), check_bool(option_is_none_int(error_to_option_int(ok_int(7))), true), check_int(option_unwrap_or_int(error_to_option_bool(err_bool(0)), 9), 0), check_bool(option_is_none_int(error_to_option_bool(ok_bool(false))), true), 0, 0)
 
-    return int_status + bool_status + option_status + option_bool_status + check_int(unwrap_result_or_int(or_result_int(err_int(5), ok_int(11)), 0), 11) + check_bool(unwrap_result_or_bool(or_result_bool(err_bool(6), ok_bool(false)), true), false)
+    return int_status + bool_status + option_status + option_bool_status + error_option_status + check_int(unwrap_result_or_int(or_result_int(err_int(5), ok_int(11)), 0), 11) + check_bool(unwrap_result_or_bool(or_result_bool(err_bool(6), ok_bool(false)), true), false)
 }

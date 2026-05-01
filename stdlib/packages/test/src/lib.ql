@@ -67,11 +67,13 @@ use std.option.is_none_int as option_is_none_int
 use std.option.is_some_bool as option_is_some_bool
 use std.option.is_some_int as option_is_some_int
 use std.option.or_option_bool as option_or_bool
-use std.option.or_int as option_or_int
+use std.option.or_option_int as option_or_int
 use std.option.unwrap_or_bool as option_unwrap_or_bool
 use std.option.unwrap_or_int as option_unwrap_or_int
 use std.option.IntOption as IntOption
 use std.result.BoolResult as BoolResult
+use std.result.error_to_option_bool as result_error_to_option_bool
+use std.result.error_to_option_int as result_error_to_option_int
 use std.result.error_or_zero_bool as result_error_or_zero_bool
 use std.result.error_or_zero_int as result_error_or_zero_int
 use std.result.is_err_bool as result_is_err_bool
@@ -739,6 +741,22 @@ pub fn expect_bool_result_to_option_some(value: BoolResult, expected: Bool) -> I
 
 pub fn expect_bool_result_to_option_none(value: BoolResult) -> Int {
     return expect_bool_option_none(result_to_option_bool(value))
+}
+
+pub fn expect_int_result_error_some(value: IntResult, expected_error: Int) -> Int {
+    return expect_int_option_some(result_error_to_option_int(value), expected_error)
+}
+
+pub fn expect_int_result_error_none(value: IntResult) -> Int {
+    return expect_int_option_none(result_error_to_option_int(value))
+}
+
+pub fn expect_bool_result_error_some(value: BoolResult, expected_error: Int) -> Int {
+    return expect_int_option_some(result_error_to_option_bool(value), expected_error)
+}
+
+pub fn expect_bool_result_error_none(value: BoolResult) -> Int {
+    return expect_int_option_none(result_error_to_option_bool(value))
 }
 
 pub fn expect_int_option_ok_or(value: IntOption, error: Int, expected: Int) -> Int {

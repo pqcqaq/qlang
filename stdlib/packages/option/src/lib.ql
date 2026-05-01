@@ -46,6 +46,10 @@ pub fn or_int(value: IntOption, fallback: IntOption) -> IntOption {
     }
 }
 
+pub fn or_option_int(value: IntOption, fallback: IntOption) -> IntOption {
+    return or_int(value, fallback)
+}
+
 pub fn value_or_zero_int(value: IntOption) -> Int {
     return unwrap_or_int(value, 0)
 }

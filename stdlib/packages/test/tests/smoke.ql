@@ -18,6 +18,8 @@ use std.test.expect_bool_option_ok_or_err as expect_bool_option_ok_or_err
 use std.test.expect_bool_option_or as expect_bool_option_or
 use std.test.expect_bool_option_some as expect_bool_option_some
 use std.test.expect_bool_result_err as expect_bool_result_err
+use std.test.expect_bool_result_error_none as expect_bool_result_error_none
+use std.test.expect_bool_result_error_some as expect_bool_result_error_some
 use std.test.expect_bool_result_ok as expect_bool_result_ok
 use std.test.expect_bool_result_or as expect_bool_result_or
 use std.test.expect_bool_result_to_option_none as expect_bool_result_to_option_none
@@ -50,6 +52,8 @@ use std.test.expect_int_option_ok_or_err as expect_int_option_ok_or_err
 use std.test.expect_int_option_or as expect_int_option_or
 use std.test.expect_int_option_some as expect_int_option_some
 use std.test.expect_int_result_err as expect_int_result_err
+use std.test.expect_int_result_error_none as expect_int_result_error_none
+use std.test.expect_int_result_error_some as expect_int_result_error_some
 use std.test.expect_int_result_ok as expect_int_result_ok
 use std.test.expect_int_result_or as expect_int_result_or
 use std.test.expect_int_result_to_option_none as expect_int_result_to_option_none
@@ -194,6 +198,8 @@ fn main() -> Int {
     let option_conversion_status = sum4(check_int(expect_int_option_ok_or(option_some_int(14), 5, 14), 0), check_int(expect_int_option_ok_or_err(option_none_int(), 5), 0), check_int(expect_bool_option_ok_or(option_some_bool(true), 6, true), 0), check_int(expect_bool_option_ok_or_err(option_none_bool(), 6), 0))
     let result_conversion_failure = sum4(check_int(expect_int_result_to_option_some(result_err_int(4), 14), 1), check_int(expect_int_result_to_option_none(result_ok_int(14)), 1), check_int(expect_bool_result_to_option_some(result_ok_bool(false), true), 1), check_int(expect_bool_result_to_option_none(result_ok_bool(false)), 1))
     let option_conversion_failure = sum4(check_int(expect_int_option_ok_or(option_some_int(14), 5, 15), 1), check_int(expect_int_option_ok_or_err(option_some_int(14), 5), 1), check_int(expect_bool_option_ok_or(option_some_bool(true), 6, false), 1), check_int(expect_bool_option_ok_or_err(option_some_bool(true), 6), 1))
+    let result_error_status = sum4(check_int(expect_int_result_error_some(result_err_int(0), 0), 0), check_int(expect_int_result_error_none(result_ok_int(14)), 0), check_int(expect_bool_result_error_some(result_err_bool(0), 0), 0), check_int(expect_bool_result_error_none(result_ok_bool(false)), 0))
+    let result_error_failure = sum4(check_int(expect_int_result_error_some(result_ok_int(14), 0), 1), check_int(expect_int_result_error_none(result_err_int(0)), 1), check_int(expect_bool_result_error_some(result_err_bool(0), 1), 1), check_int(expect_bool_result_error_none(result_err_bool(0)), 1))
 
     let bool_status = sum4(bool_pass + bool_aggregate_pass + bool_conversion_pass, bool_logic_pass + bool_none_pass, bool_failure + bool_aggregate_failure + bool_conversion_failure, bool_logic_failure + bool_none_failure)
     let int_status = sum4(int_order_pass, int_boundary_pass, int_order_failure, int_boundary_failure)
@@ -202,5 +208,5 @@ fn main() -> Int {
     let number_status = sum4(number_pass, sign_pass, number_failure, sign_failure)
     let status_status = sum4(status_bool, status_merge, status_merge_large, status_expect)
 
-    return check_int(sum4(bool_status, int_status, range_status, sum4(order_status, number_status, status_status, sum4(sign_boundary, transform_pass + transform_core_pass + transform_clamp_pass, transform_failure + transform_core_failure + transform_clamp_failure, sum4(aggregate_pass + extrema_pass + division_pass, average_pass + extrema4_pass + division_bool_pass + transform_bound_pass, aggregate_failure + extrema_failure + division_failure, average_failure + extrema4_failure + division_zero_failure + transform_bound_failure)))), 0) + option_status + option_or_status + option_failure + result_status + result_or_status + result_failure + result_conversion_status + option_conversion_status + result_conversion_failure + option_conversion_failure
+    return check_int(sum4(bool_status, int_status, range_status, sum4(order_status, number_status, status_status, sum4(sign_boundary, transform_pass + transform_core_pass + transform_clamp_pass, transform_failure + transform_core_failure + transform_clamp_failure, sum4(aggregate_pass + extrema_pass + division_pass, average_pass + extrema4_pass + division_bool_pass + transform_bound_pass, aggregate_failure + extrema_failure + division_failure, average_failure + extrema4_failure + division_zero_failure + transform_bound_failure)))), 0) + option_status + option_or_status + option_failure + result_status + result_or_status + result_failure + result_conversion_status + option_conversion_status + result_conversion_failure + option_conversion_failure + result_error_status + result_error_failure
 }
