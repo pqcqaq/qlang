@@ -13,13 +13,14 @@ use tower_lsp::LspService;
 use tower_lsp::jsonrpc::{Id, Request};
 use tower_lsp::lsp_types::request::{
     GotoDeclarationParams, GotoDeclarationResponse, GotoImplementationParams,
-    GotoImplementationResponse,
+    GotoImplementationResponse, GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
 };
 use tower_lsp::lsp_types::{
     CodeActionOrCommand, CompletionParams, CompletionResponse, Diagnostic,
-    DidOpenTextDocumentParams, DocumentFormattingParams, DocumentHighlight, FormattingOptions,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, InitializeParams, Location,
-    Position, Range, ReferenceContext, ReferenceParams, SymbolInformation, TextDocumentIdentifier,
+    DidOpenTextDocumentParams, DocumentFormattingParams, DocumentHighlight, DocumentSymbolParams,
+    DocumentSymbolResponse, FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, Hover,
+    HoverParams, InitializeParams, Location, Position, Range, ReferenceContext, ReferenceParams,
+    SemanticTokensParams, SemanticTokensResult, SymbolInformation, TextDocumentIdentifier,
     TextDocumentItem, TextDocumentPositionParams, TextEdit, Url, WorkspaceFolder,
 };
 
@@ -279,6 +280,24 @@ pub async fn goto_implementation_via_request(
     serde_json::from_value(value).expect("textDocument/implementation result should deserialize")
 }
 
+pub async fn goto_type_definition_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+    position: Position,
+) -> Option<GotoTypeDefinitionResponse> {
+    let value = request_value(
+        service,
+        "textDocument/typeDefinition",
+        json!(GotoTypeDefinitionParams {
+            text_document_position_params: text_document_position(uri, position),
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("textDocument/typeDefinition result should deserialize")
+}
+
 pub async fn completion_via_request(
     service: &mut LspService<Backend>,
     uri: Url,
@@ -381,6 +400,41 @@ pub async fn formatting_via_request(
     )
     .await;
     serde_json::from_value(value).expect("textDocument/formatting result should deserialize")
+}
+
+pub async fn document_symbol_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+) -> Option<DocumentSymbolResponse> {
+    let value = request_value(
+        service,
+        "textDocument/documentSymbol",
+        json!(DocumentSymbolParams {
+            text_document: TextDocumentIdentifier { uri },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("textDocument/documentSymbol result should deserialize")
+}
+
+pub async fn semantic_tokens_full_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+) -> Option<SemanticTokensResult> {
+    let value = request_value(
+        service,
+        "textDocument/semanticTokens/full",
+        json!(SemanticTokensParams {
+            text_document: TextDocumentIdentifier { uri },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value)
+        .expect("textDocument/semanticTokens/full result should deserialize")
 }
 
 pub async fn workspace_symbol_via_request(
