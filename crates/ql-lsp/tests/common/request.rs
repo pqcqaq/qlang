@@ -2,13 +2,14 @@
 
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_lsp::Backend;
 use serde_json::json;
 use tower::{Service, ServiceExt};
+use tower_lsp::LspService;
 use tower_lsp::jsonrpc::{Id, Request};
 use tower_lsp::lsp_types::request::{
     GotoDeclarationParams, GotoDeclarationResponse, GotoImplementationParams,
@@ -16,10 +17,9 @@ use tower_lsp::lsp_types::request::{
 };
 use tower_lsp::lsp_types::{
     CompletionParams, CompletionResponse, DidOpenTextDocumentParams, GotoDefinitionParams,
-    GotoDefinitionResponse, Hover, HoverParams, InitializeParams, Position, TextDocumentIdentifier,
-    TextDocumentItem, TextDocumentPositionParams, Url,
+    GotoDefinitionResponse, Hover, HoverParams, InitializeParams, Position, SymbolInformation,
+    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Url, WorkspaceFolder,
 };
-use tower_lsp::LspService;
 
 static NEXT_REQUEST_ID: AtomicI64 = AtomicI64::new(2);
 
@@ -36,6 +36,10 @@ impl TempDir {
         let path = env::temp_dir().join(format!("{prefix}-{unique}"));
         fs::create_dir_all(&path).expect("create temporary test directory");
         Self { path }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     pub fn write(&self, relative: &str, contents: &str) -> PathBuf {
@@ -84,11 +88,12 @@ pub fn offset_to_position(source: &str, offset: usize) -> Position {
     Position::new(line, prefix[line_start..].chars().count() as u32)
 }
 
-pub async fn initialize_service(service: &mut LspService<Backend>) {
+async fn initialize_service_with_params(
+    service: &mut LspService<Backend>,
+    params: InitializeParams,
+) {
     let request = Request::build("initialize")
-        .params(json!(InitializeParams {
-            ..InitializeParams::default()
-        }))
+        .params(json!(params))
         .id(1)
         .finish();
     let response = service
@@ -101,6 +106,40 @@ pub async fn initialize_service(service: &mut LspService<Backend>) {
     let response = response.expect("initialize should return a response");
     assert_eq!(response.id(), &Id::Number(1));
     assert!(response.is_ok(), "initialize should succeed: {response:?}");
+}
+
+pub async fn initialize_service(service: &mut LspService<Backend>) {
+    initialize_service_with_params(service, InitializeParams::default()).await;
+}
+
+pub async fn initialize_service_with_workspace_roots(
+    service: &mut LspService<Backend>,
+    workspace_roots: Vec<Url>,
+) {
+    let root_uri = workspace_roots.first().cloned();
+    let workspace_folders = if workspace_roots.is_empty() {
+        None
+    } else {
+        Some(
+            workspace_roots
+                .into_iter()
+                .enumerate()
+                .map(|(index, uri)| WorkspaceFolder {
+                    uri,
+                    name: format!("workspace-{index}"),
+                })
+                .collect(),
+        )
+    };
+    initialize_service_with_params(
+        service,
+        InitializeParams {
+            root_uri,
+            workspace_folders,
+            ..InitializeParams::default()
+        },
+    )
+    .await;
 }
 
 pub async fn did_open_via_request(service: &mut LspService<Backend>, uri: Url, text: String) {
@@ -255,4 +294,19 @@ pub async fn completion_via_request(
     )
     .await;
     serde_json::from_value(value).expect("textDocument/completion result should deserialize")
+}
+
+pub async fn workspace_symbol_via_request(
+    service: &mut LspService<Backend>,
+    query: &str,
+) -> Vec<SymbolInformation> {
+    let value = request_value(
+        service,
+        "workspace/symbol",
+        json!({
+            "query": query,
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("workspace/symbol result should deserialize")
 }

@@ -87,7 +87,7 @@
 - healthy source 下，workspace root import/use 的 `prepareRename` 现在也会读取已打开但未落盘的导出 workspace 源码，不再要求先保存文件。
 - source-preferred dependency tooling 现在按 manifest 身份区分同名本地依赖；definition / typeDefinition / references / current-document `documentHighlight` / dependency completion / `workspace/symbol` 不会再串到另一个依赖实例。
 - `workspace/symbol` 对 workspace 外本地路径依赖在源码可用时会优先返回源码里的 value / method / trait / extend symbols；源码不可用时仍回退到 `.qi`。这条行为现在也覆盖 `workspace_roots` / 无打开文档入口；同名本地依赖也不会再因为 source-preferred 排除而误丢另一个依赖的 `.qi` 符号。
-- 同名本地依赖的 type / enum / enum member、method / trait method / extend method 组合场景现在也有显式回归保护；`[dependencies]` 本地路径依赖在 open document 和 `workspace_roots` 入口上也都锁住了“源码优先 + 兄弟依赖 `.qi` 保留”这条 `workspace/symbol` 合同。
+- 同名本地依赖的 type / enum / enum member、method / trait method / extend method 组合场景现在也有显式回归保护；`[dependencies]` 本地路径依赖在 open document 和 `workspace_roots` 入口上也都锁住了“源码优先 + 兄弟依赖 `.qi` 保留”这条 `workspace/symbol` 合同；真实 LSP request 入口也已覆盖 workspace root 无打开文档、open unsaved 本地依赖源码优先与同名本地依赖隔离。
 - `qlsp` 现在会声明 `.` completion trigger，VSCode 中输入成员访问和点分 dependency 路径时可直接自动触发补全。
 - VSCode 扩展现在会读取 LSP `serverInfo.version`；若扩展版本与 `qlsp` 版本不一致，会直接给出 warning，避免 repo 开发产物和安装产物混用时静默漂移。
 - `textDocument/formatting` 已落地：当前复用 `ql fmt` 背后的格式化实现提供整文档格式化；仅在源码可成功解析时返回编辑，parse-error 文档会保守跳过并记录 warning。
