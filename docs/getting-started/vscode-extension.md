@@ -12,7 +12,7 @@
 
 ## 当前支持
 
-- diagnostics
+- diagnostics（当前文档 parser / semantic + package preflight）
 - hover
 - definition / declaration / typeDefinition
 - implementation
@@ -28,6 +28,7 @@
 ## 当前边界
 
 - 这仍然不是完整 workspace-wide index。
+- diagnostics 仍只发布当前打开文档；当前 buffer 干净时才补 manifest / interface preflight 错误，不做 workspace-wide diagnostics 推送。
 - 格式化当前只支持 parseable source 的整文档 `Format Document`。
 - rename 只开放 same-file 和一部分 source-backed dependency / workspace root 保守路径。
 - 插件不自带 `qlsp` 二进制；没有 Marketplace 发布流。

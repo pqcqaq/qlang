@@ -86,4 +86,4 @@ Changing either setting restarts the client.
 - no Marketplace publish flow
 - ships a minimal TextMate grammar fallback for base syntax coloring
 
-The reliable editor surface is still conservative: diagnostics, same-file semantics, and the source-backed workspace/dependency slices already covered by `qlsp`.
+The reliable editor surface is still conservative: current-document diagnostics with package preflight, same-file semantics, and the source-backed workspace/dependency slices already covered by `qlsp`.

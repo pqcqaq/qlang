@@ -7,7 +7,7 @@ use common::request::{
 use futures_util::{FutureExt, StreamExt};
 use ql_lsp::Backend;
 use tower_lsp::LspService;
-use tower_lsp::lsp_types::{PublishDiagnosticsParams, Url};
+use tower_lsp::lsp_types::{DiagnosticSeverity, NumberOrString, PublishDiagnosticsParams, Url};
 
 fn next_publish_diagnostics(socket: &mut tower_lsp::ClientSocket) -> PublishDiagnosticsParams {
     loop {
@@ -73,5 +73,93 @@ fn main() -> Int {
     assert!(
         close_diagnostics.diagnostics.is_empty(),
         "closing the document should clear diagnostics"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn diagnostics_notifications_include_package_interface_errors_for_clean_sources() {
+    let temp = TempDir::new("ql-lsp-diagnostics-package-interface-request");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/src/lib.ql",
+        r#"
+package demo.dep
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let uri = Url::from_file_path(&source_path).expect("source path should convert to URI");
+    let source = std::fs::read_to_string(&source_path).expect("source should read");
+    let (mut service, mut socket) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+
+    did_open_via_request(&mut service, uri.clone(), source).await;
+    let open_diagnostics = next_publish_diagnostics(&mut socket);
+    assert_eq!(open_diagnostics.uri, uri);
+    assert_eq!(
+        open_diagnostics.diagnostics.len(),
+        1,
+        "clean package source should publish package preflight diagnostics: {open_diagnostics:#?}",
+    );
+    let diagnostic = &open_diagnostics.diagnostics[0];
+    assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::ERROR));
+    assert_eq!(
+        diagnostic.code,
+        Some(NumberOrString::String(
+            "package-interface-not-found".to_owned()
+        ))
+    );
+    assert!(
+        diagnostic
+            .message
+            .contains("referenced package `dep` is missing interface artifact"),
+        "missing interface package diagnostic should be reported: {diagnostic:#?}",
+    );
+
+    did_change_via_request(&mut service, uri.clone(), 2, "fn main( {\n".to_owned()).await;
+    let change_diagnostics = next_publish_diagnostics(&mut socket);
+    assert_eq!(change_diagnostics.uri, uri);
+    assert!(
+        change_diagnostics
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("expected parameter name")),
+        "parse-error buffer should keep parser diagnostics: {change_diagnostics:#?}",
+    );
+    assert!(
+        change_diagnostics
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { !diagnostic.message.contains("missing interface artifact") }),
+        "package preflight diagnostics should not mask current buffer parser diagnostics",
     );
 }

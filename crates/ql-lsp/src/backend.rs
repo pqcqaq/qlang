@@ -25,13 +25,13 @@ use tower_lsp::lsp_types::request::{
 use tower_lsp::lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, CompletionOptions, CompletionParams, CompletionResponse,
-    DeclarationCapability, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentFormattingParams, DocumentHighlight,
-    DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
-    GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
+    DeclarationCapability, Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
+    DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
     ImplementationProviderCapability, InitializeParams, InitializeResult, InitializedParams,
-    Location, MessageType, NumberOrString, OneOf, PrepareRenameResponse, ReferenceParams,
-    RenameOptions, RenameParams, SemanticTokensFullOptions, SemanticTokensOptions,
+    Location, MessageType, NumberOrString, OneOf, Position, PrepareRenameResponse, Range,
+    ReferenceParams, RenameOptions, RenameParams, SemanticTokensFullOptions, SemanticTokensOptions,
     SemanticTokensParams, SemanticTokensResult, SemanticTokensServerCapabilities,
     ServerCapabilities, ServerInfo, SymbolInformation, SymbolKind as LspSymbolKind,
     TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
@@ -86,10 +86,7 @@ impl Backend {
     }
 
     async fn publish_document_diagnostics(&self, uri: &tower_lsp::lsp_types::Url, source: &str) {
-        let diagnostics = match analyze_source(source) {
-            Ok(analysis) => diagnostics_to_lsp(uri, source, analysis.diagnostics()),
-            Err(diagnostics) => diagnostics_to_lsp(uri, source, &diagnostics),
-        };
+        let diagnostics = document_diagnostics(uri, source);
 
         self.client
             .publish_diagnostics(uri.clone(), diagnostics, None)
@@ -183,6 +180,85 @@ fn package_analysis_for_path(path: &Path) -> Option<ql_analysis::PackageAnalysis
             analyze_package_with_available_dependencies(path).ok()
         }
         Err(_) => None,
+    }
+}
+
+fn document_diagnostics(uri: &Url, source: &str) -> Vec<Diagnostic> {
+    match analyze_source(source) {
+        Ok(analysis) if !analysis.diagnostics().is_empty() => {
+            diagnostics_to_lsp(uri, source, analysis.diagnostics())
+        }
+        Ok(_) => package_diagnostics_for_document(uri, source).unwrap_or_default(),
+        Err(diagnostics) => diagnostics_to_lsp(uri, source, &diagnostics),
+    }
+}
+
+fn package_diagnostics_for_document(uri: &Url, source: &str) -> Option<Vec<Diagnostic>> {
+    let path = uri.to_file_path().ok()?;
+    match analyze_package(&path) {
+        Ok(_) => None,
+        Err(PackageAnalysisError::SourceDiagnostics {
+            path: diagnostic_path,
+            source: diagnostic_source,
+            diagnostics,
+        }) => {
+            let current_path = canonicalize_or_clone(&path);
+            let diagnostic_path = canonicalize_or_clone(&diagnostic_path);
+            if current_path != diagnostic_path || !source_matches_disk_source(&path, source) {
+                return None;
+            }
+            Some(diagnostics_to_lsp(uri, &diagnostic_source, &diagnostics))
+        }
+        Err(PackageAnalysisError::Project(ql_project::ProjectError::ManifestNotFound {
+            ..
+        })) => None,
+        Err(PackageAnalysisError::Project(error)) => Some(vec![package_lsp_diagnostic(
+            "package-project-error",
+            format!("package analysis failed: {error}"),
+        )]),
+        Err(PackageAnalysisError::Read { path, error }) => Some(vec![package_lsp_diagnostic(
+            "package-read-error",
+            format!("failed to read `{}`: {error}", path.display()),
+        )]),
+        Err(PackageAnalysisError::InterfaceNotFound { package_name, path }) => {
+            Some(vec![package_lsp_diagnostic(
+                "package-interface-not-found",
+                format!(
+                    "referenced package `{package_name}` is missing interface artifact `{}`",
+                    path.display()
+                ),
+            )])
+        }
+        Err(PackageAnalysisError::InterfaceParse { path, message }) => {
+            Some(vec![package_lsp_diagnostic(
+                "package-interface-parse-error",
+                format!("invalid interface `{}`: {message}", path.display()),
+            )])
+        }
+    }
+}
+
+fn source_matches_disk_source(path: &Path, source: &str) -> bool {
+    fs::read_to_string(path)
+        .map(|disk_source| normalize_line_endings(&disk_source) == normalize_line_endings(source))
+        .unwrap_or(false)
+}
+
+fn normalize_line_endings(source: &str) -> String {
+    source.replace("\r\n", "\n")
+}
+
+fn package_lsp_diagnostic(code: &str, message: String) -> Diagnostic {
+    Diagnostic {
+        range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+        severity: Some(DiagnosticSeverity::ERROR),
+        code: Some(NumberOrString::String(code.to_owned())),
+        code_description: None,
+        source: Some("qlang".to_owned()),
+        message,
+        related_information: None,
+        tags: None,
+        data: None,
     }
 }
 

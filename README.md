@@ -29,6 +29,7 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - `ql check` 现在也会在 workspace member 目录或源码路径入口上恢复外层 workspace 语义，不再悄悄退回单 package 检查。
 - `ql check` 现在也支持在 workspace 入口配合 `--package <name>` 只检查单个 member；排查大型 workspace 时不必再全量跑所有包。
 - `ql test` 直接执行 project `tests/*.ql` 文件时会保留 package/workspace-aware smoke 或 UI test 语义；`ql project graph` / `ql project targets` / `ql project lock` 指向 workspace member 目录或源码文件时都会回到外层 workspace 上下文；`ql project emit-interface` 在不带 `--output` 时，无论 plain / `--changed-only` / `--check`，都会对 workspace member 目录或 `.ql` 源码路径恢复这一视角。
+- `qlsp` diagnostics 现在会在当前打开文档 parser / semantic diagnostics 之外补 package preflight：当前 buffer 干净时，会把缺失 dependency `.qi`、损坏 interface 或 manifest/source-root 问题发布到当前文档；仍不做 workspace-wide diagnostics 推送，也不会让 package preflight 覆盖当前未保存 buffer 的 parser / semantic 错误。
 - healthy package/workspace 下，LSP 的 source-preferred dependency tooling 已覆盖 workspace members 和 workspace 外本地路径依赖；definition、typeDefinition、references、`documentHighlight`、completion、`workspace/symbol` 与 source-backed dependency `method / field / enum variant` workspace rename 都会按 manifest 身份区分同名本地依赖，并优先读取已打开但未落盘的源码。
 - healthy workspace/local dependency 下，source-backed dependency `method / field` 的 `hover`、`definition`、`typeDefinition`、`references`、`documentHighlight`、semantic tokens、`prepareRename`、workspace rename 现在都会在成员只存在于未保存源码、磁盘 `.qi` 仍旧过期时继续优先读取 open docs；一旦能定位到真实 workspace 源码，rename 会跳过生成的 `.qi` 编辑。
 - `qlsp` 现已支持 `textDocument/formatting`；VSCode 可直接复用 `ql fmt` 背后的格式化实现做整文档格式化。当前仅支持可成功解析的源码，暂不支持 range / on-type formatting。
@@ -162,6 +163,8 @@ npm run package:vsix
 ```
 
 安装插件后可直接在 VSCode 使用 `Format Document`。这条能力由 `qlsp` 复用 `ql fmt` 背后的格式化实现提供，当前只做整文档格式化；若源码存在 parse error，会跳过格式化并给出 warning。
+
+Diagnostics 也由 `qlsp` 提供：当前打开文档会先发布 parser / semantic diagnostics；当当前 buffer 干净时，会额外发布 package preflight 的 manifest / interface 错误，例如缺失 dependency `.qi`。当前仍只发布打开文档本身的 diagnostics，不做 workspace-wide 推送。
 
 VSIX 当前会输出到：
 
