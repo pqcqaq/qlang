@@ -27,5 +27,6 @@ tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "syn
 tower-lsp = "0.20"
 
 [dev-dependencies]
+futures-util = "0.3"
 serde_json = "1"
 tower = "0.4"

@@ -17,12 +17,14 @@ use tower_lsp::lsp_types::request::{
 };
 use tower_lsp::lsp_types::{
     CodeActionOrCommand, CompletionParams, CompletionResponse, Diagnostic,
-    DidOpenTextDocumentParams, DocumentFormattingParams, DocumentHighlight, DocumentSymbolParams,
-    DocumentSymbolResponse, FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, Hover,
-    HoverParams, InitializeParams, Location, Position, PrepareRenameResponse, Range,
-    ReferenceContext, ReferenceParams, RenameParams, SemanticTokensParams, SemanticTokensResult,
-    SymbolInformation, TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams,
-    TextEdit, Url, WorkspaceEdit, WorkspaceFolder,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DocumentFormattingParams, DocumentHighlight, DocumentSymbolParams, DocumentSymbolResponse,
+    FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
+    InitializeParams, Location, Position, PrepareRenameResponse, Range, ReferenceContext,
+    ReferenceParams, RenameParams, SemanticTokensParams, SemanticTokensResult, SymbolInformation,
+    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+    TextDocumentPositionParams, TextEdit, Url, VersionedTextDocumentIdentifier, WorkspaceEdit,
+    WorkspaceFolder,
 };
 
 static NEXT_REQUEST_ID: AtomicI64 = AtomicI64::new(2);
@@ -164,6 +166,48 @@ pub async fn did_open_via_request(service: &mut LspService<Backend>, uri: Url, t
         .call(request)
         .await
         .expect("didOpen notification should succeed");
+    assert_eq!(response, None);
+}
+
+pub async fn did_change_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+    version: i32,
+    text: String,
+) {
+    let request = Request::build("textDocument/didChange")
+        .params(json!(DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier { uri, version },
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text,
+            }],
+        }))
+        .finish();
+    let response = service
+        .ready()
+        .await
+        .expect("service should become ready for didChange")
+        .call(request)
+        .await
+        .expect("didChange notification should succeed");
+    assert_eq!(response, None);
+}
+
+pub async fn did_close_via_request(service: &mut LspService<Backend>, uri: Url) {
+    let request = Request::build("textDocument/didClose")
+        .params(json!(DidCloseTextDocumentParams {
+            text_document: TextDocumentIdentifier { uri },
+        }))
+        .finish();
+    let response = service
+        .ready()
+        .await
+        .expect("service should become ready for didClose")
+        .call(request)
+        .await
+        .expect("didClose notification should succeed");
     assert_eq!(response, None);
 }
 
