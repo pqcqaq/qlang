@@ -16,9 +16,10 @@ use tower_lsp::lsp_types::request::{
     GotoImplementationResponse,
 };
 use tower_lsp::lsp_types::{
-    CompletionParams, CompletionResponse, DidOpenTextDocumentParams, GotoDefinitionParams,
-    GotoDefinitionResponse, Hover, HoverParams, InitializeParams, Position, SymbolInformation,
-    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Url, WorkspaceFolder,
+    CodeActionOrCommand, CompletionParams, CompletionResponse, Diagnostic,
+    DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
+    InitializeParams, Position, Range, SymbolInformation, TextDocumentIdentifier, TextDocumentItem,
+    TextDocumentPositionParams, Url, WorkspaceFolder,
 };
 
 static NEXT_REQUEST_ID: AtomicI64 = AtomicI64::new(2);
@@ -294,6 +295,29 @@ pub async fn completion_via_request(
     )
     .await;
     serde_json::from_value(value).expect("textDocument/completion result should deserialize")
+}
+
+pub async fn code_action_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+    range: Range,
+    diagnostics: Vec<Diagnostic>,
+) -> Option<Vec<CodeActionOrCommand>> {
+    let value = request_value(
+        service,
+        "textDocument/codeAction",
+        json!({
+            "textDocument": {
+                "uri": uri,
+            },
+            "range": range,
+            "context": {
+                "diagnostics": diagnostics,
+            },
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("textDocument/codeAction result should deserialize")
 }
 
 pub async fn workspace_symbol_via_request(
