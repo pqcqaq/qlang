@@ -19,9 +19,10 @@ use tower_lsp::lsp_types::{
     CodeActionOrCommand, CompletionParams, CompletionResponse, Diagnostic,
     DidOpenTextDocumentParams, DocumentFormattingParams, DocumentHighlight, DocumentSymbolParams,
     DocumentSymbolResponse, FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, Hover,
-    HoverParams, InitializeParams, Location, Position, Range, ReferenceContext, ReferenceParams,
-    SemanticTokensParams, SemanticTokensResult, SymbolInformation, TextDocumentIdentifier,
-    TextDocumentItem, TextDocumentPositionParams, TextEdit, Url, WorkspaceFolder,
+    HoverParams, InitializeParams, Location, Position, PrepareRenameResponse, Range,
+    ReferenceContext, ReferenceParams, RenameParams, SemanticTokensParams, SemanticTokensResult,
+    SymbolInformation, TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams,
+    TextEdit, Url, WorkspaceEdit, WorkspaceFolder,
 };
 
 static NEXT_REQUEST_ID: AtomicI64 = AtomicI64::new(2);
@@ -360,6 +361,39 @@ pub async fn references_via_request(
     )
     .await;
     serde_json::from_value(value).expect("textDocument/references result should deserialize")
+}
+
+pub async fn prepare_rename_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+    position: Position,
+) -> Option<PrepareRenameResponse> {
+    let value = request_value(
+        service,
+        "textDocument/prepareRename",
+        json!(text_document_position(uri, position)),
+    )
+    .await;
+    serde_json::from_value(value).expect("textDocument/prepareRename result should deserialize")
+}
+
+pub async fn rename_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+    position: Position,
+    new_name: &str,
+) -> Option<WorkspaceEdit> {
+    let value = request_value(
+        service,
+        "textDocument/rename",
+        json!(RenameParams {
+            text_document_position: text_document_position(uri, position),
+            new_name: new_name.to_owned(),
+            work_done_progress_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("textDocument/rename result should deserialize")
 }
 
 pub async fn document_highlight_via_request(
