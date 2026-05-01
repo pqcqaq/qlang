@@ -115,18 +115,19 @@
 
 ## 最小 `stdlib`
 
-- 仓库内已有普通 Qlang workspace 形态的 `stdlib`，当前包含 `stdlib/packages/core` 与 `stdlib/packages/test` 两个 package。
+- 仓库内已有普通 Qlang workspace 形态的 `stdlib`，当前包含 `stdlib/packages/core`、`stdlib/packages/option` 与 `stdlib/packages/test` 三个 package。
 - `std.core` 当前提供第一批稳定整数/布尔 helper：`max_int`、`min_int`、`max3_int`、`max4_int`、`min3_int`、`min4_int`、`sum3_int`、`sum4_int`、`product3_int`、`product4_int`、`average2_int`、`average3_int`、`quotient_or_zero_int`、`remainder_or_zero_int`、`clamp_int`、`clamp_min_int`、`clamp_max_int`、`clamp_bounds_int`、`lower_bound_int`、`upper_bound_int`、`abs_int`、`abs_diff_int`、`range_span_int`、`distance_to_range_int`、`distance_to_bounds_int`、`sign_int`、`compare_int`、`median3_int`、`is_zero_int`、`is_nonzero_int`、`is_positive_int`、`is_nonnegative_int`、`is_negative_int`、`is_nonpositive_int`、`is_even_int`、`is_odd_int`、`in_range_int`、`in_exclusive_range_int`、`in_bounds_int`、`in_exclusive_bounds_int`、`is_outside_range_int`、`is_outside_bounds_int`、`is_ascending_int`、`is_strictly_ascending_int`、`is_descending_int`、`is_strictly_descending_int`、`is_divisible_by_int`、`has_remainder_int`、`is_factor_of_int`、`is_within_int`、`is_not_within_int`、`bool_to_int`、`all3_bool`、`all4_bool`、`any3_bool`、`any4_bool`、`none3_bool`、`none4_bool`、`not_bool`、`and_bool`、`or_bool`、`xor_bool`、`implies_bool`。
+- `std.option` 当前提供可执行的 concrete option 面：`IntOption` / `BoolOption`，以及 `some_int`、`none_int`、`is_some_int`、`is_none_int`、`unwrap_or_int`、`or_int`、`value_or_zero_int`、`some_bool`、`none_bool`、`is_some_bool`、`is_none_bool`、`unwrap_or_bool`、`or_bool`、`value_or_false_bool`、`value_or_true_bool`。泛型 `Option[T]` 仍不是 prelude，也还没有进入跨包执行面。
 - `std.test` 当前提供 smoke-test 友好的 `expect_true`、`expect_false`、`expect_bool_eq`、`expect_bool_ne`、`expect_bool_not`、`expect_bool_and`、`expect_bool_or`、`expect_bool_xor`、`expect_bool_all3`、`expect_bool_all4`、`expect_bool_any3`、`expect_bool_any4`、`expect_bool_none3`、`expect_bool_none4`、`expect_bool_to_int`、`expect_int_eq`、`expect_int_ne`、`expect_int_gt`、`expect_int_ge`、`expect_int_lt`、`expect_int_le`、`expect_zero`、`expect_nonzero`、`expect_int_max`、`expect_int_min`、`expect_int_max3`、`expect_int_min3`、`expect_int_max4`、`expect_int_min4`、`expect_int_median3`、`expect_int_sum3`、`expect_int_sum4`、`expect_int_product3`、`expect_int_product4`、`expect_int_average2`、`expect_int_average3`、`expect_int_sign`、`expect_int_compare`、`expect_int_abs`、`expect_int_abs_diff`、`expect_int_range_span`、`expect_int_lower_bound`、`expect_int_upper_bound`、`expect_int_quotient_or_zero`、`expect_int_remainder_or_zero`、`expect_int_has_remainder`、`expect_int_factor_of`、`is_status_ok`、`is_status_failed`、`merge_status`、`merge_status3`、`merge_status4`、`merge_status5`、`merge_status6`、`expect_status_ok`、`expect_status_failed`、`expect_int_between`、`expect_int_exclusive_between`、`expect_int_outside`、`expect_int_between_bounds`、`expect_int_exclusive_between_bounds`、`expect_int_outside_bounds`、`expect_int_clamp_min`、`expect_int_clamp_max`、`expect_int_clamped`、`expect_int_clamped_bounds`、`expect_int_distance_to_range`、`expect_int_distance_to_bounds`、`expect_int_ascending`、`expect_int_strictly_ascending`、`expect_int_descending`、`expect_int_strictly_descending`、`expect_int_even`、`expect_int_odd`、`expect_int_divisible_by`、`expect_int_within`、`expect_int_not_within`、`expect_int_positive`、`expect_int_negative`、`expect_int_nonnegative`、`expect_int_nonpositive`、`expect_bool_implies`；`expect_*` 断言使用 `0` 表示通过，非零表示失败。
-- 用户项目可以用本地 `[dependencies]` 显式依赖；带点的包名需要写 quoted TOML key，例如 `"std.core" = "../path/to/stdlib/packages/core"`。
-- `ql project init --stdlib <path>` 可以直接生成依赖 `std.core` / `std.test` 的 package 或 workspace member scaffold，并生成消费这些 helper 的 `src/lib.ql`、`src/main.ql` 与 `tests/smoke.ql`。
+- 用户项目可以用本地 `[dependencies]` 显式依赖；带点的包名需要写 quoted TOML key，例如 `"std.option" = "../path/to/stdlib/packages/option"`。
+- `ql project init --stdlib <path>` 可以直接生成依赖 `std.core` / `std.option` / `std.test` 的 package 或 workspace member scaffold，并生成消费这些 helper 的 `src/lib.ql`、`src/main.ql` 与 `tests/smoke.ql`。
 - `stdlib` 仍是普通 package，不是编译器内置 prelude；泛型集合、IO、字符串完整库面和 registry 分发仍后置。
 
 ## 当前明确未支持
 
 - 普通跨包 Qlang free function / member / const 的完整 dependency-aware backend
 - escaping / higher-order dependency method values、超出当前不可变局部 alias direct-call slice 的 dependency receiver method codegen
-- 自动 prelude、泛型集合库、IO / 字符串完整库面
+- 自动 prelude、泛型 `Option[T]` / `Result[T, E]` 执行面、泛型集合库、IO / 字符串完整库面
 - registry / version solving / publish workflow
 - 预编译 release / VSCode Marketplace 分发
 - 更广义的 cross-file rename / workspace edits（超出 source-backed dependency `method / field / enum variant` 与 workspace root `function / const / static / struct / enum / trait / type alias` 的受限切片）

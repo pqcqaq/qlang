@@ -40,6 +40,8 @@ Qlang 的类型系统目标：
 
 这两个类型默认进入 prelude。
 
+当前实现状态：prelude 级 `Option[T]` / `Result[T, E]` 仍是设计目标，不是已开放的执行面。仓库内可用的是普通 package `std.option`，先提供 concrete `IntOption` / `BoolOption` 以匹配现有非泛型 dependency bridge。
+
 `Never` 作为底类型，用于表示不会正常返回的控制流，例如 `panic`、`abort`、无限循环和穷尽性分析中的不可能分支。
 
 ## 函数与可调用类型
