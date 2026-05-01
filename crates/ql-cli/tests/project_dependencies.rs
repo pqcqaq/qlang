@@ -172,18 +172,159 @@ fn project_dependencies_supports_json_output() {
         "package_name": "app",
         "dependencies": [
             {
+                "kind": "workspace",
                 "member": "packages/core",
+                "dependency_path": "../core",
                 "package_name": "core",
                 "manifest_path": project_root.join("packages/core/qlang.toml").to_string_lossy().replace('\\', "/"),
             },
             {
+                "kind": "workspace",
                 "member": "packages/tools",
+                "dependency_path": "../tools",
                 "package_name": "tools",
                 "manifest_path": project_root.join("packages/tools/qlang.toml").to_string_lossy().replace('\\', "/"),
             }
         ],
     });
     assert_eq!(actual, expected, "project dependencies json stdout");
+}
+
+#[test]
+fn project_dependencies_lists_external_local_path_dependencies() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependencies-local-path");
+    let project_root = temp.path().join("workspace");
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/app\", \"packages/core\"]\n",
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        "[dependencies]\ncore = \"../core\"\n\"vendor.core\" = \"../../vendor/core\"\n\n[package]\nname = \"app\"\n",
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        "[package]\nname = \"core\"\n",
+    );
+    temp.write(
+        "workspace/vendor/core/qlang.toml",
+        "[package]\nname = \"vendor.core\"\n",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependencies",
+        &project_root.to_string_lossy(),
+        "--name",
+        "app",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependencies` external local dependency",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-dependencies-local-path",
+        "list external local dependency",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependencies-local-path",
+        "list external local dependency",
+        &stderr,
+    )
+    .unwrap();
+
+    let expected = format!(
+        "workspace_manifest: {}\npackage: app\ndependencies:\n  - packages/core (core)\n  - ../../vendor/core (vendor.core, local)\n",
+        project_root
+            .join("qlang.toml")
+            .to_string_lossy()
+            .replace('\\', "/")
+    );
+    expect_snapshot_matches(
+        "project-dependencies-local-path",
+        "project dependencies local path stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn project_dependencies_json_marks_external_local_path_dependencies() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependencies-local-path-json");
+    let project_root = temp.path().join("workspace");
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/app\", \"packages/core\"]\n",
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        "[dependencies]\ncore = \"../core\"\n\"vendor.core\" = \"../../vendor/core\"\n\n[package]\nname = \"app\"\n",
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        "[package]\nname = \"core\"\n",
+    );
+    temp.write(
+        "workspace/vendor/core/qlang.toml",
+        "[package]\nname = \"vendor.core\"\n",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependencies",
+        &project_root.to_string_lossy(),
+        "--name",
+        "app",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependencies --json` external local dependency",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-dependencies-local-path-json",
+        "list external local dependency as json",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependencies-local-path-json",
+        "list external local dependency as json",
+        &stderr,
+    )
+    .unwrap();
+
+    let actual = parse_json_output("project-dependencies-local-path-json", &stdout);
+    let expected = json!({
+        "schema": "ql.project.dependencies.v1",
+        "path": project_root.to_string_lossy().replace('\\', "/"),
+        "workspace_manifest_path": project_root.join("qlang.toml").to_string_lossy().replace('\\', "/"),
+        "package_name": "app",
+        "dependencies": [
+            {
+                "kind": "workspace",
+                "member": "packages/core",
+                "dependency_path": "../core",
+                "package_name": "core",
+                "manifest_path": project_root.join("packages/core/qlang.toml").to_string_lossy().replace('\\', "/"),
+            },
+            {
+                "kind": "local",
+                "member": null,
+                "dependency_path": "../../vendor/core",
+                "package_name": "vendor.core",
+                "manifest_path": project_root.join("vendor/core/qlang.toml").to_string_lossy().replace('\\', "/"),
+            }
+        ],
+    });
+    assert_eq!(actual, expected, "project dependencies local path json stdout");
 }
 
 #[test]

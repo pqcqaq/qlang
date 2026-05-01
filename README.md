@@ -18,7 +18,7 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - `ql project remove` 已能按 package 名把现有 member 从 `[workspace].members` 里安全摘除；若仍被其他 workspace member 依赖会先拒绝删除，也可用 `--cascade` 自动清理依赖边后继续移除，并保留磁盘上的包目录，便于渐进式重构。
 - `ql project add-dependency` / `remove-dependency` 已能直接维护已有 workspace member 的本地依赖；现在从 workspace 根也可配合 `--package` 直接指定目标 member，`add-dependency --path <file-or-dir>` 可把 workspace 外本地 package 按其真实 `[package].name` 写入相对路径依赖，`remove-dependency` 同时兼容清理旧的 `[references].packages` 入口，并支持 `--all` 按 package 名一次性清理所有 dependents；若从依赖包自身的 package / workspace member 路径进入，`--all` 也可直接自动推断目标包名。
 - `ql project dependents` 已能直接查询某个 workspace package 当前被哪些 members 依赖，便于清理依赖边或定位删除阻塞；现在从 package / workspace member 目录或源码路径进入时也可自动推断目标包，不必每次手写 `--name`。
-- `ql project dependencies` 已能直接查询某个 workspace package 当前依赖了哪些 workspace members，并支持 `--json`；正反向依赖审计都不必再手读 manifest 或 `project graph`，现在从 package / workspace member 目录或源码路径进入时也可自动推断目标包。
+- `ql project dependencies` 已能直接查询某个 workspace package 当前依赖了哪些 workspace members 与 workspace 外本地路径依赖，并支持 `--json` 标出 `workspace` / `local` kind 与声明路径；正反向依赖审计都不必再手读 manifest 或 `project graph`，现在从 package / workspace member 目录或源码路径进入时也可自动推断目标包。
 - `ql project targets` 现在也支持 `--package`、`--lib`、`--bin`、`--target` 过滤；项目级 target 查询不再只能全量输出，真实 workspace 下排查目标会更直接。
 - `ql project init` 现在支持 `--stdlib <path>`；会把 `std.core` / `std.option` / `std.result` / `std.test` 作为 quoted-key 本地依赖写入新 package 或 workspace member，并生成直接消费 stdlib 的 `src/lib.ql`、`src/main.ql` 和 `tests/smoke.ql`。
 - `ql project target add --bin <name>` 现在也已落地；新增 bin target 时会自动创建 `src/bin/<name>.ql`，并在第一次显式写入 `[[bin]]` 时保留当前默认发现到的 `src/main.ql` / `src/bin/**/*.ql` targets，workspace 根也可配合 `--package` 直接改指定 member。

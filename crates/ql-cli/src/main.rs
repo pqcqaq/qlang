@@ -12336,12 +12336,11 @@ fn find_workspace_member_dependencies(
         .manifest_path
         .parent()
         .unwrap_or(Path::new("."));
-    let reference_manifest_paths = references
-        .iter()
-        .map(|manifest| normalize_path(&manifest.manifest_path))
-        .collect::<BTreeSet<_>>();
-    let mut dependencies = Vec::new();
-
+    let member_root = member_manifest
+        .manifest_path
+        .parent()
+        .unwrap_or(Path::new("."));
+    let mut workspace_member_paths = BTreeMap::new();
     for member in &workspace.members {
         let dependency_manifest =
             load_project_manifest(&workspace_root.join(member)).map_err(|error| {
@@ -12349,20 +12348,37 @@ fn find_workspace_member_dependencies(
                     "failed to inspect workspace member `{member}` while resolving local dependencies for `{member_manifest_path}`: {error}"
                 )
             })?;
+        workspace_member_paths.insert(
+            normalize_path(&dependency_manifest.manifest_path),
+            member.clone(),
+        );
+    }
+
+    let mut seen_reference_manifest_paths = BTreeSet::new();
+    let mut dependencies = Vec::new();
+
+    for dependency_manifest in references {
         let dependency_manifest_path = normalize_path(&dependency_manifest.manifest_path);
         if dependency_manifest_path == member_manifest_path
-            || !reference_manifest_paths.contains(&dependency_manifest_path)
+            || !seen_reference_manifest_paths.insert(dependency_manifest_path.clone())
         {
             continue;
         }
 
         let dependency_package_name = package_name(&dependency_manifest).map_err(|error| {
             format!(
-                "failed to inspect workspace member `{member}` while resolving local dependencies for `{member_manifest_path}`: {error}"
+                "failed to inspect local dependency `{dependency_manifest_path}` while resolving local dependencies for `{member_manifest_path}`: {error}"
             )
         })?;
+        let dependency_root = dependency_manifest
+            .manifest_path
+            .parent()
+            .unwrap_or(Path::new("."));
         dependencies.push(ProjectDependencyMember {
-            member: member.clone(),
+            member: workspace_member_paths
+                .get(&dependency_manifest_path)
+                .cloned(),
+            dependency_path: relative_path_from(member_root, dependency_root),
             package_name: dependency_package_name.to_owned(),
             manifest_path: dependency_manifest.manifest_path,
         });
@@ -13308,7 +13324,8 @@ struct ProjectDependentMember {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ProjectDependencyMember {
-    member: String,
+    member: Option<String>,
+    dependency_path: String,
     package_name: String,
     manifest_path: PathBuf,
 }
@@ -13908,10 +13925,14 @@ fn render_project_dependencies(
 
     rendered.push_str("dependencies:\n");
     for dependency in dependencies {
-        rendered.push_str(&format!(
-            "  - {} ({})\n",
-            dependency.member, dependency.package_name
-        ));
+        if let Some(member) = dependency.member.as_deref() {
+            rendered.push_str(&format!("  - {} ({})\n", member, dependency.package_name));
+        } else {
+            rendered.push_str(&format!(
+                "  - {} ({}, local)\n",
+                dependency.dependency_path, dependency.package_name
+            ));
+        }
     }
     rendered
 }
@@ -13930,7 +13951,9 @@ fn render_project_dependencies_json(
         "dependencies": dependencies
             .iter()
             .map(|dependency| json!({
-                "member": dependency.member,
+                "kind": if dependency.member.is_some() { "workspace" } else { "local" },
+                "member": dependency.member.as_deref(),
+                "dependency_path": dependency.dependency_path,
                 "package_name": dependency.package_name,
                 "manifest_path": normalize_path(&dependency.manifest_path),
             }))
