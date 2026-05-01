@@ -9,8 +9,11 @@ use std.core.any3_bool as any3_bool
 use std.core.any4_bool as any4_bool
 use std.core.average2_int as average2_int
 use std.core.average3_int as average3_int
+use std.core.bool_to_int as bool_to_int
 use std.core.clamp_bounds_int as clamp_bounds_int
 use std.core.clamp_int as clamp_int
+use std.core.clamp_max_int as clamp_max_int
+use std.core.clamp_min_int as clamp_min_int
 use std.core.compare_int as compare_int
 use std.core.distance_to_bounds_int as distance_to_bounds_int
 use std.core.distance_to_range_int as distance_to_range_int
@@ -40,6 +43,7 @@ use std.core.lower_bound_int as lower_bound_int
 use std.core.max3_int as max3_int
 use std.core.max4_int as max4_int
 use std.core.max_int as max_int
+use std.core.median3_int as median3_int
 use std.core.min3_int as min3_int
 use std.core.min4_int as min4_int
 use std.core.min_int as min_int
@@ -156,6 +160,13 @@ pub fn expect_bool_none4(first: Bool, second: Bool, third: Bool, fourth: Bool, e
     return 1
 }
 
+pub fn expect_bool_to_int(value: Bool, expected: Int) -> Int {
+    if bool_to_int(value) == expected {
+        return 0
+    }
+    return 1
+}
+
 pub fn expect_int_eq(actual: Int, expected: Int) -> Int {
     if actual == expected {
         return 0
@@ -249,6 +260,13 @@ pub fn expect_int_max4(first: Int, second: Int, third: Int, fourth: Int, expecte
 
 pub fn expect_int_min4(first: Int, second: Int, third: Int, fourth: Int, expected: Int) -> Int {
     if min4_int(first, second, third, fourth) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_median3(first: Int, second: Int, third: Int, expected: Int) -> Int {
+    if median3_int(first, second, third) == expected {
         return 0
     }
     return 1
@@ -459,6 +477,20 @@ pub fn expect_int_outside_bounds(actual: Int, first_bound: Int, second_bound: In
 
 pub fn expect_int_clamped(actual: Int, low: Int, high: Int, expected: Int) -> Int {
     if clamp_int(actual, low, high) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_clamp_min(actual: Int, low: Int, expected: Int) -> Int {
+    if clamp_min_int(actual, low) == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_int_clamp_max(actual: Int, high: Int, expected: Int) -> Int {
+    if clamp_max_int(actual, high) == expected {
         return 0
     }
     return 1
