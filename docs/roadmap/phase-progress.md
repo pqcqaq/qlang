@@ -29,11 +29,11 @@
 - `ql project targets` 现在也支持 `--package`、`--lib`、`--bin`、`--target` 过滤；真实 workspace 下排查某个 package 或单一 target 已不必再看全量列表。
 - `ql project target add --bin <name>` 现在也已落地；真实项目里新增 bin target 不必再手建 `src/bin/*.ql` 和手改 `qlang.toml`，第一次显式写入 `[[bin]]` 时也会保留当前默认发现到的 targets。
 - `ql project graph` 现在也支持 `--package` 聚焦到单个 workspace member 的包图；workspace 根图查询已不必再总是展开全部成员。
-- `ql project add-dependency` / `remove-dependency` 现在也支持从 workspace 根配合 `--package` 直接指定目标 member；真实项目里批量查看依赖后可直接在根目录继续修改，不必先切到 member 路径。
+- `ql project add-dependency` / `remove-dependency` 现在也支持从 workspace 根配合 `--package` 直接指定目标 member；`add-dependency --path <file-or-dir>` 还能按外部本地 package 的真实 manifest name 写入相对路径依赖；真实项目里批量查看依赖后可直接在根目录继续修改，不必先切到 member 路径。
 - `ql project emit-interface` 现在也支持在 workspace 入口配合 `--package` 只发射或检查单个 member；大 workspace 下做接口增量刷新时不必继续全量扫所有包，定向发射时也可继续配合 `--output` 导出到自定义路径。
 - `ql check` 现在也支持在 workspace 入口配合 `--package` 只检查单个 member；大 workspace 下做增量排查不必继续全量扫描全部包。
 - `ql project remove --cascade` 现在也已落地；当目标包仍被其他 members 引用时，CLI 已可自动清理这些本地依赖边并继续移除 member。`ql project remove-dependency` 同时兼容 `[dependencies]` 和旧的 `[references].packages` 清理路径。
-- `ql project add-dependency` / `remove-dependency` 现在也可直接维护已有 workspace member 的本地 `[dependencies]`；`remove-dependency --all` 还能按 package 名批量清理全部 dependents，若从依赖包自身的 package / workspace member 路径进入也可自动推断目标包名，创建后补依赖和移除依赖都不必再手改 manifest。
+- `ql project add-dependency` / `remove-dependency` 现在也可直接维护已有 workspace member 的本地 `[dependencies]`；`add-dependency` 支持 `--name` 选择 workspace member 或 `--path` 选择 workspace 外本地 package，`remove-dependency --all` 还能按 package 名批量清理全部 dependents，若从依赖包自身的 package / workspace member 路径进入也可自动推断目标包名，创建后补依赖和移除依赖都不必再手改 manifest。
 - project-aware `ql build` / `ql run` / `ql test` 已可在 package/workspace 根目录工作。
 - `ql check` 现在也会在 workspace member 目录或源码路径入口上恢复外层 workspace 视角；真实项目里不再出现 `build/run/graph/lock` 是 workspace-aware、但 `check` 静默退回单 member package 的不一致。
 - `ql build` / `ql run` 现在也可直接从 project 源码 target 路径进入 project-aware 流程；package 内源码路径和 workspace member 源码路径都不再掉回裸单文件输出语义。

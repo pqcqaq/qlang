@@ -1828,6 +1828,166 @@ fn project_add_dependency_supports_workspace_root_package_selector() {
 }
 
 #[test]
+fn project_add_dependency_supports_external_local_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-add-dependency-path");
+    let project_root = temp.path().join("workspace");
+    let vendor_source_path = project_root.join("vendor/core/src/lib.ql");
+
+    let mut init = ql_command(&workspace_root);
+    init.args([
+        "project",
+        "init",
+        &project_root.to_string_lossy(),
+        "--workspace",
+        "--name",
+        "app",
+    ]);
+    let output = run_command_capture(
+        &mut init,
+        "`ql project init` workspace for path add-dependency",
+    );
+    let (_stdout, stderr) = expect_success(
+        "project-add-dependency-path",
+        "workspace init for path add-dependency",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-add-dependency-path",
+        "workspace init for path add-dependency",
+        &stderr,
+    )
+    .unwrap();
+
+    temp.write(
+        "workspace/vendor/core/qlang.toml",
+        "[package]\nname = \"vendor.core\"\n",
+    );
+    temp.write(
+        "workspace/vendor/core/src/lib.ql",
+        "pub fn helper() -> Int {\n    return 1\n}\n",
+    );
+
+    let mut add_dependency = ql_command(&workspace_root);
+    add_dependency.args([
+        "project",
+        "add-dependency",
+        &project_root.to_string_lossy(),
+        "--package",
+        "app",
+        "--path",
+        &vendor_source_path.to_string_lossy(),
+    ]);
+    let output = run_command_capture(
+        &mut add_dependency,
+        "`ql project add-dependency --path` external local package",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-add-dependency-path",
+        "add external local dependency by path",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-add-dependency-path",
+        "add external local dependency by path",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "project-add-dependency-path",
+        &stdout,
+        &[&format!(
+            "updated: {}",
+            project_root
+                .join("packages/app/qlang.toml")
+                .to_string_lossy()
+                .replace('\\', "/")
+        )],
+    )
+    .unwrap();
+
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("packages/app/qlang.toml"),
+            "workspace member manifest after path add-dependency"
+        ),
+        "[dependencies]\n\"vendor.core\" = \"../../vendor/core\"\n\n[package]\nname = \"app\"\n"
+    );
+}
+
+#[test]
+fn project_add_dependency_refuses_name_and_path_together() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-add-dependency-conflict");
+    let project_root = temp.path().join("workspace");
+
+    let mut init = ql_command(&workspace_root);
+    init.args([
+        "project",
+        "init",
+        &project_root.to_string_lossy(),
+        "--workspace",
+        "--name",
+        "app",
+    ]);
+    let output = run_command_capture(
+        &mut init,
+        "`ql project init` workspace for conflicting add-dependency selectors",
+    );
+    let (_stdout, stderr) = expect_success(
+        "project-add-dependency-conflict",
+        "workspace init for conflicting add-dependency selectors",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-add-dependency-conflict",
+        "workspace init for conflicting add-dependency selectors",
+        &stderr,
+    )
+    .unwrap();
+
+    let mut add_dependency = ql_command(&workspace_root);
+    add_dependency.args([
+        "project",
+        "add-dependency",
+        &project_root.to_string_lossy(),
+        "--package",
+        "app",
+        "--name",
+        "core",
+        "--path",
+        &project_root.join("vendor/core").to_string_lossy(),
+    ]);
+    let output = run_command_capture(
+        &mut add_dependency,
+        "`ql project add-dependency` conflicting selectors",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-add-dependency-conflict",
+        "add dependency with conflicting selectors",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-add-dependency-conflict",
+        "add dependency with conflicting selectors",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-add-dependency-conflict",
+        "add dependency with conflicting selectors",
+        &stderr,
+        "error: `ql project add-dependency` accepts either `--name <package>` or `--path <file-or-dir>`, not both",
+    )
+    .unwrap();
+}
+
+#[test]
 fn project_add_dependency_refuses_missing_workspace_package() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-add-dependency-missing");

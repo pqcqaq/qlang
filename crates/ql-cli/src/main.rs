@@ -1112,6 +1112,7 @@ fn run() -> Result<(), u8> {
                     let mut path = None;
                     let mut target_package_name = None;
                     let mut package_name = None;
+                    let mut dependency_path = None;
                     let mut index = 0;
 
                     while index < remaining.len() {
@@ -1148,6 +1149,22 @@ fn run() -> Result<(), u8> {
                                 }
                                 package_name = Some(value.clone());
                             }
+                            "--path" => {
+                                index += 1;
+                                let Some(value) = remaining.get(index) else {
+                                    eprintln!(
+                                        "error: `ql project add-dependency --path` expects a package path"
+                                    );
+                                    return Err(1);
+                                };
+                                if dependency_path.is_some() {
+                                    eprintln!(
+                                        "error: `ql project add-dependency` received `--path` more than once"
+                                    );
+                                    return Err(1);
+                                }
+                                dependency_path = Some(PathBuf::from(value));
+                            }
                             other if other.starts_with('-') => {
                                 eprintln!(
                                     "error: unknown `ql project add-dependency` option `{other}`"
@@ -1168,8 +1185,16 @@ fn run() -> Result<(), u8> {
                         index += 1;
                     }
 
-                    let Some(package_name) = package_name else {
-                        eprintln!("error: `ql project add-dependency` requires `--name <package>`");
+                    if package_name.is_some() && dependency_path.is_some() {
+                        eprintln!(
+                            "error: `ql project add-dependency` accepts either `--name <package>` or `--path <file-or-dir>`, not both"
+                        );
+                        return Err(1);
+                    }
+                    if package_name.is_none() && dependency_path.is_none() {
+                        eprintln!(
+                            "error: `ql project add-dependency` requires `--name <package>` or `--path <file-or-dir>`"
+                        );
                         return Err(1);
                     };
 
@@ -1179,7 +1204,8 @@ fn run() -> Result<(), u8> {
                     project_add_dependency_path(
                         &path,
                         target_package_name.as_deref(),
-                        &package_name,
+                        package_name.as_deref(),
+                        dependency_path.as_deref(),
                     )
                 }
                 "remove-dependency" => {
@@ -11388,23 +11414,31 @@ fn project_add_binary_target_path(
 fn project_add_dependency_path(
     path: &Path,
     target_package_name: Option<&str>,
-    package_name: &str,
+    package_name: Option<&str>,
+    dependency_path: Option<&Path>,
 ) -> Result<(), u8> {
-    if let Err(message) = validate_project_package_name(package_name) {
-        eprintln!("error: `ql project add-dependency` {message}");
-        return Err(1);
-    }
-
     let (workspace_manifest, package_manifest) = resolve_project_selected_package_manifest(
         path,
         target_package_name,
         "`ql project add-dependency`",
     )?;
-    let dependency_entry = resolve_project_existing_dependency_entry(
-        &workspace_manifest,
-        &package_manifest,
-        package_name,
-    )
+    let dependency_entry = match (package_name, dependency_path) {
+        (Some(package_name), None) => {
+            if let Err(message) = validate_project_package_name(package_name) {
+                eprintln!("error: `ql project add-dependency` {message}");
+                return Err(1);
+            }
+            resolve_project_existing_dependency_entry(
+                &workspace_manifest,
+                &package_manifest,
+                package_name,
+            )
+        }
+        (None, Some(dependency_path)) => {
+            resolve_project_path_dependency_entry(&package_manifest, dependency_path)
+        }
+        _ => Err("requires exactly one dependency selector".to_owned()),
+    }
     .map_err(|message| {
         eprintln!("error: `ql project add-dependency` {message}");
         1
@@ -12375,6 +12409,49 @@ fn resolve_project_existing_dependency_entry(
         .parent()
         .unwrap_or(Path::new("."));
     let dependency_root = dependency_entries[0].1.parent().unwrap_or(Path::new("."));
+    Ok((
+        dependency_name.to_owned(),
+        relative_path_from(member_root, dependency_root),
+    ))
+}
+
+fn resolve_project_path_dependency_entry(
+    package_manifest: &ql_project::ProjectManifest,
+    dependency_path: &Path,
+) -> Result<(String, String), String> {
+    let member_package_name = package_name(package_manifest)
+        .map_err(|error| format!("failed to resolve current package name: {error}"))?;
+    let dependency_manifest =
+        load_project_manifest(&absolute_user_path(dependency_path)).map_err(|error| {
+            format!(
+                "failed to resolve local dependency path `{}`: {error}",
+                normalize_path(dependency_path)
+            )
+        })?;
+    let dependency_name = package_name(&dependency_manifest)
+        .map_err(|error| format!("failed to resolve dependency package name: {error}"))?;
+    validate_project_package_name(dependency_name)?;
+
+    if normalize_path(&dependency_manifest.manifest_path) == normalize_path(&package_manifest.manifest_path)
+    {
+        return Err(format!(
+            "does not accept self dependency `{dependency_name}` for package `{member_package_name}`"
+        ));
+    }
+    if dependency_name == member_package_name {
+        return Err(format!(
+            "does not accept dependency `{dependency_name}` because the current package has the same name"
+        ));
+    }
+
+    let member_root = package_manifest
+        .manifest_path
+        .parent()
+        .unwrap_or(Path::new("."));
+    let dependency_root = dependency_manifest
+        .manifest_path
+        .parent()
+        .unwrap_or(Path::new("."));
     Ok((
         dependency_name.to_owned(),
         relative_path_from(member_root, dependency_root),
@@ -16241,7 +16318,9 @@ fn print_usage() {
     eprintln!("  ql project add [file-or-dir] --name <package> [--dependency <package> ...]");
     eprintln!("  ql project add [file-or-dir] --existing <file-or-dir>");
     eprintln!("  ql project remove [file-or-dir] --name <package> [--cascade]");
-    eprintln!("  ql project add-dependency [file-or-dir] [--package <name>] --name <package>");
+    eprintln!(
+        "  ql project add-dependency [file-or-dir] [--package <name>] (--name <package> | --path <file-or-dir>)"
+    );
     eprintln!(
         "  ql project remove-dependency [file-or-dir] [--package <name>] [--name <package>] [--all]"
     );
