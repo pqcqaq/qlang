@@ -92,6 +92,7 @@
 - healthy workspace 下基础导航和高亮稳定工作。
 - 同名本地依赖、broken-source、workspace member 入口这些真实项目高频场景有明确保护，而不是只在单文件 happy path 里工作。
 - VSCode 文档、支持页和插件 README 与实现边界一致。
+- LSP backend 单测按能力模块拆分，避免继续把 semantic tokens、definition、references、completion、formatting 等合同堆在单个超大测试文件里。
 
 说明：
 
