@@ -4,6 +4,18 @@
 // source: src/lib.ql
 package std.array
 
+pub fn first3_array[T](values: [T; 3]) -> T
+
+pub fn first4_array[T](values: [T; 4]) -> T
+
+pub fn first5_array[T](values: [T; 5]) -> T
+
+pub fn last3_array[T](values: [T; 3]) -> T
+
+pub fn last4_array[T](values: [T; 4]) -> T
+
+pub fn last5_array[T](values: [T; 5]) -> T
+
 pub fn sum3_int_array(values: [Int; 3]) -> Int
 
 pub fn sum4_int_array(values: [Int; 4]) -> Int

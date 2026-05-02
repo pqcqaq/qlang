@@ -11692,17 +11692,7 @@ fn relative_path_from(from: &Path, to: &Path) -> String {
 }
 
 fn stdlib_package_test_source() -> &'static str {
-    r#"use std.array.all3_bool_array as all3_bool_array
-use std.array.any5_bool_array as any5_bool_array
-use std.array.first3_array as first3_array
-use std.array.last5_array as last5_array
-use std.array.max5_int_array as max5_int_array
-use std.array.min5_int_array as min5_int_array
-use std.array.none4_bool_array as none4_bool_array
-use std.array.product4_int_array as product4_int_array
-use std.array.sum3_int_array as sum3_int_array
-use std.array.sum5_int_array as sum5_int_array
-use std.core.abs_diff_int as abs_diff_int
+    r#"use std.core.abs_diff_int as abs_diff_int
 use std.core.abs_int as abs_int
 use std.core.all3_bool as all3_bool
 use std.core.all4_bool as all4_bool
@@ -11782,6 +11772,10 @@ use std.test.expect_bool_all3 as expect_bool_all3
 use std.test.expect_bool_all4 as expect_bool_all4
 use std.test.expect_bool_all5 as expect_bool_all5
 use std.test.expect_bool_and as expect_bool_and
+use std.test.expect_bool_array_all3 as expect_bool_array_all3
+use std.test.expect_bool_array_any5 as expect_bool_array_any5
+use std.test.expect_bool_array_last5 as expect_bool_array_last5
+use std.test.expect_bool_array_none4 as expect_bool_array_none4
 use std.test.expect_bool_any3 as expect_bool_any3
 use std.test.expect_bool_any4 as expect_bool_any4
 use std.test.expect_bool_any5 as expect_bool_any5
@@ -11836,6 +11830,12 @@ use std.test.expect_generic_int_result_to_option_none as expect_generic_int_resu
 use std.test.expect_generic_int_result_to_option_some as expect_generic_int_result_to_option_some
 use std.test.expect_int_abs as expect_int_abs
 use std.test.expect_int_abs_diff as expect_int_abs_diff
+use std.test.expect_int_array_first3 as expect_int_array_first3
+use std.test.expect_int_array_max5 as expect_int_array_max5
+use std.test.expect_int_array_min5 as expect_int_array_min5
+use std.test.expect_int_array_product4 as expect_int_array_product4
+use std.test.expect_int_array_sum3 as expect_int_array_sum3
+use std.test.expect_int_array_sum5 as expect_int_array_sum5
 use std.test.expect_status_failed as expect_status_failed
 use std.test.expect_status_ok as expect_status_ok
 use std.test.expect_int_average2 as expect_int_average2
@@ -12018,12 +12018,12 @@ fn main() -> Int {
     let bool_none4_check = expect_bool_none4(false, false, true, false, false)
     let bool_none5_check = expect_bool_none5(false, false, false, false, false, true)
     let bool_to_int_expect_check = expect_bool_to_int(true, 1)
-    let array_sum_check = expect_int_eq(sum3_int_array([2, 3, 4]), 9)
-    let array_sum5_check = expect_int_eq(sum5_int_array([2, 3, 4, 5, 6]), 20)
-    let array_product_check = expect_int_eq(product4_int_array([2, 3, 4, 5]), 120)
-    let array_extrema_check = expect_int_eq(max5_int_array([3, 9, 5, 7, 11]), 11) + expect_int_eq(min5_int_array([3, 9, 5, 7, 1]), 1)
-    let array_bool_check = expect_bool_eq(all3_bool_array([true, true, true]), true) + expect_bool_eq(any5_bool_array([false, false, false, false, true]), true) + expect_bool_eq(none4_bool_array([false, false, false, false]), true)
-    let array_generic_check = expect_int_eq(first3_array([8, 9, 10]), 8) + expect_bool_eq(last5_array([true, false, true, false, true]), true)
+    let array_sum_check = expect_int_array_sum3([2, 3, 4], 9)
+    let array_sum5_check = expect_int_array_sum5([2, 3, 4, 5, 6], 20)
+    let array_product_check = expect_int_array_product4([2, 3, 4, 5], 120)
+    let array_extrema_check = expect_int_array_max5([3, 9, 5, 7, 11], 11) + expect_int_array_min5([3, 9, 5, 7, 1], 1)
+    let array_bool_check = expect_bool_array_all3([true, true, true], true) + expect_bool_array_any5([false, false, false, false, true], true) + expect_bool_array_none4([false, false, false, false], true)
+    let array_generic_check = expect_int_array_first3([8, 9, 10], 8) + expect_bool_array_last5([true, false, true, false, true], true)
     let max_expect_check = expect_int_max(20, 22, 22)
     let min_expect_check = expect_int_min(20, 22, 20)
     let max3_expect_check = expect_int_max3(20, 22, 21, 22)

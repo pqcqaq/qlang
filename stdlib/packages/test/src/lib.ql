@@ -1,5 +1,32 @@
 package std.test
 
+use std.array.all3_bool_array as array_all3_bool
+use std.array.all4_bool_array as array_all4_bool
+use std.array.all5_bool_array as array_all5_bool
+use std.array.any3_bool_array as array_any3_bool
+use std.array.any4_bool_array as array_any4_bool
+use std.array.any5_bool_array as array_any5_bool
+use std.array.first3_array as array_first3
+use std.array.first4_array as array_first4
+use std.array.first5_array as array_first5
+use std.array.last3_array as array_last3
+use std.array.last4_array as array_last4
+use std.array.last5_array as array_last5
+use std.array.max3_int_array as array_max3_int
+use std.array.max4_int_array as array_max4_int
+use std.array.max5_int_array as array_max5_int
+use std.array.min3_int_array as array_min3_int
+use std.array.min4_int_array as array_min4_int
+use std.array.min5_int_array as array_min5_int
+use std.array.none3_bool_array as array_none3_bool
+use std.array.none4_bool_array as array_none4_bool
+use std.array.none5_bool_array as array_none5_bool
+use std.array.product3_int_array as array_product3_int
+use std.array.product4_int_array as array_product4_int
+use std.array.product5_int_array as array_product5_int
+use std.array.sum3_int_array as array_sum3_int
+use std.array.sum4_int_array as array_sum4_int
+use std.array.sum5_int_array as array_sum5_int
 use std.core.abs_diff_int as abs_diff_int
 use std.core.abs_int as abs_int
 use std.core.all3_bool as all3_bool
@@ -243,6 +270,138 @@ pub fn expect_int_eq(actual: Int, expected: Int) -> Int {
         return 0
     }
     return 1
+}
+
+pub fn expect_int_array_first3(values: [Int; 3], expected: Int) -> Int {
+    return expect_int_eq(array_first3(values), expected)
+}
+
+pub fn expect_int_array_first4(values: [Int; 4], expected: Int) -> Int {
+    return expect_int_eq(array_first4(values), expected)
+}
+
+pub fn expect_int_array_first5(values: [Int; 5], expected: Int) -> Int {
+    return expect_int_eq(array_first5(values), expected)
+}
+
+pub fn expect_int_array_last3(values: [Int; 3], expected: Int) -> Int {
+    return expect_int_eq(array_last3(values), expected)
+}
+
+pub fn expect_int_array_last4(values: [Int; 4], expected: Int) -> Int {
+    return expect_int_eq(array_last4(values), expected)
+}
+
+pub fn expect_int_array_last5(values: [Int; 5], expected: Int) -> Int {
+    return expect_int_eq(array_last5(values), expected)
+}
+
+pub fn expect_bool_array_first3(values: [Bool; 3], expected: Bool) -> Int {
+    return expect_bool_eq(array_first3(values), expected)
+}
+
+pub fn expect_bool_array_first4(values: [Bool; 4], expected: Bool) -> Int {
+    return expect_bool_eq(array_first4(values), expected)
+}
+
+pub fn expect_bool_array_first5(values: [Bool; 5], expected: Bool) -> Int {
+    return expect_bool_eq(array_first5(values), expected)
+}
+
+pub fn expect_bool_array_last3(values: [Bool; 3], expected: Bool) -> Int {
+    return expect_bool_eq(array_last3(values), expected)
+}
+
+pub fn expect_bool_array_last4(values: [Bool; 4], expected: Bool) -> Int {
+    return expect_bool_eq(array_last4(values), expected)
+}
+
+pub fn expect_bool_array_last5(values: [Bool; 5], expected: Bool) -> Int {
+    return expect_bool_eq(array_last5(values), expected)
+}
+
+pub fn expect_int_array_sum3(values: [Int; 3], expected: Int) -> Int {
+    return expect_int_eq(array_sum3_int(values), expected)
+}
+
+pub fn expect_int_array_sum4(values: [Int; 4], expected: Int) -> Int {
+    return expect_int_eq(array_sum4_int(values), expected)
+}
+
+pub fn expect_int_array_sum5(values: [Int; 5], expected: Int) -> Int {
+    return expect_int_eq(array_sum5_int(values), expected)
+}
+
+pub fn expect_int_array_product3(values: [Int; 3], expected: Int) -> Int {
+    return expect_int_eq(array_product3_int(values), expected)
+}
+
+pub fn expect_int_array_product4(values: [Int; 4], expected: Int) -> Int {
+    return expect_int_eq(array_product4_int(values), expected)
+}
+
+pub fn expect_int_array_product5(values: [Int; 5], expected: Int) -> Int {
+    return expect_int_eq(array_product5_int(values), expected)
+}
+
+pub fn expect_int_array_max3(values: [Int; 3], expected: Int) -> Int {
+    return expect_int_eq(array_max3_int(values), expected)
+}
+
+pub fn expect_int_array_max4(values: [Int; 4], expected: Int) -> Int {
+    return expect_int_eq(array_max4_int(values), expected)
+}
+
+pub fn expect_int_array_max5(values: [Int; 5], expected: Int) -> Int {
+    return expect_int_eq(array_max5_int(values), expected)
+}
+
+pub fn expect_int_array_min3(values: [Int; 3], expected: Int) -> Int {
+    return expect_int_eq(array_min3_int(values), expected)
+}
+
+pub fn expect_int_array_min4(values: [Int; 4], expected: Int) -> Int {
+    return expect_int_eq(array_min4_int(values), expected)
+}
+
+pub fn expect_int_array_min5(values: [Int; 5], expected: Int) -> Int {
+    return expect_int_eq(array_min5_int(values), expected)
+}
+
+pub fn expect_bool_array_all3(values: [Bool; 3], expected: Bool) -> Int {
+    return expect_bool_eq(array_all3_bool(values), expected)
+}
+
+pub fn expect_bool_array_all4(values: [Bool; 4], expected: Bool) -> Int {
+    return expect_bool_eq(array_all4_bool(values), expected)
+}
+
+pub fn expect_bool_array_all5(values: [Bool; 5], expected: Bool) -> Int {
+    return expect_bool_eq(array_all5_bool(values), expected)
+}
+
+pub fn expect_bool_array_any3(values: [Bool; 3], expected: Bool) -> Int {
+    return expect_bool_eq(array_any3_bool(values), expected)
+}
+
+pub fn expect_bool_array_any4(values: [Bool; 4], expected: Bool) -> Int {
+    return expect_bool_eq(array_any4_bool(values), expected)
+}
+
+pub fn expect_bool_array_any5(values: [Bool; 5], expected: Bool) -> Int {
+    return expect_bool_eq(array_any5_bool(values), expected)
+}
+
+pub fn expect_bool_array_none3(values: [Bool; 3], expected: Bool) -> Int {
+    return expect_bool_eq(array_none3_bool(values), expected)
+}
+
+pub fn expect_bool_array_none4(values: [Bool; 4], expected: Bool) -> Int {
+    return expect_bool_eq(array_none4_bool(values), expected)
+}
+
+pub fn expect_bool_array_none5(values: [Bool; 5], expected: Bool) -> Int {
+    return expect_bool_eq(array_none5_bool(values), expected)
 }
 
 pub fn expect_int_ne(actual: Int, unexpected: Int) -> Int {

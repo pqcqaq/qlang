@@ -2,6 +2,7 @@
 name = "std.test"
 
 [dependencies]
+"std.array" = "../array"
 "std.core" = "../core"
 "std.option" = "../option"
 "std.result" = "../result"
