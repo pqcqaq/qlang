@@ -1,0 +1,47 @@
+// qlang interface v1
+// package: std.array
+
+// source: src/lib.ql
+package std.array
+
+pub fn sum3_int_array(values: [Int; 3]) -> Int
+
+pub fn sum4_int_array(values: [Int; 4]) -> Int
+
+pub fn sum5_int_array(values: [Int; 5]) -> Int
+
+pub fn product3_int_array(values: [Int; 3]) -> Int
+
+pub fn product4_int_array(values: [Int; 4]) -> Int
+
+pub fn product5_int_array(values: [Int; 5]) -> Int
+
+pub fn max3_int_array(values: [Int; 3]) -> Int
+
+pub fn max4_int_array(values: [Int; 4]) -> Int
+
+pub fn max5_int_array(values: [Int; 5]) -> Int
+
+pub fn min3_int_array(values: [Int; 3]) -> Int
+
+pub fn min4_int_array(values: [Int; 4]) -> Int
+
+pub fn min5_int_array(values: [Int; 5]) -> Int
+
+pub fn all3_bool_array(values: [Bool; 3]) -> Bool
+
+pub fn all4_bool_array(values: [Bool; 4]) -> Bool
+
+pub fn all5_bool_array(values: [Bool; 5]) -> Bool
+
+pub fn any3_bool_array(values: [Bool; 3]) -> Bool
+
+pub fn any4_bool_array(values: [Bool; 4]) -> Bool
+
+pub fn any5_bool_array(values: [Bool; 5]) -> Bool
+
+pub fn none3_bool_array(values: [Bool; 3]) -> Bool
+
+pub fn none4_bool_array(values: [Bool; 4]) -> Bool
+
+pub fn none5_bool_array(values: [Bool; 5]) -> Bool

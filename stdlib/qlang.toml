@@ -1,2 +1,2 @@
 [workspace]
-members = ["packages/core", "packages/option", "packages/result", "packages/test"]
+members = ["packages/core", "packages/option", "packages/result", "packages/array", "packages/test"]

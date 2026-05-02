@@ -12,7 +12,7 @@
 
 ## Current Assessment
 
-- `stdlib` is real production-facing code: downstream projects can depend on `std.core`, `std.option`, `std.result`, and `std.test` through local `[dependencies]`.
+- `stdlib` is real production-facing code: downstream projects can depend on `std.core`, `std.option`, `std.result`, `std.array`, and `std.test` through local `[dependencies]`.
 - The current API shape is too concrete because backend and dependency bridge support still reject generic functions and generic public type execution.
 - `IntOption` / `BoolOption`, `IntResult` / `BoolResult`, and `sum3_int` / `sum4_int` / `sum5_int` are transitional compatibility surfaces, not the desired long-term library design.
 - Generic `Option[T]` / `Result[T, E]` should move into the P0 stdlib unblock path once generic package execution is stable.
@@ -38,7 +38,7 @@
 
 1. Add a concise contract that marks existing concrete APIs as transitional compatibility APIs.
 2. Add or tighten a downstream package/workspace test that runs `ql project init --stdlib <path>` and then `ql test` against the generated project.
-3. Ensure that generated smoke code imports `std.core`, `std.option`, `std.result`, and `std.test` through normal local dependencies.
+3. Ensure that generated smoke code imports `std.core`, `std.option`, `std.result`, `std.array`, and `std.test` through normal local dependencies.
 4. Run the smallest CLI tests covering stdlib project init and generated smoke execution.
 5. Commit as `docs: clarify stdlib roadmap` if this remains documentation-only, or `test: strengthen stdlib consumer smoke` if tests are added.
 
@@ -87,6 +87,8 @@
 8. Commit as `feat: add generic std option result`.
 
 ## Task 4: Collection-First Replacement for Fixed-Arity Helpers
+
+Status: first executable slice landed. `std.array` now provides concrete fixed-array helpers for `Int` and `Bool`, has package-local smoke tests, has a generated `.qi`, and is consumed by `ql project init --stdlib` package/workspace templates. Next work in this task should replace the concrete `3/4/5` surface with generic array helpers only after generic public API execution is available.
 
 **Files:**
 - Create: `stdlib/packages/array/qlang.toml`

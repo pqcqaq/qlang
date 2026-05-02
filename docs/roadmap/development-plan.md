@@ -36,7 +36,7 @@
 
 - 能从 `ql project init` / `add` 建出 workspace，并直接从 workspace 根目录执行 `check/build/run/test`。
 - 本地路径依赖不再只停在窄的 public free function / `extern "c"`；至少要覆盖真实项目常见的 public value/type/member 使用路径。
-- 仓库内存在最小 `stdlib`，至少包含普通 Qlang package 形态的 `std.core`、`std.option`、`std.result` 与 `std.test`，并能被真实项目通过本地依赖消费。
+- 仓库内存在最小 `stdlib`，至少包含普通 Qlang package 形态的 `std.core`、`std.option`、`std.result`、`std.array` 与 `std.test`，并能被真实项目通过本地依赖消费。
 - `stdlib` 不再继续主要靠 `Int*` / `Bool*` concrete carrier 和 3/4/5 固定参数 helper 扩面；generic public function/type、generic `Option[T]` / `Result[T, E]`，以及能替代固定参数复制的数组/集合 helper 必须有可执行路径或明确的阻塞测试。
 - VSCode 中打开真实 workspace 时，definition / references / hover / completion / semantic tokens / `workspace/symbol` 不再只在理想样例里工作。
 - `ql`、`qlsp`、VSIX 的安装和版本绑定有明确、稳定、可复现的路径。
@@ -115,7 +115,7 @@
 目标：
 
 - 先以普通 Qlang workspace/package 形态落地 `stdlib`，不先做编译器内置 prelude。
-- 让用户项目能通过本地 `[dependencies]` 显式依赖 `std.core` / `std.option` / `std.result` / `std.test`。
+- 让用户项目能通过本地 `[dependencies]` 显式依赖 `std.core` / `std.option` / `std.result` / `std.array` / `std.test`。
 - 用 `stdlib` 反向驱动 dependency-aware backend、项目模板和文档收口。
 - 把当前 concrete/fixed-arity helper 收敛为过渡兼容面，主线改为 generic carriers、集合/数组 helper、真实 downstream smoke 和后续可变参数设计。
 
@@ -124,15 +124,16 @@
 - `stdlib/packages/core` 能被 `ql check/build/test` 验证，并提供第一批稳定基础函数。（已落地整数/布尔 helper，含符号、比较、三/四/五值 extrema、三值 median、3/4/5 项整数聚合、2/3/4/5 项均值、安全 quotient/remainder、3/4/5 项 Bool all/any/none 聚合、单边/双边/无序边界 clamp、边界归一化、绝对差、range span、range/bounds 距离、零值/正负/非正/非负、奇偶、闭/开区间、无序边界区间、区间外/无序边界外、3/4/5 项升/降序判断、整除、余数、因子、容差内/外检查和基础布尔组合）
 - `stdlib/packages/option` 能被 `ql check/build/test` 验证，并提供当前 dependency bridge 可执行的 concrete option surface。（已落地 `IntOption` / `BoolOption` 的 some/none 构造、is_some/is_none 判定、unwrap_or、or / or_option 与默认值 helper；泛型 `Option[T]` / prelude 集成继续后置）
 - `stdlib/packages/result` 能被 `ql check/build/test` 验证，并提供当前 dependency bridge 可执行的 concrete result surface。（已落地 `IntResult` / `BoolResult` 的 ok/err 构造、is_ok/is_err 判定、`unwrap_result_or_*`、`or_result_*`、error-code helper、无损 error-to-option helper，以及 concrete Option/Result 互转 helper；泛型 `Result[T, E]` / prelude 集成继续后置）
+- `stdlib/packages/array` 能被 `ql check/build/test` 验证，并提供当前 dependency bridge 可执行的固定长度数组 helper。（已落地 `Int` 数组 sum/product/min/max 与 `Bool` 数组 all/any/none 的 3/4/5 长度 helper；这是 collection-shaped 过渡面，泛型数组 helper、动态集合和迭代器继续由 generic public API / backend 路线解锁）
 - `stdlib/packages/test` 能提供 smoke-test 友好的断言辅助，并通过 package-aware smoke test 直接导入自身 public helpers。（已落地 true/false、bool equality/ne/logic/implies、Bool all/any/none、Bool-to-Int、int equality/order、zero/nonzero、max/min/median、sum/product/average、sign/compare、abs/abs-diff/range-span/bounds、quotient/remainder/has-remainder/factor、Option/Result carrier、转换与 error extraction 断言、2-6 路 status 组合、正负/非正/非负、区间、无序边界区间、单边/双边 clamp / range-distance、3/4/5 项升/降序、奇偶、整除和容差内/外断言）
-- 用户项目模板能依赖 `std.core` / `std.option` / `std.result` / `std.test` 并通过 `ql test`。（已落地 `ql project init --stdlib <path>` 的 package 与 workspace member 生成路径）
+- 用户项目模板能依赖 `std.core` / `std.option` / `std.result` / `std.array` / `std.test` 并通过 `ql test`。（已落地 `ql project init --stdlib <path>` 的 package 与 workspace member 生成路径，并且生成的 lib/main/smoke 都会真实消费 `std.array`）
 - `stdlib` 当前已发布的 concrete API 继续使用稳定语言面并保持可执行；generic `Option[T]` / `Result[T, E]` 和 generic public helper 不再作为远期后置项，而是先用 failing tests 驱动 dependency bridge / monomorphization / codegen 打通后再替换 concrete 主路径。
 - 数组/集合 helper 是替代 `sum3/4/5`、`all3/4/5` 这类固定参数复制的近期方向；可变参数语法需要独立设计 ABI、`.qi` 表示、typeck、LSP 和 lowering，先进入设计 gate，不直接承诺为下一轮实现。
 
 ## 下一轮（已排定）
 
-- stdlib/generics：按 [Stdlib Generics and Collections Roadmap](/plans/2026-05-02-stdlib-generics-and-collections-roadmap) 推进；下一刀优先写 direct local dependency 的 generic public function / generic struct / generic enum failing tests，并用它们驱动 `.qi`、dependency bridge 和 LLVM codegen 的最小泛型执行面。
-- stdlib/API：暂停继续堆新的 `foo3/foo4/foo5` 式 helper；现有 concrete Option/Result 和 fixed-arity helper 保留为兼容面，新的主路径优先设计 generic carrier 与数组/集合 helper。
+- stdlib/generics：按 [Stdlib Generics and Collections Roadmap](/plans/2026-05-02-stdlib-generics-and-collections-roadmap) 推进；`std.array` 的固定数组过渡面已先落地，下一刀优先写 direct local dependency 的 generic public function / generic struct / generic enum failing tests，并用它们驱动 `.qi`、dependency bridge 和 LLVM codegen 的最小泛型执行面。
+- stdlib/API：暂停继续堆新的重复参数 `foo3/foo4/foo5` 式 helper；现有 concrete Option/Result 和 fixed-arity helper 保留为兼容面，新的主路径优先设计 generic carrier、数组/集合 helper 和后续可变参数。
 - backend：继续扩 direct local dependency 下真实项目高频的 public value/type/member 调用面；短期重点从非泛型 alias 转到 generic public API 的实例化、桥接和 codegen。后续仍优先修 `stdlib` / 模板暴露的真实阻塞。
 - LSP：`textDocument/implementation` 的已完成基线已明显超出这里最初记录，当前准确支持面以 `current-supported-surface.md` 为准；继续扩更宽的 implementation index，但不压过 P0 stdlib / backend 阻塞项。
 - 文档：继续只保留入口结论、支持边界和最近 checkpoint；不再追加长流水账。

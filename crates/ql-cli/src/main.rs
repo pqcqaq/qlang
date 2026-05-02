@@ -11760,11 +11760,13 @@ fn resolve_project_init_stdlib_dependencies(
     let core_root = stdlib_root.join("packages").join("core");
     let option_root = stdlib_root.join("packages").join("option");
     let result_root = stdlib_root.join("packages").join("result");
+    let array_root = stdlib_root.join("packages").join("array");
     let test_root = stdlib_root.join("packages").join("test");
 
     validate_stdlib_package(&core_root, "std.core")?;
     validate_stdlib_package(&option_root, "std.option")?;
     validate_stdlib_package(&result_root, "std.result")?;
+    validate_stdlib_package(&array_root, "std.array")?;
     validate_stdlib_package(&test_root, "std.test")?;
 
     Ok(vec![
@@ -11779,6 +11781,10 @@ fn resolve_project_init_stdlib_dependencies(
         (
             "std.result".to_owned(),
             relative_path_from(&package_root, &result_root),
+        ),
+        (
+            "std.array".to_owned(),
+            relative_path_from(&package_root, &array_root),
         ),
         (
             "std.test".to_owned(),
@@ -12853,33 +12859,43 @@ fn default_package_test_source() -> &'static str {
 }
 
 fn stdlib_package_source() -> &'static str {
-    r#"use std.core.clamp_int as clamp_int
+    r#"use std.array.sum3_int_array as sum3_int_array
+use std.core.clamp_int as clamp_int
 use std.option.some_int as some_int
 use std.option.unwrap_or_int as unwrap_or_int
 use std.result.ok_int as result_ok_int
 use std.result.unwrap_result_or_int as result_unwrap_or_int
 
 pub fn run() -> Int {
-    return clamp_int(result_unwrap_or_int(result_ok_int(unwrap_or_int(some_int(42), 0)), 0), 0, 100)
+    return clamp_int(result_unwrap_or_int(result_ok_int(unwrap_or_int(some_int(42), 0)), 0) + sum3_int_array([1, 2, 3]), 0, 100)
 }
 "#
 }
 
 fn stdlib_package_main_source() -> &'static str {
-    r#"use std.core.bool_to_int as bool_to_int
+    r#"use std.array.all3_bool_array as all3_bool_array
+use std.core.bool_to_int as bool_to_int
 use std.option.some_bool as some_bool
 use std.option.unwrap_or_bool as unwrap_or_bool
 use std.result.ok_bool as result_ok_bool
 use std.result.unwrap_result_or_bool as result_unwrap_or_bool
 
 fn main() -> Int {
-    return 1 - bool_to_int(result_unwrap_or_bool(result_ok_bool(unwrap_or_bool(some_bool(true), false)), false))
+    return 1 - bool_to_int(result_unwrap_or_bool(result_ok_bool(all3_bool_array([true, unwrap_or_bool(some_bool(true), false), true])), false))
 }
 "#
 }
 
 fn stdlib_package_test_source() -> &'static str {
-    r#"use std.core.abs_diff_int as abs_diff_int
+    r#"use std.array.all3_bool_array as all3_bool_array
+use std.array.any5_bool_array as any5_bool_array
+use std.array.max5_int_array as max5_int_array
+use std.array.min5_int_array as min5_int_array
+use std.array.none4_bool_array as none4_bool_array
+use std.array.product4_int_array as product4_int_array
+use std.array.sum3_int_array as sum3_int_array
+use std.array.sum5_int_array as sum5_int_array
+use std.core.abs_diff_int as abs_diff_int
 use std.core.abs_int as abs_int
 use std.core.all3_bool as all3_bool
 use std.core.all4_bool as all4_bool
@@ -13166,6 +13182,11 @@ fn main() -> Int {
     let bool_none4_check = expect_bool_none4(false, false, true, false, false)
     let bool_none5_check = expect_bool_none5(false, false, false, false, false, true)
     let bool_to_int_expect_check = expect_bool_to_int(true, 1)
+    let array_sum_check = expect_int_eq(sum3_int_array([2, 3, 4]), 9)
+    let array_sum5_check = expect_int_eq(sum5_int_array([2, 3, 4, 5, 6]), 20)
+    let array_product_check = expect_int_eq(product4_int_array([2, 3, 4, 5]), 120)
+    let array_extrema_check = expect_int_eq(max5_int_array([3, 9, 5, 7, 11]), 11) + expect_int_eq(min5_int_array([3, 9, 5, 7, 1]), 1)
+    let array_bool_check = expect_bool_eq(all3_bool_array([true, true, true]), true) + expect_bool_eq(any5_bool_array([false, false, false, false, true]), true) + expect_bool_eq(none4_bool_array([false, false, false, false]), true)
     let max_expect_check = expect_int_max(20, 22, 22)
     let min_expect_check = expect_int_min(20, 22, 20)
     let max3_expect_check = expect_int_max3(20, 22, 21, 22)
@@ -13330,8 +13351,9 @@ fn main() -> Int {
     let range_status = merge_status5(exclusive_bounds_check + outside_bounds_check + clamp_min_expect_check + clamp_max_expect_check + clamped_check + clamped_bounds_check, distance_range_expect_check + distance_bounds_expect_check + max_expect_check + min_expect_check, max3_expect_check + min3_expect_check + max4_expect_check + min4_expect_check + max5_expect_check + min5_expect_check + median3_expect_check, sum3_expect_check + sum4_expect_check + sum5_expect_check + product3_expect_check + product4_expect_check + product5_expect_check + average2_expect_check + average3_expect_check + average4_expect_check + average5_expect_check, sign_expect_check + sign_zero_expect_check + compare_less_expect_check + compare_equal_expect_check + compare_greater_expect_check + abs_expect_check + abs_diff_expect_check + range_span_expect_check + lower_bound_expect_check + upper_bound_expect_check + quotient_expect_check + quotient_zero_expect_check + remainder_expect_check + remainder_zero_expect_check + has_remainder_expect_check + factor_expect_check + ascending_check + ascending4_check + ascending5_check + strict_ascending_check + strict_ascending4_check + strict_ascending5_check + descending_check + descending4_check + descending5_check + strict_descending_check + strict_descending4_check + strict_descending5_check + divisible_check + within_check + not_within_check + even_check + odd_check + positive_check + negative_check + nonnegative_check + nonpositive_check + test_implies_check + true_check + status_ok_bool_check)
     let status_helper_status = merge_status4(status_failed_bool_check + merged_status_check + merged_status3_check + merged_status4_check, merged_status5_check + merged_status6_check + status_ok_check + status_failed_check, failed_status_ok_check + failed_status_failed_check + failed_range_check + failed_exclusive_range_check, failed_outside_check + failed_bounds_check + failed_exclusive_bounds_check + failed_outside_bounds_check)
     let failure_status = merge_status4(failed_clamp_min_check + failed_clamp_max_check + failed_clamped_check + failed_clamped_bounds_check + failed_distance_range_check + failed_distance_bounds_check, failed_max_check + failed_min_check + failed_max3_check + failed_min3_check + failed_max4_check + failed_min4_check + failed_max5_check + failed_min5_check + failed_median3_check, failed_sum3_check + failed_sum4_check + failed_sum5_check + failed_product3_check + failed_product4_check + failed_product5_check + failed_average2_check + failed_average3_check + failed_average4_check + failed_average5_check + failed_sign_check + failed_compare_equal_check + failed_compare_order_check + failed_abs_check + failed_abs_diff_check + failed_range_span_check + failed_lower_bound_check + failed_upper_bound_check + failed_quotient_check + failed_quotient_zero_check, failed_remainder_check + failed_remainder_zero_check + failed_has_remainder_check + failed_factor_check + failed_ascending_check + failed_ascending4_check + failed_ascending5_check + failed_strict_ascending_check + failed_strict_ascending4_check + failed_strict_ascending5_check + failed_descending_check + failed_descending4_check + failed_descending5_check + failed_strict_descending_check + failed_strict_descending4_check + failed_strict_descending5_check + failed_divisible_check + failed_within_check + failed_not_within_check + failed_even_check + failed_odd_check + failed_positive_check + failed_negative_check + failed_nonnegative_check + failed_nonpositive_check + failed_implies_check)
+    let array_status = merge_status5(array_sum_check, array_sum5_check, array_product_check, array_extrema_check, array_bool_check)
 
-    return expect_status_ok(merge_status6(core_status, bool_status, range_status, status_helper_status, failure_status, merge_status6(option_status, option_or_status, result_status, result_or_status, conversion_status, conversion_bool_status + error_option_status)))
+    return expect_status_ok(merge_status6(core_status, bool_status, range_status, status_helper_status, failure_status, merge_status6(array_status + option_status, option_or_status, result_status, result_or_status, conversion_status, conversion_bool_status + error_option_status)))
 }
 "#
 }
