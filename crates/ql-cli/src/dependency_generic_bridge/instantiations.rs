@@ -235,12 +235,16 @@ fn collect_dependency_generic_function_instantiations_from_item(
                     dependency_function,
                     &mut bindings,
                     instantiations,
+                    root_function.return_type.as_ref(),
+                    root_function.return_type.as_ref(),
                 );
             }
         }
         ItemKind::Const(global) | ItemKind::Static(global) => {
             collect_dependency_generic_function_instantiations_from_expr(
                 &global.value,
+                Some(&global.ty),
+                None,
                 local_names,
                 dependency_function,
                 root_bindings,
@@ -252,6 +256,8 @@ fn collect_dependency_generic_function_instantiations_from_item(
                 if let Some(default) = &field.default {
                     collect_dependency_generic_function_instantiations_from_expr(
                         default,
+                        Some(&field.ty),
+                        None,
                         local_names,
                         dependency_function,
                         root_bindings,
@@ -271,6 +277,8 @@ fn collect_dependency_generic_function_instantiations_from_item(
                         dependency_function,
                         &mut bindings,
                         instantiations,
+                        method.return_type.as_ref(),
+                        method.return_type.as_ref(),
                     );
                 }
             }
@@ -286,6 +294,8 @@ fn collect_dependency_generic_function_instantiations_from_item(
                         dependency_function,
                         &mut bindings,
                         instantiations,
+                        method.return_type.as_ref(),
+                        method.return_type.as_ref(),
                     );
                 }
             }
@@ -301,6 +311,8 @@ fn collect_dependency_generic_function_instantiations_from_item(
                         dependency_function,
                         &mut bindings,
                         instantiations,
+                        method.return_type.as_ref(),
+                        method.return_type.as_ref(),
                     );
                 }
             }
@@ -315,6 +327,8 @@ fn collect_dependency_generic_function_instantiations_from_block(
     function: &FunctionDecl,
     bindings: &mut ValueTypeBindings,
     instantiations: &mut BTreeSet<TypeSubstitutions>,
+    return_expected_ty: Option<&TypeExpr>,
+    tail_expected_ty: Option<&TypeExpr>,
 ) {
     for statement in &block.statements {
         match &statement.kind {
@@ -323,6 +337,8 @@ fn collect_dependency_generic_function_instantiations_from_block(
             } => {
                 collect_dependency_generic_function_instantiations_from_expr(
                     value,
+                    ty.as_ref(),
+                    return_expected_ty,
                     local_names,
                     function,
                     bindings,
@@ -330,11 +346,22 @@ fn collect_dependency_generic_function_instantiations_from_block(
                 );
                 record_let_type_bindings(pattern, ty.as_ref(), value, bindings);
             }
-            ql_ast::StmtKind::Return(Some(value))
-            | ql_ast::StmtKind::Defer(value)
-            | ql_ast::StmtKind::Expr { expr: value, .. } => {
+            ql_ast::StmtKind::Return(Some(value)) => {
                 collect_dependency_generic_function_instantiations_from_expr(
                     value,
+                    return_expected_ty,
+                    return_expected_ty,
+                    local_names,
+                    function,
+                    bindings,
+                    instantiations,
+                );
+            }
+            ql_ast::StmtKind::Defer(value) | ql_ast::StmtKind::Expr { expr: value, .. } => {
+                collect_dependency_generic_function_instantiations_from_expr(
+                    value,
+                    None,
+                    return_expected_ty,
                     local_names,
                     function,
                     bindings,
@@ -344,6 +371,8 @@ fn collect_dependency_generic_function_instantiations_from_block(
             ql_ast::StmtKind::While { condition, body } => {
                 collect_dependency_generic_function_instantiations_from_expr(
                     condition,
+                    None,
+                    return_expected_ty,
                     local_names,
                     function,
                     bindings,
@@ -356,6 +385,8 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     function,
                     &mut body_bindings,
                     instantiations,
+                    return_expected_ty,
+                    None,
                 );
             }
             ql_ast::StmtKind::Loop { body } => {
@@ -366,11 +397,15 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     function,
                     &mut body_bindings,
                     instantiations,
+                    return_expected_ty,
+                    None,
                 );
             }
             ql_ast::StmtKind::For { iterable, body, .. } => {
                 collect_dependency_generic_function_instantiations_from_expr(
                     iterable,
+                    None,
+                    return_expected_ty,
                     local_names,
                     function,
                     bindings,
@@ -383,6 +418,8 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     function,
                     &mut body_bindings,
                     instantiations,
+                    return_expected_ty,
+                    None,
                 );
             }
             ql_ast::StmtKind::Return(None)
@@ -393,6 +430,8 @@ fn collect_dependency_generic_function_instantiations_from_block(
     if let Some(tail) = &block.tail {
         collect_dependency_generic_function_instantiations_from_expr(
             tail,
+            tail_expected_ty,
+            return_expected_ty,
             local_names,
             function,
             bindings,
@@ -403,6 +442,8 @@ fn collect_dependency_generic_function_instantiations_from_block(
 
 fn collect_dependency_generic_function_instantiations_from_expr(
     expr: &Expr,
+    expected_ty: Option<&TypeExpr>,
+    return_expected_ty: Option<&TypeExpr>,
     local_names: &BTreeSet<String>,
     function: &FunctionDecl,
     bindings: &ValueTypeBindings,
@@ -412,13 +453,19 @@ fn collect_dependency_generic_function_instantiations_from_expr(
         ExprKind::Call { callee, args } => {
             if let ExprKind::Name(name) = &callee.kind
                 && local_names.contains(name)
-                && let Some(substitutions) =
-                    infer_dependency_generic_function_substitutions(function, args, bindings)
+                && let Some(substitutions) = infer_dependency_generic_function_substitutions(
+                    function,
+                    args,
+                    expected_ty,
+                    bindings,
+                )
             {
                 instantiations.insert(substitutions);
             }
             collect_dependency_generic_function_instantiations_from_expr(
                 callee,
+                None,
+                return_expected_ty,
                 local_names,
                 function,
                 bindings,
@@ -429,6 +476,8 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                     CallArg::Positional(value) | CallArg::Named { value, .. } => {
                         collect_dependency_generic_function_instantiations_from_expr(
                             value,
+                            None,
+                            return_expected_ty,
                             local_names,
                             function,
                             bindings,
@@ -442,6 +491,8 @@ fn collect_dependency_generic_function_instantiations_from_expr(
             for item in items {
                 collect_dependency_generic_function_instantiations_from_expr(
                     item,
+                    None,
+                    return_expected_ty,
                     local_names,
                     function,
                     bindings,
@@ -454,6 +505,8 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 if let Some(value) = &field.value {
                     collect_dependency_generic_function_instantiations_from_expr(
                         value,
+                        None,
+                        return_expected_ty,
                         local_names,
                         function,
                         bindings,
@@ -465,6 +518,8 @@ fn collect_dependency_generic_function_instantiations_from_expr(
         ExprKind::Binary { left, right, .. } => {
             collect_dependency_generic_function_instantiations_from_expr(
                 left,
+                None,
+                return_expected_ty,
                 local_names,
                 function,
                 bindings,
@@ -472,6 +527,8 @@ fn collect_dependency_generic_function_instantiations_from_expr(
             );
             collect_dependency_generic_function_instantiations_from_expr(
                 right,
+                None,
+                return_expected_ty,
                 local_names,
                 function,
                 bindings,
@@ -481,6 +538,8 @@ fn collect_dependency_generic_function_instantiations_from_expr(
         ExprKind::Unary { expr, .. } | ExprKind::Question(expr) => {
             collect_dependency_generic_function_instantiations_from_expr(
                 expr,
+                None,
+                return_expected_ty,
                 local_names,
                 function,
                 bindings,
@@ -490,6 +549,8 @@ fn collect_dependency_generic_function_instantiations_from_expr(
         ExprKind::Member { object, .. } => {
             collect_dependency_generic_function_instantiations_from_expr(
                 object,
+                None,
+                return_expected_ty,
                 local_names,
                 function,
                 bindings,
@@ -499,6 +560,8 @@ fn collect_dependency_generic_function_instantiations_from_expr(
         ExprKind::Bracket { target, items } => {
             collect_dependency_generic_function_instantiations_from_expr(
                 target,
+                None,
+                return_expected_ty,
                 local_names,
                 function,
                 bindings,
@@ -507,6 +570,8 @@ fn collect_dependency_generic_function_instantiations_from_expr(
             for item in items {
                 collect_dependency_generic_function_instantiations_from_expr(
                     item,
+                    None,
+                    return_expected_ty,
                     local_names,
                     function,
                     bindings,
@@ -522,6 +587,8 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 function,
                 &mut block_bindings,
                 instantiations,
+                return_expected_ty,
+                expected_ty,
             );
         }
         ExprKind::If {
@@ -531,6 +598,8 @@ fn collect_dependency_generic_function_instantiations_from_expr(
         } => {
             collect_dependency_generic_function_instantiations_from_expr(
                 condition,
+                None,
+                return_expected_ty,
                 local_names,
                 function,
                 bindings,
@@ -543,10 +612,14 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 function,
                 &mut then_bindings,
                 instantiations,
+                return_expected_ty,
+                expected_ty,
             );
             if let Some(else_branch) = else_branch {
                 collect_dependency_generic_function_instantiations_from_expr(
                     else_branch,
+                    expected_ty,
+                    return_expected_ty,
                     local_names,
                     function,
                     bindings,
@@ -557,6 +630,8 @@ fn collect_dependency_generic_function_instantiations_from_expr(
         ExprKind::Match { value, arms } => {
             collect_dependency_generic_function_instantiations_from_expr(
                 value,
+                None,
+                return_expected_ty,
                 local_names,
                 function,
                 bindings,
@@ -566,6 +641,8 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 if let Some(guard) = &arm.guard {
                     collect_dependency_generic_function_instantiations_from_expr(
                         guard,
+                        None,
+                        return_expected_ty,
                         local_names,
                         function,
                         bindings,
@@ -574,6 +651,8 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 }
                 collect_dependency_generic_function_instantiations_from_expr(
                     &arm.body,
+                    expected_ty,
+                    return_expected_ty,
                     local_names,
                     function,
                     bindings,
@@ -584,6 +663,8 @@ fn collect_dependency_generic_function_instantiations_from_expr(
         ExprKind::Closure { body, .. } => {
             collect_dependency_generic_function_instantiations_from_expr(
                 body,
+                None,
+                None,
                 local_names,
                 function,
                 bindings,
@@ -601,6 +682,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
 fn infer_dependency_generic_function_substitutions(
     function: &FunctionDecl,
     args: &[CallArg],
+    expected_ty: Option<&TypeExpr>,
     bindings: &ValueTypeBindings,
 ) -> Option<TypeSubstitutions> {
     if args.iter().any(|arg| matches!(arg, CallArg::Named { .. })) {
@@ -636,6 +718,19 @@ fn infer_dependency_generic_function_substitutions(
             ) {
                 return None;
             }
+        }
+    }
+    if let (Some(return_ty), Some(expected_ty)) = (function.return_type.as_ref(), expected_ty)
+        && type_expr_mentions_generic(return_ty, &generic_names)
+    {
+        let expected_ty = InferredType::from_type_expr(expected_ty)?;
+        if !collect_generic_type_substitutions(
+            return_ty,
+            &expected_ty,
+            &generic_names,
+            &mut substitutions,
+        ) {
+            return None;
         }
     }
     Some(substitutions)
@@ -1004,5 +1099,70 @@ fn run() -> Int {
             .next()
             .expect("one substitution should be inferred");
         assert_eq!(substitutions.get("T").map(String::as_str), Some("Int"));
+    }
+
+    #[test]
+    fn infers_substitution_from_explicit_result_context() {
+        let dependency = parse_module(
+            r#"
+package std.result
+
+pub enum Result[T, E] {
+    Ok(T),
+    Err(E),
+}
+
+pub fn ok[T, E](value: T) -> Result[T, E] {
+    return Result.Ok(value)
+}
+
+pub fn err[T, E](error: E) -> Result[T, E] {
+    return Result.Err(error)
+}
+"#,
+        );
+        let root = parse_module(
+            r#"
+use std.result.Result as Result
+use std.result.ok as result_ok
+use std.result.err as result_err
+
+fn make_ok() -> Result[Int, Int] {
+    return result_ok(42)
+}
+
+fn run() -> Int {
+    let failed: Result[Int, Int] = result_err(3)
+    return 0
+}
+"#,
+        );
+
+        let ok_instantiations = collect_public_function_instantiations(
+            &root,
+            &["std".to_owned(), "result".to_owned()],
+            function(&dependency, "ok"),
+        );
+        let err_instantiations = collect_public_function_instantiations(
+            &root,
+            &["std".to_owned(), "result".to_owned()],
+            function(&dependency, "err"),
+        );
+
+        assert_eq!(ok_instantiations.len(), 1);
+        let ok = ok_instantiations
+            .iter()
+            .next()
+            .expect("ok should infer one substitution");
+        assert_eq!(ok.get("T").map(String::as_str), Some("Int"));
+        assert_eq!(ok.get("E").map(String::as_str), Some("Int"));
+
+        assert_eq!(err_instantiations.len(), 1);
+        let err = err_instantiations
+            .iter()
+            .next()
+            .expect("err should infer one substitution");
+        assert_eq!(err.get("T").map(String::as_str), Some("Int"));
+        assert_eq!(err.get("E").map(String::as_str), Some("Int"));
     }
 }

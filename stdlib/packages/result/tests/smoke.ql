@@ -5,9 +5,11 @@ use std.result.error_to_option_int as error_to_option_int
 use std.result.error_or as result_error_or
 use std.result.error_or_zero_bool as error_or_zero_bool
 use std.result.error_or_zero_int as error_or_zero_int
+use std.result.err as result_err
 use std.result.is_err as result_is_err
 use std.result.is_err_bool as is_err_bool
 use std.result.is_err_int as is_err_int
+use std.result.ok as result_ok
 use std.result.is_ok as result_is_ok
 use std.result.is_ok_bool as is_ok_bool
 use std.result.is_ok_int as is_ok_int
@@ -69,9 +71,9 @@ fn main() -> Int {
     let option_status = sum6(check_int(option_unwrap_or_int(to_option_int(ok_int(13)), 0), 13), check_bool(option_is_none_int(to_option_int(err_int(3))), true), check_bool(option_unwrap_or_bool(to_option_bool(ok_bool(false)), true), false), check_bool(option_is_none_bool(to_option_bool(err_bool(4))), true), check_int(unwrap_result_or_int(ok_or_int(option_some_int(19), 5), 0), 19), check_int(error_or_zero_int(ok_or_int(option_none_int(), 5)), 5))
     let option_bool_status = sum6(check_bool(unwrap_result_or_bool(ok_or_bool(option_some_bool(true), 6), false), true), check_int(error_or_zero_bool(ok_or_bool(option_none_bool(), 6)), 6), 0, 0, 0, 0)
     let error_option_status = sum6(check_int(option_unwrap_or_int(error_to_option_int(err_int(0)), 9), 0), check_bool(option_is_none_int(error_to_option_int(ok_int(7))), true), check_int(option_unwrap_or_int(error_to_option_bool(err_bool(0)), 9), 0), check_bool(option_is_none_int(error_to_option_bool(ok_bool(false))), true), 0, 0)
-    let generic_ok: Result[Int, Int] = Result.Ok(17)
-    let generic_err: Result[Int, Int] = Result.Err(4)
-    let generic_fallback: Result[Int, Int] = Result.Ok(23)
+    let generic_ok: Result[Int, Int] = result_ok(17)
+    let generic_err: Result[Int, Int] = result_err(4)
+    let generic_fallback: Result[Int, Int] = result_ok(23)
     let generic_or: Result[Int, Int] = generic_or_result(generic_err, generic_fallback)
     let generic_status = sum6(check_bool(result_is_ok(generic_ok), true), check_bool(result_is_err(generic_err), true), check_int(result_unwrap_result_or(generic_ok, 0), 17), check_int(result_unwrap_result_or(generic_err, 9), 9), check_int(result_error_or(generic_err, 0), 4), check_int(result_unwrap_result_or(generic_or, 0), 23))
 

@@ -1815,6 +1815,146 @@ fn main() -> Int {
 }
 
 #[test]
+fn build_package_path_json_infers_dependency_generic_function_from_result_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-json-generic-public-function-result-context");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src"))
+        .expect("create dep source tree for dependency generic function result context");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create app source tree for dependency generic function result context");
+
+    let dep_manifest = temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        r#"
+pub enum Result[T, E] {
+    Ok(T),
+    Err(E),
+}
+
+pub fn ok[T, E](value: T) -> Result[T, E] {
+    return Result.Ok(value)
+}
+
+pub fn err[T, E](error: E) -> Result[T, E] {
+    return Result.Err(error)
+}
+"#,
+    );
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "app/src/main.ql",
+        r#"
+use dep.Result as Result
+use dep.ok as result_ok
+use dep.err as result_err
+
+fn make_ok() -> Result[Int, Int] {
+    return result_ok(7)
+}
+
+fn ok_status(value: Result[Int, Int]) -> Int {
+    return match value {
+        Result.Ok(inner) => inner,
+        Result.Err(_) => 0,
+    }
+}
+
+fn err_status(value: Result[Int, Int]) -> Int {
+    return match value {
+        Result.Ok(_) => 0,
+        Result.Err(error) => error,
+    }
+}
+
+fn main() -> Int {
+    let failed: Result[Int, Int] = result_err(3)
+    return ok_status(make_ok()) + err_status(failed)
+}
+"#,
+    );
+
+    let dep_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let app_output = project_root.join("target/ql/debug/main.ll");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` direct dependency generic public function result context",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-package-json-generic-public-function-result-context",
+        "package build json dependency generic public function result context",
+        &output,
+    )
+    .expect("package-path `ql build --json` should infer generic function instantiations from explicit result context");
+    expect_empty_stderr(
+        "project-build-package-json-generic-public-function-result-context",
+        "package build json dependency generic public function result context",
+        &stderr,
+    )
+    .expect("result-context generic function instantiation json build should not print stderr");
+
+    let json = parse_json_output(
+        "project-build-package-json-generic-public-function-result-context",
+        &stdout,
+    );
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(json["status"], "ok");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    let built_targets = json["built_targets"]
+        .as_array()
+        .expect("result-context generic function json should expose built_targets");
+    assert_eq!(built_targets.len(), 2);
+    assert_eq!(
+        built_targets[0]["manifest_path"],
+        dep_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        built_targets[1]["artifact_path"],
+        app_output.display().to_string().replace('\\', "/")
+    );
+    expect_file_exists(
+        "project-build-package-json-generic-public-function-result-context",
+        &dep_output,
+        "dependency package artifact",
+        "package build json dependency generic public function result context",
+    )
+    .expect(
+        "result-context generic function instantiation should preserve the dependency artifact",
+    );
+    expect_file_exists(
+        "project-build-package-json-generic-public-function-result-context",
+        &app_output,
+        "selected package artifact",
+        "package build json dependency generic public function result context",
+    )
+    .expect("result-context generic function instantiation should emit the selected artifact");
+}
+
+#[test]
 fn build_package_path_json_reports_uninferred_direct_dependency_generic_public_function_import() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-package-json-uninferred-generic-public-function");
@@ -1856,7 +1996,8 @@ dep = "../dep"
 use dep.make as make
 
 fn main() -> Int {
-    return make()
+    let value = make()
+    return 0
 }
 "#,
     );

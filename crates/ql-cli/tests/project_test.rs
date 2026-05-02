@@ -402,6 +402,125 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_package_tests_support_current_package_generic_function_from_result_context() {
+    if !toolchain_available("`ql test` current package generic result-context function test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-current-package-generic-function-result-context");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source root for generic result-context function import test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "app/src/lib.ql",
+        r#"
+pub enum Result[T, E] {
+    Ok(T),
+    Err(E),
+}
+
+pub fn ok[T, E](value: T) -> Result[T, E] {
+    return Result.Ok(value)
+}
+
+pub fn err[T, E](error: E) -> Result[T, E] {
+    return Result.Err(error)
+}
+"#,
+    );
+    temp.write(
+        "app/tests/smoke.ql",
+        r#"
+use app.Result as Result
+use app.ok as result_ok
+use app.err as result_err
+
+fn make_ok() -> Result[Int, Int] {
+    return result_ok(7)
+}
+
+fn ok_status(value: Result[Int, Int]) -> Int {
+    return match value {
+        Result.Ok(inner) => inner,
+        Result.Err(_) => 0,
+    }
+}
+
+fn err_status(value: Result[Int, Int]) -> Int {
+    return match value {
+        Result.Ok(_) => 0,
+        Result.Err(error) => error,
+    }
+}
+
+fn main() -> Int {
+    let failed: Result[Int, Int] = result_err(3)
+    if ok_status(make_ok()) + err_status(failed) == 10 {
+        return 0
+    }
+    return 1
+}
+"#,
+    );
+
+    let package_output = static_library_output_path(&project_root.join("target/ql/debug"), "lib");
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test` current package generic result-context function",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-current-package-generic-function-result-context",
+        "package tests importing current package generic function with result context",
+        &output,
+    )
+    .expect("package-path `ql test` should infer current package generic public functions from explicit result context");
+    expect_empty_stderr(
+        "project-test-current-package-generic-function-result-context",
+        "package tests importing current package generic function with result context",
+        &stderr,
+    )
+    .expect("generic result-context function package test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-current-package-generic-function-result-context",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("generic result-context function package test should report a passing smoke test");
+    expect_file_exists(
+        "project-test-current-package-generic-function-result-context",
+        &package_output,
+        "current package library",
+        "`ql test` current package generic result-context function",
+    )
+    .expect(
+        "current package library should build before the generic result-context test bridge runs",
+    );
+    expect_file_exists(
+        "project-test-current-package-generic-function-result-context",
+        &smoke_output,
+        "current package generic result-context function test executable",
+        "`ql test` current package generic result-context function",
+    )
+    .expect("generic result-context function package test should emit the smoke test executable");
+}
+
+#[test]
 fn test_package_path_supports_direct_dependency_public_struct_functions() {
     if !toolchain_available("`ql test` dependency public struct function test") {
         return;

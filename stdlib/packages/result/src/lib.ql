@@ -16,6 +16,14 @@ pub enum Result[T, E] {
     Err(E),
 }
 
+pub fn ok[T, E](value: T) -> Result[T, E] {
+    return Result.Ok(value)
+}
+
+pub fn err[T, E](error: E) -> Result[T, E] {
+    return Result.Err(error)
+}
+
 pub enum IntResult {
     Ok(Int),
     Err(Int),

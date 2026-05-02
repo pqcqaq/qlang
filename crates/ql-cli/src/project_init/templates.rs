@@ -16,10 +16,11 @@ use std.core.clamp_int as clamp_int
 use std.option.some as option_some
 use std.option.unwrap_or as option_unwrap_or
 use std.result.Result as Result
+use std.result.ok as result_ok
 use std.result.unwrap_result_or as result_unwrap_result_or
 
 pub fn run() -> Int {
-    let result_value: Result[Int, Int] = Result.Ok(option_unwrap_or(option_some(42), 0))
+    let result_value: Result[Int, Int] = result_ok(option_unwrap_or(option_some(42), 0))
     return clamp_int(result_unwrap_result_or(result_value, 0) + sum3_int_array([1, 2, 3]), 0, 100)
 }
 "#
@@ -69,6 +70,7 @@ mod tests {
         assert!(lib.contains("use std.core.clamp_int"));
         assert!(lib.contains("use std.option.some as option_some"));
         assert!(lib.contains("use std.result.Result as Result"));
+        assert!(lib.contains("use std.result.ok as result_ok"));
         assert!(lib.contains("use std.result.unwrap_result_or as result_unwrap_result_or"));
         assert!(lib.contains("use std.array.sum3_int_array"));
         assert!(main.contains("use std.core.bool_to_int"));
