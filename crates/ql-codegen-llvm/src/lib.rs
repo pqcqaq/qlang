@@ -1,6 +1,6 @@
 mod error;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::env::consts::{ARCH, OS};
 use std::fmt::Write;
 
@@ -7954,13 +7954,6 @@ impl<'a> ModuleEmitter<'a> {
             ))
             .with_label(Label::new(span)));
         };
-        if !args.is_empty() {
-            return Err(Diagnostic::error(format!(
-                "LLVM IR backend foundation does not support {context} `{ty}` yet"
-            ))
-            .with_label(Label::new(span)));
-        }
-
         let item = self.input.hir.item(*item_id);
         let ItemKind::Struct(struct_decl) = &item.kind else {
             return Err(Diagnostic::error(format!(
@@ -7968,18 +7961,17 @@ impl<'a> ModuleEmitter<'a> {
             ))
             .with_label(Label::new(span)));
         };
-        if !struct_decl.generics.is_empty() {
-            return Err(Diagnostic::error(format!(
-                "LLVM IR backend foundation does not support {context} `{ty}` yet"
-            ))
-            .with_label(Label::new(span)));
-        }
+        let substitutions =
+            self.generic_type_substitutions(&struct_decl.generics, args, ty, span, context)?;
 
         struct_decl
             .fields
             .iter()
             .map(|field| {
-                let ty = lower_type(self.input.hir, self.input.resolution, field.ty);
+                let ty = self.substitute_generic_ty(
+                    lower_type(self.input.hir, self.input.resolution, field.ty),
+                    &substitutions,
+                );
                 if is_void_ty(&ty) {
                     return Err(Diagnostic::error(format!(
                         "LLVM IR backend foundation does not support {context} `{ty}` yet"
@@ -8008,13 +8000,6 @@ impl<'a> ModuleEmitter<'a> {
             ))
             .with_label(Label::new(span)));
         };
-        if !args.is_empty() {
-            return Err(Diagnostic::error(format!(
-                "LLVM IR backend foundation does not support {context} `{ty}` yet"
-            ))
-            .with_label(Label::new(span)));
-        }
-
         let item = self.input.hir.item(*item_id);
         let ItemKind::Enum(enum_decl) = &item.kind else {
             return Err(Diagnostic::error(format!(
@@ -8022,12 +8007,8 @@ impl<'a> ModuleEmitter<'a> {
             ))
             .with_label(Label::new(span)));
         };
-        if !enum_decl.generics.is_empty() {
-            return Err(Diagnostic::error(format!(
-                "LLVM IR backend foundation does not support {context} `{ty}` yet"
-            ))
-            .with_label(Label::new(span)));
-        }
+        let substitutions =
+            self.generic_type_substitutions(&enum_decl.generics, args, ty, span, context)?;
 
         let mut variants = Vec::with_capacity(enum_decl.variants.len());
         let mut max_payload_size = 0;
@@ -8042,7 +8023,10 @@ impl<'a> ModuleEmitter<'a> {
                 hir::VariantFields::Unit => {}
                 hir::VariantFields::Tuple(items) => {
                     for &type_id in items {
-                        let ty = lower_type(self.input.hir, self.input.resolution, type_id);
+                        let ty = self.substitute_generic_ty(
+                            lower_type(self.input.hir, self.input.resolution, type_id),
+                            &substitutions,
+                        );
                         if is_void_ty(&ty) {
                             return Err(Diagnostic::error(format!(
                                 "LLVM IR backend foundation does not support {context} `{ty}` yet"
@@ -8063,7 +8047,10 @@ impl<'a> ModuleEmitter<'a> {
                 }
                 hir::VariantFields::Struct(named_fields) => {
                     for field in named_fields {
-                        let ty = lower_type(self.input.hir, self.input.resolution, field.ty);
+                        let ty = self.substitute_generic_ty(
+                            lower_type(self.input.hir, self.input.resolution, field.ty),
+                            &substitutions,
+                        );
                         if is_void_ty(&ty) {
                             return Err(Diagnostic::error(format!(
                                 "LLVM IR backend foundation does not support {context} `{ty}` yet"
@@ -8166,6 +8153,93 @@ impl<'a> ModuleEmitter<'a> {
             size: count * align,
             align,
         })
+    }
+
+    fn generic_type_substitutions(
+        &self,
+        generics: &[hir::GenericParam],
+        args: &[Ty],
+        ty: &Ty,
+        span: Span,
+        context: &str,
+    ) -> Result<BTreeMap<String, Ty>, Diagnostic> {
+        if generics.is_empty() && args.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        if generics.len() != args.len() {
+            return Err(Diagnostic::error(format!(
+                "LLVM IR backend foundation does not support {context} `{ty}` yet"
+            ))
+            .with_label(Label::new(span)));
+        }
+        Ok(generics
+            .iter()
+            .zip(args.iter())
+            .map(|(generic, arg)| (generic.name.clone(), arg.clone()))
+            .collect())
+    }
+
+    fn substitute_generic_ty(&self, ty: Ty, substitutions: &BTreeMap<String, Ty>) -> Ty {
+        if substitutions.is_empty() {
+            return ty;
+        }
+        match ty {
+            Ty::Generic(name) => substitutions
+                .get(&name)
+                .cloned()
+                .unwrap_or(Ty::Generic(name)),
+            Ty::Array { element, len } => Ty::Array {
+                element: Box::new(self.substitute_generic_ty(*element, substitutions)),
+                len,
+            },
+            Ty::Item {
+                item_id,
+                name,
+                args,
+            } => Ty::Item {
+                item_id,
+                name,
+                args: args
+                    .into_iter()
+                    .map(|arg| self.substitute_generic_ty(arg, substitutions))
+                    .collect(),
+            },
+            Ty::Import { path, args } => Ty::Import {
+                path,
+                args: args
+                    .into_iter()
+                    .map(|arg| self.substitute_generic_ty(arg, substitutions))
+                    .collect(),
+            },
+            Ty::Named { path, args } => Ty::Named {
+                path,
+                args: args
+                    .into_iter()
+                    .map(|arg| self.substitute_generic_ty(arg, substitutions))
+                    .collect(),
+            },
+            Ty::Pointer { is_const, inner } => Ty::Pointer {
+                is_const,
+                inner: Box::new(self.substitute_generic_ty(*inner, substitutions)),
+            },
+            Ty::Tuple(items) => Ty::Tuple(
+                items
+                    .into_iter()
+                    .map(|item| self.substitute_generic_ty(item, substitutions))
+                    .collect(),
+            ),
+            Ty::TaskHandle(output) => {
+                Ty::TaskHandle(Box::new(self.substitute_generic_ty(*output, substitutions)))
+            }
+            Ty::Callable { params, ret } => Ty::Callable {
+                params: params
+                    .into_iter()
+                    .map(|param| self.substitute_generic_ty(param, substitutions))
+                    .collect(),
+                ret: Box::new(self.substitute_generic_ty(*ret, substitutions)),
+            },
+            other => other,
+        }
     }
 
     fn enum_variant_lowering_for_path<'b>(

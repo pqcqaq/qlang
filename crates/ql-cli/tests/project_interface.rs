@@ -264,6 +264,11 @@ pub struct Buffer[T] {
     count: Int = 0,
 }
 
+pub enum ApiResult[T] {
+    Ok(T),
+    Failed(Int),
+}
+
 pub trait Writer {
     fn flush(var self) -> Int
 }
@@ -290,6 +295,10 @@ extend Buffer[Int] {
 
 pub fn sum(left: Int, right: Int) -> Int {
     return left + right
+}
+
+pub fn identity[T](value: T) -> T {
+    return value
 }
 
 pub extern "c" {
@@ -360,6 +369,11 @@ pub struct Buffer[T] {
     count: Int,
 }
 
+pub enum ApiResult[T] {
+    Ok(T),
+    Failed(Int),
+}
+
 pub trait Writer {
     fn flush(var self) -> Int
 }
@@ -373,6 +387,8 @@ extend Buffer[Int] {
 }
 
 pub fn sum(left: Int, right: Int) -> Int
+
+pub fn identity[T](value: T) -> T
 
 pub extern \"c\" {
     fn puts(ptr: *const U8) -> I32

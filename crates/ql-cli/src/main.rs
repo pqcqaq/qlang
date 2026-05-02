@@ -8529,6 +8529,12 @@ fn collect_dependency_module_public_method_forwarders(
         {
             continue;
         }
+        if type_candidates
+            .get(&struct_name)
+            .is_some_and(|candidate| candidate.decl.is_generic())
+        {
+            continue;
+        }
 
         for (method_name, method) in
             dependency_public_struct_method_bridge_candidates(module, &struct_name)
@@ -8616,6 +8622,12 @@ fn render_public_dependency_function_export_wrappers_for_package(
         }
     }
     for struct_name in type_candidates.keys() {
+        if type_candidates
+            .get(struct_name)
+            .is_some_and(|candidate| candidate.decl.is_generic())
+        {
+            continue;
+        }
         for method in
             dependency_public_struct_method_bridge_candidates(&module, struct_name).values()
         {
@@ -8717,6 +8729,14 @@ impl<'a> DependencyPublicTypeDecl<'a> {
             Self::TypeAlias(alias) => alias.name.as_str(),
         }
     }
+
+    fn is_generic(self) -> bool {
+        match self {
+            Self::Struct(struct_decl) => !struct_decl.generics.is_empty(),
+            Self::Enum(enum_decl) => !enum_decl.generics.is_empty(),
+            Self::TypeAlias(alias) => !alias.generics.is_empty(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -8752,15 +8772,10 @@ fn dependency_public_type_bridge_candidates<'a>(
     let mut candidates = BTreeMap::new();
     for item in &module.items {
         let decl = match &item.kind {
-            ItemKind::Struct(struct_decl)
-                if struct_decl.visibility == Visibility::Public
-                    && struct_decl.generics.is_empty() =>
-            {
+            ItemKind::Struct(struct_decl) if struct_decl.visibility == Visibility::Public => {
                 DependencyPublicTypeDecl::Struct(struct_decl)
             }
-            ItemKind::Enum(enum_decl)
-                if enum_decl.visibility == Visibility::Public && enum_decl.generics.is_empty() =>
-            {
+            ItemKind::Enum(enum_decl) if enum_decl.visibility == Visibility::Public => {
                 DependencyPublicTypeDecl::Enum(enum_decl)
             }
             ItemKind::TypeAlias(alias)
@@ -9724,15 +9739,10 @@ fn collect_dependency_module_public_type_declarations(
 
     for item in &module.items {
         let type_name = match &item.kind {
-            ItemKind::Struct(struct_decl)
-                if struct_decl.visibility == Visibility::Public
-                    && struct_decl.generics.is_empty() =>
-            {
+            ItemKind::Struct(struct_decl) if struct_decl.visibility == Visibility::Public => {
                 struct_decl.name.as_str()
             }
-            ItemKind::Enum(enum_decl)
-                if enum_decl.visibility == Visibility::Public && enum_decl.generics.is_empty() =>
-            {
+            ItemKind::Enum(enum_decl) if enum_decl.visibility == Visibility::Public => {
                 enum_decl.name.as_str()
             }
             ItemKind::TypeAlias(alias)
