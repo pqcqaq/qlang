@@ -74,6 +74,8 @@ mod tests {
         assert!(main.contains("use std.core.bool_to_int"));
         assert!(main.contains("use std.array.all3_bool_array"));
         assert!(smoke.contains("use std.test.expect_status_ok"));
+        assert!(smoke.contains("use std.test.expect_generic_int_option_some"));
+        assert!(smoke.contains("use std.test.expect_generic_int_result_ok"));
         assert!(smoke.contains("use std.array.max5_int_array"));
         assert!(smoke.contains("use std.option.Option as Option"));
         assert!(smoke.contains("use std.result.Result as Result"));

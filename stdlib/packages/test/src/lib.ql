@@ -79,6 +79,7 @@ use std.core.sum5_int as sum5_int
 use std.core.upper_bound_int as upper_bound_int
 use std.core.xor_bool as xor_bool
 use std.option.BoolOption as BoolOption
+use std.option.Option as Option
 use std.option.is_none_bool as option_is_none_bool
 use std.option.is_none_int as option_is_none_int
 use std.option.is_some_bool as option_is_some_bool
@@ -89,6 +90,7 @@ use std.option.unwrap_or_bool as option_unwrap_or_bool
 use std.option.unwrap_or_int as option_unwrap_or_int
 use std.option.IntOption as IntOption
 use std.result.BoolResult as BoolResult
+use std.result.Result as Result
 use std.result.error_to_option_bool as result_error_to_option_bool
 use std.result.error_to_option_int as result_error_to_option_int
 use std.result.error_or_zero_bool as result_error_or_zero_bool
@@ -821,6 +823,48 @@ pub fn expect_bool_option_or(value: BoolOption, fallback: BoolOption, expected: 
     return 1
 }
 
+pub fn expect_generic_int_option_some(value: Option[Int], expected: Int) -> Int {
+    return match value {
+        Option.Some(inner) => expect_int_eq(inner, expected),
+        Option.None => 1,
+    }
+}
+
+pub fn expect_generic_int_option_none(value: Option[Int]) -> Int {
+    return match value {
+        Option.Some(_) => 1,
+        Option.None => 0,
+    }
+}
+
+pub fn expect_generic_int_option_or(value: Option[Int], fallback: Option[Int], expected: Int) -> Int {
+    return match value {
+        Option.Some(inner) => expect_int_eq(inner, expected),
+        Option.None => expect_generic_int_option_some(fallback, expected),
+    }
+}
+
+pub fn expect_generic_bool_option_some(value: Option[Bool], expected: Bool) -> Int {
+    return match value {
+        Option.Some(inner) => expect_bool_eq(inner, expected),
+        Option.None => 1,
+    }
+}
+
+pub fn expect_generic_bool_option_none(value: Option[Bool]) -> Int {
+    return match value {
+        Option.Some(_) => 1,
+        Option.None => 0,
+    }
+}
+
+pub fn expect_generic_bool_option_or(value: Option[Bool], fallback: Option[Bool], expected: Bool) -> Int {
+    return match value {
+        Option.Some(inner) => expect_bool_eq(inner, expected),
+        Option.None => expect_generic_bool_option_some(fallback, expected),
+    }
+}
+
 pub fn expect_int_result_ok(value: IntResult, expected: Int) -> Int {
     if result_is_ok_int(value) && result_unwrap_or_int(value, expected) == expected {
         return 0
@@ -861,6 +905,62 @@ pub fn expect_bool_result_or(value: BoolResult, fallback: BoolResult, expected: 
         return 0
     }
     return 1
+}
+
+pub fn expect_generic_int_result_ok(value: Result[Int, Int], expected: Int) -> Int {
+    return match value {
+        Result.Ok(inner) => expect_int_eq(inner, expected),
+        Result.Err(_) => 1,
+    }
+}
+
+pub fn expect_generic_int_result_err(value: Result[Int, Int], expected_error: Int) -> Int {
+    return match value {
+        Result.Ok(_) => 1,
+        Result.Err(error) => expect_int_eq(error, expected_error),
+    }
+}
+
+pub fn expect_generic_int_result_or(value: Result[Int, Int], fallback: Result[Int, Int], expected: Int) -> Int {
+    return match value {
+        Result.Ok(inner) => expect_int_eq(inner, expected),
+        Result.Err(_) => expect_generic_int_result_ok(fallback, expected),
+    }
+}
+
+pub fn expect_generic_int_result_error(value: Result[Int, Int], fallback_error: Int, expected_error: Int) -> Int {
+    return match value {
+        Result.Ok(_) => expect_int_eq(fallback_error, expected_error),
+        Result.Err(error) => expect_int_eq(error, expected_error),
+    }
+}
+
+pub fn expect_generic_bool_result_ok(value: Result[Bool, Int], expected: Bool) -> Int {
+    return match value {
+        Result.Ok(inner) => expect_bool_eq(inner, expected),
+        Result.Err(_) => 1,
+    }
+}
+
+pub fn expect_generic_bool_result_err(value: Result[Bool, Int], expected_error: Int) -> Int {
+    return match value {
+        Result.Ok(_) => 1,
+        Result.Err(error) => expect_int_eq(error, expected_error),
+    }
+}
+
+pub fn expect_generic_bool_result_or(value: Result[Bool, Int], fallback: Result[Bool, Int], expected: Bool) -> Int {
+    return match value {
+        Result.Ok(inner) => expect_bool_eq(inner, expected),
+        Result.Err(_) => expect_generic_bool_result_ok(fallback, expected),
+    }
+}
+
+pub fn expect_generic_bool_result_error(value: Result[Bool, Int], fallback_error: Int, expected_error: Int) -> Int {
+    return match value {
+        Result.Ok(_) => expect_int_eq(fallback_error, expected_error),
+        Result.Err(error) => expect_int_eq(error, expected_error),
+    }
 }
 
 pub fn expect_int_result_to_option_some(value: IntResult, expected: Int) -> Int {

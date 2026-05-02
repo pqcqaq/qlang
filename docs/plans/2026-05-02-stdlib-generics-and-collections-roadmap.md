@@ -68,7 +68,7 @@ Status: eighth execution slice landed. Direct local dependencies can now expose 
 
 ## Task 3: Generic Option and Result Packages
 
-Status: option/result helper slices landed. `std.option` now exposes generic `some`, `is_some`, `is_none`, `unwrap_or`, and `or_option`; `std.result` now exposes generic `is_ok`, `is_err`, `unwrap_result_or`, `or_result`, and `error_or`. Package-local smoke covers explicit `Option[Int]` / `Result[Int, Int]` locals, enum variants, helper calls, and match-based status checks. `ql project init --stdlib` generated package code now consumes generic `std.option.some` / `std.option.unwrap_or` and generic `std.result.Result` / `std.result.unwrap_result_or` directly. Generic `ok` / `err` constructors, `std.test` generic carrier assertions, and broader multi-instantiation support remain open.
+Status: option/result helper slices landed. `std.option` now exposes generic `some`, `is_some`, `is_none`, `unwrap_or`, and `or_option`; `std.result` now exposes generic `is_ok`, `is_err`, `unwrap_result_or`, `or_result`, and `error_or`. Package-local smoke covers explicit `Option[Int]` / `Result[Int, Int]` locals, enum variants, helper calls, and match-based status checks. `std.test` now exposes generic carrier assertions for `Option[Int]`, `Option[Bool]`, `Result[Int, Int]`, and `Result[Bool, Int]`; these assertions match carriers directly so downstream smoke tests do not depend on broader generic helper bridge support. `ql project init --stdlib` generated package code now consumes generic `std.option.some` / `std.option.unwrap_or` and generic `std.result.Result` / `std.result.unwrap_result_or` directly, while generated smoke uses the public `std.test` generic carrier assertions instead of hand-written local status functions. Generic `ok` / `err` constructors and broader multi-instantiation support remain open.
 
 **Files:**
 - Modify: `stdlib/packages/option/src/lib.ql`
@@ -85,7 +85,7 @@ Status: option/result helper slices landed. `std.option` now exposes generic `so
 2. Add generic constructors and predicates where the compiler can execute them through local dependencies.
 3. Add generic `Result[T, E]` after generic enum/function execution is stable.
 4. Keep concrete wrappers as compatibility shims until templates migrate.
-5. Update `std.test` to cover generic and concrete carrier paths.
+5. Update `std.test` to cover generic and concrete carrier paths. Done for `Option[Int]`, `Option[Bool]`, `Result[Int, Int]`, and `Result[Bool, Int]`.
 6. Run `cargo run -q -p ql-cli -- check --sync-interfaces stdlib`.
 7. Run `cargo run -q -p ql-cli -- test stdlib`.
 8. Commit as `feat: add generic std option result`.
