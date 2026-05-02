@@ -34,6 +34,7 @@ use ql_runtime::{collect_runtime_hook_signatures, collect_runtime_hooks};
 use ql_span::locate;
 use serde_json::{Value as JsonValue, json};
 
+mod dependency_generic_bridge;
 mod project_dependencies;
 mod project_graph;
 mod project_init;
@@ -7066,6 +7067,7 @@ fn render_package_under_test_bridge_items(
             manifest_path,
             &module.module,
             &module.source,
+            &root_source_module,
             Some(&imported_externs),
             None,
             &occupied_root_names,
@@ -7931,6 +7933,7 @@ fn collect_dependency_public_function_forwarders_from_modules<E>(
             dependency_manifest_path,
             &source_module,
             &dependency_source,
+            root_source_module,
             Some(&imported_externs),
             required_functions_by_module_path.get(&module_import_path),
             occupied_root_names,
@@ -9044,6 +9047,7 @@ fn collect_dependency_module_public_function_forwarders(
     dependency_manifest_path: &Path,
     module: &Module,
     contents: &str,
+    root_module: &Module,
     imported_externs: Option<&ImportedDependencyExterns>,
     required_function_names: Option<&BTreeSet<String>>,
     occupied_root_names: &BTreeSet<String>,
@@ -9067,10 +9071,37 @@ fn collect_dependency_module_public_function_forwarders(
         if !imported && !required_by_value {
             continue;
         }
-        if dependency_public_function_import_is_unsupported_generic(function) {
-            return Err(DependencyPublicFunctionForwarderError::UnsupportedGeneric {
-                symbol: function.name.clone(),
-            });
+        if dependency_generic_bridge::supports_public_function_specialization(function) {
+            let Some(forwarder) = dependency_generic_bridge::render_public_function_specialization(
+                &module_import_path,
+                function,
+                contents,
+                root_module,
+            ) else {
+                return Err(DependencyPublicFunctionForwarderError::UnsupportedGeneric {
+                    symbol: function.name.clone(),
+                });
+            };
+            record_dependency_extern_declaration(
+                dependency_package,
+                dependency_manifest_path,
+                &function.name,
+                forwarder,
+                owners_by_symbol,
+                forwarders,
+            )
+            .map_err(|(symbol, owner)| {
+                DependencyPublicFunctionForwarderError::DependencyConflict { symbol, owner }
+            })?;
+            let type_dependencies =
+                collect_dependency_public_function_type_dependencies(function, &type_candidates);
+            if !type_dependencies.is_empty() {
+                required_types_by_module_path
+                    .entry(module_import_path.clone())
+                    .or_default()
+                    .extend(type_dependencies);
+            }
+            continue;
         }
         if !supports_dependency_public_function_import_bridge(function) {
             continue;
@@ -9532,19 +9563,6 @@ enum DependencyPublicValueBridgeError {
     LocalConflict {
         symbol: String,
     },
-}
-
-fn dependency_public_function_import_is_unsupported_generic(function: &FunctionDecl) -> bool {
-    function.visibility == Visibility::Public
-        && function.abi.is_none()
-        && !function.is_async
-        && !function.is_unsafe
-        && !function.generics.is_empty()
-        && function.where_clause.is_empty()
-        && function
-            .params
-            .iter()
-            .all(|param| matches!(param, Param::Regular { .. }))
 }
 
 fn supports_dependency_public_function_import_bridge(function: &FunctionDecl) -> bool {

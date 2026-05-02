@@ -188,7 +188,7 @@ name = "app"
 }
 
 #[test]
-fn test_package_tests_report_current_package_generic_public_function_import() {
+fn test_package_tests_support_current_package_generic_public_function_single_instantiation() {
     if !toolchain_available("`ql test` current package generic public function test") {
         return;
     }
@@ -219,7 +219,10 @@ pub fn identity[T](value: T) -> T {
 use app.identity as identity
 
 fn main() -> Int {
-    return identity(42)
+    if identity(42) == 42 {
+        return 0
+    }
+    return 1
 }
 "#,
     );
@@ -234,47 +237,43 @@ fn main() -> Int {
         &mut command,
         "`ql test` current package generic public function",
     );
-    let (stdout, stderr) = expect_exit_code(
+    let (stdout, stderr) = expect_success(
         "project-test-current-package-generic-function",
         "package tests importing current package generic public function",
         &output,
-        1,
     )
     .expect(
-        "package-path `ql test` should reject current package generic public function imports explicitly",
+        "package-path `ql test` should support current package generic public function imports with a single concrete instantiation",
     );
+    expect_empty_stderr(
+        "project-test-current-package-generic-function",
+        "package tests importing current package generic public function",
+        &stderr,
+    )
+    .expect("generic function package test should not print stderr");
     expect_stdout_contains_all(
         "project-test-current-package-generic-function",
         &stdout.replace('\\', "/"),
-        &["test tests/smoke.ql ... FAILED"],
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
     )
-    .expect("generic function import failure should mark the smoke test as failed on stdout");
-    expect_stderr_contains(
-        "project-test-current-package-generic-function",
-        "package tests importing current package generic public function",
-        &stderr,
-        "cannot synthesize package-under-test public function bridge for generic function `identity` yet",
-    )
-    .expect("generic package-under-test function import should explain the unsupported bridge");
-    expect_stderr_contains(
-        "project-test-current-package-generic-function",
-        "package tests importing current package generic public function",
-        &stderr,
-        "generic function monomorphization is not implemented yet",
-    )
-    .expect("generic package-under-test function import should point to monomorphization");
+    .expect("generic function package test should report a passing smoke test");
     expect_file_exists(
         "project-test-current-package-generic-function",
         &package_output,
         "current package library",
         "`ql test` current package generic public function",
     )
-    .expect("current package library should still build before the test bridge fails");
-    assert!(
-        !smoke_output.exists(),
-        "generic function import failure should not emit a smoke test executable at {}",
-        smoke_output.display()
-    );
+    .expect("current package library should build before the test bridge runs");
+    expect_file_exists(
+        "project-test-current-package-generic-function",
+        &smoke_output,
+        "current package generic function test executable",
+        "`ql test` current package generic public function",
+    )
+    .expect("generic function package test should emit the smoke test executable");
 }
 
 #[test]

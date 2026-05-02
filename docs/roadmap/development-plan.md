@@ -17,7 +17,7 @@
 - 最小 `stdlib` 属于 P0 可用性，不属于后置语言扩面；没有可依赖的 `core/option/result/test` 包，真实项目仍会退化成手写样例集合。
 - 当前 `stdlib` 是真实标准库 workspace，不是测试夹具；但 `IntOption` / `BoolOption`、`IntResult` / `BoolResult`、`sum3_int` / `sum4_int` / `sum5_int` 这类 API 是受限后端下的过渡 helper，不应继续作为长期设计方向扩张。
 - generic `Option[T]` / `Result[T, E]` carrier 已经进入可执行路径；下一步优先补泛型 helper、公用集合抽象和真实 downstream smoke，而不是继续堆 concrete/fixed-arity helper。可变参数语法仍需单独设计和 lowering，不直接拿来绕过当前 stdlib API 问题。
-- generic public function declaration 现在可以存在于 library package 中并进入 `.qi`，只要没有被实例化调用就不会毒化 library build；但 root target 实际导入 direct dependency 的 generic public function 时，会明确返回 `dependency-function-unsupported-generic`，完整单态化仍是下一阶段 backend/bridge 重点。
+- generic public function declaration 现在可以存在于 library package 中并进入 `.qi`，只要没有被实例化调用就不会毒化 library build；direct dependency / package-under-test bridge 已经能对单一具体实例的 public generic free function 做本地特化，前提是所有 generic 参数都能从直接调用的 `Int` / `Bool` / `String` 字面量实参推断出来。完整单态化仍是下一阶段 backend/bridge 重点，超出该切片继续明确返回 `dependency-function-unsupported-generic`。
 - 从现在开始，每一轮功能迭代必须优先落到生产代码；只有测试或文档改动，不再计作一轮功能推进。
 - 不再用固定日期承诺完成 P0；节奏改为每一轮尽力交付一个可验证切片，并用回归和文档更新收口。
 
@@ -142,7 +142,7 @@
 
 ## 下一轮（已排定）
 
-- stdlib/generics：按 [Stdlib Generics and Collections Roadmap](/plans/2026-05-02-stdlib-generics-and-collections-roadmap) 推进；`std.array` 的固定数组过渡面已先落地，generic type / carrier 执行面和 uninstantiated generic function declaration 面已被回归锁住。下一刀继续围绕 direct local dependency 的 generic public function 调用实例化，补调用点实例化表、bridge 专用符号命名和 LLVM specialization，而不是再扩 concrete helper。
+- stdlib/generics：按 [Stdlib Generics and Collections Roadmap](/plans/2026-05-02-stdlib-generics-and-collections-roadmap) 推进；`std.array` 的固定数组过渡面已先落地，generic type / carrier 执行面、uninstantiated generic function declaration 面，以及 literal-inferred single-instantiation generic public function bridge 已被回归锁住。下一刀继续把实例推断从字面量扩到局部类型/显式 carrier helper，补更完整调用点实例化表、bridge 专用符号命名和 LLVM specialization，而不是再扩 concrete helper。
 - stdlib/API：暂停继续堆新的重复参数 `foo3/foo4/foo5` 式 helper；现有 concrete Option/Result 和 fixed-arity helper 保留为兼容面，新的主路径优先设计 generic carrier、数组/集合 helper 和后续可变参数。
 - backend：继续扩 direct local dependency 下真实项目高频的 public value/type/member 调用面；短期重点从非泛型 alias 转到 generic public API 的实例化、桥接和 codegen。后续仍优先修 `stdlib` / 模板暴露的真实阻塞。
 - LSP：`textDocument/implementation` 的已完成基线已明显超出这里最初记录，当前准确支持面以 `current-supported-surface.md` 为准；继续扩更宽的 implementation index，但不压过 P0 stdlib / backend 阻塞项。

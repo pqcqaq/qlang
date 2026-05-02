@@ -1284,15 +1284,16 @@ fn main() -> Int {
 }
 
 #[test]
-fn build_package_path_json_reports_direct_dependency_generic_public_function_import() {
+fn build_package_path_json_supports_direct_dependency_generic_public_function_single_instantiation()
+{
     let workspace_root = workspace_root();
-    let temp = TempDir::new("ql-project-build-package-json-generic-public-function-import");
+    let temp = TempDir::new("ql-project-build-package-json-generic-public-function-instantiation");
     let dep_root = temp.path().join("dep");
     let project_root = temp.path().join("app");
     std::fs::create_dir_all(dep_root.join("src"))
-        .expect("create dep source tree for dependency generic function import");
+        .expect("create dep source tree for dependency generic function instantiation");
     std::fs::create_dir_all(project_root.join("src"))
-        .expect("create app source tree for dependency generic function import");
+        .expect("create app source tree for dependency generic function instantiation");
 
     let dep_manifest = temp.write(
         "dep/qlang.toml",
@@ -1335,30 +1336,30 @@ fn main() -> Int {
     );
 
     let dep_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let app_output = project_root.join("target/ql/debug/main.ll");
 
     let mut command = ql_command(&workspace_root);
     command.current_dir(temp.path());
     command.args(["build"]).arg(&project_root).arg("--json");
     let output = run_command_capture(
         &mut command,
-        "`ql build --json` direct dependency generic public function import",
+        "`ql build --json` direct dependency generic public function instantiation",
     );
-    let (stdout, stderr) = expect_exit_code(
-        "project-build-package-json-generic-public-function-import",
-        "package build json dependency generic public function import",
+    let (stdout, stderr) = expect_success(
+        "project-build-package-json-generic-public-function-instantiation",
+        "package build json dependency generic public function instantiation",
         &output,
-        1,
     )
-    .expect("package-path `ql build --json` should fail with an explicit generic function bridge diagnostic");
+    .expect("package-path `ql build --json` should support a single direct dependency generic function instantiation");
     expect_empty_stderr(
-        "project-build-package-json-generic-public-function-import",
-        "package build json dependency generic public function import",
+        "project-build-package-json-generic-public-function-instantiation",
+        "package build json dependency generic public function instantiation",
         &stderr,
     )
-    .expect("generic function bridge diagnostics should stay on stdout in json mode");
+    .expect("generic function instantiation json build should not print stderr");
 
     let json = parse_json_output(
-        "project-build-package-json-generic-public-function-import",
+        "project-build-package-json-generic-public-function-instantiation",
         &stdout,
     );
     assert_eq!(json["schema"], "ql.build.v1");
@@ -1371,61 +1372,155 @@ fn main() -> Int {
         json["project_manifest_path"],
         app_manifest.display().to_string().replace('\\', "/")
     );
-    assert_eq!(json["status"], "failed");
+    assert_eq!(json["status"], "ok");
 
     let built_targets = json["built_targets"]
         .as_array()
-        .expect("generic function import json should expose built_targets");
-    assert_eq!(built_targets.len(), 1);
+        .expect("generic function instantiation json should expose built_targets");
+    assert_eq!(built_targets.len(), 2);
     assert_eq!(
-        built_targets[0]["manifest_path"],
-        dep_manifest.display().to_string().replace('\\', "/")
+        built_targets[0],
+        serde_json::json!({
+            "manifest_path": dep_manifest.display().to_string().replace('\\', "/"),
+            "package_name": "dep",
+            "selected": false,
+            "dependency_only": true,
+            "kind": "lib",
+            "path": "src/lib.ql",
+            "emit": "staticlib",
+            "profile": "debug",
+            "artifact_path": dep_output.display().to_string().replace('\\', "/"),
+            "c_header_path": JsonValue::Null,
+        })
     );
-    assert_eq!(built_targets[0]["package_name"], "dep");
-    assert_eq!(built_targets[0]["selected"], false);
-    assert_eq!(built_targets[0]["dependency_only"], true);
-    assert_eq!(built_targets[0]["kind"], "lib");
     assert_eq!(
-        built_targets[0]["artifact_path"],
-        dep_output.display().to_string().replace('\\', "/")
+        built_targets[1],
+        serde_json::json!({
+            "manifest_path": app_manifest.display().to_string().replace('\\', "/"),
+            "package_name": "app",
+            "selected": true,
+            "dependency_only": false,
+            "kind": "bin",
+            "path": "src/main.ql",
+            "emit": "llvm-ir",
+            "profile": "debug",
+            "artifact_path": app_output.display().to_string().replace('\\', "/"),
+            "c_header_path": JsonValue::Null,
+        })
+    );
+    expect_file_exists(
+        "project-build-package-json-generic-public-function-instantiation",
+        &dep_output,
+        "dependency package artifact",
+        "package build json dependency generic public function instantiation",
+    )
+    .expect("generic function instantiation should preserve the dependency package artifact");
+    expect_file_exists(
+        "project-build-package-json-generic-public-function-instantiation",
+        &app_output,
+        "selected package artifact",
+        "package build json dependency generic public function instantiation",
+    )
+    .expect("generic function instantiation should emit the selected package artifact");
+}
+
+#[test]
+fn build_package_path_json_reports_uninferred_direct_dependency_generic_public_function_import() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-json-uninferred-generic-public-function");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src"))
+        .expect("create dep source tree for uninferred dependency generic function import");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create app source tree for uninferred dependency generic function import");
+
+    let dep_manifest = temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        r#"
+pub fn make[T]() -> T {
+    return 0
+}
+"#,
+    );
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "app/src/main.ql",
+        r#"
+use dep.make as make
+
+fn main() -> Int {
+    return make()
+}
+"#,
     );
 
-    assert_eq!(json["interfaces"], serde_json::json!([]));
+    let dep_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` uninferred direct dependency generic public function import",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-build-package-json-uninferred-generic-public-function",
+        "package build json uninferred dependency generic public function import",
+        &output,
+        1,
+    )
+    .expect("package-path `ql build --json` should reject uninferred generic function imports explicitly");
+    expect_empty_stderr(
+        "project-build-package-json-uninferred-generic-public-function",
+        "package build json uninferred dependency generic public function import",
+        &stderr,
+    )
+    .expect("uninferred generic function bridge diagnostics should stay on stdout in json mode");
+
+    let json = parse_json_output(
+        "project-build-package-json-uninferred-generic-public-function",
+        &stdout,
+    );
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(json["status"], "failed");
     assert_eq!(
         json["failure"]["manifest_path"],
         app_manifest.display().to_string().replace('\\', "/")
     );
-    assert_eq!(json["failure"]["package_name"], "app");
-    assert_eq!(json["failure"]["selected"], true);
-    assert_eq!(json["failure"]["dependency_only"], false);
-    assert_eq!(json["failure"]["kind"], "bin");
-    assert_eq!(json["failure"]["path"], "src/main.ql");
-    assert_eq!(json["failure"]["stage"], "target-prep");
     assert_eq!(
         json["failure"]["error_kind"],
         "dependency-function-unsupported-generic"
     );
-    assert_eq!(json["failure"]["symbol"], "identity");
+    assert_eq!(json["failure"]["symbol"], "make");
     assert_eq!(json["failure"]["dependency_package"], "dep");
     assert_eq!(
         json["failure"]["dependency_manifest_path"],
         dep_manifest.display().to_string().replace('\\', "/")
     );
-    assert!(
-        json["failure"]["message"]
-            .as_str()
-            .expect("generic function import json should expose a message")
-            .contains("generic function `identity`"),
-        "generic function import json should preserve the unsupported bridge detail: {json}"
-    );
-
     expect_file_exists(
-        "project-build-package-json-generic-public-function-import",
+        "project-build-package-json-uninferred-generic-public-function",
         &dep_output,
         "dependency package artifact",
-        "package build json dependency generic public function import",
+        "package build json uninferred dependency generic public function import",
     )
-    .expect("unsupported generic function import should preserve the dependency package artifact");
+    .expect("uninferred generic function import should preserve the dependency package artifact");
 }
 
 #[test]
