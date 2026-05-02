@@ -218,8 +218,13 @@ pub fn identity[T](value: T) -> T {
         r#"
 use app.identity as identity
 
+fn check(value: Int) -> Int {
+    return identity(value)
+}
+
 fn main() -> Int {
-    if identity(42) == 42 {
+    let value: Int = 42
+    if check(value) == 42 {
         return 0
     }
     return 1
