@@ -18,15 +18,16 @@ use tower_lsp::lsp_types::request::{
 use tower_lsp::lsp_types::{
     CodeActionOrCommand, CompletionItem as LspCompletionItem, CompletionParams, CompletionResponse,
     Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentFormattingParams, DocumentHighlight, DocumentSymbolParams, DocumentSymbolResponse,
-    FoldingRange, FoldingRangeParams, FormattingOptions, GotoDefinitionParams,
-    GotoDefinitionResponse, Hover, HoverParams, InitializeParams, InitializeResult, InlayHint,
-    InlayHintParams, Location, Position, PrepareRenameResponse, Range, ReferenceContext,
-    ReferenceParams, RenameParams, SelectionRange, SelectionRangeParams, SemanticTokensParams,
-    SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult, SignatureHelp,
-    SignatureHelpParams, SymbolInformation, TextDocumentContentChangeEvent, TextDocumentIdentifier,
-    TextDocumentItem, TextDocumentPositionParams, TextEdit, Url, VersionedTextDocumentIdentifier,
-    WorkspaceEdit, WorkspaceFolder,
+    DocumentFormattingParams, DocumentHighlight, DocumentOnTypeFormattingParams,
+    DocumentRangeFormattingParams, DocumentSymbolParams, DocumentSymbolResponse, FoldingRange,
+    FoldingRangeParams, FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, Hover,
+    HoverParams, InitializeParams, InitializeResult, InlayHint, InlayHintParams, Location,
+    Position, PrepareRenameResponse, Range, ReferenceContext, ReferenceParams, RenameParams,
+    SelectionRange, SelectionRangeParams, SemanticTokensParams, SemanticTokensRangeParams,
+    SemanticTokensRangeResult, SemanticTokensResult, SignatureHelp, SignatureHelpParams,
+    SymbolInformation, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+    TextDocumentPositionParams, TextEdit, Url, VersionedTextDocumentIdentifier, WorkspaceEdit,
+    WorkspaceFolder,
 };
 
 static NEXT_REQUEST_ID: AtomicI64 = AtomicI64::new(2);
@@ -495,6 +496,52 @@ pub async fn formatting_via_request(
     )
     .await;
     serde_json::from_value(value).expect("textDocument/formatting result should deserialize")
+}
+
+pub async fn range_formatting_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+    range: Range,
+) -> Option<Vec<TextEdit>> {
+    let value = request_value(
+        service,
+        "textDocument/rangeFormatting",
+        json!(DocumentRangeFormattingParams {
+            text_document: TextDocumentIdentifier { uri },
+            range,
+            options: FormattingOptions {
+                tab_size: 4,
+                insert_spaces: true,
+                ..FormattingOptions::default()
+            },
+            work_done_progress_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("textDocument/rangeFormatting result should deserialize")
+}
+
+pub async fn on_type_formatting_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+    position: Position,
+    ch: &str,
+) -> Option<Vec<TextEdit>> {
+    let value = request_value(
+        service,
+        "textDocument/onTypeFormatting",
+        json!(DocumentOnTypeFormattingParams {
+            text_document_position: text_document_position(uri, position),
+            ch: ch.to_owned(),
+            options: FormattingOptions {
+                tab_size: 4,
+                insert_spaces: true,
+                ..FormattingOptions::default()
+            },
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("textDocument/onTypeFormatting result should deserialize")
 }
 
 pub async fn document_symbol_via_request(

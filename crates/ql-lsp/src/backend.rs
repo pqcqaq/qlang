@@ -27,19 +27,21 @@ use tower_lsp::lsp_types::{
     CodeActionProviderCapability, CompletionItem as LspCompletionItem, CompletionOptions,
     CompletionParams, CompletionResponse, DeclarationCapability, Diagnostic, DiagnosticSeverity,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentFormattingParams, DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams,
-    DocumentSymbolResponse, FoldingRange, FoldingRangeParams, FoldingRangeProviderCapability,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
-    ImplementationProviderCapability, InitializeParams, InitializeResult, InitializedParams,
-    InlayHint, InlayHintParams, Location, MessageType, NumberOrString, OneOf, Position,
-    PrepareRenameResponse, Range, ReferenceParams, RenameOptions, RenameParams, SelectionRange,
-    SelectionRangeParams, SelectionRangeProviderCapability, SemanticTokensFullOptions,
-    SemanticTokensOptions, SemanticTokensParams, SemanticTokensRangeParams,
-    SemanticTokensRangeResult, SemanticTokensResult, SemanticTokensServerCapabilities,
-    ServerCapabilities, ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
-    SymbolInformation, SymbolKind as LspSymbolKind, TextDocumentPositionParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit,
-    TypeDefinitionProviderCapability, Url, WorkspaceEdit, WorkspaceSymbolParams,
+    DocumentFormattingParams, DocumentHighlight, DocumentHighlightParams,
+    DocumentOnTypeFormattingOptions, DocumentOnTypeFormattingParams, DocumentRangeFormattingParams,
+    DocumentSymbolParams, DocumentSymbolResponse, FoldingRange, FoldingRangeParams,
+    FoldingRangeProviderCapability, GotoDefinitionParams, GotoDefinitionResponse, Hover,
+    HoverParams, HoverProviderCapability, ImplementationProviderCapability, InitializeParams,
+    InitializeResult, InitializedParams, InlayHint, InlayHintParams, Location, MessageType,
+    NumberOrString, OneOf, Position, PrepareRenameResponse, Range, ReferenceParams, RenameOptions,
+    RenameParams, SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability,
+    SemanticTokensFullOptions, SemanticTokensOptions, SemanticTokensParams,
+    SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult,
+    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
+    SignatureHelpOptions, SignatureHelpParams, SymbolInformation, SymbolKind as LspSymbolKind,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextEdit, TypeDefinitionProviderCapability, Url, WorkspaceEdit,
+    WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -86,6 +88,12 @@ pub struct Backend {
 
 type OpenDocuments = HashMap<PathBuf, (Url, String)>;
 
+#[derive(Debug, PartialEq, Eq)]
+struct FormattingEdit {
+    span: Span,
+    replacement: String,
+}
+
 impl Backend {
     pub fn new(client: Client) -> Self {
         Self {
@@ -130,8 +138,8 @@ fn file_open_documents(documents: Vec<(Url, String)>) -> OpenDocuments {
     open_docs
 }
 
-fn document_formatting_edits(source: &str) -> std::result::Result<Vec<TextEdit>, String> {
-    let formatted = format_source(source).map_err(|errors| {
+fn format_source_for_lsp(source: &str) -> std::result::Result<String, String> {
+    format_source(source).map_err(|errors| {
         let Some(error) = errors.first() else {
             return "qlang: document formatting skipped because the document has parse errors"
                 .to_owned();
@@ -143,8 +151,11 @@ fn document_formatting_edits(source: &str) -> std::result::Result<Vec<TextEdit>,
             range.start.character + 1,
             error.message
         )
-    })?;
+    })
+}
 
+fn document_formatting_edits(source: &str) -> std::result::Result<Vec<TextEdit>, String> {
+    let formatted = format_source_for_lsp(source)?;
     if formatted == source {
         return Ok(Vec::new());
     }
@@ -153,6 +164,138 @@ fn document_formatting_edits(source: &str) -> std::result::Result<Vec<TextEdit>,
         span_to_range(source, Span::new(0, source.len())),
         formatted,
     )])
+}
+
+fn range_formatting_edits(
+    source: &str,
+    range: Range,
+) -> std::result::Result<Vec<TextEdit>, String> {
+    let formatted = format_source_for_lsp(source)?;
+    let requested = range_offsets(source, range)?;
+    Ok(line_formatting_edits(source, &formatted)
+        .into_iter()
+        .filter(|edit| edit.span.start >= requested.start && edit.span.end <= requested.end)
+        .map(|edit| TextEdit::new(span_to_range(source, edit.span), edit.replacement))
+        .collect())
+}
+
+fn on_type_formatting_edits(
+    source: &str,
+    position: Position,
+    ch: &str,
+) -> std::result::Result<Vec<TextEdit>, String> {
+    if !matches!(ch, "\n" | "}" | ";" | ",") {
+        return Ok(Vec::new());
+    }
+    position_to_offset(source, position).ok_or_else(|| {
+        "qlang: formatting skipped because the trigger position is invalid".to_owned()
+    })?;
+    let formatted = format_source_for_lsp(source)?;
+    Ok(line_formatting_edits(source, &formatted)
+        .into_iter()
+        .filter(|edit| {
+            let range = span_to_range(source, edit.span);
+            range.start.line == position.line && range.end.line == position.line
+        })
+        .map(|edit| TextEdit::new(span_to_range(source, edit.span), edit.replacement))
+        .collect())
+}
+
+fn range_offsets(source: &str, range: Range) -> std::result::Result<Span, String> {
+    let start = position_to_offset(source, range.start)
+        .ok_or_else(|| "qlang: formatting skipped because the range start is invalid".to_owned())?;
+    let end = position_to_offset(source, range.end)
+        .ok_or_else(|| "qlang: formatting skipped because the range end is invalid".to_owned())?;
+    Ok(Span::new(start.min(end), start.max(end)))
+}
+
+fn line_formatting_edits(source: &str, formatted: &str) -> Vec<FormattingEdit> {
+    let source_lines = line_content_spans(source);
+    let formatted_lines = line_content_spans(formatted);
+    if source_lines.len() != formatted_lines.len() {
+        return Vec::new();
+    }
+
+    source_lines
+        .into_iter()
+        .zip(formatted_lines)
+        .filter_map(|((source_span, source_line), (_, formatted_line))| {
+            line_formatting_edit(source_span, source_line, formatted_line)
+        })
+        .collect()
+}
+
+fn line_formatting_edit(
+    source_span: Span,
+    source_line: &str,
+    formatted_line: &str,
+) -> Option<FormattingEdit> {
+    if source_line == formatted_line {
+        return None;
+    }
+    let prefix = common_prefix_len(source_line, formatted_line);
+    let (source_end, formatted_end) = common_suffix_starts(source_line, formatted_line, prefix);
+    Some(FormattingEdit {
+        span: Span::new(source_span.start + prefix, source_span.start + source_end),
+        replacement: formatted_line[prefix..formatted_end].to_owned(),
+    })
+}
+
+fn line_content_spans(source: &str) -> Vec<(Span, &str)> {
+    let mut lines = Vec::new();
+    let mut line_start = 0usize;
+    for (offset, ch) in source.char_indices() {
+        if ch != '\n' {
+            continue;
+        }
+        let content_end = if offset > line_start && source.as_bytes()[offset - 1] == b'\r' {
+            offset - 1
+        } else {
+            offset
+        };
+        lines.push((
+            Span::new(line_start, content_end),
+            &source[line_start..content_end],
+        ));
+        line_start = offset + ch.len_utf8();
+    }
+    if line_start < source.len() || source.ends_with('\n') {
+        lines.push((
+            Span::new(line_start, source.len()),
+            &source[line_start..source.len()],
+        ));
+    }
+    lines
+}
+
+fn common_prefix_len(left: &str, right: &str) -> usize {
+    let mut matched = 0usize;
+    for ((left_index, left_char), (right_index, right_char)) in
+        left.char_indices().zip(right.char_indices())
+    {
+        if left_char != right_char {
+            return left_index.min(right_index);
+        }
+        matched = left_index + left_char.len_utf8();
+    }
+    matched
+}
+
+fn common_suffix_starts(left: &str, right: &str, prefix: usize) -> (usize, usize) {
+    let mut left_end = left.len();
+    let mut right_end = right.len();
+    let mut left_chars = left.char_indices().rev();
+    let mut right_chars = right.char_indices().rev();
+    while let (Some((left_index, left_char)), Some((right_index, right_char))) =
+        (left_chars.next(), right_chars.next())
+    {
+        if left_index < prefix || right_index < prefix || left_char != right_char {
+            break;
+        }
+        left_end = left_index;
+        right_end = right_index;
+    }
+    (left_end, right_end)
 }
 
 fn configure_workspace_roots(params: &InitializeParams) -> Vec<PathBuf> {
@@ -8975,6 +9118,13 @@ impl LanguageServer for Backend {
                 }),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
+                document_range_formatting_provider: Some(OneOf::Left(true)),
+                document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
+                    first_trigger_character: "\n".to_owned(),
+                    more_trigger_character: Some(
+                        ["}", ";", ","].into_iter().map(str::to_owned).collect(),
+                    ),
+                }),
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 semantic_tokens_provider: Some(
                     SemanticTokensServerCapabilities::SemanticTokensOptions(
@@ -9618,6 +9768,43 @@ impl LanguageServer for Backend {
         };
 
         match document_formatting_edits(&source) {
+            Ok(edits) => Ok(Some(edits)),
+            Err(message) => {
+                self.client.log_message(MessageType::WARNING, message).await;
+                Ok(None)
+            }
+        }
+    }
+
+    async fn range_formatting(
+        &self,
+        params: DocumentRangeFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let uri = params.text_document.uri;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+
+        match range_formatting_edits(&source, params.range) {
+            Ok(edits) => Ok(Some(edits)),
+            Err(message) => {
+                self.client.log_message(MessageType::WARNING, message).await;
+                Ok(None)
+            }
+        }
+    }
+
+    async fn on_type_formatting(
+        &self,
+        params: DocumentOnTypeFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+
+        match on_type_formatting_edits(&source, position, params.ch.as_str()) {
             Ok(edits) => Ok(Some(edits)),
             Err(message) => {
                 self.client.log_message(MessageType::WARNING, message).await;

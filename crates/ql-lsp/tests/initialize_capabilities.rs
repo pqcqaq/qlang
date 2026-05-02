@@ -38,6 +38,23 @@ async fn initialize_declares_rich_editor_capabilities() {
         Some(["(", ",", "<"].into_iter().map(str::to_owned).collect())
     );
     assert!(matches!(
+        capabilities.document_formatting_provider,
+        Some(OneOf::Left(true))
+    ));
+    assert!(matches!(
+        capabilities.document_range_formatting_provider,
+        Some(OneOf::Left(true))
+    ));
+    let on_type = capabilities
+        .document_on_type_formatting_provider
+        .as_ref()
+        .expect("onTypeFormatting provider should be declared");
+    assert_eq!(on_type.first_trigger_character, "\n");
+    assert_eq!(
+        on_type.more_trigger_character,
+        Some(["}", ";", ","].into_iter().map(str::to_owned).collect())
+    );
+    assert!(matches!(
         capabilities.folding_range_provider,
         Some(FoldingRangeProviderCapability::Simple(true))
     ));

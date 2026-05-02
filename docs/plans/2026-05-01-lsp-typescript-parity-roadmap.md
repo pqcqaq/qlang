@@ -4,7 +4,7 @@
 
 **Goal:** Bring Qlang editor experience close to the TypeScript language server baseline by fixing visible syntax UX first, then expanding backend LSP capability in small verified slices.
 
-**Status 2026-05-01:** The first rich-editor slice is implemented: VS Code grammar now mirrors the lexer keyword set, `qlsp` declares and serves keyword hover, keyword/snippet completion, `completionItem/resolve` documentation/detail enrichment, semantic tokens full/range with lexical tokens and modifiers, signature help, local type inlay hints, folding ranges, and selection ranges. Remaining TypeScript-parity work is still code lens, codeAction resolve/source actions, range/on-type formatting, call/type hierarchy, file-operation hooks, and a deeper AST/type-driven implementation of signature/inlay/folding/selection.
+**Status 2026-05-02:** The first rich-editor slices are implemented: VS Code grammar now mirrors the lexer keyword set, `qlsp` declares and serves keyword hover, keyword/snippet completion, `completionItem/resolve` documentation/detail enrichment, semantic tokens full/range with lexical tokens and modifiers, signature help, local type inlay hints, folding ranges, selection ranges, range formatting, and on-type formatting. Remaining TypeScript-parity work is still code lens, codeAction resolve/source actions, call/type hierarchy, file-operation hooks, and a deeper AST/type-driven implementation of signature/inlay/folding/selection.
 
 **Architecture:** Keep `ql-analysis` as the semantic truth source and keep `ql-lsp` as the protocol bridge. VS Code lexical coloring stays in the extension TextMate grammar; semantic coloring, hover, navigation, diagnostics, actions, and workspace intelligence stay behind `qlsp`.
 
@@ -167,10 +167,10 @@ The visible UX gap that motivated this plan was:
 
 **Steps:**
 
-1. Add range formatting for complete syntactic subtrees where safe.
-2. Add on-type formatting for newline, `}`, `;`, and `,` if it can reuse formatter output predictably.
-3. Keep full-document formatting as the fallback for unsupported ranges.
-4. Run formatting tests.
+1. Done: add safe range formatting by reusing `ql fmt` and returning per-line minimal edits only when each edit stays inside the requested range.
+2. Done: add on-type formatting for newline, `}`, `;`, and `,` by returning per-line minimal edits only on the trigger line.
+3. Done: unsupported partial changes that cannot be safely split by line return empty edits instead of silently changing unrelated text.
+4. Done: `cargo test -p ql-lsp --test formatting_request --test initialize_capabilities --test request_smoke`.
 5. Commit as `feat: expand qlsp formatting requests`.
 
 ### Task 9: Workspace Diagnostics and Actions

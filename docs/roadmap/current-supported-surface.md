@@ -67,7 +67,7 @@
 
 ### LSP 与 VSCode
 
-- same-file 语义已经接通：hover、keyword hover、definition、declaration、typeDefinition、references、documentHighlight、completion、completion resolve（补齐缺失文档/detail）、signatureHelp、inlayHint、foldingRange、selectionRange、semanticTokens/full、semanticTokens/range、documentSymbol、rename。
+- same-file 语义已经接通：hover、keyword hover、definition、declaration、typeDefinition、references、documentHighlight、completion、completion resolve（补齐缺失文档/detail）、signatureHelp、inlayHint、foldingRange、selectionRange、semanticTokens/full、semanticTokens/range、documentSymbol、document/range/on-type formatting、rename。
 - `workspace/symbol` 已落地。
 - `textDocument/codeAction` 第一版已落地：当前会对 unresolved value/type 提供 quick fix，并从 workspace member / 本地依赖源码或 `.qi` 的 `package ...` 声明推导完整 `use ...` 路径；若候选来自未声明的 sibling workspace member，还会同时给当前 package `qlang.toml` 补本地 `[dependencies]` 项。显式 `use demo.xxx...` 指向未声明的 sibling workspace member 时，也会直接提供只改 manifest 的 missing-dependency quick fix。真实 LSP request 回归已锁住 unresolved type auto-import 和“插 `use` + 补 manifest”两条入口。
 - 真实 `LspService` request smoke 现在也继续补宽了 `textDocument/references` 与 `textDocument/documentHighlight` 主入口；workspace / dependency 边界仍由专题 request 回归锁住。
@@ -92,7 +92,7 @@
 - 同名本地依赖的 type / enum / enum member、method / trait method / extend method 组合场景现在也有显式回归保护；`[dependencies]` 本地路径依赖在 open document 和 `workspace_roots` 入口上也都锁住了“源码优先 + 兄弟依赖 `.qi` 保留”这条 `workspace/symbol` 合同；真实 LSP request 入口也已覆盖 workspace root 无打开文档、open unsaved 本地依赖源码优先与同名本地依赖隔离。
 - `qlsp` 现在会声明 `.`, `:`, `"`, `/`, `@`, `<` completion triggers；VSCode 中输入成员访问、点分 dependency 路径、基础 keyword/snippet 场景时可直接自动触发补全。
 - VSCode 扩展现在会读取 LSP `serverInfo.version`；若扩展版本与 `qlsp` 版本不一致，会直接给出 warning，避免 repo 开发产物和安装产物混用时静默漂移。
-- `textDocument/formatting` 已落地：当前复用 `ql fmt` 背后的格式化实现提供整文档格式化；仅在源码可成功解析时返回编辑，parse-error 文档会保守跳过并记录 warning。真实 `LspService` request 回归已锁住返回整文档 edit、已格式化源码返回空 edit、parse-error 返回 `None` 三条入口合同。
+- `textDocument/formatting` / `rangeFormatting` / `onTypeFormatting` 已落地：当前复用 `ql fmt` 背后的格式化实现；整文档格式化返回全文件 edit，range formatting 只返回能安全落在请求范围内的逐行最小 edit，on-type formatting 只返回触发行内的逐行最小 edit；parse-error 文档会保守跳过并记录 warning。真实 `LspService` request 回归已锁住整文档 edit、已格式化源码空 edit、parse-error `None`、安全局部 range edit、只改请求范围内的 range edit、on-type 触发行 edit、`}` / `;` / `,` 触发字符和未声明触发字符空 edit。
 - full-sync document lifecycle 现在也有真实 `LspService` notification 回归；`didOpen` / `didChange` 会优先发布当前 buffer 的 parser / semantic diagnostics，当前 buffer 干净时再补 package preflight 的 manifest / interface 错误（例如缺失 dependency `.qi`），`didClose` 会清空该文档 diagnostics。当前仍只发布打开文档本身的 diagnostics，不做 workspace-wide 推送。
 - 真实 `LspService` request smoke 现在覆盖 same-file `textDocument/hover`、`definition`、`declaration`、`typeDefinition`、`completion`、`implementation`、`documentSymbol`、`semanticTokens/full` 主入口；复杂 workspace / dependency 边界仍由各专题 integration request 回归分别锁住。
 - `textDocument/prepareRename` / `rename` 现在也有真实 `LspService` request 回归；当前已锁住 same-file rename 的 range/placeholder 与同文件 `WorkspaceEdit` 返回合同，以及从 workspace import use 发起并联动改写导出源码定义、导出源码内部引用、当前文件和同 package sibling consumer 的 workspace source-root rename 合同。更宽的 source-backed member/dependency rename 仍由专题 backend tests 覆盖。
