@@ -2,7 +2,7 @@
 
 `stdlib` is an ordinary Qlang workspace. It is not a compiler prelude and it is not published through a registry yet.
 
-This is real standard-library code for downstream packages, not only a test fixture. The current `IntOption` / `BoolOption`, `IntResult` / `BoolResult`, and fixed-arity helpers such as `sum3_int` are transitional compatibility APIs while generic public APIs, collection helpers, and eventually variadic syntax are still being opened in the compiler/backend.
+This is real standard-library code for downstream packages, not only a test fixture. The current `IntOption` / `BoolOption`, `IntResult` / `BoolResult`, and fixed-arity helpers such as `sum3_int` are transitional compatibility APIs while generic helper APIs, collection helpers, and eventually variadic syntax are still being opened in the compiler/backend.
 
 Current packages:
 
@@ -40,7 +40,7 @@ cargo run -q -p ql-cli -- project init D:\Projects\my-qlang-app --stdlib D:\Proj
 cargo run -q -p ql-cli -- project init D:\Projects\my-qlang-workspace --workspace --name app --stdlib D:\Projects\language_q\stdlib
 ```
 
-Generated `--stdlib` projects depend on `std.core`, `std.option`, `std.result`, `std.array`, and `std.test`. `std.option` and `std.result` are intentionally concrete today: direct dependency builds now support explicit generic `struct` / `enum` instantiations in non-generic function signatures, but generic helper function monomorphization and automatic prelude integration are still open. `IntOption` / `BoolOption` and `IntResult` / `BoolResult` remain the executable API until generic `Option[T]` / `Result[T, E]` helpers can pass downstream `ql check/build/run/test`. `std.array` is also intentionally concrete today, but it moves repeated-value APIs toward collection-shaped calls instead of adding more `foo3/foo4/foo5` argument lists. `std.test` now also ships carrier-specific assertions for `std.option` and `std.result`.
+Generated `--stdlib` projects depend on `std.core`, `std.option`, `std.result`, `std.array`, and `std.test`. `std.option` and `std.result` are intentionally concrete today: direct dependency builds now support explicit generic `struct` / `enum` instantiations in non-generic function signatures, contextual generic struct literals and field projection, but generic helper function monomorphization and automatic prelude integration are still open. `IntOption` / `BoolOption` and `IntResult` / `BoolResult` remain the executable API until generic `Option[T]` / `Result[T, E]` helpers can pass downstream `ql check/build/run/test`. `std.array` is also intentionally concrete today, but it moves repeated-value APIs toward collection-shaped calls instead of adding more `foo3/foo4/foo5` argument lists. `std.test` now also ships carrier-specific assertions for `std.option` and `std.result`.
 Generated smoke tests group assertion statuses with `merge_status4` / `merge_status5` / `merge_status6`, use carrier-specific `std.test` assertions for `std.option` / `std.result`, cover `std.array` fixed-array helpers, cover the `std.result` <-> `std.option` conversion and error extraction helpers through `std.test`, and return `expect_status_ok(...)` so larger tests can keep the same `0` pass / non-zero failure contract without one long status expression.
 `std.test` also uses a package-aware smoke test that imports its own public helpers through `use std.test...` and exercises `std.option` / `std.result` assertions, so the assertion package is checked through the same surface as downstream users.
 

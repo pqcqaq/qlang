@@ -1151,7 +1151,8 @@ use dep.inspect_box as inspect_box
 use dep.classify as classify
 
 fn consume_box(value: Box[Int]) -> Int {
-    return inspect_box(value)
+    let local: Box[Int] = Box { value: 7 }
+    return inspect_box(value) + value.value + inspect_box(local) + local.value
 }
 
 fn consume_maybe(value: Maybe[Int]) -> Int {
@@ -1159,7 +1160,8 @@ fn consume_maybe(value: Maybe[Int]) -> Int {
 }
 
 fn main() -> Int {
-    return 0
+    let value: Box[Int] = Box { value: 5 }
+    return consume_box(value)
 }
 "#,
     );

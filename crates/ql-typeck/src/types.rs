@@ -1,6 +1,8 @@
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
-use ql_hir::{Function, FunctionRef, ItemId, ItemKind, Module, Param, TypeId, TypeKind};
+use ql_hir::{
+    Function, FunctionRef, GenericParam, ItemId, ItemKind, Module, Param, TypeId, TypeKind,
+};
 use ql_resolve::{BuiltinType, ImportBinding, ResolutionMap, TypeResolution};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -324,6 +326,90 @@ pub fn lower_type(module: &Module, resolution: &ResolutionMap, type_id: TypeId) 
                 .collect(),
             ret: Box::new(lower_type(module, resolution, *ret)),
         },
+    }
+}
+
+pub fn generic_type_substitutions(
+    generics: &[GenericParam],
+    args: &[Ty],
+) -> Option<BTreeMap<String, Ty>> {
+    if args.is_empty() {
+        return Some(BTreeMap::new());
+    }
+    if generics.len() != args.len() {
+        return None;
+    }
+
+    Some(
+        generics
+            .iter()
+            .zip(args.iter())
+            .map(|(generic, arg)| (generic.name.clone(), arg.clone()))
+            .collect(),
+    )
+}
+
+pub fn substitute_generic_ty(ty: Ty, substitutions: &BTreeMap<String, Ty>) -> Ty {
+    if substitutions.is_empty() {
+        return ty;
+    }
+
+    match ty {
+        Ty::Generic(name) => substitutions
+            .get(&name)
+            .cloned()
+            .unwrap_or(Ty::Generic(name)),
+        Ty::Array { element, len } => Ty::Array {
+            element: Box::new(substitute_generic_ty(*element, substitutions)),
+            len,
+        },
+        Ty::Item {
+            item_id,
+            name,
+            args,
+        } => Ty::Item {
+            item_id,
+            name,
+            args: args
+                .into_iter()
+                .map(|arg| substitute_generic_ty(arg, substitutions))
+                .collect(),
+        },
+        Ty::Import { path, args } => Ty::Import {
+            path,
+            args: args
+                .into_iter()
+                .map(|arg| substitute_generic_ty(arg, substitutions))
+                .collect(),
+        },
+        Ty::Named { path, args } => Ty::Named {
+            path,
+            args: args
+                .into_iter()
+                .map(|arg| substitute_generic_ty(arg, substitutions))
+                .collect(),
+        },
+        Ty::Pointer { is_const, inner } => Ty::Pointer {
+            is_const,
+            inner: Box::new(substitute_generic_ty(*inner, substitutions)),
+        },
+        Ty::Tuple(items) => Ty::Tuple(
+            items
+                .into_iter()
+                .map(|item| substitute_generic_ty(item, substitutions))
+                .collect(),
+        ),
+        Ty::TaskHandle(output) => {
+            Ty::TaskHandle(Box::new(substitute_generic_ty(*output, substitutions)))
+        }
+        Ty::Callable { params, ret } => Ty::Callable {
+            params: params
+                .into_iter()
+                .map(|param| substitute_generic_ty(param, substitutions))
+                .collect(),
+            ret: Box::new(substitute_generic_ty(*ret, substitutions)),
+        },
+        other => other,
     }
 }
 

@@ -2473,6 +2473,118 @@ fn build[T]() -> Int {
 }
 
 #[test]
+fn accepts_contextual_generic_aggregate_construction_and_projection() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Box[T] {
+    value: T,
+}
+
+enum Maybe[T] {
+    Some(T),
+    None,
+}
+
+enum Pair[T] {
+    Both {
+        left: T,
+        right: T,
+    },
+}
+
+fn make_box(value: Int) -> Box[Int] {
+    return Box { value: value }
+}
+
+fn read_box(value: Box[Int]) -> Int {
+    return value.value
+}
+
+fn destructure_box(value: Box[Int]) -> Int {
+    let Box { value } = value
+    return value
+}
+
+fn make_some(value: Int) -> Maybe[Int] {
+    return Maybe.Some(value)
+}
+
+fn make_none() -> Maybe[Int] {
+    return Maybe.None
+}
+
+fn read_maybe(value: Maybe[Int]) -> Int {
+    match value {
+        Maybe.Some(item) => item,
+        Maybe.None => 0,
+    }
+}
+
+fn make_pair(value: Int) -> Pair[Int] {
+    return Pair.Both { left: value, right: value }
+}
+
+fn read_pair(value: Pair[Int]) -> Int {
+    match value {
+        Pair.Both { left, right } => left + right,
+    }
+}
+
+fn main() -> Int {
+    let boxed: Box[Int] = Box { value: 7 }
+    return read_box(boxed) + destructure_box(make_box(2)) + read_maybe(make_some(3)) + read_maybe(make_none()) + read_pair(make_pair(4))
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_contextual_generic_aggregate_type_mismatches() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Box[T] {
+    value: T,
+}
+
+enum Maybe[T] {
+    Some(T),
+}
+
+fn make_box() -> Box[Int] {
+    return Box { value: "bad" }
+}
+
+fn read_box(value: Box[Int]) -> String {
+    return value.value
+}
+
+fn make_some() -> Maybe[Int] {
+    return Maybe.Some("bad")
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(
+        &"struct literal field has type mismatch: expected `Int`, found `String`".to_string()
+    ));
+    assert!(
+        diagnostics.contains(
+            &"return value has type mismatch: expected `String`, found `Int`".to_string()
+        )
+    );
+    assert!(
+        diagnostics.contains(
+            &"call argument has type mismatch: expected `Int`, found `String`".to_string()
+        )
+    );
+}
+
+#[test]
 fn accepts_struct_literals_through_same_file_import_aliases() {
     let diagnostics = diagnostic_messages(
         r#"

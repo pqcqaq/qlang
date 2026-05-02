@@ -44,7 +44,7 @@
 
 ## Task 2: Generic Public API Execution
 
-Status: first execution slice landed. Direct local dependencies can now expose public generic `struct` / `enum` declarations and use explicit instantiations such as `Box[Int]` / `Maybe[Int]` in non-generic public function signatures consumed by a root project. `.qi` emission now also has regression coverage for generic enum and generic function declarations. Generic function monomorphization, generic aliases, generic struct literals / field projection, and generic stdlib `Option[T]` / `Result[T, E]` helper execution remain open.
+Status: second execution slice landed. Direct local dependencies can now expose public generic `struct` / `enum` declarations, use explicit instantiations such as `Box[Int]` / `Maybe[Int]` in non-generic public function signatures consumed by a root project, and build contextual generic struct literals plus field projection when the expected type carries concrete args. Typeck also substitutes those args through struct/enum patterns and enum unit/tuple/struct variant construction. `.qi` emission has regression coverage for generic enum and generic function declarations. Generic function monomorphization, generic aliases, and generic stdlib `Option[T]` / `Result[T, E]` helper execution remain open.
 
 **Files:**
 - Modify: `crates/ql-project/src/lib.rs`

@@ -10,7 +10,10 @@ use ql_resolve::{ParamBinding, ResolutionMap, TypeResolution, ValueResolution};
 use ql_span::Span;
 
 use crate::checker::{FieldTarget, MemberTarget, MethodTarget};
-use crate::types::{Ty, item_display_name, local_item_for_import_binding, lower_type, void_ty};
+use crate::types::{
+    Ty, generic_type_substitutions, item_display_name, local_item_for_import_binding, lower_type,
+    substitute_generic_ty, void_ty,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TypingResult {
@@ -617,9 +620,11 @@ impl<'a> Checker<'a> {
             }
             ExprKind::Closure { params, body, .. } => self.check_closure(params, *body, expected),
             ExprKind::Call { callee, args } => self.check_call(expr_id, *callee, args, expected),
-            ExprKind::Member { object, field, .. } => self.check_member(expr_id, *object, field),
+            ExprKind::Member { object, field, .. } => {
+                self.check_member(expr_id, *object, field, expected)
+            }
             ExprKind::Bracket { target, items } => self.check_bracket(expr_id, *target, items),
-            ExprKind::StructLiteral { .. } => self.check_struct_literal(expr_id),
+            ExprKind::StructLiteral { .. } => self.check_struct_literal(expr_id, expected),
             ExprKind::Binary { left, op, right } => self.check_binary(expr_id, *left, *op, *right),
             ExprKind::Unary { op, expr } => self.check_unary(expr_id, *op, *expr),
             ExprKind::Question(expr) => self.check_expr(*expr, expected),
@@ -1891,9 +1896,9 @@ impl<'a> Checker<'a> {
         expr_id: ExprId,
         callee: ExprId,
         args: &[CallArg],
-        _expected: Option<&Ty>,
+        expected: Option<&Ty>,
     ) -> Ty {
-        if let Some(signature) = match self.enum_tuple_variant_call_signature(callee) {
+        if let Some(signature) = match self.enum_tuple_variant_call_signature(callee, expected) {
             Ok(signature) => signature,
             Err(message) => {
                 self.diagnostics.push(Diagnostic::error(message).with_label(
@@ -1952,8 +1957,14 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn check_member(&mut self, expr_id: ExprId, object: ExprId, field: &str) -> Ty {
-        if let Some(ty) = match self.enum_unit_variant_expr_ty(expr_id) {
+    fn check_member(
+        &mut self,
+        expr_id: ExprId,
+        object: ExprId,
+        field: &str,
+        expected: Option<&Ty>,
+    ) -> Ty {
+        if let Some(ty) = match self.enum_unit_variant_expr_ty(expr_id, expected) {
             Ok(ty) => ty,
             Err(message) => {
                 self.diagnostics.push(Diagnostic::error(message).with_label(
@@ -2036,7 +2047,7 @@ impl<'a> Checker<'a> {
     }
 
     fn select_member_target(&self, object_ty: &Ty, field: &str) -> SelectedMember {
-        let Ty::Item { item_id, .. } = object_ty else {
+        let Ty::Item { item_id, args, .. } = object_ty else {
             return SelectedMember::Missing;
         };
 
@@ -2053,19 +2064,29 @@ impl<'a> Checker<'a> {
         }
 
         match &self.module.item(*item_id).kind {
-            ItemKind::Struct(struct_decl) => struct_decl
-                .fields
-                .iter()
-                .enumerate()
-                .find(|(_, candidate)| candidate.name == field)
-                .map(|(field_index, candidate)| SelectedMember::Field {
-                    target: FieldTarget {
-                        item_id: *item_id,
-                        field_index,
-                    },
-                    ty: lower_type(self.module, self.resolution, candidate.ty),
-                })
-                .unwrap_or(SelectedMember::Missing),
+            ItemKind::Struct(struct_decl) => {
+                let Some(substitutions) = generic_type_substitutions(&struct_decl.generics, args)
+                else {
+                    return SelectedMember::Missing;
+                };
+
+                struct_decl
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .find(|(_, candidate)| candidate.name == field)
+                    .map(|(field_index, candidate)| SelectedMember::Field {
+                        target: FieldTarget {
+                            item_id: *item_id,
+                            field_index,
+                        },
+                        ty: substitute_generic_ty(
+                            lower_type(self.module, self.resolution, candidate.ty),
+                            &substitutions,
+                        ),
+                    })
+                    .unwrap_or(SelectedMember::Missing)
+            }
             _ => SelectedMember::Missing,
         }
     }
@@ -2312,29 +2333,60 @@ impl<'a> Checker<'a> {
             .map(|variant| variant.map(|variant| (item_id, variant, path)))
     }
 
-    fn enum_root_ty(&self, item_id: ItemId) -> Ty {
+    fn item_root_ty(&self, item_id: ItemId, expected: Option<&Ty>) -> Ty {
         Ty::Item {
             item_id,
             name: item_display_name(self.module, item_id),
-            args: Vec::new(),
+            args: self.expected_item_args(item_id, expected),
         }
     }
 
-    fn enum_unit_variant_expr_ty(&self, expr_id: ExprId) -> Result<Option<Ty>, String> {
+    fn expected_item_args(&self, item_id: ItemId, expected: Option<&Ty>) -> Vec<Ty> {
+        let Some(expected) = expected else {
+            return Vec::new();
+        };
+        let expected = self.transparent_value_ty(expected);
+        match expected {
+            Ty::Item {
+                item_id: expected_item,
+                args,
+                ..
+            } if expected_item == item_id => args,
+            _ => Vec::new(),
+        }
+    }
+
+    fn enum_unit_variant_expr_ty(
+        &self,
+        expr_id: ExprId,
+        expected: Option<&Ty>,
+    ) -> Result<Option<Ty>, String> {
         let Some((item_id, variant, _)) = self.enum_variant_for_expr_path(expr_id)? else {
             return Ok(None);
         };
-        Ok(matches!(&variant.fields, VariantFields::Unit).then(|| self.enum_root_ty(item_id)))
+        Ok(matches!(&variant.fields, VariantFields::Unit)
+            .then(|| self.item_root_ty(item_id, expected)))
     }
 
     fn enum_tuple_variant_call_signature(
         &self,
         callee: ExprId,
+        expected: Option<&Ty>,
     ) -> Result<Option<Signature>, String> {
         let Some((item_id, variant, _)) = self.enum_variant_for_expr_path(callee)? else {
             return Ok(None);
         };
         let VariantFields::Tuple(types) = &variant.fields else {
+            return Ok(None);
+        };
+        let root_ty = self.item_root_ty(item_id, expected);
+        let Ty::Item { args, .. } = &root_ty else {
+            return Ok(None);
+        };
+        let ItemKind::Enum(enum_decl) = &self.module.item(item_id).kind else {
+            return Ok(None);
+        };
+        let Some(substitutions) = generic_type_substitutions(&enum_decl.generics, args) else {
             return Ok(None);
         };
 
@@ -2344,10 +2396,13 @@ impl<'a> Checker<'a> {
                 .iter()
                 .map(|&type_id| SignatureParam {
                     name: None,
-                    ty: lower_type(self.module, self.resolution, type_id),
+                    ty: substitute_generic_ty(
+                        lower_type(self.module, self.resolution, type_id),
+                        &substitutions,
+                    ),
                 })
                 .collect(),
-            ret: self.enum_root_ty(item_id),
+            ret: root_ty,
         }))
     }
 
@@ -2371,7 +2426,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn check_struct_literal(&mut self, expr_id: ExprId) -> Ty {
+    fn check_struct_literal(&mut self, expr_id: ExprId, expected: Option<&Ty>) -> Ty {
         let expr = self.module.expr(expr_id);
         let ExprKind::StructLiteral { path, fields } = &expr.kind else {
             return Ty::Unknown;
@@ -2380,7 +2435,14 @@ impl<'a> Checker<'a> {
             .resolution
             .struct_literal_resolution(expr_id)
             .and_then(|resolution| self.item_id_for_type_resolution(resolution))
-            .filter(|&item_id| self.field_infos_for_item_path(item_id, path).is_some());
+            .filter(|&item_id| {
+                let root_ty = self.item_root_ty(item_id, expected);
+                let Ty::Item { args, .. } = &root_ty else {
+                    return false;
+                };
+                self.field_infos_for_item_path(item_id, path, args)
+                    .is_some()
+            });
 
         let Some(item_id) = item_id else {
             if let Some(message) = self.invalid_struct_literal_root_message(expr_id, path) {
@@ -2394,14 +2456,13 @@ impl<'a> Checker<'a> {
             }
             return Ty::Unknown;
         };
-        let fields_info = self
-            .field_infos_for_item_path(item_id, path)
-            .expect("supported struct literals should expose field information");
-        let root_ty = Ty::Item {
-            item_id,
-            name: item_display_name(self.module, item_id),
-            args: Vec::new(),
+        let root_ty = self.item_root_ty(item_id, expected);
+        let Ty::Item { args, .. } = &root_ty else {
+            return Ty::Unknown;
         };
+        let fields_info = self
+            .field_infos_for_item_path(item_id, path, args)
+            .expect("supported struct literals should expose field information");
 
         let mut seen = HashSet::new();
         for field in fields {
@@ -2941,7 +3002,7 @@ impl<'a> Checker<'a> {
                 if invalid_root_message.is_none() {
                     self.check_pattern_root(pattern_id, expected, "tuple-struct pattern");
                 }
-                let expected_items = self.tuple_struct_pattern_items(pattern_id);
+                let expected_items = self.tuple_struct_pattern_items(pattern_id, expected);
                 if let Some(expected_items) = expected_items {
                     if expected_items.len() != items.len() {
                         self.diagnostics.push(
@@ -2976,7 +3037,7 @@ impl<'a> Checker<'a> {
                 if invalid_root_message.is_none() {
                     self.check_pattern_root(pattern_id, expected, "struct pattern");
                 }
-                let field_types = self.struct_pattern_fields(pattern_id);
+                let field_types = self.struct_pattern_fields(pattern_id, expected);
                 if field_types.is_none()
                     && let Some(message) = invalid_root_message
                 {
@@ -3093,7 +3154,7 @@ impl<'a> Checker<'a> {
     }
 
     fn check_pattern_root(&mut self, pattern_id: PatternId, expected: &Ty, context: &str) {
-        let Some(actual) = self.pattern_root_ty(pattern_id) else {
+        let Some(actual) = self.pattern_root_ty(pattern_id, Some(expected)) else {
             return;
         };
 
@@ -3344,7 +3405,7 @@ impl<'a> Checker<'a> {
         );
     }
 
-    fn pattern_root_ty(&self, pattern_id: PatternId) -> Option<Ty> {
+    fn pattern_root_ty(&self, pattern_id: PatternId, expected: Option<&Ty>) -> Option<Ty> {
         let pattern = self.module.pattern(pattern_id);
         let path = match &pattern.kind {
             PatternKind::Path(path)
@@ -3362,21 +3423,17 @@ impl<'a> Checker<'a> {
             ItemKind::Const(_) if path.segments.len() == 1 => {
                 self.const_item_path_pattern_ty(item_id)
             }
-            ItemKind::Struct(_) if path.segments.len() == 1 => Some(Ty::Item {
-                item_id,
-                name: item_display_name(self.module, item_id),
-                args: Vec::new(),
-            }),
-            ItemKind::Enum(_) if path.segments.len() == 2 => Some(Ty::Item {
-                item_id,
-                name: item_display_name(self.module, item_id),
-                args: Vec::new(),
-            }),
+            ItemKind::Struct(_) if path.segments.len() == 1 => {
+                Some(self.item_root_ty(item_id, expected))
+            }
+            ItemKind::Enum(_) if path.segments.len() == 2 => {
+                Some(self.item_root_ty(item_id, expected))
+            }
             _ => None,
         }
     }
 
-    fn tuple_struct_pattern_items(&self, pattern_id: PatternId) -> Option<Vec<Ty>> {
+    fn tuple_struct_pattern_items(&self, pattern_id: PatternId, expected: &Ty) -> Option<Vec<Ty>> {
         let pattern = self.module.pattern(pattern_id);
         let PatternKind::TupleStruct { path, .. } = &pattern.kind else {
             return None;
@@ -3388,13 +3445,20 @@ impl<'a> Checker<'a> {
             .and_then(|resolution| self.item_id_for_value_resolution(resolution))?;
 
         match &self.module.item(item_id).kind {
-            ItemKind::Enum(_) if path.segments.len() == 2 => {
+            ItemKind::Enum(enum_decl) if path.segments.len() == 2 => {
+                let root_args = self.expected_item_args(item_id, Some(expected));
+                let substitutions = generic_type_substitutions(&enum_decl.generics, &root_args)?;
                 match self.enum_variant_for_item_path(item_id, path).ok()? {
                     Some(variant) => match &variant.fields {
                         VariantFields::Tuple(types) => Some(
                             types
                                 .iter()
-                                .map(|&type_id| lower_type(self.module, self.resolution, type_id))
+                                .map(|&type_id| {
+                                    substitute_generic_ty(
+                                        lower_type(self.module, self.resolution, type_id),
+                                        &substitutions,
+                                    )
+                                })
                                 .collect(),
                         ),
                         _ => None,
@@ -3406,7 +3470,11 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn struct_pattern_fields(&self, pattern_id: PatternId) -> Option<Vec<FieldInfo>> {
+    fn struct_pattern_fields(
+        &self,
+        pattern_id: PatternId,
+        expected: &Ty,
+    ) -> Option<Vec<FieldInfo>> {
         let pattern = self.module.pattern(pattern_id);
         let PatternKind::Struct { path, .. } = &pattern.kind else {
             return None;
@@ -3417,27 +3485,36 @@ impl<'a> Checker<'a> {
             .pattern_resolution(pattern_id)
             .and_then(|resolution| self.item_id_for_value_resolution(resolution))?;
 
-        self.field_infos_for_item_path(item_id, path)
+        let root_args = self.expected_item_args(item_id, Some(expected));
+        self.field_infos_for_item_path(item_id, path, &root_args)
     }
 
     fn field_infos_for_item_path(
         &self,
         item_id: ItemId,
         path: &ql_ast::Path,
+        args: &[Ty],
     ) -> Option<Vec<FieldInfo>> {
         match &self.module.item(item_id).kind {
-            ItemKind::Struct(struct_decl) if path.segments.len() == 1 => Some(
-                struct_decl
-                    .fields
-                    .iter()
-                    .map(|field| FieldInfo {
-                        name: field.name.clone(),
-                        ty: lower_type(self.module, self.resolution, field.ty),
-                        has_default: field.default.is_some(),
-                    })
-                    .collect(),
-            ),
-            ItemKind::Enum(_) if path.segments.len() == 2 => {
+            ItemKind::Struct(struct_decl) if path.segments.len() == 1 => {
+                let substitutions = generic_type_substitutions(&struct_decl.generics, args)?;
+                Some(
+                    struct_decl
+                        .fields
+                        .iter()
+                        .map(|field| FieldInfo {
+                            name: field.name.clone(),
+                            ty: substitute_generic_ty(
+                                lower_type(self.module, self.resolution, field.ty),
+                                &substitutions,
+                            ),
+                            has_default: field.default.is_some(),
+                        })
+                        .collect(),
+                )
+            }
+            ItemKind::Enum(enum_decl) if path.segments.len() == 2 => {
+                let substitutions = generic_type_substitutions(&enum_decl.generics, args)?;
                 match self.enum_variant_for_item_path(item_id, path).ok()? {
                     Some(variant) => match &variant.fields {
                         VariantFields::Struct(fields) => Some(
@@ -3445,7 +3522,10 @@ impl<'a> Checker<'a> {
                                 .iter()
                                 .map(|field| FieldInfo {
                                     name: field.name.clone(),
-                                    ty: lower_type(self.module, self.resolution, field.ty),
+                                    ty: substitute_generic_ty(
+                                        lower_type(self.module, self.resolution, field.ty),
+                                        &substitutions,
+                                    ),
                                     has_default: field.default.is_some(),
                                 })
                                 .collect(),
