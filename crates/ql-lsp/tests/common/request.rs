@@ -16,15 +16,15 @@ use tower_lsp::lsp_types::request::{
     GotoImplementationResponse, GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
 };
 use tower_lsp::lsp_types::{
-    CodeAction, CodeActionKind, CodeActionOrCommand, CompletionItem as LspCompletionItem,
-    CompletionParams, CompletionResponse, Diagnostic, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
-    DocumentHighlight, DocumentOnTypeFormattingParams, DocumentRangeFormattingParams,
-    DocumentSymbolParams, DocumentSymbolResponse, FoldingRange, FoldingRangeParams,
-    FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
-    InitializeParams, InitializeResult, InlayHint, InlayHintParams, Location, Position,
-    PrepareRenameResponse, Range, ReferenceContext, ReferenceParams, RenameParams, SelectionRange,
-    SelectionRangeParams, SemanticTokensParams, SemanticTokensRangeParams,
+    CodeAction, CodeActionKind, CodeActionOrCommand, CodeLens, CodeLensParams,
+    CompletionItem as LspCompletionItem, CompletionParams, CompletionResponse, Diagnostic,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DocumentFormattingParams, DocumentHighlight, DocumentOnTypeFormattingParams,
+    DocumentRangeFormattingParams, DocumentSymbolParams, DocumentSymbolResponse, FoldingRange,
+    FoldingRangeParams, FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, Hover,
+    HoverParams, InitializeParams, InitializeResult, InlayHint, InlayHintParams, Location,
+    Position, PrepareRenameResponse, Range, ReferenceContext, ReferenceParams, RenameParams,
+    SelectionRange, SelectionRangeParams, SemanticTokensParams, SemanticTokensRangeParams,
     SemanticTokensRangeResult, SemanticTokensResult, SignatureHelp, SignatureHelpParams,
     SymbolInformation, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
     TextDocumentPositionParams, TextEdit, Url, VersionedTextDocumentIdentifier, WorkspaceEdit,
@@ -421,6 +421,31 @@ pub async fn code_action_resolve_via_request(
 ) -> CodeAction {
     let value = request_value(service, "codeAction/resolve", json!(action)).await;
     serde_json::from_value(value).expect("codeAction/resolve result should deserialize")
+}
+
+pub async fn code_lens_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+) -> Option<Vec<CodeLens>> {
+    let value = request_value(
+        service,
+        "textDocument/codeLens",
+        json!(CodeLensParams {
+            text_document: TextDocumentIdentifier { uri },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("textDocument/codeLens result should deserialize")
+}
+
+pub async fn code_lens_resolve_via_request(
+    service: &mut LspService<Backend>,
+    code_lens: CodeLens,
+) -> CodeLens {
+    let value = request_value(service, "codeLens/resolve", json!(code_lens)).await;
+    serde_json::from_value(value).expect("codeLens/resolve result should deserialize")
 }
 
 pub async fn references_via_request(

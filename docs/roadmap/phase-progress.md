@@ -1,6 +1,6 @@
 # P1-P8 阶段总览
 
-> 最后同步：2026-04-29
+> 最后同步：2026-05-02
 
 这页只保留阶段级结论和当前焦点。
 
@@ -90,6 +90,7 @@
 - 这一轮把 broken-source implementation fallback 上的 same-named 本地依赖隔离也补齐了：当前 package 里存在 `alpha/beta` 这类同名导出依赖时，broken open consumers 的 type / trait implementation 聚合现在会先按真实 dependency identity 过滤 import binding，再决定可见本地名，不会再把兄弟依赖的 `extend` / `impl` 误收进来。
 - 这一轮把 broken current consumer 的 trait-typed receiver method call `implementation` 也补上了：当前 active root/source 自身处于 parse-error 时，会先把 `runner.run(` 这类未闭合调用修复成最小可分析形态，再复用既有 source-backed local/dependency method implementation 路径；broken local trait call 现在会继续聚合可见 workspace impl methods，broken dependency trait call 也会继续优先读取 parseable open docs。
 - 这一轮顺手把 workspace root `Find References` 也补到了 trait method definition；从导出源码里的 trait method 发起时，VSCode 现在会把可见 workspace members / 本地依赖源码里的匹配 impl methods 一起聚合进来，并优先读取 parseable open docs。
+- 这一轮把 `textDocument/codeLens` 第一版接入 `qlsp`：可解析的当前文档会基于 document symbols 生成 references / implementations lenses，并复用 VSCode `editor.action.showReferences` 展示结果；parse-error 文档保守不返回 lens，workspace-wide lens index 仍后置。
 - broken-source 下，workspace import `hover/definition/typeDefinition`、direct imported-result member hover / completion / query / `documentHighlight`、dependency struct field label completion、dependency semantic tokens fallback、dependency enum variant 的 `completion/definition/typeDefinition/references/documentHighlight` fallback 已补齐到源码优先路径；workspace import references / query、dependency references / current-document `documentHighlight` / method completion 也已补上 open unsaved workspace member / local dependency source 合同；其中 import references 在补回 healthy workspace consumers 时也会读取这些 consumer 的 open docs；这一轮又补齐了 workspace root import/use `prepareRename` 与 workspace import alias rename 的 open-doc 路径。
 - 同名本地依赖在这条 broken-source 路径上继续按 manifest 身份区分；`build().ping()` / `build().value`、dependency struct field label completion，以及 enum variant query / completion 都不会再串到兄弟依赖实例。
 - broken-source 下的同名本地依赖 `workspace/symbol` 现在也补到了 `[dependencies]` 本地路径依赖入口；open document 和 `workspace_roots` 的顶层 type / interface / enum symbol、enum member，以及 method / trait method / extend method 都已锁住“源码优先 + 兄弟依赖 `.qi` 保留”这条组合场景。
@@ -113,7 +114,7 @@
 - stdlib / test harness：普通 Qlang package 形态的 `stdlib` 已继续扩面，当前 `std.core` 已覆盖区间外/无序边界外、3/4/5 项升降序、容差外、边界归一化、range/bounds 距离、安全 quotient/remainder、三/四/五值 extrema、三值 median、3/4/5 项整数聚合、2/3/4/5 项均值、Bool-to-Int 与 3/4/5 项 Bool all/any/none 聚合 helper；`std.option` 已提供可执行的 concrete `IntOption` / `BoolOption` 构造、判定、解包、or/or_option 和回退 helper；`std.result` 已提供可执行的 concrete `IntResult` / `BoolResult` 构造、判定、解包、回退、error-code helper、无损 error-to-option helper 和 concrete Option/Result 互转 helper；`std.test` 已覆盖 5/6 路 status 合并、max/min/median、sum/product/average、sign/compare、abs/abs-diff/range-span/bounds、quotient/remainder/has_remainder/factor、Option/Result carrier、转换与 error extraction 断言、Bool all/any/none/Bool-to-Int、单边/双边 clamp / range-distance 断言与 3/4/5 项升降序断言；生成的 `ql project init --stdlib` consumer smoke 也会依赖并消费 `std.core` / `std.option` / `std.result` / `std.test`，并通过 `std.test` 覆盖 Option/Result 转换和 error extraction helper。下一步继续扩只依赖稳定语言面的基础 helper，并优先让模板覆盖真实 consumer 路径。
 - build/backend：继续优先补真实项目里高频的 direct local dependency value/type/member 调用面；本轮已把 public 非泛型、非 opaque type alias 从 declaration bridge 推到普通值兼容，typeck 现在覆盖 return、call argument、assignment、数组/分支统一、pattern literal、bool/numeric/string 操作里的透明 alias target；LLVM backend 已跟进 direct lowering 所需的 alias 赋值、数组/字段值检查、二元操作和 callable 参数断言，并用 build/run/test 真实 consumer 锁住 `Count -> Score -> Int` 的跨包签名、alias 算术与 wrapper 调用。`opaque type`、泛型 alias、`impl` / `extend` 身份匹配继续保持不透明；后续若 `stdlib` 继续暴露阻塞项，优先修阻塞项而不是扩新语法。
 - typeck/backend 回归清理：`ql-codegen-llvm` 中仍有一批 IR 形状耦合测试需要分组收敛。本轮已先修正真实语义问题：`if` 一侧不可贯通时不再强制与可贯通分支统一值类型；剩余失败优先改成语义级断言或更稳定的 IR helper，而不是继续追加脆弱字符串匹配。
-- LSP：继续把 `textDocument/implementation` 从已完成的 trait/type surface、workspace root/source-backed type definition surface、workspace root/source-backed concrete / trait-typed method call、source-backed dependency concrete / trait-typed method call、dependency non-import type-driven positions、trait method definition，以及 broken current-buffer concrete / trait-typed method call / broken-source open dependency member-type surface，扩到更宽的 implementation index；更广的全局聚合继续后置。
+- LSP：继续把 `textDocument/implementation` 从已完成的 trait/type surface、workspace root/source-backed type definition surface、workspace root/source-backed concrete / trait-typed method call、source-backed dependency concrete / trait-typed method call、dependency non-import type-driven positions、trait method definition，以及 broken current-buffer concrete / trait-typed method call / broken-source open dependency member-type surface，扩到更宽的 implementation index；`codeLens` 已有当前文档 references / implementations 入口，后续再扩 workspace-wide lens/index。
 - 文档：入口页继续只保留结论、边界和最近 checkpoint，不再追加流水账。
 
 ## 明确后置

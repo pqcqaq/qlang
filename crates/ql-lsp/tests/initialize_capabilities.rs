@@ -28,6 +28,11 @@ async fn initialize_declares_rich_editor_capabilities() {
         )
     );
     assert_eq!(completion.resolve_provider, Some(true));
+    let code_lens = capabilities
+        .code_lens_provider
+        .as_ref()
+        .expect("codeLens provider should be declared");
+    assert_eq!(code_lens.resolve_provider, Some(true));
 
     let signature = capabilities
         .signature_help_provider

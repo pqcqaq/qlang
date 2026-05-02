@@ -4,7 +4,7 @@
 
 **Goal:** Bring Qlang editor experience close to the TypeScript language server baseline by fixing visible syntax UX first, then expanding backend LSP capability in small verified slices.
 
-**Status 2026-05-02:** The first rich-editor slices are implemented: VS Code grammar now mirrors the lexer keyword set, `qlsp` declares and serves keyword hover, keyword/snippet completion, `completionItem/resolve` documentation/detail enrichment, semantic tokens full/range with lexical tokens and modifiers, signature help, local type inlay hints, folding ranges, selection ranges, range formatting, on-type formatting, `codeAction/resolve`, and `source.organizeImports`. Remaining TypeScript-parity work is still code lens, richer source actions, call/type hierarchy, file-operation hooks, and a deeper AST/type-driven implementation of signature/inlay/folding/selection.
+**Status 2026-05-02:** The first rich-editor slices are implemented: VS Code grammar now mirrors the lexer keyword set, `qlsp` declares and serves keyword hover, keyword/snippet completion, `completionItem/resolve` documentation/detail enrichment, semantic tokens full/range with lexical tokens and modifiers, signature help, local type inlay hints, folding ranges, selection ranges, range formatting, on-type formatting, `codeAction/resolve`, `source.organizeImports`, and current-document code lens for references/implementations. Remaining TypeScript-parity work is still richer source actions, call/type hierarchy, file-operation hooks, workspace-wide lens/index work, and a deeper AST/type-driven implementation of signature/inlay/folding/selection.
 
 **Architecture:** Keep `ql-analysis` as the semantic truth source and keep `ql-lsp` as the protocol bridge. VS Code lexical coloring stays in the extension TextMate grammar; semantic coloring, hover, navigation, diagnostics, actions, and workspace intelligence stay behind `qlsp`.
 
@@ -206,7 +206,7 @@ The visible UX gap that motivated this plan was:
 
 1. Add a real workspace symbol/reference index instead of ad hoc source-backed scans.
 2. Expand workspace rename to every source-backed symbol that has a unique package identity.
-3. Add code lens for references and implementations.
+3. Partly done: add current-document code lens for references and implementations on parseable sources; workspace-wide lens/index work remains open.
 4. Add call hierarchy for functions and methods.
 5. Add type hierarchy for structs, enums, traits, impls, extends, and type aliases where meaningful.
 6. Add file rename support for package/source path changes.

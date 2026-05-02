@@ -23,10 +23,10 @@ ql-lexer.workspace = true
 ql-project.workspace = true
 ql-resolve.workspace = true
 ql-span.workspace = true
+serde_json = "1"
 tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "sync"] }
 tower-lsp = "0.20"
 
 [dev-dependencies]
 futures-util = "0.3"
-serde_json = "1"
 tower = "0.4"

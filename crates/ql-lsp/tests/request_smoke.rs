@@ -1,10 +1,10 @@
 mod common;
 
 use common::request::{
-    TempDir, completion_via_request, document_symbol_via_request, goto_declaration_via_request,
-    goto_definition_via_request, goto_implementation_via_request, goto_type_definition_via_request,
-    hover_via_request, initialized_service_with_open_documents, nth_offset, offset_to_position,
-    semantic_tokens_full_via_request,
+    TempDir, code_lens_via_request, completion_via_request, document_symbol_via_request,
+    goto_declaration_via_request, goto_definition_via_request, goto_implementation_via_request,
+    goto_type_definition_via_request, hover_via_request, initialized_service_with_open_documents,
+    nth_offset, offset_to_position, semantic_tokens_full_via_request,
 };
 use tower_lsp::lsp_types::request::{
     GotoDeclarationResponse, GotoImplementationResponse, GotoTypeDefinitionResponse,
@@ -78,6 +78,18 @@ fn complete(config: Config) -> Int {
     assert_eq!(
         range.start,
         offset_to_position(&source, nth_offset(&source, "Config", 1)),
+    );
+
+    let code_lenses = code_lens_via_request(&mut service, uri.clone())
+        .await
+        .expect("codeLens request should return lenses");
+    assert!(
+        code_lenses.iter().any(|lens| {
+            lens.command
+                .as_ref()
+                .is_some_and(|command| command.title.contains("reference"))
+        }),
+        "codeLens should expose reference lenses: {code_lenses:#?}",
     );
 
     let declaration = goto_declaration_via_request(
