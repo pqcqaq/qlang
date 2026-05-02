@@ -124,6 +124,7 @@ use std.core.sum5_int as sum5_int
 use std.core.upper_bound_int as upper_bound_int
 use std.core.xor_bool as xor_bool
 use std.option.Option as Option
+use std.option.none_option as option_none
 use std.option.none_bool as none_bool
 use std.option.none_int as none_int
 use std.option.some_bool as some_bool
@@ -524,8 +525,9 @@ fn main() -> Int {
     let conversion_status = merge_status4(expect_int_result_to_option_some(result_ok_int(31), 31), expect_int_result_to_option_none(result_err_int(8)), expect_int_option_ok_or(some_int(31), 8, 31), expect_int_option_ok_or_err(none_int(), 8))
     let conversion_bool_status = merge_status4(expect_bool_result_to_option_some(result_ok_bool(false), false), expect_bool_result_to_option_none(result_err_bool(9)), expect_bool_option_ok_or(some_bool(true), 9, true), expect_bool_option_ok_or_err(none_bool(), 9))
     let error_option_status = merge_status4(expect_int_result_error_some(result_err_int(0), 0), expect_int_result_error_none(result_ok_int(31)), expect_bool_result_error_some(result_err_bool(0), 0), expect_bool_result_error_none(result_ok_bool(false)))
-    let generic_option_status = merge_status4(expect_generic_int_option_some(Option.Some(7), 7), expect_generic_int_option_none(Option.None), expect_generic_bool_option_some(Option.Some(true), true), expect_generic_bool_option_none(Option.None))
-    let generic_option_or_status = merge_status4(expect_generic_int_option_or(Option.None, Option.Some(9), 9), expect_generic_bool_option_or(Option.None, Option.Some(false), false), 0, 0)
+    let generic_none_int: Option[Int] = option_none()
+    let generic_option_status = merge_status4(expect_generic_int_option_some(Option.Some(7), 7), expect_generic_int_option_none(generic_none_int), expect_generic_bool_option_some(Option.Some(true), true), expect_generic_bool_option_none(Option.None))
+    let generic_option_or_status = merge_status4(expect_generic_int_option_or(generic_none_int, Option.Some(9), 9), expect_generic_bool_option_or(Option.None, Option.Some(false), false), 0, 0)
     let generic_result_status = merge_status4(expect_generic_int_result_ok(Result.Ok(7), 7), expect_generic_int_result_err(Result.Err(3), 3), expect_generic_bool_result_ok(Result.Ok(true), true), expect_generic_bool_result_err(Result.Err(4), 4))
     let generic_result_or_status = merge_status4(expect_generic_int_result_or(Result.Err(5), Result.Ok(11), 11), expect_generic_bool_result_or(Result.Err(6), Result.Ok(false), false), 0, 0)
     let generic_result_error_status = merge_status4(expect_generic_int_result_error(Result.Err(8), 0, 8), expect_generic_int_result_error(Result.Ok(14), 0, 0), expect_generic_bool_result_error(Result.Err(9), 0, 9), expect_generic_bool_result_error(Result.Ok(false), 0, 0))

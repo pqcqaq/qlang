@@ -1165,4 +1165,50 @@ fn run() -> Int {
         assert_eq!(err.get("T").map(String::as_str), Some("Int"));
         assert_eq!(err.get("E").map(String::as_str), Some("Int"));
     }
+
+    #[test]
+    fn infers_zero_argument_substitution_from_explicit_option_context() {
+        let dependency = parse_module(
+            r#"
+package std.option
+
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+
+pub fn none_option[T]() -> Option[T] {
+    return Option.None
+}
+"#,
+        );
+        let root = parse_module(
+            r#"
+use std.option.Option as Option
+use std.option.none_option as option_none
+
+fn make_none() -> Option[Int] {
+    return option_none()
+}
+
+fn run() -> Int {
+    let value: Option[Int] = option_none()
+    return 0
+}
+"#,
+        );
+
+        let instantiations = collect_public_function_instantiations(
+            &root,
+            &["std".to_owned(), "option".to_owned()],
+            function(&dependency, "none_option"),
+        );
+
+        assert_eq!(instantiations.len(), 1);
+        let substitutions = instantiations
+            .iter()
+            .next()
+            .expect("none_option should infer one substitution");
+        assert_eq!(substitutions.get("T").map(String::as_str), Some("Int"));
+    }
 }

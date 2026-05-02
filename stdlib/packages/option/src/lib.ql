@@ -19,6 +19,10 @@ pub fn some[T](value: T) -> Option[T] {
     return Option.Some(value)
 }
 
+pub fn none_option[T]() -> Option[T] {
+    return Option.None
+}
+
 pub fn is_some[T](value: Option[T]) -> Bool {
     return match value {
         Option.Some(_) => true,
