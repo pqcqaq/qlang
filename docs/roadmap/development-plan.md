@@ -53,6 +53,7 @@
 - `ql project status` 的状态收集、interface 状态判定、text/json 输出归 `crates/ql-cli/src/project_status.rs` 承载；后续 project 查询命令继续按这个粒度拆分。
 - `ql project dependencies` / `dependents` 的依赖发现、反向依赖发现和 text/json 输出归 `crates/ql-cli/src/project_dependencies.rs` 承载；`project remove` / `remove-dependency --all` 继续复用同一套反向依赖发现逻辑。
 - `ql project lock` 的 lockfile 写入、`--check` 状态机和 JSON result 输出归 `crates/ql-cli/src/project_lock.rs` 承载；`main.rs` 只保留命令分发。
+- `ql project graph` 的 manifest 解析、package selector 和 text/json graph 输出归 `crates/ql-cli/src/project_graph.rs` 承载；`main.rs` 不再内联 graph 错误提示和 selector 解析细节。
 - 如果 `stdlib` 暴露出 backend / project / LSP 缺口，优先修真实阻塞项；不为绕过缺口而降低 `stdlib` 设计边界。
 - 如果某个 API 明显应该用泛型或集合抽象表达，不继续堆 concrete/fixed-arity 版本；先补泛型、数组/迭代或可变参数所需的编译器路径。
 
