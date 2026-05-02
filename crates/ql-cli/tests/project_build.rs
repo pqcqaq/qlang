@@ -1667,6 +1667,125 @@ fn main() -> Int {
 }
 
 #[test]
+fn build_package_path_json_infers_dependency_generic_function_from_named_arguments() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-json-generic-public-function-named-args");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src"))
+        .expect("create dep source tree for dependency generic function named args");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create app source tree for dependency generic function named args");
+
+    let dep_manifest = temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        r#"
+pub fn choose[T](fallback: T, value: T) -> T {
+    return value
+}
+"#,
+    );
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "app/src/main.ql",
+        r#"
+use dep.choose as choose
+
+fn bool_score(value: Bool) -> Int {
+    if value {
+        return 6
+    }
+    return 0
+}
+
+fn main() -> Int {
+    let number: Int = choose(value: 7, fallback: 0)
+    let flag: Bool = choose(value: true, fallback: false)
+    return number + bool_score(flag)
+}
+"#,
+    );
+
+    let dep_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let app_output = project_root.join("target/ql/debug/main.ll");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` direct dependency generic public function named arguments",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-package-json-generic-public-function-named-args",
+        "package build json dependency generic public function named arguments",
+        &output,
+    )
+    .expect("package-path `ql build --json` should infer generic function instantiations from named arguments");
+    expect_empty_stderr(
+        "project-build-package-json-generic-public-function-named-args",
+        "package build json dependency generic public function named arguments",
+        &stderr,
+    )
+    .expect("named-argument generic function instantiation json build should not print stderr");
+
+    let json = parse_json_output(
+        "project-build-package-json-generic-public-function-named-args",
+        &stdout,
+    );
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(json["status"], "ok");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    let built_targets = json["built_targets"]
+        .as_array()
+        .expect("named-argument generic function json should expose built_targets");
+    assert_eq!(built_targets.len(), 2);
+    assert_eq!(
+        built_targets[0]["manifest_path"],
+        dep_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        built_targets[1]["artifact_path"],
+        app_output.display().to_string().replace('\\', "/")
+    );
+    expect_file_exists(
+        "project-build-package-json-generic-public-function-named-args",
+        &dep_output,
+        "dependency package artifact",
+        "package build json dependency generic public function named arguments",
+    )
+    .expect(
+        "named-argument generic function instantiation should preserve the dependency artifact",
+    );
+    expect_file_exists(
+        "project-build-package-json-generic-public-function-named-args",
+        &app_output,
+        "selected package artifact",
+        "package build json dependency generic public function named arguments",
+    )
+    .expect("named-argument generic function instantiation should emit the selected artifact");
+}
+
+#[test]
 fn build_package_path_json_supports_dependency_generic_function_from_generic_carriers() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-package-json-generic-public-function-carriers");

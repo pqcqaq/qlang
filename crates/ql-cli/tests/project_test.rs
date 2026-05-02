@@ -380,6 +380,102 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_package_tests_support_current_package_generic_function_named_arguments() {
+    if !toolchain_available("`ql test` current package generic function named arguments") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-current-package-generic-function-named-args");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source root for generic function named-argument test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "app/src/lib.ql",
+        r#"
+pub fn choose[T](fallback: T, value: T) -> T {
+    return value
+}
+"#,
+    );
+    temp.write(
+        "app/tests/smoke.ql",
+        r#"
+use app.choose as choose
+
+fn bool_score(value: Bool) -> Int {
+    if value {
+        return 5
+    }
+    return 0
+}
+
+fn main() -> Int {
+    let number: Int = choose(value: 7, fallback: 0)
+    let flag: Bool = choose(value: true, fallback: false)
+    if number + bool_score(flag) == 12 {
+        return 0
+    }
+    return 1
+}
+"#,
+    );
+
+    let package_output = static_library_output_path(&project_root.join("target/ql/debug"), "lib");
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test` current package generic public function named arguments",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-current-package-generic-function-named-args",
+        "package tests importing current package generic function with named arguments",
+        &output,
+    )
+    .expect("package-path `ql test` should infer current package generic public functions from named arguments");
+    expect_empty_stderr(
+        "project-test-current-package-generic-function-named-args",
+        "package tests importing current package generic function with named arguments",
+        &stderr,
+    )
+    .expect("named-argument generic function package test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-current-package-generic-function-named-args",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("named-argument generic function package test should report a passing smoke test");
+    expect_file_exists(
+        "project-test-current-package-generic-function-named-args",
+        &package_output,
+        "current package library",
+        "`ql test` current package generic public function named arguments",
+    )
+    .expect("current package library should build before the named-argument test bridge runs");
+    expect_file_exists(
+        "project-test-current-package-generic-function-named-args",
+        &smoke_output,
+        "current package generic function named-argument test executable",
+        "`ql test` current package generic public function named arguments",
+    )
+    .expect("named-argument generic function package test should emit the smoke test executable");
+}
+
+#[test]
 fn test_package_tests_support_current_package_generic_function_from_generic_carriers() {
     if !toolchain_available("`ql test` current package generic carrier function test") {
         return;

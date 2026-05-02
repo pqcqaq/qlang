@@ -707,27 +707,14 @@ fn infer_dependency_generic_function_substitutions(
     expected_ty: Option<&TypeExpr>,
     bindings: &ValueTypeBindings,
 ) -> Option<TypeSubstitutions> {
-    if args.iter().any(|arg| matches!(arg, CallArg::Named { .. })) {
-        return None;
-    }
-    let regular_params = function
-        .params
-        .iter()
-        .filter_map(|param| match param {
-            Param::Regular { ty, .. } => Some(ty),
-            Param::Receiver { .. } => None,
-        })
-        .collect::<Vec<_>>();
-    if regular_params.len() != args.len() {
-        return None;
-    }
+    let ordered_args = ordered_dependency_generic_call_args(function, args)?;
     let generic_names = function
         .generics
         .iter()
         .map(|generic| generic.name.as_str())
         .collect::<BTreeSet<_>>();
     let mut substitutions = TypeSubstitutions::new();
-    for (param_ty, arg) in regular_params.into_iter().zip(args) {
+    for (param_ty, arg) in ordered_args {
         if !type_expr_mentions_generic(param_ty, &generic_names) {
             continue;
         }
@@ -756,6 +743,65 @@ fn infer_dependency_generic_function_substitutions(
         }
     }
     Some(substitutions)
+}
+
+fn ordered_dependency_generic_call_args<'f, 'a>(
+    function: &'f FunctionDecl,
+    args: &'a [CallArg],
+) -> Option<Vec<(&'f TypeExpr, &'a CallArg)>> {
+    let regular_params = function
+        .params
+        .iter()
+        .filter_map(|param| match param {
+            Param::Regular { name, ty, .. } => Some((name.as_str(), ty)),
+            Param::Receiver { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    if args.iter().all(|arg| matches!(arg, CallArg::Positional(_))) {
+        return (regular_params.len() == args.len()).then(|| {
+            regular_params
+                .into_iter()
+                .zip(args)
+                .map(|((_, param_ty), arg)| (param_ty, arg))
+                .collect()
+        });
+    }
+
+    let mut ordered = vec![None; regular_params.len()];
+    let mut next_positional = 0usize;
+    let mut named_started = false;
+    for arg in args {
+        let index = match arg {
+            CallArg::Named { name, .. } => {
+                named_started = true;
+                regular_params
+                    .iter()
+                    .position(|(param_name, _)| *param_name == name.as_str())?
+            }
+            CallArg::Positional(_) => {
+                if named_started {
+                    return None;
+                }
+                while next_positional < ordered.len() && ordered[next_positional].is_some() {
+                    next_positional += 1;
+                }
+                if next_positional == ordered.len() {
+                    return None;
+                }
+                next_positional
+            }
+        };
+        if ordered[index].is_some() {
+            return None;
+        }
+        ordered[index] = Some(arg);
+    }
+
+    regular_params
+        .into_iter()
+        .zip(ordered)
+        .map(|((_, param_ty), arg)| arg.map(|arg| (param_ty, arg)))
+        .collect()
 }
 
 fn collect_function_param_type_bindings(function: &FunctionDecl, bindings: &mut ValueTypeBindings) {
@@ -1073,6 +1119,41 @@ fn run() -> Int {
             .iter()
             .next()
             .expect("one substitution should be inferred");
+        assert_eq!(substitutions.get("T").map(String::as_str), Some("Int"));
+    }
+
+    #[test]
+    fn infers_substitution_from_named_arguments() {
+        let dependency = parse_module(
+            r#"
+package dep
+
+pub fn choose[T](fallback: T, value: T) -> T {
+    return value
+}
+"#,
+        );
+        let root = parse_module(
+            r#"
+use dep.choose as choose
+
+fn run() -> Int {
+    return choose(value: 42, fallback: 0)
+}
+"#,
+        );
+
+        let instantiations = collect_public_function_instantiations(
+            &root,
+            &["dep".to_owned()],
+            function(&dependency, "choose"),
+        );
+
+        assert_eq!(instantiations.len(), 1);
+        let substitutions = instantiations
+            .iter()
+            .next()
+            .expect("one named-argument substitution should be inferred");
         assert_eq!(substitutions.get("T").map(String::as_str), Some("Int"));
     }
 
