@@ -5,13 +5,148 @@ use ql_ast::{
     TypeExpr, TypeExprKind,
 };
 
-type TypeBindings = BTreeMap<String, String>;
+type TypeSubstitutions = BTreeMap<String, String>;
+type ValueTypeBindings = BTreeMap<String, InferredType>;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct InferredType {
+    rendered: String,
+    kind: InferredTypeKind,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum InferredTypeKind {
+    Pointer {
+        is_const: bool,
+        inner: Box<InferredType>,
+    },
+    Array {
+        element: Box<InferredType>,
+        len: String,
+    },
+    Named {
+        path: Vec<String>,
+        args: Vec<InferredType>,
+    },
+    Tuple(Vec<InferredType>),
+    Callable {
+        params: Vec<InferredType>,
+        ret: Box<InferredType>,
+    },
+}
+
+impl InferredType {
+    fn primitive(name: &str) -> Self {
+        Self {
+            rendered: name.to_owned(),
+            kind: InferredTypeKind::Named {
+                path: vec![name.to_owned()],
+                args: Vec::new(),
+            },
+        }
+    }
+
+    fn from_type_expr(ty: &TypeExpr) -> Option<Self> {
+        match &ty.kind {
+            TypeExprKind::Named { path, args } => {
+                let args = args
+                    .iter()
+                    .map(Self::from_type_expr)
+                    .collect::<Option<Vec<_>>>()?;
+                let mut rendered = path.segments.join(".");
+                if !args.is_empty() {
+                    rendered.push('[');
+                    rendered.push_str(
+                        &args
+                            .iter()
+                            .map(|arg| arg.rendered.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    );
+                    rendered.push(']');
+                }
+                Some(Self {
+                    rendered,
+                    kind: InferredTypeKind::Named {
+                        path: path.segments.clone(),
+                        args,
+                    },
+                })
+            }
+            TypeExprKind::Tuple(items) => {
+                let items = items
+                    .iter()
+                    .map(Self::from_type_expr)
+                    .collect::<Option<Vec<_>>>()?;
+                let mut rendered = String::from("(");
+                rendered.push_str(
+                    &items
+                        .iter()
+                        .map(|item| item.rendered.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+                if items.len() == 1 {
+                    rendered.push(',');
+                }
+                rendered.push(')');
+                Some(Self {
+                    rendered,
+                    kind: InferredTypeKind::Tuple(items),
+                })
+            }
+            TypeExprKind::Array { element, len } => {
+                let element = Self::from_type_expr(element)?;
+                Some(Self {
+                    rendered: format!("[{}; {len}]", element.rendered),
+                    kind: InferredTypeKind::Array {
+                        element: Box::new(element),
+                        len: len.clone(),
+                    },
+                })
+            }
+            TypeExprKind::Pointer { is_const, inner } => {
+                let inner = Self::from_type_expr(inner)?;
+                let qualifier = if *is_const { "const " } else { "" };
+                Some(Self {
+                    rendered: format!("*{}{}", qualifier, inner.rendered),
+                    kind: InferredTypeKind::Pointer {
+                        is_const: *is_const,
+                        inner: Box::new(inner),
+                    },
+                })
+            }
+            TypeExprKind::Callable { params, ret } => {
+                let params = params
+                    .iter()
+                    .map(Self::from_type_expr)
+                    .collect::<Option<Vec<_>>>()?;
+                let ret = Self::from_type_expr(ret)?;
+                Some(Self {
+                    rendered: format!(
+                        "({}) -> {}",
+                        params
+                            .iter()
+                            .map(|param| param.rendered.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        ret.rendered
+                    ),
+                    kind: InferredTypeKind::Callable {
+                        params,
+                        ret: Box::new(ret),
+                    },
+                })
+            }
+        }
+    }
+}
 
 pub(super) fn collect_public_function_instantiations(
     root_module: &Module,
     module_import_path: &[String],
     function: &FunctionDecl,
-) -> BTreeSet<BTreeMap<String, String>> {
+) -> BTreeSet<TypeSubstitutions> {
     let local_names =
         dependency_imported_local_names(root_module, module_import_path, function.name.as_str());
     if local_names.is_empty() {
@@ -32,13 +167,13 @@ pub(super) fn collect_public_function_instantiations(
     instantiations
 }
 
-fn collect_root_value_type_bindings(root_module: &Module) -> TypeBindings {
-    let mut bindings = TypeBindings::new();
+fn collect_root_value_type_bindings(root_module: &Module) -> ValueTypeBindings {
+    let mut bindings = ValueTypeBindings::new();
     for item in &root_module.items {
         let (ItemKind::Const(global) | ItemKind::Static(global)) = &item.kind else {
             continue;
         };
-        if let Some(ty) = primitive_type_name_for_type_expr(&global.ty) {
+        if let Some(ty) = InferredType::from_type_expr(&global.ty) {
             bindings.insert(global.name.clone(), ty);
         }
     }
@@ -86,8 +221,8 @@ fn collect_dependency_generic_function_instantiations_from_item(
     item: &ql_ast::Item,
     local_names: &BTreeSet<String>,
     dependency_function: &FunctionDecl,
-    root_bindings: &TypeBindings,
-    instantiations: &mut BTreeSet<TypeBindings>,
+    root_bindings: &ValueTypeBindings,
+    instantiations: &mut BTreeSet<TypeSubstitutions>,
 ) {
     match &item.kind {
         ItemKind::Function(root_function) => {
@@ -178,8 +313,8 @@ fn collect_dependency_generic_function_instantiations_from_block(
     block: &ql_ast::Block,
     local_names: &BTreeSet<String>,
     function: &FunctionDecl,
-    bindings: &mut TypeBindings,
-    instantiations: &mut BTreeSet<TypeBindings>,
+    bindings: &mut ValueTypeBindings,
+    instantiations: &mut BTreeSet<TypeSubstitutions>,
 ) {
     for statement in &block.statements {
         match &statement.kind {
@@ -270,8 +405,8 @@ fn collect_dependency_generic_function_instantiations_from_expr(
     expr: &Expr,
     local_names: &BTreeSet<String>,
     function: &FunctionDecl,
-    bindings: &TypeBindings,
-    instantiations: &mut BTreeSet<TypeBindings>,
+    bindings: &ValueTypeBindings,
+    instantiations: &mut BTreeSet<TypeSubstitutions>,
 ) {
     match &expr.kind {
         ExprKind::Call { callee, args } => {
@@ -466,8 +601,8 @@ fn collect_dependency_generic_function_instantiations_from_expr(
 fn infer_dependency_generic_function_substitutions(
     function: &FunctionDecl,
     args: &[CallArg],
-    bindings: &TypeBindings,
-) -> Option<TypeBindings> {
+    bindings: &ValueTypeBindings,
+) -> Option<TypeSubstitutions> {
     if args.iter().any(|arg| matches!(arg, CallArg::Named { .. })) {
         return None;
     }
@@ -487,29 +622,30 @@ fn infer_dependency_generic_function_substitutions(
         .iter()
         .map(|generic| generic.name.as_str())
         .collect::<BTreeSet<_>>();
-    let mut substitutions = TypeBindings::new();
+    let mut substitutions = TypeSubstitutions::new();
     for (param_ty, arg) in regular_params.into_iter().zip(args) {
-        let Some(generic_name) = generic_param_name_for_type_expr(param_ty, &generic_names) else {
+        if !type_expr_mentions_generic(param_ty, &generic_names) {
             continue;
-        };
+        }
         let arg_ty = infer_dependency_generic_arg_type(arg, bindings)?;
-        match substitutions.get(generic_name) {
-            Some(existing) if existing != &arg_ty => return None,
-            Some(_) => {}
-            None => {
-                substitutions.insert(generic_name.to_owned(), arg_ty);
-            }
+        if !collect_generic_type_substitutions(
+            param_ty,
+            &arg_ty,
+            &generic_names,
+            &mut substitutions,
+        ) {
+            return None;
         }
     }
     Some(substitutions)
 }
 
-fn collect_function_param_type_bindings(function: &FunctionDecl, bindings: &mut TypeBindings) {
+fn collect_function_param_type_bindings(function: &FunctionDecl, bindings: &mut ValueTypeBindings) {
     for param in &function.params {
         let Param::Regular { name, ty, .. } = param else {
             continue;
         };
-        if let Some(ty) = primitive_type_name_for_type_expr(ty) {
+        if let Some(ty) = InferredType::from_type_expr(ty) {
             bindings.insert(name.clone(), ty);
         }
     }
@@ -519,7 +655,7 @@ fn record_let_type_bindings(
     pattern: &Pattern,
     ty: Option<&TypeExpr>,
     value: &Expr,
-    bindings: &mut TypeBindings,
+    bindings: &mut ValueTypeBindings,
 ) {
     if let Some(ty) = ty {
         record_pattern_type_bindings(pattern, ty, bindings);
@@ -532,10 +668,14 @@ fn record_let_type_bindings(
     }
 }
 
-fn record_pattern_type_bindings(pattern: &Pattern, ty: &TypeExpr, bindings: &mut TypeBindings) {
+fn record_pattern_type_bindings(
+    pattern: &Pattern,
+    ty: &TypeExpr,
+    bindings: &mut ValueTypeBindings,
+) {
     match (&pattern.kind, &ty.kind) {
         (PatternKind::Name(name), _) => {
-            if let Some(ty) = primitive_type_name_for_type_expr(ty) {
+            if let Some(ty) = InferredType::from_type_expr(ty) {
                 bindings.insert(name.clone(), ty);
             }
         }
@@ -551,10 +691,10 @@ fn record_pattern_type_bindings(pattern: &Pattern, ty: &TypeExpr, bindings: &mut
 }
 
 fn generic_param_name_for_type_expr<'a>(
-    ty: &ql_ast::TypeExpr,
+    ty: &TypeExpr,
     generic_names: &BTreeSet<&'a str>,
 ) -> Option<&'a str> {
-    let ql_ast::TypeExprKind::Named { path, args } = &ty.kind else {
+    let TypeExprKind::Named { path, args } = &ty.kind else {
         return None;
     };
     if !args.is_empty() {
@@ -566,32 +706,167 @@ fn generic_param_name_for_type_expr<'a>(
     generic_names.get(name.as_str()).copied()
 }
 
-fn infer_dependency_generic_arg_type(arg: &CallArg, bindings: &TypeBindings) -> Option<String> {
+fn type_expr_mentions_generic(ty: &TypeExpr, generic_names: &BTreeSet<&str>) -> bool {
+    if generic_param_name_for_type_expr(ty, generic_names).is_some() {
+        return true;
+    }
+    match &ty.kind {
+        TypeExprKind::Pointer { inner, .. } => type_expr_mentions_generic(inner, generic_names),
+        TypeExprKind::Array { element, .. } => type_expr_mentions_generic(element, generic_names),
+        TypeExprKind::Named { args, .. } | TypeExprKind::Tuple(args) => args
+            .iter()
+            .any(|arg| type_expr_mentions_generic(arg, generic_names)),
+        TypeExprKind::Callable { params, ret } => {
+            params
+                .iter()
+                .any(|param| type_expr_mentions_generic(param, generic_names))
+                || type_expr_mentions_generic(ret, generic_names)
+        }
+    }
+}
+
+fn collect_generic_type_substitutions(
+    param_ty: &TypeExpr,
+    arg_ty: &InferredType,
+    generic_names: &BTreeSet<&str>,
+    substitutions: &mut TypeSubstitutions,
+) -> bool {
+    if let Some(generic_name) = generic_param_name_for_type_expr(param_ty, generic_names) {
+        return bind_generic_type_substitution(generic_name, arg_ty, substitutions);
+    }
+
+    match (&param_ty.kind, &arg_ty.kind) {
+        (
+            TypeExprKind::Named { path, args },
+            InferredTypeKind::Named {
+                path: arg_path,
+                args: arg_args,
+            },
+        ) => {
+            path.segments == *arg_path
+                && args.len() == arg_args.len()
+                && args.iter().zip(arg_args).all(|(param_arg, arg_arg)| {
+                    collect_generic_type_substitutions(
+                        param_arg,
+                        arg_arg,
+                        generic_names,
+                        substitutions,
+                    )
+                })
+        }
+        (TypeExprKind::Tuple(params), InferredTypeKind::Tuple(args)) => {
+            params.len() == args.len()
+                && params.iter().zip(args).all(|(param_item, arg_item)| {
+                    collect_generic_type_substitutions(
+                        param_item,
+                        arg_item,
+                        generic_names,
+                        substitutions,
+                    )
+                })
+        }
+        (
+            TypeExprKind::Array {
+                element: param_element,
+                len: param_len,
+            },
+            InferredTypeKind::Array {
+                element: arg_element,
+                len: arg_len,
+            },
+        ) => {
+            param_len == arg_len
+                && collect_generic_type_substitutions(
+                    param_element,
+                    arg_element,
+                    generic_names,
+                    substitutions,
+                )
+        }
+        (
+            TypeExprKind::Pointer {
+                is_const: param_const,
+                inner: param_inner,
+            },
+            InferredTypeKind::Pointer {
+                is_const: arg_const,
+                inner: arg_inner,
+            },
+        ) => {
+            param_const == arg_const
+                && collect_generic_type_substitutions(
+                    param_inner,
+                    arg_inner,
+                    generic_names,
+                    substitutions,
+                )
+        }
+        (
+            TypeExprKind::Callable {
+                params: param_params,
+                ret: param_ret,
+            },
+            InferredTypeKind::Callable {
+                params: arg_params,
+                ret: arg_ret,
+            },
+        ) => {
+            param_params.len() == arg_params.len()
+                && param_params
+                    .iter()
+                    .zip(arg_params)
+                    .all(|(param_param, arg_param)| {
+                        collect_generic_type_substitutions(
+                            param_param,
+                            arg_param,
+                            generic_names,
+                            substitutions,
+                        )
+                    })
+                && collect_generic_type_substitutions(
+                    param_ret,
+                    arg_ret,
+                    generic_names,
+                    substitutions,
+                )
+        }
+        _ => false,
+    }
+}
+
+fn bind_generic_type_substitution(
+    generic_name: &str,
+    arg_ty: &InferredType,
+    substitutions: &mut TypeSubstitutions,
+) -> bool {
+    match substitutions.get(generic_name) {
+        Some(existing) => existing == &arg_ty.rendered,
+        None => {
+            substitutions.insert(generic_name.to_owned(), arg_ty.rendered.clone());
+            true
+        }
+    }
+}
+
+fn infer_dependency_generic_arg_type(
+    arg: &CallArg,
+    bindings: &ValueTypeBindings,
+) -> Option<InferredType> {
     let expr = match arg {
         CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => expr,
     };
     infer_dependency_generic_expr_type(expr, bindings)
 }
 
-fn infer_dependency_generic_expr_type(expr: &Expr, bindings: &TypeBindings) -> Option<String> {
+fn infer_dependency_generic_expr_type(
+    expr: &Expr,
+    bindings: &ValueTypeBindings,
+) -> Option<InferredType> {
     match &expr.kind {
-        ExprKind::Integer(_) => Some("Int".to_owned()),
-        ExprKind::Bool(_) => Some("Bool".to_owned()),
-        ExprKind::String { .. } => Some("String".to_owned()),
+        ExprKind::Integer(_) => Some(InferredType::primitive("Int")),
+        ExprKind::Bool(_) => Some(InferredType::primitive("Bool")),
+        ExprKind::String { .. } => Some(InferredType::primitive("String")),
         ExprKind::Name(name) => bindings.get(name).cloned(),
         _ => None,
     }
-}
-
-fn primitive_type_name_for_type_expr(ty: &TypeExpr) -> Option<String> {
-    let TypeExprKind::Named { path, args } = &ty.kind else {
-        return None;
-    };
-    if !args.is_empty() {
-        return None;
-    }
-    let [name] = path.segments.as_slice() else {
-        return None;
-    };
-    matches!(name.as_str(), "Int" | "Bool" | "String").then(|| name.clone())
 }

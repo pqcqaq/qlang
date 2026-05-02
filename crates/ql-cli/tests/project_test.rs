@@ -282,6 +282,112 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_package_tests_support_current_package_generic_function_from_generic_carriers() {
+    if !toolchain_available("`ql test` current package generic carrier function test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-current-package-generic-function-carrier");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source root for generic carrier function import test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "app/src/lib.ql",
+        r#"
+pub struct Box[T] {
+    value: T,
+}
+
+pub fn identity[T](value: T) -> T {
+    return value
+}
+
+pub fn keep_box[T](value: Box[T]) -> Box[T] {
+    return value
+}
+"#,
+    );
+    temp.write(
+        "app/tests/smoke.ql",
+        r#"
+use app.Box as Box
+use app.identity as identity
+use app.keep_box as keep_box
+
+fn check(value: Box[Int]) -> Int {
+    let kept: Box[Int] = identity(value)
+    let nested: Box[Int] = keep_box(kept)
+    return nested.value
+}
+
+fn main() -> Int {
+    let value: Box[Int] = Box { value: 42 }
+    if check(value) == 42 {
+        return 0
+    }
+    return 1
+}
+"#,
+    );
+
+    let package_output = static_library_output_path(&project_root.join("target/ql/debug"), "lib");
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test` current package generic carrier function",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-current-package-generic-function-carrier",
+        "package tests importing current package generic function with generic carrier values",
+        &output,
+    )
+    .expect(
+        "package-path `ql test` should infer current package generic public functions from generic carrier values",
+    );
+    expect_empty_stderr(
+        "project-test-current-package-generic-function-carrier",
+        "package tests importing current package generic function with generic carrier values",
+        &stderr,
+    )
+    .expect("generic carrier function package test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-current-package-generic-function-carrier",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("generic carrier function package test should report a passing smoke test");
+    expect_file_exists(
+        "project-test-current-package-generic-function-carrier",
+        &package_output,
+        "current package library",
+        "`ql test` current package generic carrier function",
+    )
+    .expect("current package library should build before the generic carrier test bridge runs");
+    expect_file_exists(
+        "project-test-current-package-generic-function-carrier",
+        &smoke_output,
+        "current package generic carrier function test executable",
+        "`ql test` current package generic carrier function",
+    )
+    .expect("generic carrier function package test should emit the smoke test executable");
+}
+
+#[test]
 fn test_package_path_supports_direct_dependency_public_struct_functions() {
     if !toolchain_available("`ql test` dependency public struct function test") {
         return;
