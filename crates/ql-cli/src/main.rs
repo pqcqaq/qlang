@@ -27,10 +27,9 @@ use ql_project::{
     discover_package_build_targets, discover_workspace_build_targets,
     interface_artifact_stale_reasons, interface_artifact_status, interface_artifact_status_detail,
     load_interface_artifact, load_project_manifest, load_reference_manifests, package_name,
-    package_source_root, project_lockfile_path, render_manifest_with_added_binary_target,
+    package_source_root, render_manifest_with_added_binary_target,
     render_manifest_with_added_local_dependency, render_manifest_with_removed_local_dependency,
     render_module_interface, render_project_graph_resolved, render_project_graph_resolved_json,
-    render_project_lockfile,
 };
 use ql_runtime::{collect_runtime_hook_signatures, collect_runtime_hooks};
 use ql_span::locate;
@@ -39,6 +38,7 @@ use toml::Value as TomlValue;
 
 mod project_dependencies;
 mod project_init;
+mod project_lock;
 mod project_status;
 mod project_targets;
 
@@ -46,6 +46,7 @@ use project_dependencies::{
     ProjectDependentMember, find_workspace_member_dependents, project_dependencies_path,
     project_dependents_path,
 };
+use project_lock::project_lock_path;
 use project_status::project_status_path;
 use project_targets::{
     ProjectTargetSelector, ProjectTargetSelectorKind, is_runnable_project_target,
@@ -2110,39 +2111,6 @@ fn report_project_graph_package_context_failure(path: &Path) {
     let rerun_command = format!("ql project graph {normalized_path}");
     eprintln!(
         "note: `ql project graph` only renders package/workspace graphs for packages or workspace members discoverable from `qlang.toml`"
-    );
-    eprintln!("hint: rerun `{rerun_command}` after adding `qlang.toml` for this path");
-}
-
-fn format_project_lock_command(manifest_path: &Path, check_only: bool) -> String {
-    let manifest_path = normalize_path(manifest_path);
-    if check_only {
-        format!("ql project lock {manifest_path} --check")
-    } else {
-        format!("ql project lock {manifest_path}")
-    }
-}
-
-fn report_project_lock_manifest_failure(manifest_path: &Path, check_only: bool) {
-    let manifest_path = normalize_path(manifest_path);
-    let rerun_command = if check_only {
-        format!("ql project lock {manifest_path} --check")
-    } else {
-        format!("ql project lock {manifest_path}")
-    };
-    eprintln!("note: failing package manifest: {manifest_path}");
-    eprintln!("hint: rerun `{rerun_command}` after fixing the package manifest");
-}
-
-fn report_project_lock_package_context_failure(path: &Path, check_only: bool) {
-    let normalized_path = normalize_path(path);
-    let rerun_command = if check_only {
-        format!("ql project lock {normalized_path} --check")
-    } else {
-        format!("ql project lock {normalized_path}")
-    };
-    eprintln!(
-        "note: `ql project lock` only writes or checks package/workspace lockfiles for packages or workspace members discoverable from `qlang.toml`"
     );
     eprintln!("hint: rerun `{rerun_command}` after adding `qlang.toml` for this path");
 }
@@ -12726,279 +12694,6 @@ fn resolve_project_graph_package_manifest(
     }
 
     Ok(manifest.clone())
-}
-
-#[derive(Debug)]
-struct ProjectLockJsonReport {
-    path: String,
-    project_manifest_path: String,
-    lockfile_path: String,
-    check_only: bool,
-    status: &'static str,
-    lockfile: JsonValue,
-    failure: Option<JsonValue>,
-}
-
-impl ProjectLockJsonReport {
-    fn new(
-        path: &Path,
-        manifest: &ql_project::ProjectManifest,
-        lockfile_path: &Path,
-        check_only: bool,
-        rendered_lockfile: &str,
-    ) -> Self {
-        Self {
-            path: normalize_path(path),
-            project_manifest_path: normalize_path(&manifest.manifest_path),
-            lockfile_path: normalize_path(lockfile_path),
-            check_only,
-            status: if check_only { "up-to-date" } else { "wrote" },
-            lockfile: serde_json::from_str(rendered_lockfile)
-                .expect("project lockfile should serialize as valid json"),
-            failure: None,
-        }
-    }
-
-    fn record_failure(
-        &mut self,
-        kind: &'static str,
-        message: String,
-        rerun_command: Option<String>,
-    ) {
-        let mut failure = json!({
-            "kind": kind,
-            "message": message,
-        });
-        if let Some(command) = rerun_command {
-            failure["rerun_command"] = json!(command);
-        }
-        self.status = "failed";
-        self.failure = Some(failure);
-    }
-
-    fn into_json(self) -> String {
-        let rendered = serde_json::to_string_pretty(&json!({
-            "schema": "ql.project.lock.result.v1",
-            "path": self.path,
-            "project_manifest_path": self.project_manifest_path,
-            "lockfile_path": self.lockfile_path,
-            "check_only": self.check_only,
-            "status": self.status,
-            "lockfile": self.lockfile,
-            "failure": self.failure,
-        }))
-        .expect("project lock json report should serialize");
-        format!("{rendered}\n")
-    }
-}
-
-enum ProjectLockCheckStatus {
-    UpToDate,
-    Stale,
-    Missing,
-    ReadError(String),
-}
-
-fn project_lockfile_check_status(lockfile_path: &Path, expected: &str) -> ProjectLockCheckStatus {
-    match fs::read_to_string(lockfile_path) {
-        Ok(actual) => {
-            if normalize_line_endings(&actual) == normalize_line_endings(expected) {
-                ProjectLockCheckStatus::UpToDate
-            } else {
-                ProjectLockCheckStatus::Stale
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            ProjectLockCheckStatus::Missing
-        }
-        Err(error) => ProjectLockCheckStatus::ReadError(error.to_string()),
-    }
-}
-
-fn project_lock_path(path: &Path, check_only: bool, json: bool) -> Result<(), u8> {
-    let command_label = if check_only {
-        "`ql project lock --check`"
-    } else {
-        "`ql project lock`"
-    };
-
-    let request_root = resolve_project_workspace_member_command_request_root(path);
-    let manifest = load_project_manifest(request_root.as_deref().unwrap_or(path)).map_err(|error| {
-        if let ql_project::ProjectError::ManifestNotFound { start } = &error {
-            eprintln!(
-                "error: {command_label} requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
-                normalize_path(start)
-            );
-            report_project_lock_package_context_failure(path, check_only);
-        } else if let Some(manifest_path) =
-            package_missing_name_manifest_path_from_project_error(&error)
-        {
-            eprintln!(
-                "error: {command_label} manifest `{}` does not declare `[package].name`",
-                normalize_path(manifest_path)
-            );
-            report_project_lock_manifest_failure(manifest_path, check_only);
-        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error)
-        {
-            eprintln!("error: {command_label} {error}");
-            report_project_lock_manifest_failure(manifest_path, check_only);
-        } else {
-            eprintln!("error: {command_label} {error}");
-        }
-        1
-    })?;
-
-    let lockfile_path = project_lockfile_path(&manifest);
-    let rendered = render_project_lockfile(&manifest).map_err(|error| {
-        if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error) {
-            eprintln!(
-                "error: {command_label} manifest `{}` does not declare `[package].name`",
-                normalize_path(manifest_path)
-            );
-            report_project_lock_manifest_failure(manifest_path, check_only);
-        } else if let ql_project::ProjectError::PackageSourceRootNotFound { path } = &error {
-            eprintln!(
-                "error: {command_label} package source directory `{}` does not exist",
-                normalize_path(path)
-            );
-            eprintln!(
-                "hint: rerun `{}` after fixing the package source root",
-                format_project_lock_command(&manifest.manifest_path, check_only)
-            );
-        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error) {
-            eprintln!("error: {command_label} {error}");
-            report_project_lock_manifest_failure(manifest_path, check_only);
-        } else {
-            eprintln!("error: {command_label} {error}");
-            eprintln!(
-                "note: failing package manifest: {}",
-                normalize_path(&manifest.manifest_path)
-            );
-        }
-        1
-    })?;
-
-    if json {
-        let mut report =
-            ProjectLockJsonReport::new(path, &manifest, &lockfile_path, check_only, &rendered);
-        let rerun_command = format_project_lock_command(&manifest.manifest_path, false);
-
-        if check_only {
-            match project_lockfile_check_status(&lockfile_path, &rendered) {
-                ProjectLockCheckStatus::UpToDate => {
-                    print!("{}", report.into_json());
-                    return Ok(());
-                }
-                ProjectLockCheckStatus::Stale => {
-                    report.record_failure(
-                        "stale",
-                        format!("lockfile `{}` is stale", normalize_path(&lockfile_path)),
-                        Some(rerun_command),
-                    );
-                    print!("{}", report.into_json());
-                    return Err(1);
-                }
-                ProjectLockCheckStatus::Missing => {
-                    report.record_failure(
-                        "missing",
-                        format!("lockfile `{}` is missing", normalize_path(&lockfile_path)),
-                        Some(rerun_command),
-                    );
-                    print!("{}", report.into_json());
-                    return Err(1);
-                }
-                ProjectLockCheckStatus::ReadError(error) => {
-                    report.record_failure(
-                        "read",
-                        format!(
-                            "failed to read lockfile `{}`: {error}",
-                            normalize_path(&lockfile_path)
-                        ),
-                        Some(rerun_command),
-                    );
-                    print!("{}", report.into_json());
-                    return Err(1);
-                }
-            }
-        }
-
-        if let Err(error) = fs::write(&lockfile_path, rendered) {
-            report.record_failure(
-                "write",
-                format!(
-                    "failed to write lockfile `{}`: {error}",
-                    normalize_path(&lockfile_path)
-                ),
-                Some(format_project_lock_command(&manifest.manifest_path, false)),
-            );
-            print!("{}", report.into_json());
-            return Err(1);
-        }
-
-        print!("{}", report.into_json());
-        return Ok(());
-    }
-
-    if check_only {
-        return check_project_lockfile(&manifest, &lockfile_path, &rendered);
-    }
-
-    fs::write(&lockfile_path, rendered).map_err(|error| {
-        eprintln!(
-            "error: {command_label} failed to write lockfile `{}`: {error}",
-            normalize_path(&lockfile_path)
-        );
-        eprintln!(
-            "note: failing package manifest: {}",
-            normalize_path(&manifest.manifest_path)
-        );
-        eprintln!(
-            "hint: rerun `ql project lock {}` after fixing the lockfile output path",
-            normalize_path(&manifest.manifest_path)
-        );
-        1
-    })?;
-
-    println!("wrote lockfile: {}", normalize_path(&lockfile_path));
-    Ok(())
-}
-
-fn check_project_lockfile(
-    manifest: &ql_project::ProjectManifest,
-    lockfile_path: &Path,
-    expected: &str,
-) -> Result<(), u8> {
-    let normalized_lockfile_path = normalize_path(lockfile_path);
-    let rerun_command = format!(
-        "ql project lock {}",
-        normalize_path(&manifest.manifest_path)
-    );
-
-    match project_lockfile_check_status(lockfile_path, expected) {
-        ProjectLockCheckStatus::UpToDate => return Ok(()),
-        ProjectLockCheckStatus::Stale => {
-            eprintln!(
-                "error: `ql project lock --check` lockfile `{normalized_lockfile_path}` is stale"
-            );
-        }
-        ProjectLockCheckStatus::Missing => {
-            eprintln!(
-                "error: `ql project lock --check` lockfile `{normalized_lockfile_path}` is missing"
-            );
-        }
-        ProjectLockCheckStatus::ReadError(error) => {
-            eprintln!(
-                "error: `ql project lock --check` failed to read lockfile `{normalized_lockfile_path}`: {error}"
-            );
-        }
-    }
-
-    eprintln!(
-        "note: failing package manifest: {}",
-        normalize_path(&manifest.manifest_path)
-    );
-    eprintln!("hint: rerun `{rerun_command}` to regenerate `qlang.lock`");
-    Err(1)
 }
 
 fn load_workspace_build_targets_for_command_from_request_root(
