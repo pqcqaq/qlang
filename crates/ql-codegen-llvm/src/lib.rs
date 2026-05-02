@@ -23360,12 +23360,14 @@ fn llvm_symbol_name(item_id: ItemId, name: &str) -> String {
 
 fn library_function_refs(module: &hir::Module, item_id: ItemId) -> Vec<FunctionRef> {
     match &module.item(item_id).kind {
-        ItemKind::Function(function) if function.body.is_some() => vec![FunctionRef::Item(item_id)],
+        ItemKind::Function(function) if function.body.is_some() && function.generics.is_empty() => {
+            vec![FunctionRef::Item(item_id)]
+        }
         ItemKind::Trait(trait_decl) => trait_decl
             .methods
             .iter()
             .enumerate()
-            .filter(|(_, method)| method.body.is_some())
+            .filter(|(_, method)| method.body.is_some() && method.generics.is_empty())
             .map(|(index, _)| FunctionRef::TraitMethod {
                 item: item_id,
                 index,
@@ -23375,7 +23377,7 @@ fn library_function_refs(module: &hir::Module, item_id: ItemId) -> Vec<FunctionR
             .methods
             .iter()
             .enumerate()
-            .filter(|(_, method)| method.body.is_some())
+            .filter(|(_, method)| method.body.is_some() && method.generics.is_empty())
             .map(|(index, _)| FunctionRef::ImplMethod {
                 item: item_id,
                 index,
@@ -23385,7 +23387,7 @@ fn library_function_refs(module: &hir::Module, item_id: ItemId) -> Vec<FunctionR
             .methods
             .iter()
             .enumerate()
-            .filter(|(_, method)| method.body.is_some())
+            .filter(|(_, method)| method.body.is_some() && method.generics.is_empty())
             .map(|(index, _)| FunctionRef::ExtendMethod {
                 item: item_id,
                 index,

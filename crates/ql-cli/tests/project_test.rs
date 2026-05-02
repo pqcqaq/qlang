@@ -188,6 +188,96 @@ name = "app"
 }
 
 #[test]
+fn test_package_tests_report_current_package_generic_public_function_import() {
+    if !toolchain_available("`ql test` current package generic public function test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-current-package-generic-function");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source root for generic function import test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "app/src/lib.ql",
+        r#"
+pub fn identity[T](value: T) -> T {
+    return value
+}
+"#,
+    );
+    temp.write(
+        "app/tests/smoke.ql",
+        r#"
+use app.identity as identity
+
+fn main() -> Int {
+    return identity(42)
+}
+"#,
+    );
+
+    let package_output = static_library_output_path(&project_root.join("target/ql/debug"), "lib");
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test` current package generic public function",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-test-current-package-generic-function",
+        "package tests importing current package generic public function",
+        &output,
+        1,
+    )
+    .expect(
+        "package-path `ql test` should reject current package generic public function imports explicitly",
+    );
+    expect_stdout_contains_all(
+        "project-test-current-package-generic-function",
+        &stdout.replace('\\', "/"),
+        &["test tests/smoke.ql ... FAILED"],
+    )
+    .expect("generic function import failure should mark the smoke test as failed on stdout");
+    expect_stderr_contains(
+        "project-test-current-package-generic-function",
+        "package tests importing current package generic public function",
+        &stderr,
+        "cannot synthesize package-under-test public function bridge for generic function `identity` yet",
+    )
+    .expect("generic package-under-test function import should explain the unsupported bridge");
+    expect_stderr_contains(
+        "project-test-current-package-generic-function",
+        "package tests importing current package generic public function",
+        &stderr,
+        "generic function monomorphization is not implemented yet",
+    )
+    .expect("generic package-under-test function import should point to monomorphization");
+    expect_file_exists(
+        "project-test-current-package-generic-function",
+        &package_output,
+        "current package library",
+        "`ql test` current package generic public function",
+    )
+    .expect("current package library should still build before the test bridge fails");
+    assert!(
+        !smoke_output.exists(),
+        "generic function import failure should not emit a smoke test executable at {}",
+        smoke_output.display()
+    );
+}
+
+#[test]
 fn test_package_path_supports_direct_dependency_public_struct_functions() {
     if !toolchain_available("`ql test` dependency public struct function test") {
         return;

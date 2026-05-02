@@ -3350,6 +3350,25 @@ fn build_json_target_prep_failure(
             JsonValue::Null,
             JsonValue::Null,
         ),
+        PrepareProjectTargetBuildFailureKind::DependencyFunctionUnsupportedGeneric {
+            symbol,
+            dependency_package,
+            dependency_manifest_path,
+        } => (
+            "dependency-function-unsupported-generic",
+            format!(
+                "cannot synthesize direct dependency public function bridge for generic function `{symbol}` yet"
+            ),
+            json!(normalize_path(dependency_manifest_path)),
+            json!(dependency_package),
+            JsonValue::Null,
+            json!(symbol),
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+        ),
         PrepareProjectTargetBuildFailureKind::DependencyTypeConflict {
             symbol,
             first_package,
@@ -5703,6 +5722,11 @@ enum PrepareProjectTargetBuildFailureKind {
         dependency_package: String,
         dependency_manifest_path: PathBuf,
     },
+    DependencyFunctionUnsupportedGeneric {
+        symbol: String,
+        dependency_package: String,
+        dependency_manifest_path: PathBuf,
+    },
     DependencyTypeConflict {
         symbol: String,
         first_package: String,
@@ -7050,26 +7074,32 @@ fn render_package_under_test_bridge_items(
             &mut forwarders,
         )
         .map_err(|error| {
-            if report_failure {
-                match error {
-                    DependencyPublicFunctionForwarderError::DependencyConflict {
-                        symbol,
-                        owner,
-                    } => {
-                        eprintln!(
-                            "error: {command_label} found conflicting package-under-test public function imports for `{symbol}`"
-                        );
-                        eprintln!("note: first package: `{}`", owner.package_name);
-                        eprintln!("note: package under test: `{package_name}`");
-                    }
-                    DependencyPublicFunctionForwarderError::LocalConflict { symbol } => {
-                        eprintln!(
-                            "error: {command_label} cannot synthesize package-under-test public function bridge for `{symbol}` because the test source already defines the same top-level name"
-                        );
-                        eprintln!(
-                            "hint: rename the local top-level item or avoid importing the package-under-test public function with the same original symbol name"
-                        );
-                    }
+            if !report_failure {
+                return 1;
+            }
+            match error {
+                DependencyPublicFunctionForwarderError::DependencyConflict { symbol, owner } => {
+                    eprintln!(
+                        "error: {command_label} found conflicting package-under-test public function imports for `{symbol}`"
+                    );
+                    eprintln!("note: first package: `{}`", owner.package_name);
+                    eprintln!("note: package under test: `{package_name}`");
+                }
+                DependencyPublicFunctionForwarderError::LocalConflict { symbol } => {
+                    eprintln!(
+                        "error: {command_label} cannot synthesize package-under-test public function bridge for `{symbol}` because the test source already defines the same top-level name"
+                    );
+                    eprintln!(
+                        "hint: rename the local top-level item or avoid importing the package-under-test public function with the same original symbol name"
+                    );
+                }
+                DependencyPublicFunctionForwarderError::UnsupportedGeneric { symbol } => {
+                    eprintln!(
+                        "error: {command_label} cannot synthesize package-under-test public function bridge for generic function `{symbol}` yet"
+                    );
+                    eprintln!(
+                        "hint: generic function monomorphization is not implemented yet; use a non-generic wrapper with concrete parameter and return types"
+                    );
                 }
             }
             1
@@ -7736,6 +7766,15 @@ fn render_direct_dependency_public_function_forwarders(
                                 "hint: rename the local top-level item or avoid importing a direct dependency public function with the same original symbol name"
                             );
                         }
+                        DependencyPublicFunctionForwarderError::UnsupportedGeneric { symbol } => {
+                            eprintln!(
+                                "error: {command_label} cannot synthesize direct dependency public function bridge for generic function `{symbol}` yet"
+                            );
+                            eprintln!("note: direct dependency package: `{dependency_package}`");
+                            eprintln!(
+                                "hint: generic function monomorphization is not implemented yet; use a non-generic wrapper with concrete parameter and return types"
+                            );
+                        }
                     }
                 }
                 1
@@ -7846,31 +7885,12 @@ fn render_direct_dependency_public_function_forwarders_quiet(
                     },
                 })
             },
-            |error| match error {
-                DependencyPublicFunctionForwarderError::DependencyConflict { symbol, owner } => {
-                    PrepareProjectTargetBuildError {
-                        failure_kind:
-                            PrepareProjectTargetBuildFailureKind::DependencyFunctionConflict {
-                                symbol,
-                                first_package: owner.package_name,
-                                first_manifest_path: owner.manifest_path,
-                                conflicting_package: dependency_package.clone(),
-                                conflicting_manifest_path: dependency_manifest
-                                    .manifest_path
-                                    .clone(),
-                            },
-                    }
-                }
-                DependencyPublicFunctionForwarderError::LocalConflict { symbol } => {
-                    PrepareProjectTargetBuildError {
-                        failure_kind:
-                            PrepareProjectTargetBuildFailureKind::DependencyFunctionLocalConflict {
-                                symbol,
-                                dependency_package: dependency_package.clone(),
-                                dependency_manifest_path: dependency_manifest.manifest_path.clone(),
-                            },
-                    }
-                }
+            |error| {
+                dependency_function_forwarder_target_prep_error(
+                    error,
+                    &dependency_package,
+                    &dependency_manifest.manifest_path,
+                )
             },
         )?;
     }
@@ -9038,9 +9058,6 @@ fn collect_dependency_module_public_function_forwarders(
         let ItemKind::Function(function) = &item.kind else {
             continue;
         };
-        if !supports_dependency_public_function_import_bridge(function) {
-            continue;
-        }
         let imported = imported_externs.is_none_or(|imports| {
             dependency_extern_is_imported(imports, &module_import_path, &function.name)
         });
@@ -9048,6 +9065,14 @@ fn collect_dependency_module_public_function_forwarders(
             required_function_names.contains(&function.name)
         });
         if !imported && !required_by_value {
+            continue;
+        }
+        if dependency_public_function_import_is_unsupported_generic(function) {
+            return Err(DependencyPublicFunctionForwarderError::UnsupportedGeneric {
+                symbol: function.name.clone(),
+            });
+        }
+        if !supports_dependency_public_function_import_bridge(function) {
             continue;
         }
         let type_dependencies =
@@ -9461,6 +9486,42 @@ enum DependencyPublicFunctionForwarderError {
     LocalConflict {
         symbol: String,
     },
+    UnsupportedGeneric {
+        symbol: String,
+    },
+}
+
+fn dependency_function_forwarder_target_prep_error(
+    error: DependencyPublicFunctionForwarderError,
+    dependency_package: &str,
+    dependency_manifest_path: &Path,
+) -> PrepareProjectTargetBuildError {
+    let failure_kind = match error {
+        DependencyPublicFunctionForwarderError::DependencyConflict { symbol, owner } => {
+            PrepareProjectTargetBuildFailureKind::DependencyFunctionConflict {
+                symbol,
+                first_package: owner.package_name,
+                first_manifest_path: owner.manifest_path,
+                conflicting_package: dependency_package.to_owned(),
+                conflicting_manifest_path: dependency_manifest_path.to_path_buf(),
+            }
+        }
+        DependencyPublicFunctionForwarderError::LocalConflict { symbol } => {
+            PrepareProjectTargetBuildFailureKind::DependencyFunctionLocalConflict {
+                symbol,
+                dependency_package: dependency_package.to_owned(),
+                dependency_manifest_path: dependency_manifest_path.to_path_buf(),
+            }
+        }
+        DependencyPublicFunctionForwarderError::UnsupportedGeneric { symbol } => {
+            PrepareProjectTargetBuildFailureKind::DependencyFunctionUnsupportedGeneric {
+                symbol,
+                dependency_package: dependency_package.to_owned(),
+                dependency_manifest_path: dependency_manifest_path.to_path_buf(),
+            }
+        }
+    };
+    PrepareProjectTargetBuildError { failure_kind }
 }
 
 enum DependencyPublicValueBridgeError {
@@ -9471,6 +9532,19 @@ enum DependencyPublicValueBridgeError {
     LocalConflict {
         symbol: String,
     },
+}
+
+fn dependency_public_function_import_is_unsupported_generic(function: &FunctionDecl) -> bool {
+    function.visibility == Visibility::Public
+        && function.abi.is_none()
+        && !function.is_async
+        && !function.is_unsafe
+        && !function.generics.is_empty()
+        && function.where_clause.is_empty()
+        && function
+            .params
+            .iter()
+            .all(|param| matches!(param, Param::Regular { .. }))
 }
 
 fn supports_dependency_public_function_import_bridge(function: &FunctionDecl) -> bool {

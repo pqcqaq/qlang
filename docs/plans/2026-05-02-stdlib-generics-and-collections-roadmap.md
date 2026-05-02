@@ -13,7 +13,7 @@
 ## Current Assessment
 
 - `stdlib` is real production-facing code: downstream projects can depend on `std.core`, `std.option`, `std.result`, `std.array`, and `std.test` through local `[dependencies]`.
-- The current API shape is too concrete because backend and dependency bridge support still reject generic functions and generic public type execution.
+- The current API shape is still too concrete because backend and dependency bridge support still reject actual generic function imports/calls. Generic public type execution is partially open for explicit `struct` / `enum` instantiations in concrete signatures and contextual aggregate usage.
 - `IntOption` / `BoolOption`, `IntResult` / `BoolResult`, and `sum3_int` / `sum4_int` / `sum5_int` are transitional compatibility surfaces, not the desired long-term library design.
 - Generic `Option[T]` / `Result[T, E]` should move into the P0 stdlib unblock path once generic package execution is stable.
 - Variadic parameters can remove fixed-arity duplication, but they affect parser, typeck, ABI, lowering, LSP, and docs. Do not block stdlib on variadic syntax; first make collection APIs good enough.
@@ -44,7 +44,7 @@
 
 ## Task 2: Generic Public API Execution
 
-Status: second execution slice landed. Direct local dependencies can now expose public generic `struct` / `enum` declarations, use explicit instantiations such as `Box[Int]` / `Maybe[Int]` in non-generic public function signatures consumed by a root project, and build contextual generic struct literals plus field projection when the expected type carries concrete args. Typeck also substitutes those args through struct/enum patterns and enum unit/tuple/struct variant construction. `.qi` emission has regression coverage for generic enum and generic function declarations. Generic function monomorphization, generic aliases, and generic stdlib `Option[T]` / `Result[T, E]` helper execution remain open.
+Status: third execution/diagnostic slice landed. Direct local dependencies can now expose public generic `struct` / `enum` declarations, use explicit instantiations such as `Box[Int]` / `Maybe[Int]` in non-generic public function signatures consumed by a root project, and build contextual generic struct literals plus field projection when the expected type carries concrete args. Typeck also substitutes those args through struct/enum patterns and enum unit/tuple/struct variant construction. `.qi` emission has regression coverage for generic enum and generic function declarations, and library-mode codegen no longer fails just because a generic function/method declaration exists but is never instantiated. When a root target actually imports a direct dependency generic public function such as `identity[T]`, the CLI now reports `dependency-function-unsupported-generic` instead of surfacing a vague missing bridge failure. Generic function monomorphization, generic aliases, and generic stdlib `Option[T]` / `Result[T, E]` helper execution remain open.
 
 **Files:**
 - Modify: `crates/ql-project/src/lib.rs`
