@@ -651,12 +651,8 @@ fn project_init_with_stdlib_creates_consuming_package_scaffold_and_check_succeed
     );
 
     let mut check = ql_command(&workspace_root);
-    check.args([
-        "check",
-        "--sync-interfaces",
-        &project_root.to_string_lossy(),
-    ]);
-    let output = run_command_capture(&mut check, "`ql check --sync-interfaces` stdlib package");
+    check.args(["check", &project_root.to_string_lossy()]);
+    let output = run_command_capture(&mut check, "`ql check` initialized stdlib package");
     let (stdout, stderr) = expect_success(
         "project-init-stdlib-package",
         "check initialized stdlib package",
@@ -1041,12 +1037,8 @@ fn project_init_with_stdlib_creates_consuming_workspace_scaffold_and_check_succe
     );
 
     let mut check = ql_command(&workspace_root);
-    check.args([
-        "check",
-        "--sync-interfaces",
-        &project_root.to_string_lossy(),
-    ]);
-    let output = run_command_capture(&mut check, "`ql check --sync-interfaces` stdlib workspace");
+    check.args(["check", &project_root.to_string_lossy()]);
+    let output = run_command_capture(&mut check, "`ql check` initialized stdlib workspace");
     let (stdout, stderr) = expect_success(
         "project-init-stdlib-workspace",
         "check initialized stdlib workspace",

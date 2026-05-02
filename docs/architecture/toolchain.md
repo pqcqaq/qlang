@@ -264,7 +264,7 @@ P4/P5 地基已经落地；当前一边保守扩展 Phase 7 async library/progra
 - executable smoke test 当前通过条件只有一个：测试进程退出码为 `0`。
 - workspace member 没有测试时当前会保守跳过；只有整次请求范围里完全没有发现测试文件时，CLI 才会显式失败；如果 discovery 成功但 `--filter` 之后没有匹配项，也会单独显式失败。
 - 成功时 stdout 只输出测试状态与汇总；失败时 stderr 会打印 smoke test 的退出码和捕获到的 stdout/stderr，或 UI test 的 snapshot mismatch / 读取失败等细节。
-- `ql project init` 现在会默认生成 `src/main.ql` 与 `tests/smoke.ql`，确保新脚手架可以直接进入 `ql run` 与 `ql test`。
+- `ql project init` 现在会默认生成 `src/main.ql` 与 `tests/smoke.ql`，确保新脚手架可以直接进入 `ql check` / `ql run` / `ql test`。当传入 `--stdlib <path>` 时，init 会静默预备这些 stdlib path dependency 的 `.qi` interface artifact，所以新项目不需要先手动执行 `ql check --sync-interfaces` 才能进入普通 `ql check`。
 - 当前项目内 UI test 仍只覆盖单文件 diagnostics snapshot，不等于完整 integration/doc/benchmark harness 已开放。
 
 ### `ql ffi`
