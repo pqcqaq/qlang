@@ -80,6 +80,8 @@ mod tests {
         assert!(smoke.contains("let generic_none_int: Option[Int] = option_none()"));
         assert!(smoke.contains("use std.test.expect_generic_int_option_some"));
         assert!(smoke.contains("use std.test.expect_generic_int_result_ok"));
+        assert!(smoke.contains("use std.test.expect_generic_int_result_to_option_some"));
+        assert!(smoke.contains("use std.test.expect_generic_int_option_ok_or"));
         assert!(smoke.contains("use std.array.max5_int_array"));
         assert!(smoke.contains("use std.option.Option as Option"));
         assert!(smoke.contains("use std.result.Result as Result"));

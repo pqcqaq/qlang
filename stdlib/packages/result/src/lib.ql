@@ -1,5 +1,6 @@
 package std.result
 
+use std.option.Option as Option
 use std.option.BoolOption as BoolOption
 use std.option.IntOption as IntOption
 use std.option.is_some_bool as option_is_some_bool
@@ -66,6 +67,27 @@ pub fn error_or[T, E](value: Result[T, E], fallback: E) -> E {
     return match value {
         Result.Ok(_) => fallback,
         Result.Err(error) => error,
+    }
+}
+
+pub fn ok_or[T, E](value: Option[T], error: E) -> Result[T, E] {
+    return match value {
+        Option.Some(inner) => Result.Ok(inner),
+        Option.None => Result.Err(error),
+    }
+}
+
+pub fn to_option[T, E](value: Result[T, E]) -> Option[T] {
+    return match value {
+        Result.Ok(inner) => Option.Some(inner),
+        Result.Err(_) => Option.None,
+    }
+}
+
+pub fn error_to_option[T, E](value: Result[T, E]) -> Option[E] {
+    return match value {
+        Result.Ok(_) => Option.None,
+        Result.Err(error) => Option.Some(error),
     }
 }
 

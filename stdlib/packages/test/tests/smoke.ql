@@ -29,19 +29,31 @@ use std.test.expect_bool_result_to_option_none as expect_bool_result_to_option_n
 use std.test.expect_bool_result_to_option_some as expect_bool_result_to_option_some
 use std.test.expect_false as expect_false
 use std.test.expect_generic_bool_option_none as expect_generic_bool_option_none
+use std.test.expect_generic_bool_option_ok_or as expect_generic_bool_option_ok_or
+use std.test.expect_generic_bool_option_ok_or_err as expect_generic_bool_option_ok_or_err
 use std.test.expect_generic_bool_option_or as expect_generic_bool_option_or
 use std.test.expect_generic_bool_option_some as expect_generic_bool_option_some
 use std.test.expect_generic_bool_result_err as expect_generic_bool_result_err
 use std.test.expect_generic_bool_result_error as expect_generic_bool_result_error
+use std.test.expect_generic_bool_result_error_none as expect_generic_bool_result_error_none
+use std.test.expect_generic_bool_result_error_some as expect_generic_bool_result_error_some
 use std.test.expect_generic_bool_result_ok as expect_generic_bool_result_ok
 use std.test.expect_generic_bool_result_or as expect_generic_bool_result_or
+use std.test.expect_generic_bool_result_to_option_none as expect_generic_bool_result_to_option_none
+use std.test.expect_generic_bool_result_to_option_some as expect_generic_bool_result_to_option_some
 use std.test.expect_generic_int_option_none as expect_generic_int_option_none
+use std.test.expect_generic_int_option_ok_or as expect_generic_int_option_ok_or
+use std.test.expect_generic_int_option_ok_or_err as expect_generic_int_option_ok_or_err
 use std.test.expect_generic_int_option_or as expect_generic_int_option_or
 use std.test.expect_generic_int_option_some as expect_generic_int_option_some
 use std.test.expect_generic_int_result_err as expect_generic_int_result_err
 use std.test.expect_generic_int_result_error as expect_generic_int_result_error
+use std.test.expect_generic_int_result_error_none as expect_generic_int_result_error_none
+use std.test.expect_generic_int_result_error_some as expect_generic_int_result_error_some
 use std.test.expect_generic_int_result_ok as expect_generic_int_result_ok
 use std.test.expect_generic_int_result_or as expect_generic_int_result_or
+use std.test.expect_generic_int_result_to_option_none as expect_generic_int_result_to_option_none
+use std.test.expect_generic_int_result_to_option_some as expect_generic_int_result_to_option_some
 use std.test.expect_int_abs as expect_int_abs
 use std.test.expect_int_abs_diff as expect_int_abs_diff
 use std.test.expect_int_average2 as expect_int_average2
@@ -250,6 +262,10 @@ fn main() -> Int {
     let generic_result_or_status = sum4(check_int(expect_generic_int_result_or(Result.Err(5), Result.Ok(11), 11), 0), check_int(expect_generic_bool_result_or(Result.Err(6), Result.Ok(false), false), 0), 0, 0)
     let generic_result_error_status = sum4(check_int(expect_generic_int_result_error(Result.Err(8), 0, 8), 0), check_int(expect_generic_int_result_error(Result.Ok(14), 0, 0), 0), check_int(expect_generic_bool_result_error(Result.Err(9), 0, 9), 0), check_int(expect_generic_bool_result_error(Result.Ok(false), 0, 0), 0))
     let generic_result_failure = sum4(check_int(expect_generic_int_result_ok(Result.Ok(7), 8), 1), check_int(expect_generic_int_result_err(Result.Ok(7), 3), 1), check_int(expect_generic_bool_result_ok(Result.Ok(true), false), 1), check_int(expect_generic_bool_result_or(Result.Ok(true), Result.Err(4), false), 1))
+    let generic_none_bool: Option[Bool] = Option.None
+    let generic_result_conversion_status = sum4(check_int(expect_generic_int_result_to_option_some(Result.Ok(31), 31), 0), check_int(expect_generic_int_result_to_option_none(Result.Err(8)), 0), check_int(expect_generic_bool_result_to_option_some(Result.Ok(false), false), 0), check_int(expect_generic_bool_result_to_option_none(Result.Err(9)), 0))
+    let generic_result_error_option_status = sum4(check_int(expect_generic_int_result_error_some(Result.Err(0), 0), 0), check_int(expect_generic_int_result_error_none(Result.Ok(31)), 0), check_int(expect_generic_bool_result_error_some(Result.Err(0), 0), 0), check_int(expect_generic_bool_result_error_none(Result.Ok(false)), 0))
+    let generic_option_conversion_status = sum4(check_int(expect_generic_int_option_ok_or(Option.Some(31), 8, 31), 0), check_int(expect_generic_int_option_ok_or_err(Option.None, 8), 0), check_int(expect_generic_bool_option_ok_or(Option.Some(true), 9, true), 0), check_int(expect_generic_bool_option_ok_or_err(generic_none_bool, 9), 0))
 
     let bool_status = sum4(bool_pass + bool_aggregate_pass + bool_aggregate5_pass + bool_conversion_pass, bool_logic_pass + bool_none_pass, bool_failure + bool_aggregate_failure + bool_aggregate5_failure + bool_conversion_failure, bool_logic_failure + bool_none_failure)
     let int_status = sum4(int_order_pass, int_boundary_pass, int_order_failure, int_boundary_failure)
@@ -258,5 +274,5 @@ fn main() -> Int {
     let number_status = sum4(number_pass, sign_pass, number_failure, sign_failure)
     let status_status = sum4(status_bool, status_merge, status_merge_large, status_expect)
 
-    return check_int(sum4(bool_status, int_status, range_status, sum4(order_status, number_status, status_status, sum4(sign_boundary, transform_pass + transform_core_pass + transform_clamp_pass, transform_failure + transform_core_failure + transform_clamp_failure, sum4(aggregate_pass + aggregate5_pass + extrema_pass + division_pass, average_pass + extrema4_pass + extrema5_pass + division_bool_pass + transform_bound_pass, aggregate_failure + aggregate5_failure + extrema_failure + division_failure, average_failure + extrema4_failure + extrema5_failure + division_zero_failure + transform_bound_failure)))), 0) + option_status + option_or_status + option_failure + result_status + result_or_status + result_failure + result_conversion_status + option_conversion_status + result_conversion_failure + option_conversion_failure + result_error_status + result_error_failure + generic_option_status + generic_option_or_status + generic_option_failure + generic_result_status + generic_result_or_status + generic_result_error_status + generic_result_failure
+    return check_int(sum4(bool_status, int_status, range_status, sum4(order_status, number_status, status_status, sum4(sign_boundary, transform_pass + transform_core_pass + transform_clamp_pass, transform_failure + transform_core_failure + transform_clamp_failure, sum4(aggregate_pass + aggregate5_pass + extrema_pass + division_pass, average_pass + extrema4_pass + extrema5_pass + division_bool_pass + transform_bound_pass, aggregate_failure + aggregate5_failure + extrema_failure + division_failure, average_failure + extrema4_failure + extrema5_failure + division_zero_failure + transform_bound_failure)))), 0) + option_status + option_or_status + option_failure + result_status + result_or_status + result_failure + result_conversion_status + option_conversion_status + result_conversion_failure + option_conversion_failure + result_error_status + result_error_failure + generic_option_status + generic_option_or_status + generic_option_failure + generic_result_status + generic_result_or_status + generic_result_error_status + generic_result_failure + generic_result_conversion_status + generic_result_error_option_status + generic_option_conversion_status
 }

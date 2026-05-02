@@ -91,6 +91,7 @@ use std.option.unwrap_or_int as option_unwrap_or_int
 use std.option.IntOption as IntOption
 use std.result.BoolResult as BoolResult
 use std.result.Result as Result
+use std.result.error_to_option as result_error_to_option
 use std.result.error_to_option_bool as result_error_to_option_bool
 use std.result.error_to_option_int as result_error_to_option_int
 use std.result.error_or_zero_bool as result_error_or_zero_bool
@@ -99,10 +100,12 @@ use std.result.is_err_bool as result_is_err_bool
 use std.result.is_err_int as result_is_err_int
 use std.result.is_ok_bool as result_is_ok_bool
 use std.result.is_ok_int as result_is_ok_int
+use std.result.ok_or as result_ok_or
 use std.result.ok_or_bool as result_ok_or_bool
 use std.result.ok_or_int as result_ok_or_int
 use std.result.or_result_bool as result_or_bool
 use std.result.or_result_int as result_or_int
+use std.result.to_option as result_to_option
 use std.result.to_option_bool as result_to_option_bool
 use std.result.to_option_int as result_to_option_int
 use std.result.unwrap_result_or_bool as result_unwrap_or_bool
@@ -935,6 +938,30 @@ pub fn expect_generic_int_result_error(value: Result[Int, Int], fallback_error: 
     }
 }
 
+pub fn expect_generic_int_result_to_option_some(value: Result[Int, Int], expected: Int) -> Int {
+    return expect_generic_int_option_some(result_to_option(value), expected)
+}
+
+pub fn expect_generic_int_result_to_option_none(value: Result[Int, Int]) -> Int {
+    return expect_generic_int_option_none(result_to_option(value))
+}
+
+pub fn expect_generic_int_result_error_some(value: Result[Int, Int], expected_error: Int) -> Int {
+    return expect_generic_int_option_some(result_error_to_option(value), expected_error)
+}
+
+pub fn expect_generic_int_result_error_none(value: Result[Int, Int]) -> Int {
+    return expect_generic_int_option_none(result_error_to_option(value))
+}
+
+pub fn expect_generic_int_option_ok_or(value: Option[Int], error: Int, expected: Int) -> Int {
+    return expect_generic_int_result_ok(result_ok_or(value, error), expected)
+}
+
+pub fn expect_generic_int_option_ok_or_err(value: Option[Int], error: Int) -> Int {
+    return expect_generic_int_result_err(result_ok_or(value, error), error)
+}
+
 pub fn expect_generic_bool_result_ok(value: Result[Bool, Int], expected: Bool) -> Int {
     return match value {
         Result.Ok(inner) => expect_bool_eq(inner, expected),
@@ -961,6 +988,30 @@ pub fn expect_generic_bool_result_error(value: Result[Bool, Int], fallback_error
         Result.Ok(_) => expect_int_eq(fallback_error, expected_error),
         Result.Err(error) => expect_int_eq(error, expected_error),
     }
+}
+
+pub fn expect_generic_bool_result_to_option_some(value: Result[Bool, Int], expected: Bool) -> Int {
+    return expect_generic_bool_option_some(result_to_option(value), expected)
+}
+
+pub fn expect_generic_bool_result_to_option_none(value: Result[Bool, Int]) -> Int {
+    return expect_generic_bool_option_none(result_to_option(value))
+}
+
+pub fn expect_generic_bool_result_error_some(value: Result[Bool, Int], expected_error: Int) -> Int {
+    return expect_generic_int_option_some(result_error_to_option(value), expected_error)
+}
+
+pub fn expect_generic_bool_result_error_none(value: Result[Bool, Int]) -> Int {
+    return expect_generic_int_option_none(result_error_to_option(value))
+}
+
+pub fn expect_generic_bool_option_ok_or(value: Option[Bool], error: Int, expected: Bool) -> Int {
+    return expect_generic_bool_result_ok(result_ok_or(value, error), expected)
+}
+
+pub fn expect_generic_bool_option_ok_or_err(value: Option[Bool], error: Int) -> Int {
+    return expect_generic_bool_result_err(result_ok_or(value, error), error)
 }
 
 pub fn expect_int_result_to_option_some(value: IntResult, expected: Int) -> Int {
