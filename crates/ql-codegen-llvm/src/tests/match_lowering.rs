@@ -40,6 +40,36 @@ return match flag {
 }
 
 #[test]
+fn emits_generic_enum_match_after_local_alias_lowering() {
+    let rendered = emit(
+        r#"
+enum Option[T] {
+    Some(T),
+    None,
+}
+
+fn choose(value: Option[Int]) -> Int {
+let kept: Option[Int] = value
+return match kept {
+    Option.Some(inner) => inner,
+    Option.None => 0,
+}
+}
+
+fn main() -> Int {
+let current: Option[Int] = Option.Some(7)
+let missing: Option[Int] = Option.None
+return choose(current) + choose(missing)
+}
+"#,
+    );
+
+    assert!(rendered.contains("define i64 @ql_1_choose("));
+    assert!(rendered.contains("call i64 @ql_1_choose"));
+    assert!(!rendered.contains("task-handle alias analysis"));
+}
+
+#[test]
 fn emits_short_circuit_bool_expression_lowering() {
     let rendered = emit_with_mode(
         r#"

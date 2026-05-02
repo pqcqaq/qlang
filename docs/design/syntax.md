@@ -158,7 +158,7 @@ async fn handle(stream: TcpStream) -> Result[Void, HttpError] {
 - `none` 只代表 `Option[T]` 的空分支
 - `f"..."` 作为唯一官方插值字符串写法
 
-实现状态：`none` / prelude `Option[T]` / `Result[T, E]` 仍是语法设计目标；当前可执行 stdlib 只开放普通 package `std.option` / `std.result` 里的 concrete `IntOption` / `BoolOption` / `IntResult` / `BoolResult`。
+实现状态：`none` / prelude `Option[T]` / `Result[T, E]` 仍是语法设计目标；当前可执行 stdlib 通过普通 package `std.option` / `std.result` 开放 generic carrier，`std.option` 已有首批 generic helper。泛型空值当前写作 `Option.None`，并依赖显式或上下文 `Option[T]` 类型。
 
 ## 2. 模块与导入
 

@@ -5858,17 +5858,39 @@ impl<'a> ModuleEmitter<'a> {
             Ty::Tuple(items) => items
                 .iter()
                 .any(|item| self.ty_contains_task_handles(item, span, diagnostics)),
-            Ty::Item { .. } => {
-                match self.struct_field_lowerings(ty, span, "task-handle alias analysis") {
-                    Ok(fields) => fields
-                        .iter()
-                        .any(|field| self.ty_contains_task_handles(&field.ty, span, diagnostics)),
-                    Err(error) => {
-                        diagnostics.push(error);
-                        false
+            Ty::Item { item_id, args, .. } => match &self.input.hir.item(*item_id).kind {
+                ItemKind::Struct(_) => {
+                    match self.struct_field_lowerings(ty, span, "task-handle alias analysis") {
+                        Ok(fields) => fields.iter().any(|field| {
+                            self.ty_contains_task_handles(&field.ty, span, diagnostics)
+                        }),
+                        Err(error) => {
+                            diagnostics.push(error);
+                            false
+                        }
                     }
                 }
-            }
+                ItemKind::Enum(_) => {
+                    match self.enum_lowering(ty, span, "task-handle alias analysis") {
+                        Ok(lowering) => lowering
+                            .variants
+                            .iter()
+                            .flat_map(|variant| variant.fields.iter())
+                            .any(|field| {
+                                self.ty_contains_task_handles(&field.ty, span, diagnostics)
+                            }),
+                        Err(error) => {
+                            diagnostics.push(error);
+                            false
+                        }
+                    }
+                }
+                ItemKind::TypeAlias(alias) if args.is_empty() => {
+                    let target_ty = lower_type(self.input.hir, self.input.resolution, alias.ty);
+                    self.ty_contains_task_handles(&target_ty, span, diagnostics)
+                }
+                _ => false,
+            },
             _ => false,
         }
     }

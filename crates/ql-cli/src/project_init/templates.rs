@@ -13,13 +13,13 @@ pub(super) fn default_package_test_source() -> &'static str {
 pub(super) fn stdlib_package_source() -> &'static str {
     r#"use std.array.sum3_int_array as sum3_int_array
 use std.core.clamp_int as clamp_int
-use std.option.some_int as some_int
-use std.option.unwrap_or_int as unwrap_or_int
+use std.option.some as option_some
+use std.option.unwrap_or as option_unwrap_or
 use std.result.ok_int as result_ok_int
 use std.result.unwrap_result_or_int as result_unwrap_or_int
 
 pub fn run() -> Int {
-    return clamp_int(result_unwrap_or_int(result_ok_int(unwrap_or_int(some_int(42), 0)), 0) + sum3_int_array([1, 2, 3]), 0, 100)
+    return clamp_int(result_unwrap_or_int(result_ok_int(option_unwrap_or(option_some(42), 0)), 0) + sum3_int_array([1, 2, 3]), 0, 100)
 }
 "#
 }
@@ -66,7 +66,7 @@ mod tests {
         let smoke = stdlib_package_test_source();
 
         assert!(lib.contains("use std.core.clamp_int"));
-        assert!(lib.contains("use std.option.some_int"));
+        assert!(lib.contains("use std.option.some as option_some"));
         assert!(lib.contains("use std.result.ok_int"));
         assert!(lib.contains("use std.array.sum3_int_array"));
         assert!(main.contains("use std.core.bool_to_int"));

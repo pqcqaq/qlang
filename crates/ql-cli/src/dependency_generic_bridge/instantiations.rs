@@ -627,14 +627,15 @@ fn infer_dependency_generic_function_substitutions(
         if !type_expr_mentions_generic(param_ty, &generic_names) {
             continue;
         }
-        let arg_ty = infer_dependency_generic_arg_type(arg, bindings)?;
-        if !collect_generic_type_substitutions(
-            param_ty,
-            &arg_ty,
-            &generic_names,
-            &mut substitutions,
-        ) {
-            return None;
+        if let Some(arg_ty) = infer_dependency_generic_arg_type(arg, bindings) {
+            if !collect_generic_type_substitutions(
+                param_ty,
+                &arg_ty,
+                &generic_names,
+                &mut substitutions,
+            ) {
+                return None;
+            }
         }
     }
     Some(substitutions)
@@ -868,5 +869,66 @@ fn infer_dependency_generic_expr_type(
         ExprKind::String { .. } => Some(InferredType::primitive("String")),
         ExprKind::Name(name) => bindings.get(name).cloned(),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_module(source: &str) -> Module {
+        ql_parser::parse_source(source).expect("test source should parse")
+    }
+
+    fn function<'a>(module: &'a Module, name: &str) -> &'a FunctionDecl {
+        module
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                ItemKind::Function(function) if function.name == name => Some(function),
+                _ => None,
+            })
+            .expect("test function should exist")
+    }
+
+    #[test]
+    fn infers_substitution_from_later_argument_when_nested_call_arg_is_untyped() {
+        let dependency = parse_module(
+            r#"
+package std.option
+
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+
+pub fn unwrap_or[T](value: Option[T], fallback: T) -> T {
+    return fallback
+}
+"#,
+        );
+        let root = parse_module(
+            r#"
+use std.option.some as option_some
+use std.option.unwrap_or as option_unwrap_or
+
+fn run() -> Int {
+    return option_unwrap_or(option_some(42), 0)
+}
+"#,
+        );
+
+        let instantiations = collect_public_function_instantiations(
+            &root,
+            &["std".to_owned(), "option".to_owned()],
+            function(&dependency, "unwrap_or"),
+        );
+
+        assert_eq!(instantiations.len(), 1);
+        let substitutions = instantiations
+            .iter()
+            .next()
+            .expect("one substitution should be inferred");
+        assert_eq!(substitutions.get("T").map(String::as_str), Some("Int"));
     }
 }

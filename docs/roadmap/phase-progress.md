@@ -105,13 +105,13 @@
 ## 当前主线
 
 1. 先把 qlang 做到“可真实使用的最小项目语言”，而不是继续扩语言表面。
-2. 主线先做 manifest、dependency-aware build/backend、真实 `stdlib`、真实 workspace LSP、安装与分发；P0 未完成前，不再把新语法和更宽 runtime 当主线，但 generic public API / generic `Option[T]` / `Result[T, E]` 已因 stdlib 可用性进入 unblock 路径，`std.array` 先作为固定数组集合过渡面服务真实项目。
+2. 主线先做 manifest、dependency-aware build/backend、真实 `stdlib`、真实 workspace LSP、安装与分发；P0 未完成前，不再把新语法和更宽 runtime 当主线，但 generic public API / generic `Option[T]` / `Result[T, E]` 已因 stdlib 可用性进入 unblock 路径，`std.option` 首批 generic helper 和 `std.array` 固定数组集合过渡面已服务真实项目。
 3. 每一轮功能推进必须先落生产代码，再补测试和文档；只有测试或文档改动，不再计作一轮功能迭代。
 4. 不再按固定日期承诺完成；每轮选择当前最能提升真实项目可用性的切片，做到实现、回归、文档一起收口。
 
 ## 下一轮
 
-- stdlib / test harness：普通 Qlang package 形态的 `stdlib` 已继续扩面，新增 `std.array` 固定数组 helper 并接入 `ql project init --stdlib` 下游 smoke；当前 concrete carrier 与 3/4/5 固定参数 helper 已明确降级为过渡兼容面。direct local dependency 的 generic public type carrier，以及单实例、primitive 字面量 / 显式 typed value / generic carrier 可推断的 generic public free function bridge 已有 build 与 package-under-test smoke 回归，覆盖 `T = Box[Int]` 与从 `Box[T]` 参数反推 `T = Int`。下一步不继续主要堆重复参数 helper，而是按 `docs/plans/2026-05-02-stdlib-generics-and-collections-roadmap.md` 继续打通更完整的调用点实例化、monomorphization/codegen 和 downstream stdlib generic helper smoke。
+- stdlib / test harness：普通 Qlang package 形态的 `stdlib` 已继续扩面，新增 `std.array` 固定数组 helper 并接入 `ql project init --stdlib` 下游 smoke；当前 concrete carrier 与 3/4/5 固定参数 helper 已明确降级为过渡兼容面。direct local dependency 的 generic public type carrier，以及单实例、primitive 字面量 / 显式 typed value / generic carrier 可推断的 generic public free function bridge 已有 build 与 package-under-test smoke 回归，覆盖 `T = Box[Int]`、从 `Box[T]` 参数反推 `T = Int`，以及 `std.option` generic `some` / `is_some` / `is_none` / `unwrap_or` / `or_option`。下一步不继续主要堆重复参数 helper，而是按 `docs/plans/2026-05-02-stdlib-generics-and-collections-roadmap.md` 继续打通更完整的调用点实例化、monomorphization/codegen、generic `Result` helper 和 collection helper。
 - build/backend：继续优先补真实项目里高频的 direct local dependency value/type/member 调用面；本轮已把 public 非泛型、非 opaque type alias 从 declaration bridge 推到普通值兼容，typeck 现在覆盖 return、call argument、assignment、数组/分支统一、pattern literal、bool/numeric/string 操作里的透明 alias target；LLVM backend 已跟进 direct lowering 所需的 alias 赋值、数组/字段值检查、二元操作和 callable 参数断言，并用 build/run/test 真实 consumer 锁住 `Count -> Score -> Int` 的跨包签名、alias 算术与 wrapper 调用。下一步重点转向 generic public API 的实例化、桥接和 codegen；`opaque type`、泛型 alias、`impl` / `extend` 身份匹配继续保持不透明。
 - typeck/backend 回归清理：`ql-codegen-llvm` 中仍有一批 IR 形状耦合测试需要分组收敛。本轮已先修正真实语义问题：`if` 一侧不可贯通时不再强制与可贯通分支统一值类型；剩余失败优先改成语义级断言或更稳定的 IR helper，而不是继续追加脆弱字符串匹配。
 - LSP：继续把 `textDocument/implementation` 从已完成的 trait/type surface、workspace root/source-backed type definition surface、workspace root/source-backed concrete / trait-typed method call、source-backed dependency concrete / trait-typed method call、dependency non-import type-driven positions、trait method definition，以及 broken current-buffer concrete / trait-typed method call / broken-source open dependency member-type surface，扩到更宽的 implementation index；`codeLens` 已有当前文档 references / implementations 入口，后续再扩 workspace-wide lens/index。
