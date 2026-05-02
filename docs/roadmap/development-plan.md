@@ -15,6 +15,8 @@
 - 如果语言现在还无法稳定支撑小型真实项目，继续扩语法、类型系统或 runtime 表面价值很低。
 - 从现在开始，主线改为“先把语言做到可真实使用，再恢复语言扩面”；P0 未完成前，不再把新语法和更宽语言能力当主线。
 - 最小 `stdlib` 属于 P0 可用性，不属于后置语言扩面；没有可依赖的 `core/option/result/test` 包，真实项目仍会退化成手写样例集合。
+- 当前 `stdlib` 是真实标准库 workspace，不是测试夹具；但 `IntOption` / `BoolOption`、`IntResult` / `BoolResult`、`sum3_int` / `sum4_int` / `sum5_int` 这类 API 是受限后端下的过渡形态，不应继续作为长期设计方向扩张。
+- 泛型 public API、generic `Option[T]` / `Result[T, E]`、数组/迭代式聚合能力现在进入 P0 stdlib unblock 路径；可变参数语法仍需单独设计和 lowering，不直接拿来绕过当前 stdlib API 问题。
 - 从现在开始，每一轮功能迭代必须优先落到生产代码；只有测试或文档改动，不再计作一轮功能推进。
 - 不再用固定日期承诺完成 P0；节奏改为每一轮尽力交付一个可验证切片，并用回归和文档更新收口。
 
@@ -23,7 +25,7 @@
 | 优先级 | 主题 | 当前目标 |
 | --- | --- | --- |
 | P0 | 可用性 MVP | 让 qlang 能稳定支撑小型本地 workspace 项目开发 |
-| P1 | dependency-aware build/backend | 把跨包执行和依赖装载从窄的 demo slice 扩到真实项目需要的核心路径 |
+| P1 | stdlib / generics / dependency backend | 把 `stdlib` 从 concrete/fixed-arity 过渡面推进到泛型 carrier、数组/迭代 helper 和真实跨包执行 |
 | P2 | 基础 LSP / VSCode 可用性 | 把真实 workspace 里的导航、高亮、补全做到可依赖 |
 | P3 | 分发 / CI / 团队接入 | 补齐安装、锁文件、JSON、CI、VSIX 分发 |
 | P4 | 高级 IDE 与语言扩面 | cross-file rename / workspace edits / 更完整 code actions，以及更宽 async/runtime/语言能力后置 |
@@ -35,6 +37,7 @@
 - 能从 `ql project init` / `add` 建出 workspace，并直接从 workspace 根目录执行 `check/build/run/test`。
 - 本地路径依赖不再只停在窄的 public free function / `extern "c"`；至少要覆盖真实项目常见的 public value/type/member 使用路径。
 - 仓库内存在最小 `stdlib`，至少包含普通 Qlang package 形态的 `std.core`、`std.option`、`std.result` 与 `std.test`，并能被真实项目通过本地依赖消费。
+- `stdlib` 不再继续主要靠 `Int*` / `Bool*` concrete carrier 和 3/4/5 固定参数 helper 扩面；generic public function/type、generic `Option[T]` / `Result[T, E]`，以及能替代固定参数复制的数组/集合 helper 必须有可执行路径或明确的阻塞测试。
 - VSCode 中打开真实 workspace 时，definition / references / hover / completion / semantic tokens / `workspace/symbol` 不再只在理想样例里工作。
 - `ql`、`qlsp`、VSIX 的安装和版本绑定有明确、稳定、可复现的路径。
 - README、支持页、开发计划三者描述一致，不再出现“文档说可用，但真实项目一碰就碎”。
@@ -45,6 +48,7 @@
 - 每一轮都选择当前最能提升可用性的切片，做到实现、回归、文档一起提交。
 - 每轮结束时必须能说明本轮让真实项目多走通了哪条路径，不能只报告“清理了一些代码”。
 - 如果 `stdlib` 暴露出 backend / project / LSP 缺口，优先修真实阻塞项；不为绕过缺口而降低 `stdlib` 设计边界。
+- 如果某个 API 明显应该用泛型或集合抽象表达，不继续堆 concrete/fixed-arity 版本；先补泛型、数组/迭代或可变参数所需的编译器路径。
 
 ## 当前 Checkpoints
 
@@ -113,6 +117,7 @@
 - 先以普通 Qlang workspace/package 形态落地 `stdlib`，不先做编译器内置 prelude。
 - 让用户项目能通过本地 `[dependencies]` 显式依赖 `std.core` / `std.option` / `std.result` / `std.test`。
 - 用 `stdlib` 反向驱动 dependency-aware backend、项目模板和文档收口。
+- 把当前 concrete/fixed-arity helper 收敛为过渡兼容面，主线改为 generic carriers、集合/数组 helper、真实 downstream smoke 和后续可变参数设计。
 
 完成标准：
 
@@ -121,12 +126,14 @@
 - `stdlib/packages/result` 能被 `ql check/build/test` 验证，并提供当前 dependency bridge 可执行的 concrete result surface。（已落地 `IntResult` / `BoolResult` 的 ok/err 构造、is_ok/is_err 判定、`unwrap_result_or_*`、`or_result_*`、error-code helper、无损 error-to-option helper，以及 concrete Option/Result 互转 helper；泛型 `Result[T, E]` / prelude 集成继续后置）
 - `stdlib/packages/test` 能提供 smoke-test 友好的断言辅助，并通过 package-aware smoke test 直接导入自身 public helpers。（已落地 true/false、bool equality/ne/logic/implies、Bool all/any/none、Bool-to-Int、int equality/order、zero/nonzero、max/min/median、sum/product/average、sign/compare、abs/abs-diff/range-span/bounds、quotient/remainder/has-remainder/factor、Option/Result carrier、转换与 error extraction 断言、2-6 路 status 组合、正负/非正/非负、区间、无序边界区间、单边/双边 clamp / range-distance、3/4/5 项升/降序、奇偶、整除和容差内/外断言）
 - 用户项目模板能依赖 `std.core` / `std.option` / `std.result` / `std.test` 并通过 `ql test`。（已落地 `ql project init --stdlib <path>` 的 package 与 workspace member 生成路径）
-- `stdlib` API 只使用当前稳定语言面；泛型 `Option[T]` / `Result[T, E]` 执行面、IO、字符串、自动 prelude 和 registry 发布继续后置。
+- `stdlib` 当前已发布的 concrete API 继续使用稳定语言面并保持可执行；generic `Option[T]` / `Result[T, E]` 和 generic public helper 不再作为远期后置项，而是先用 failing tests 驱动 dependency bridge / monomorphization / codegen 打通后再替换 concrete 主路径。
+- 数组/集合 helper 是替代 `sum3/4/5`、`all3/4/5` 这类固定参数复制的近期方向；可变参数语法需要独立设计 ABI、`.qi` 表示、typeck、LSP 和 lowering，先进入设计 gate，不直接承诺为下一轮实现。
 
 ## 下一轮（已排定）
 
-- stdlib：继续扩只依赖稳定语言面的基础 helper，并让 package / workspace 初始化模板优先覆盖真实 consumer 路径。
-- backend：继续扩 direct local dependency 下真实项目高频的 public value/member 调用面；public 非泛型、非 opaque type alias 已进入 type declaration bridge，并已在普通值上下文支持 alias 透明的跨包函数签名、alias 算术与 wrapper 调用。后续仍优先修 `stdlib` / 模板暴露的真实阻塞。
+- stdlib/generics：按 [Stdlib Generics and Collections Roadmap](/plans/2026-05-02-stdlib-generics-and-collections-roadmap) 推进；下一刀优先写 direct local dependency 的 generic public function / generic struct / generic enum failing tests，并用它们驱动 `.qi`、dependency bridge 和 LLVM codegen 的最小泛型执行面。
+- stdlib/API：暂停继续堆新的 `foo3/foo4/foo5` 式 helper；现有 concrete Option/Result 和 fixed-arity helper 保留为兼容面，新的主路径优先设计 generic carrier 与数组/集合 helper。
+- backend：继续扩 direct local dependency 下真实项目高频的 public value/type/member 调用面；短期重点从非泛型 alias 转到 generic public API 的实例化、桥接和 codegen。后续仍优先修 `stdlib` / 模板暴露的真实阻塞。
 - LSP：`textDocument/implementation` 的已完成基线已明显超出这里最初记录，当前准确支持面以 `current-supported-surface.md` 为准；继续扩更宽的 implementation index，但不压过 P0 stdlib / backend 阻塞项。
 - 文档：继续只保留入口结论、支持边界和最近 checkpoint；不再追加长流水账。
 
@@ -135,7 +142,8 @@
 - cross-file rename / workspace edits / 更完整 code actions
 - 更宽的 async/runtime/Rust interop 扩面
 - 新语法糖和更远的类型系统能力
-- 自动 prelude、泛型集合库、IO / 字符串完整库面
+- 自动 prelude、IO / 字符串完整库面
+- 可变参数语法实现，直到 collections/generic stdlib 和 ABI 设计先稳定
 - registry / publish workflow
 
 ## 交付规则

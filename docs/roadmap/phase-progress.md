@@ -105,14 +105,14 @@
 ## 当前主线
 
 1. 先把 qlang 做到“可真实使用的最小项目语言”，而不是继续扩语言表面。
-2. 主线先做 manifest、dependency-aware build/backend、最小 `stdlib`、真实 workspace LSP、安装与分发；P0 未完成前，不再把新语法和更宽 runtime 当主线。
+2. 主线先做 manifest、dependency-aware build/backend、真实 `stdlib`、真实 workspace LSP、安装与分发；P0 未完成前，不再把新语法和更宽 runtime 当主线，但 generic public API / generic `Option[T]` / `Result[T, E]` 已因 stdlib 可用性进入 unblock 路径。
 3. 每一轮功能推进必须先落生产代码，再补测试和文档；只有测试或文档改动，不再计作一轮功能迭代。
 4. 不再按固定日期承诺完成；每轮选择当前最能提升真实项目可用性的切片，做到实现、回归、文档一起收口。
 
 ## 下一轮
 
-- stdlib / test harness：普通 Qlang package 形态的 `stdlib` 已继续扩面，当前 `std.core` 已覆盖区间外/无序边界外、3/4/5 项升降序、容差外、边界归一化、range/bounds 距离、安全 quotient/remainder、三/四/五值 extrema、三值 median、3/4/5 项整数聚合、2/3/4/5 项均值、Bool-to-Int 与 3/4/5 项 Bool all/any/none 聚合 helper；`std.option` 已提供可执行的 concrete `IntOption` / `BoolOption` 构造、判定、解包、or/or_option 和回退 helper；`std.result` 已提供可执行的 concrete `IntResult` / `BoolResult` 构造、判定、解包、回退、error-code helper、无损 error-to-option helper 和 concrete Option/Result 互转 helper；`std.test` 已覆盖 5/6 路 status 合并、max/min/median、sum/product/average、sign/compare、abs/abs-diff/range-span/bounds、quotient/remainder/has_remainder/factor、Option/Result carrier、转换与 error extraction 断言、Bool all/any/none/Bool-to-Int、单边/双边 clamp / range-distance 断言与 3/4/5 项升降序断言；生成的 `ql project init --stdlib` consumer smoke 也会依赖并消费 `std.core` / `std.option` / `std.result` / `std.test`，并通过 `std.test` 覆盖 Option/Result 转换和 error extraction helper。下一步继续扩只依赖稳定语言面的基础 helper，并优先让模板覆盖真实 consumer 路径。
-- build/backend：继续优先补真实项目里高频的 direct local dependency value/type/member 调用面；本轮已把 public 非泛型、非 opaque type alias 从 declaration bridge 推到普通值兼容，typeck 现在覆盖 return、call argument、assignment、数组/分支统一、pattern literal、bool/numeric/string 操作里的透明 alias target；LLVM backend 已跟进 direct lowering 所需的 alias 赋值、数组/字段值检查、二元操作和 callable 参数断言，并用 build/run/test 真实 consumer 锁住 `Count -> Score -> Int` 的跨包签名、alias 算术与 wrapper 调用。`opaque type`、泛型 alias、`impl` / `extend` 身份匹配继续保持不透明；后续若 `stdlib` 继续暴露阻塞项，优先修阻塞项而不是扩新语法。
+- stdlib / test harness：普通 Qlang package 形态的 `stdlib` 已继续扩面，但当前 concrete carrier 与 3/4/5 固定参数 helper 已明确降级为过渡兼容面。下一步不继续主要堆 `foo3/foo4/foo5`，而是按 `docs/plans/2026-05-02-stdlib-generics-and-collections-roadmap.md` 先补 direct local dependency 的 generic public function / generic struct / generic enum failing tests，再打通 `.qi`、dependency bridge、monomorphization/codegen 和 downstream stdlib smoke。
+- build/backend：继续优先补真实项目里高频的 direct local dependency value/type/member 调用面；本轮已把 public 非泛型、非 opaque type alias 从 declaration bridge 推到普通值兼容，typeck 现在覆盖 return、call argument、assignment、数组/分支统一、pattern literal、bool/numeric/string 操作里的透明 alias target；LLVM backend 已跟进 direct lowering 所需的 alias 赋值、数组/字段值检查、二元操作和 callable 参数断言，并用 build/run/test 真实 consumer 锁住 `Count -> Score -> Int` 的跨包签名、alias 算术与 wrapper 调用。下一步重点转向 generic public API 的实例化、桥接和 codegen；`opaque type`、泛型 alias、`impl` / `extend` 身份匹配继续保持不透明。
 - typeck/backend 回归清理：`ql-codegen-llvm` 中仍有一批 IR 形状耦合测试需要分组收敛。本轮已先修正真实语义问题：`if` 一侧不可贯通时不再强制与可贯通分支统一值类型；剩余失败优先改成语义级断言或更稳定的 IR helper，而不是继续追加脆弱字符串匹配。
 - LSP：继续把 `textDocument/implementation` 从已完成的 trait/type surface、workspace root/source-backed type definition surface、workspace root/source-backed concrete / trait-typed method call、source-backed dependency concrete / trait-typed method call、dependency non-import type-driven positions、trait method definition，以及 broken current-buffer concrete / trait-typed method call / broken-source open dependency member-type surface，扩到更宽的 implementation index；`codeLens` 已有当前文档 references / implementations 入口，后续再扩 workspace-wide lens/index。
 - 文档：入口页继续只保留结论、边界和最近 checkpoint，不再追加流水账。

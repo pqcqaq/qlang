@@ -19,6 +19,7 @@
 - [Phase 5 C FFI 与宿主互操作地基](/plans/phase-5-ffi-and-c-abi)
 - [Phase 6 LSP 与编辑器语义收口](/plans/phase-6-lsp-and-editor-experience)
 - [LSP TypeScript Parity Roadmap](/plans/2026-05-01-lsp-typescript-parity-roadmap)
+- [Stdlib Generics and Collections Roadmap](/plans/2026-05-02-stdlib-generics-and-collections-roadmap)
 - [Phase 7 并发、异步与 Rust 互操作](/plans/phase-7-concurrency-and-rust-interop)
 - [Phase 8：`.qi` 接口产物与 Cross-File LSP 设计入口](/plans/2026-04-05-phase8-interface-artifacts-and-cross-file-lsp)
 
