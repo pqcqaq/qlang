@@ -27,6 +27,12 @@ use std.array.none5_bool_array as array_none5_bool
 use std.array.product3_int_array as array_product3_int
 use std.array.product4_int_array as array_product4_int
 use std.array.product5_int_array as array_product5_int
+use std.array.repeat3_array as array_repeat3
+use std.array.repeat4_array as array_repeat4
+use std.array.repeat5_array as array_repeat5
+use std.array.reverse3_array as array_reverse3
+use std.array.reverse4_array as array_reverse4
+use std.array.reverse5_array as array_reverse5
 use std.array.sum3_int_array as array_sum3_int
 use std.array.sum4_int_array as array_sum4_int
 use std.array.sum5_int_array as array_sum5_int
@@ -345,6 +351,66 @@ pub fn expect_bool_array_at4(values: [Bool; 4], index: Int, fallback: Bool, expe
 
 pub fn expect_bool_array_at5(values: [Bool; 5], index: Int, fallback: Bool, expected: Bool) -> Int {
     return expect_bool_eq(array_at5_or(values, index, fallback), expected)
+}
+
+pub fn expect_int_array_reverse3(values: [Int; 3], expected_first: Int, expected_last: Int) -> Int {
+    let reversed: [Int; 3] = array_reverse3(values)
+    return expect_int_eq(array_first3(reversed), expected_first) + expect_int_eq(array_last3(reversed), expected_last)
+}
+
+pub fn expect_int_array_reverse4(values: [Int; 4], expected_first: Int, expected_last: Int) -> Int {
+    let reversed: [Int; 4] = array_reverse4(values)
+    return expect_int_eq(array_first4(reversed), expected_first) + expect_int_eq(array_last4(reversed), expected_last)
+}
+
+pub fn expect_int_array_reverse5(values: [Int; 5], expected_first: Int, expected_last: Int) -> Int {
+    let reversed: [Int; 5] = array_reverse5(values)
+    return expect_int_eq(array_first5(reversed), expected_first) + expect_int_eq(array_last5(reversed), expected_last)
+}
+
+pub fn expect_bool_array_reverse3(values: [Bool; 3], expected_first: Bool, expected_last: Bool) -> Int {
+    let reversed: [Bool; 3] = array_reverse3(values)
+    return expect_bool_eq(array_first3(reversed), expected_first) + expect_bool_eq(array_last3(reversed), expected_last)
+}
+
+pub fn expect_bool_array_reverse4(values: [Bool; 4], expected_first: Bool, expected_last: Bool) -> Int {
+    let reversed: [Bool; 4] = array_reverse4(values)
+    return expect_bool_eq(array_first4(reversed), expected_first) + expect_bool_eq(array_last4(reversed), expected_last)
+}
+
+pub fn expect_bool_array_reverse5(values: [Bool; 5], expected_first: Bool, expected_last: Bool) -> Int {
+    let reversed: [Bool; 5] = array_reverse5(values)
+    return expect_bool_eq(array_first5(reversed), expected_first) + expect_bool_eq(array_last5(reversed), expected_last)
+}
+
+pub fn expect_int_array_repeat3(value: Int, expected: Int) -> Int {
+    let repeated: [Int; 3] = array_repeat3(value)
+    return expect_int_eq(array_first3(repeated), expected) + expect_int_eq(array_last3(repeated), expected)
+}
+
+pub fn expect_int_array_repeat4(value: Int, expected: Int) -> Int {
+    let repeated: [Int; 4] = array_repeat4(value)
+    return expect_int_eq(array_first4(repeated), expected) + expect_int_eq(array_last4(repeated), expected)
+}
+
+pub fn expect_int_array_repeat5(value: Int, expected: Int) -> Int {
+    let repeated: [Int; 5] = array_repeat5(value)
+    return expect_int_eq(array_first5(repeated), expected) + expect_int_eq(array_last5(repeated), expected)
+}
+
+pub fn expect_bool_array_repeat3(value: Bool, expected: Bool) -> Int {
+    let repeated: [Bool; 3] = array_repeat3(value)
+    return expect_bool_eq(array_first3(repeated), expected) + expect_bool_eq(array_last3(repeated), expected)
+}
+
+pub fn expect_bool_array_repeat4(value: Bool, expected: Bool) -> Int {
+    let repeated: [Bool; 4] = array_repeat4(value)
+    return expect_bool_eq(array_first4(repeated), expected) + expect_bool_eq(array_last4(repeated), expected)
+}
+
+pub fn expect_bool_array_repeat5(value: Bool, expected: Bool) -> Int {
+    let repeated: [Bool; 5] = array_repeat5(value)
+    return expect_bool_eq(array_first5(repeated), expected) + expect_bool_eq(array_last5(repeated), expected)
 }
 
 pub fn expect_int_array_sum3(values: [Int; 3], expected: Int) -> Int {

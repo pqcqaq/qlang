@@ -135,6 +135,7 @@ use std.test.expect_bool_array_any5 as expect_bool_array_any5
 use std.test.expect_bool_array_at5 as expect_bool_array_at5
 use std.test.expect_bool_array_last5 as expect_bool_array_last5
 use std.test.expect_bool_array_none4 as expect_bool_array_none4
+use std.test.expect_bool_array_repeat5 as expect_bool_array_repeat5
 use std.test.expect_bool_any3 as expect_bool_any3
 use std.test.expect_bool_any4 as expect_bool_any4
 use std.test.expect_bool_any5 as expect_bool_any5
@@ -194,6 +195,8 @@ use std.test.expect_int_array_first3 as expect_int_array_first3
 use std.test.expect_int_array_max5 as expect_int_array_max5
 use std.test.expect_int_array_min5 as expect_int_array_min5
 use std.test.expect_int_array_product4 as expect_int_array_product4
+use std.test.expect_int_array_repeat3 as expect_int_array_repeat3
+use std.test.expect_int_array_reverse3 as expect_int_array_reverse3
 use std.test.expect_int_array_sum3 as expect_int_array_sum3
 use std.test.expect_int_array_sum5 as expect_int_array_sum5
 use std.test.expect_status_failed as expect_status_failed
@@ -385,6 +388,7 @@ fn main() -> Int {
     let array_bool_check = expect_bool_array_all3([true, true, true], true) + expect_bool_array_any5([false, false, false, false, true], true) + expect_bool_array_none4([false, false, false, false], true)
     let array_generic_check = expect_int_array_first3([8, 9, 10], 8) + expect_bool_array_last5([true, false, true, false, true], true)
     let array_at_check = expect_int_array_at3([8, 9, 10], 1, 0, 9) + expect_bool_array_at5([true, false, true, false, true], 8, false, false)
+    let array_transform_check = expect_int_array_reverse3([8, 9, 10], 10, 8) + expect_int_array_repeat3(7, 7) + expect_bool_array_repeat5(false, false)
     let max_expect_check = expect_int_max(20, 22, 22)
     let min_expect_check = expect_int_min(20, 22, 20)
     let max3_expect_check = expect_int_max3(20, 22, 21, 22)
@@ -559,7 +563,7 @@ fn main() -> Int {
     let range_status = merge_status5(exclusive_bounds_check + outside_bounds_check + clamp_min_expect_check + clamp_max_expect_check + clamped_check + clamped_bounds_check, distance_range_expect_check + distance_bounds_expect_check + max_expect_check + min_expect_check, max3_expect_check + min3_expect_check + max4_expect_check + min4_expect_check + max5_expect_check + min5_expect_check + median3_expect_check, sum3_expect_check + sum4_expect_check + sum5_expect_check + product3_expect_check + product4_expect_check + product5_expect_check + average2_expect_check + average3_expect_check + average4_expect_check + average5_expect_check, sign_expect_check + sign_zero_expect_check + compare_less_expect_check + compare_equal_expect_check + compare_greater_expect_check + abs_expect_check + abs_diff_expect_check + range_span_expect_check + lower_bound_expect_check + upper_bound_expect_check + quotient_expect_check + quotient_zero_expect_check + remainder_expect_check + remainder_zero_expect_check + has_remainder_expect_check + factor_expect_check + ascending_check + ascending4_check + ascending5_check + strict_ascending_check + strict_ascending4_check + strict_ascending5_check + descending_check + descending4_check + descending5_check + strict_descending_check + strict_descending4_check + strict_descending5_check + divisible_check + within_check + not_within_check + even_check + odd_check + positive_check + negative_check + nonnegative_check + nonpositive_check + test_implies_check + true_check + status_ok_bool_check)
     let status_helper_status = merge_status4(status_failed_bool_check + merged_status_check + merged_status3_check + merged_status4_check, merged_status5_check + merged_status6_check + status_ok_check + status_failed_check, failed_status_ok_check + failed_status_failed_check + failed_range_check + failed_exclusive_range_check, failed_outside_check + failed_bounds_check + failed_exclusive_bounds_check + failed_outside_bounds_check)
     let failure_status = merge_status4(failed_clamp_min_check + failed_clamp_max_check + failed_clamped_check + failed_clamped_bounds_check + failed_distance_range_check + failed_distance_bounds_check, failed_max_check + failed_min_check + failed_max3_check + failed_min3_check + failed_max4_check + failed_min4_check + failed_max5_check + failed_min5_check + failed_median3_check, failed_sum3_check + failed_sum4_check + failed_sum5_check + failed_product3_check + failed_product4_check + failed_product5_check + failed_average2_check + failed_average3_check + failed_average4_check + failed_average5_check + failed_sign_check + failed_compare_equal_check + failed_compare_order_check + failed_abs_check + failed_abs_diff_check + failed_range_span_check + failed_lower_bound_check + failed_upper_bound_check + failed_quotient_check + failed_quotient_zero_check, failed_remainder_check + failed_remainder_zero_check + failed_has_remainder_check + failed_factor_check + failed_ascending_check + failed_ascending4_check + failed_ascending5_check + failed_strict_ascending_check + failed_strict_ascending4_check + failed_strict_ascending5_check + failed_descending_check + failed_descending4_check + failed_descending5_check + failed_strict_descending_check + failed_strict_descending4_check + failed_strict_descending5_check + failed_divisible_check + failed_within_check + failed_not_within_check + failed_even_check + failed_odd_check + failed_positive_check + failed_negative_check + failed_nonnegative_check + failed_nonpositive_check + failed_implies_check)
-    let array_status = merge_status6(array_sum_check, array_sum5_check, array_product_check, array_extrema_check, array_bool_check, array_generic_check + array_at_check)
+    let array_status = merge_status6(array_sum_check, array_sum5_check, array_product_check, array_extrema_check, array_bool_check, array_generic_check + array_at_check + array_transform_check)
 
     return expect_status_ok(merge_status6(core_status, bool_status, range_status, status_helper_status, failure_status, merge_status6(array_status + option_status, option_or_status, result_status, result_or_status, conversion_status + generic_option_status + generic_option_or_status + generic_result_status + generic_result_conversion_status, conversion_bool_status + error_option_status + generic_result_or_status + generic_result_error_status + generic_result_error_option_status + generic_option_conversion_status)))
 }
@@ -685,7 +689,14 @@ fn project_init_with_stdlib_creates_consuming_package_scaffold_and_check_succeed
     );
     assert_eq!(
         read_normalized_file(&project_root.join("src/lib.ql"), "stdlib package source"),
-        "use std.array.at3_array_or as at3_array_or\nuse std.array.first3_array as first3_array\nuse std.array.sum3_int_array as sum3_int_array\nuse std.core.clamp_int as clamp_int\nuse std.option.some as option_some\nuse std.option.unwrap_or as option_unwrap_or\nuse std.result.Result as Result\nuse std.result.ok as result_ok\nuse std.result.unwrap_result_or as result_unwrap_result_or\n\npub fn run() -> Int {\n    let result_value: Result[Int, Int] = result_ok(option_unwrap_or(option_some(42), 0))\n    return clamp_int(result_unwrap_result_or(result_value, 0) + sum3_int_array([1, first3_array([2, 3, 4]), at3_array_or([3, 4, 5], 1, 0)]), 0, 100)\n}\n"
+        "use std.array.at3_array_or as at3_array_or\nuse std.array.first3_array as first3_array\nuse std.array.repeat3_array as repeat3_array\nuse std.array.reverse3_array as reverse3_array\nuse std.array.sum3_int_array as sum3_int_array\nuse std.core.clamp_int as clamp_int\nuse std.option.some as option_some\nuse std.option.unwrap_or as option_unwrap_or\nuse std.result.Result as Result\nuse std.result.ok as result_ok\nuse std.result.unwrap_result_or as result_unwrap_result_or\n\npub fn run() -> Int {\n    let result_value: Result[Int, Int] = result_ok(option_unwrap_or(option_some(42), 0))\n    let transformed_total = sum3_int_array(reverse3_array([1, first3_array([2, 3, 4]), at3_array_or([3, 4, 5], 1, 0)]))\n    return clamp_int(result_unwrap_result_or(result_value, 0) + transformed_total + sum3_int_array(repeat3_array(1)), 0, 100)\n}\n"
+    );
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("src/main.ql"),
+            "stdlib package main source"
+        ),
+        "use std.array.all3_bool_array as all3_bool_array\nuse std.array.repeat3_array as repeat3_array\nuse std.core.bool_to_int as bool_to_int\nuse std.option.some_bool as some_bool\nuse std.option.unwrap_or_bool as unwrap_or_bool\nuse std.result.ok_bool as result_ok_bool\nuse std.result.unwrap_result_or_bool as result_unwrap_or_bool\n\nfn main() -> Int {\n    return 1 - bool_to_int(result_unwrap_or_bool(result_ok_bool(all3_bool_array(repeat3_array(unwrap_or_bool(some_bool(true), false)))), false))\n}\n"
     );
     assert_eq!(
         read_normalized_file(
@@ -1071,7 +1082,14 @@ fn project_init_with_stdlib_creates_consuming_workspace_scaffold_and_check_succe
             &member_root.join("src/lib.ql"),
             "stdlib workspace member source"
         ),
-        "use std.array.at3_array_or as at3_array_or\nuse std.array.first3_array as first3_array\nuse std.array.sum3_int_array as sum3_int_array\nuse std.core.clamp_int as clamp_int\nuse std.option.some as option_some\nuse std.option.unwrap_or as option_unwrap_or\nuse std.result.Result as Result\nuse std.result.ok as result_ok\nuse std.result.unwrap_result_or as result_unwrap_result_or\n\npub fn run() -> Int {\n    let result_value: Result[Int, Int] = result_ok(option_unwrap_or(option_some(42), 0))\n    return clamp_int(result_unwrap_result_or(result_value, 0) + sum3_int_array([1, first3_array([2, 3, 4]), at3_array_or([3, 4, 5], 1, 0)]), 0, 100)\n}\n"
+        "use std.array.at3_array_or as at3_array_or\nuse std.array.first3_array as first3_array\nuse std.array.repeat3_array as repeat3_array\nuse std.array.reverse3_array as reverse3_array\nuse std.array.sum3_int_array as sum3_int_array\nuse std.core.clamp_int as clamp_int\nuse std.option.some as option_some\nuse std.option.unwrap_or as option_unwrap_or\nuse std.result.Result as Result\nuse std.result.ok as result_ok\nuse std.result.unwrap_result_or as result_unwrap_result_or\n\npub fn run() -> Int {\n    let result_value: Result[Int, Int] = result_ok(option_unwrap_or(option_some(42), 0))\n    let transformed_total = sum3_int_array(reverse3_array([1, first3_array([2, 3, 4]), at3_array_or([3, 4, 5], 1, 0)]))\n    return clamp_int(result_unwrap_result_or(result_value, 0) + transformed_total + sum3_int_array(repeat3_array(1)), 0, 100)\n}\n"
+    );
+    assert_eq!(
+        read_normalized_file(
+            &member_root.join("src/main.ql"),
+            "stdlib workspace member main source"
+        ),
+        "use std.array.all3_bool_array as all3_bool_array\nuse std.array.repeat3_array as repeat3_array\nuse std.core.bool_to_int as bool_to_int\nuse std.option.some_bool as some_bool\nuse std.option.unwrap_or_bool as unwrap_or_bool\nuse std.result.ok_bool as result_ok_bool\nuse std.result.unwrap_result_or_bool as result_unwrap_or_bool\n\nfn main() -> Int {\n    return 1 - bool_to_int(result_unwrap_or_bool(result_ok_bool(all3_bool_array(repeat3_array(unwrap_or_bool(some_bool(true), false)))), false))\n}\n"
     );
     assert_eq!(
         read_normalized_file(

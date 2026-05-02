@@ -72,6 +72,30 @@ pub fn at5_array_or[T](values: [T; 5], index: Int, fallback: T) -> T {
     return fallback
 }
 
+pub fn reverse3_array[T](values: [T; 3]) -> [T; 3] {
+    return [values[2], values[1], values[0]]
+}
+
+pub fn reverse4_array[T](values: [T; 4]) -> [T; 4] {
+    return [values[3], values[2], values[1], values[0]]
+}
+
+pub fn reverse5_array[T](values: [T; 5]) -> [T; 5] {
+    return [values[4], values[3], values[2], values[1], values[0]]
+}
+
+pub fn repeat3_array[T](value: T) -> [T; 3] {
+    return [value, value, value]
+}
+
+pub fn repeat4_array[T](value: T) -> [T; 4] {
+    return [value, value, value, value]
+}
+
+pub fn repeat5_array[T](value: T) -> [T; 5] {
+    return [value, value, value, value, value]
+}
+
 pub fn sum3_int_array(values: [Int; 3]) -> Int {
     return values[0] + values[1] + values[2]
 }

@@ -22,6 +22,18 @@ pub fn at4_array_or[T](values: [T; 4], index: Int, fallback: T) -> T
 
 pub fn at5_array_or[T](values: [T; 5], index: Int, fallback: T) -> T
 
+pub fn reverse3_array[T](values: [T; 3]) -> [T; 3]
+
+pub fn reverse4_array[T](values: [T; 4]) -> [T; 4]
+
+pub fn reverse5_array[T](values: [T; 5]) -> [T; 5]
+
+pub fn repeat3_array[T](value: T) -> [T; 3]
+
+pub fn repeat4_array[T](value: T) -> [T; 4]
+
+pub fn repeat5_array[T](value: T) -> [T; 5]
+
 pub fn sum3_int_array(values: [Int; 3]) -> Int
 
 pub fn sum4_int_array(values: [Int; 4]) -> Int

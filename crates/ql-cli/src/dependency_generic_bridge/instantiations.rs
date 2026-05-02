@@ -1058,8 +1058,34 @@ fn infer_dependency_generic_expr_type(
             })
         }
         ExprKind::Name(name) => bindings.get(name).cloned(),
+        ExprKind::Block(block) | ExprKind::Unsafe(block) => {
+            infer_dependency_generic_block_type(block, bindings)
+        }
+        ExprKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            let then_ty = infer_dependency_generic_block_type(then_branch, bindings)?;
+            let else_ty = infer_dependency_generic_expr_type(else_branch.as_deref()?, bindings)?;
+            (then_ty == else_ty).then_some(then_ty)
+        }
+        ExprKind::Match { arms, .. } => {
+            let (first, rest) = arms.split_first()?;
+            let first_ty = infer_dependency_generic_expr_type(&first.body, bindings)?;
+            for arm in rest {
+                let arm_ty = infer_dependency_generic_expr_type(&arm.body, bindings)?;
+                if arm_ty != first_ty {
+                    return None;
+                }
+            }
+            Some(first_ty)
+        }
         ExprKind::Call { callee, args } => {
             infer_single_field_generic_variant_call_type(callee, args, bindings)
+        }
+        ExprKind::Bracket { target, items } => {
+            infer_dependency_generic_projection_type(target, items, bindings)
         }
         ExprKind::Binary { left, op, right } => {
             let left = infer_dependency_generic_expr_type(left, bindings)?;
@@ -1069,6 +1095,46 @@ fn infer_dependency_generic_expr_type(
         ExprKind::Unary { op, expr } => {
             let expr = infer_dependency_generic_expr_type(expr, bindings)?;
             infer_dependency_generic_unary_expr_type(*op, &expr)
+        }
+        _ => None,
+    }
+}
+
+fn infer_dependency_generic_block_type(
+    block: &ql_ast::Block,
+    bindings: &ValueTypeBindings,
+) -> Option<InferredType> {
+    let mut block_bindings = bindings.clone();
+    for statement in &block.statements {
+        if let ql_ast::StmtKind::Let {
+            pattern, ty, value, ..
+        } = &statement.kind
+        {
+            record_let_type_bindings(pattern, ty.as_ref(), value, &mut block_bindings);
+        }
+    }
+    infer_dependency_generic_expr_type(block.tail.as_deref()?, &block_bindings)
+}
+
+fn infer_dependency_generic_projection_type(
+    target: &Expr,
+    items: &[Expr],
+    bindings: &ValueTypeBindings,
+) -> Option<InferredType> {
+    let [index] = items else {
+        return None;
+    };
+    let target_ty = infer_dependency_generic_expr_type(target, bindings)?;
+    match target_ty.kind {
+        InferredTypeKind::Array { element, .. } => {
+            let index_ty = infer_dependency_generic_expr_type(index, bindings)?;
+            is_inferred_numeric_type(&index_ty).then_some(*element)
+        }
+        InferredTypeKind::Tuple(items) => {
+            let ExprKind::Integer(index) = &index.kind else {
+                return None;
+            };
+            items.get(ql_ast::parse_usize_literal(index)?).cloned()
         }
         _ => None,
     }
@@ -1394,6 +1460,58 @@ fn run() -> Int {
             substitutions
                 .iter()
                 .any(|item| { item.get("T").map(String::as_str) == Some("[Int; 3]") })
+        );
+    }
+
+    #[test]
+    fn infers_substitutions_from_projection_and_control_flow_expressions() {
+        let dependency = parse_module(
+            r#"
+package dep
+
+pub fn identity[T](value: T) -> T {
+    return value
+}
+"#,
+        );
+        let root = parse_module(
+            r#"
+use dep.identity as identity
+
+fn run(flag: Bool) -> Int {
+    let values: [Int; 3] = [1, 2, 3]
+    let pair: (Int, Bool) = (5, flag)
+    let picked: Int = identity(values[1])
+    let tuple_flag: Bool = identity(pair[1])
+    let selected: Int = identity(if tuple_flag { picked } else { 0 })
+    let matched: Bool = identity(match selected {
+        0 => false,
+        _ => tuple_flag,
+    })
+    if matched {
+        return selected
+    }
+    return 0
+}
+"#,
+        );
+
+        let substitutions = collect_public_function_instantiations(
+            &root,
+            &["dep".to_owned()],
+            function(&dependency, "identity"),
+        );
+
+        assert_eq!(substitutions.len(), 2);
+        assert!(
+            substitutions
+                .iter()
+                .any(|item| { item.get("T").map(String::as_str) == Some("Int") })
+        );
+        assert!(
+            substitutions
+                .iter()
+                .any(|item| { item.get("T").map(String::as_str) == Some("Bool") })
         );
     }
 

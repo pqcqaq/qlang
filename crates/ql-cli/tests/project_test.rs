@@ -517,7 +517,14 @@ fn main() -> Int {
     let ordered: Bool = identity(1 < 2)
     let pair: (Int, Bool) = identity((number, flag))
     let values: [Int; 3] = identity([number, 2 + 3, 4])
-    if pair[1] && ordered && values[0] + values[1] + values[2] == 12 {
+    let projected: Int = identity(values[1])
+    let tuple_flag: Bool = identity(pair[1])
+    let selected: Int = identity(if tuple_flag { projected } else { 0 })
+    let matched: Bool = identity(match selected {
+        0 => false,
+        _ => tuple_flag,
+    })
+    if matched && ordered && values[0] + values[1] + values[2] + selected == 17 {
         return 0
     }
     return 1
