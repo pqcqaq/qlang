@@ -1,19 +1,21 @@
 use std::path::{Path, PathBuf};
 
 use ql_project::{
+    BuildTarget, InterfaceArtifactStaleReason, InterfaceArtifactStatus, ManifestBuildProfile,
     default_interface_path, discover_package_build_targets, interface_artifact_stale_reasons,
     interface_artifact_status, interface_artifact_status_detail, load_project_manifest,
-    package_name, BuildTarget, InterfaceArtifactStaleReason, InterfaceArtifactStatus,
-    ManifestBuildProfile,
+    package_name,
 };
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 
 use super::{
-    find_workspace_member_dependencies, normalize_path,
-    package_check_manifest_path_from_project_error,
-    package_missing_name_manifest_path_from_project_error, project_dependency_json,
-    project_target_display_path, resolve_project_workspace_member_command_request_root,
-    validate_project_package_name, ProjectDependencyMember,
+    normalize_path, package_check_manifest_path_from_project_error,
+    package_missing_name_manifest_path_from_project_error, project_target_display_path,
+    resolve_project_workspace_member_command_request_root, validate_project_package_name,
+};
+
+use crate::project_dependencies::{
+    ProjectDependencyMember, find_workspace_member_dependencies, project_dependency_json,
 };
 
 struct ProjectStatusMember {
