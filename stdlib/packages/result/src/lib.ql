@@ -26,6 +26,41 @@ pub enum BoolResult {
     Err(Int),
 }
 
+pub fn is_ok[T, E](value: Result[T, E]) -> Bool {
+    return match value {
+        Result.Ok(_) => true,
+        Result.Err(_) => false,
+    }
+}
+
+pub fn is_err[T, E](value: Result[T, E]) -> Bool {
+    return match value {
+        Result.Ok(_) => false,
+        Result.Err(_) => true,
+    }
+}
+
+pub fn unwrap_result_or[T, E](value: Result[T, E], fallback: T) -> T {
+    return match value {
+        Result.Ok(inner) => inner,
+        Result.Err(_) => fallback,
+    }
+}
+
+pub fn or_result[T, E](value: Result[T, E], fallback: Result[T, E]) -> Result[T, E] {
+    return match value {
+        Result.Ok(inner) => Result.Ok(inner),
+        Result.Err(_) => fallback,
+    }
+}
+
+pub fn error_or[T, E](value: Result[T, E], fallback: E) -> E {
+    return match value {
+        Result.Ok(_) => fallback,
+        Result.Err(error) => error,
+    }
+}
+
 pub fn ok_int(value: Int) -> IntResult {
     return IntResult.Ok(value)
 }

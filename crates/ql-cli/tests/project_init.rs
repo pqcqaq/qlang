@@ -667,7 +667,7 @@ fn project_init_with_stdlib_creates_consuming_package_scaffold_and_check_succeed
     );
     assert_eq!(
         read_normalized_file(&project_root.join("src/lib.ql"), "stdlib package source"),
-        "use std.array.sum3_int_array as sum3_int_array\nuse std.core.clamp_int as clamp_int\nuse std.option.some as option_some\nuse std.option.unwrap_or as option_unwrap_or\nuse std.result.ok_int as result_ok_int\nuse std.result.unwrap_result_or_int as result_unwrap_or_int\n\npub fn run() -> Int {\n    return clamp_int(result_unwrap_or_int(result_ok_int(option_unwrap_or(option_some(42), 0)), 0) + sum3_int_array([1, 2, 3]), 0, 100)\n}\n"
+        "use std.array.sum3_int_array as sum3_int_array\nuse std.core.clamp_int as clamp_int\nuse std.option.some as option_some\nuse std.option.unwrap_or as option_unwrap_or\nuse std.result.Result as Result\nuse std.result.unwrap_result_or as result_unwrap_result_or\n\npub fn run() -> Int {\n    let result_value: Result[Int, Int] = Result.Ok(option_unwrap_or(option_some(42), 0))\n    return clamp_int(result_unwrap_result_or(result_value, 0) + sum3_int_array([1, 2, 3]), 0, 100)\n}\n"
     );
     assert_eq!(
         read_normalized_file(
@@ -1053,7 +1053,7 @@ fn project_init_with_stdlib_creates_consuming_workspace_scaffold_and_check_succe
             &member_root.join("src/lib.ql"),
             "stdlib workspace member source"
         ),
-        "use std.array.sum3_int_array as sum3_int_array\nuse std.core.clamp_int as clamp_int\nuse std.option.some as option_some\nuse std.option.unwrap_or as option_unwrap_or\nuse std.result.ok_int as result_ok_int\nuse std.result.unwrap_result_or_int as result_unwrap_or_int\n\npub fn run() -> Int {\n    return clamp_int(result_unwrap_or_int(result_ok_int(option_unwrap_or(option_some(42), 0)), 0) + sum3_int_array([1, 2, 3]), 0, 100)\n}\n"
+        "use std.array.sum3_int_array as sum3_int_array\nuse std.core.clamp_int as clamp_int\nuse std.option.some as option_some\nuse std.option.unwrap_or as option_unwrap_or\nuse std.result.Result as Result\nuse std.result.unwrap_result_or as result_unwrap_result_or\n\npub fn run() -> Int {\n    let result_value: Result[Int, Int] = Result.Ok(option_unwrap_or(option_some(42), 0))\n    return clamp_int(result_unwrap_result_or(result_value, 0) + sum3_int_array([1, 2, 3]), 0, 100)\n}\n"
     );
     assert_eq!(
         read_normalized_file(
