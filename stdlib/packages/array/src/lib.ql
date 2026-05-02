@@ -96,6 +96,90 @@ pub fn repeat5_array[T](value: T) -> [T; 5] {
     return [value, value, value, value, value]
 }
 
+pub fn contains3_array[T](values: [T; 3], needle: T) -> Bool {
+    return values[0] == needle || values[1] == needle || values[2] == needle
+}
+
+pub fn contains4_array[T](values: [T; 4], needle: T) -> Bool {
+    return values[0] == needle || values[1] == needle || values[2] == needle || values[3] == needle
+}
+
+pub fn contains5_array[T](values: [T; 5], needle: T) -> Bool {
+    return values[0] == needle || values[1] == needle || values[2] == needle || values[3] == needle || values[4] == needle
+}
+
+pub fn count3_array[T](values: [T; 3], needle: T) -> Int {
+    let first = if values[0] == needle {
+        1
+    } else {
+        0
+    }
+    let second = if values[1] == needle {
+        1
+    } else {
+        0
+    }
+    let third = if values[2] == needle {
+        1
+    } else {
+        0
+    }
+    return first + second + third
+}
+
+pub fn count4_array[T](values: [T; 4], needle: T) -> Int {
+    let first = if values[0] == needle {
+        1
+    } else {
+        0
+    }
+    let second = if values[1] == needle {
+        1
+    } else {
+        0
+    }
+    let third = if values[2] == needle {
+        1
+    } else {
+        0
+    }
+    let fourth = if values[3] == needle {
+        1
+    } else {
+        0
+    }
+    return first + second + third + fourth
+}
+
+pub fn count5_array[T](values: [T; 5], needle: T) -> Int {
+    let first = if values[0] == needle {
+        1
+    } else {
+        0
+    }
+    let second = if values[1] == needle {
+        1
+    } else {
+        0
+    }
+    let third = if values[2] == needle {
+        1
+    } else {
+        0
+    }
+    let fourth = if values[3] == needle {
+        1
+    } else {
+        0
+    }
+    let fifth = if values[4] == needle {
+        1
+    } else {
+        0
+    }
+    return first + second + third + fourth + fifth
+}
+
 pub fn sum3_int_array(values: [Int; 3]) -> Int {
     return values[0] + values[1] + values[2]
 }
@@ -121,7 +205,11 @@ pub fn product5_int_array(values: [Int; 5]) -> Int {
 }
 
 pub fn max3_int_array(values: [Int; 3]) -> Int {
-    let first = if values[0] > values[1] { values[0] } else { values[1] }
+    let first = if values[0] > values[1] {
+        values[0]
+    } else {
+        values[1]
+    }
     if first > values[2] {
         return first
     }
@@ -145,7 +233,11 @@ pub fn max5_int_array(values: [Int; 5]) -> Int {
 }
 
 pub fn min3_int_array(values: [Int; 3]) -> Int {
-    let first = if values[0] < values[1] { values[0] } else { values[1] }
+    let first = if values[0] < values[1] {
+        values[0]
+    } else {
+        values[1]
+    }
     if first < values[2] {
         return first
     }

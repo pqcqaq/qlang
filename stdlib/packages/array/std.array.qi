@@ -34,6 +34,18 @@ pub fn repeat4_array[T](value: T) -> [T; 4]
 
 pub fn repeat5_array[T](value: T) -> [T; 5]
 
+pub fn contains3_array[T](values: [T; 3], needle: T) -> Bool
+
+pub fn contains4_array[T](values: [T; 4], needle: T) -> Bool
+
+pub fn contains5_array[T](values: [T; 5], needle: T) -> Bool
+
+pub fn count3_array[T](values: [T; 3], needle: T) -> Int
+
+pub fn count4_array[T](values: [T; 4], needle: T) -> Int
+
+pub fn count5_array[T](values: [T; 5], needle: T) -> Int
+
 pub fn sum3_int_array(values: [Int; 3]) -> Int
 
 pub fn sum4_int_array(values: [Int; 4]) -> Int

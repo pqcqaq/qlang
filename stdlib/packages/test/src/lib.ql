@@ -9,6 +9,12 @@ use std.array.at5_array_or as array_at5_or
 use std.array.any3_bool_array as array_any3_bool
 use std.array.any4_bool_array as array_any4_bool
 use std.array.any5_bool_array as array_any5_bool
+use std.array.contains3_array as array_contains3
+use std.array.contains4_array as array_contains4
+use std.array.contains5_array as array_contains5
+use std.array.count3_array as array_count3
+use std.array.count4_array as array_count4
+use std.array.count5_array as array_count5
 use std.array.first3_array as array_first3
 use std.array.first4_array as array_first4
 use std.array.first5_array as array_first5
@@ -411,6 +417,54 @@ pub fn expect_bool_array_repeat4(value: Bool, expected: Bool) -> Int {
 pub fn expect_bool_array_repeat5(value: Bool, expected: Bool) -> Int {
     let repeated: [Bool; 5] = array_repeat5(value)
     return expect_bool_eq(array_first5(repeated), expected) + expect_bool_eq(array_last5(repeated), expected)
+}
+
+pub fn expect_int_array_contains3(values: [Int; 3], needle: Int, expected: Bool) -> Int {
+    return expect_bool_eq(array_contains3(values, needle), expected)
+}
+
+pub fn expect_int_array_contains4(values: [Int; 4], needle: Int, expected: Bool) -> Int {
+    return expect_bool_eq(array_contains4(values, needle), expected)
+}
+
+pub fn expect_int_array_contains5(values: [Int; 5], needle: Int, expected: Bool) -> Int {
+    return expect_bool_eq(array_contains5(values, needle), expected)
+}
+
+pub fn expect_bool_array_contains3(values: [Bool; 3], needle: Bool, expected: Bool) -> Int {
+    return expect_bool_eq(array_contains3(values, needle), expected)
+}
+
+pub fn expect_bool_array_contains4(values: [Bool; 4], needle: Bool, expected: Bool) -> Int {
+    return expect_bool_eq(array_contains4(values, needle), expected)
+}
+
+pub fn expect_bool_array_contains5(values: [Bool; 5], needle: Bool, expected: Bool) -> Int {
+    return expect_bool_eq(array_contains5(values, needle), expected)
+}
+
+pub fn expect_int_array_count3(values: [Int; 3], needle: Int, expected: Int) -> Int {
+    return expect_int_eq(array_count3(values, needle), expected)
+}
+
+pub fn expect_int_array_count4(values: [Int; 4], needle: Int, expected: Int) -> Int {
+    return expect_int_eq(array_count4(values, needle), expected)
+}
+
+pub fn expect_int_array_count5(values: [Int; 5], needle: Int, expected: Int) -> Int {
+    return expect_int_eq(array_count5(values, needle), expected)
+}
+
+pub fn expect_bool_array_count3(values: [Bool; 3], needle: Bool, expected: Int) -> Int {
+    return expect_int_eq(array_count3(values, needle), expected)
+}
+
+pub fn expect_bool_array_count4(values: [Bool; 4], needle: Bool, expected: Int) -> Int {
+    return expect_int_eq(array_count4(values, needle), expected)
+}
+
+pub fn expect_bool_array_count5(values: [Bool; 5], needle: Bool, expected: Int) -> Int {
+    return expect_int_eq(array_count5(values, needle), expected)
 }
 
 pub fn expect_int_array_sum3(values: [Int; 3], expected: Int) -> Int {

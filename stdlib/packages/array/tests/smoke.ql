@@ -7,6 +7,12 @@ use std.array.at5_array_or as at5_array_or
 use std.array.any3_bool_array as any3_bool_array
 use std.array.any4_bool_array as any4_bool_array
 use std.array.any5_bool_array as any5_bool_array
+use std.array.contains3_array as contains3_array
+use std.array.contains4_array as contains4_array
+use std.array.contains5_array as contains5_array
+use std.array.count3_array as count3_array
+use std.array.count4_array as count4_array
+use std.array.count5_array as count5_array
 use std.array.first3_array as first3_array
 use std.array.first4_array as first4_array
 use std.array.first5_array as first5_array
@@ -69,10 +75,11 @@ fn main() -> Int {
     let repeated5_bool: [Bool; 5] = repeat5_array(false)
     let generic_reverse_int_status = sum6(check_int(first3_array(reversed3_int), 4), check_int(last3_array(reversed3_int), 2), check_int(first4_array(reversed4_int), 5), check_int(last4_array(reversed4_int), 2), check_int(first5_array(reversed5_int), 6), check_int(last5_array(reversed5_int), 2))
     let generic_repeat_status = sum6(check_int(sum3_int_array(repeated3_int), 12), check_int(sum4_int_array(repeated4_int), 12), check_int(sum5_int_array(repeated5_int), 10), check_bool(all3_bool_array(repeated3_bool), true), check_bool(any4_bool_array(repeated4_bool), false), check_bool(none5_bool_array(repeated5_bool), true))
+    let generic_contains_status = sum6(check_bool(contains3_array([2, 3, 4], 3), true), check_bool(contains4_array([2, 3, 4, 5], 9), false), check_bool(contains5_array([true, false, true, false, true], false), true), check_bool(contains3_array(["red", "blue", "green"], "blue"), true), check_bool(contains4_array(["a", "b", "c", "d"], "z"), false), 0)
+    let generic_count_status = sum6(check_int(count3_array([2, 3, 2], 2), 2), check_int(count4_array([2, 3, 2, 2], 2), 3), check_int(count5_array([true, false, true, false, true], true), 3), check_int(count5_array([1, 2, 3, 4, 5], 9), 0), check_int(count3_array(["same", "other", "same"], "same"), 2), 0)
     let numeric_status = sum6(check_int(sum3_int_array([2, 3, 4]), 9), check_int(sum4_int_array([2, 3, 4, 5]), 14), check_int(sum5_int_array([2, 3, 4, 5, 6]), 20), check_int(product3_int_array([2, 3, 4]), 24), check_int(product4_int_array([2, 3, 4, 5]), 120), check_int(product5_int_array([2, 3, 4, 5, 6]), 720))
     let extrema_status = sum6(check_int(max3_int_array([3, 9, 5]), 9), check_int(max4_int_array([3, 9, 5, 7]), 9), check_int(max5_int_array([3, 9, 5, 7, 11]), 11), check_int(min3_int_array([3, 9, 5]), 3), check_int(min4_int_array([3, 9, 5, 7]), 3), check_int(min5_int_array([3, 9, 5, 7, 1]), 1))
     let bool_all_status = sum6(check_bool(all3_bool_array([true, true, true]), true), check_bool(all4_bool_array([true, true, true, false]), false), check_bool(all5_bool_array([true, true, true, true, true]), true), check_bool(any3_bool_array([false, false, true]), true), check_bool(any4_bool_array([false, false, false, false]), false), check_bool(any5_bool_array([false, false, false, false, true]), true))
     let bool_none_status = sum6(check_bool(none3_bool_array([false, false, false]), true), check_bool(none4_bool_array([false, false, true, false]), false), check_bool(none5_bool_array([false, false, false, false, false]), true), 0, 0, 0)
-
-    return generic_int_status + generic_bool_status + generic_at_int_status + generic_at_bool_status + generic_reverse_int_status + generic_repeat_status + numeric_status + extrema_status + bool_all_status + bool_none_status
+    return generic_int_status + generic_bool_status + generic_at_int_status + generic_at_bool_status + generic_reverse_int_status + generic_repeat_status + generic_contains_status + generic_count_status + numeric_status + extrema_status + bool_all_status + bool_none_status
 }
