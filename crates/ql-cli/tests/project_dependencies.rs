@@ -324,7 +324,10 @@ fn project_dependencies_json_marks_external_local_path_dependencies() {
             }
         ],
     });
-    assert_eq!(actual, expected, "project dependencies local path json stdout");
+    assert_eq!(
+        actual, expected,
+        "project dependencies local path json stdout"
+    );
 }
 
 #[test]

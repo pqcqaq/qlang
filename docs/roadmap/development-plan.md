@@ -15,8 +15,8 @@
 - 如果语言现在还无法稳定支撑小型真实项目，继续扩语法、类型系统或 runtime 表面价值很低。
 - 从现在开始，主线改为“先把语言做到可真实使用，再恢复语言扩面”；P0 未完成前，不再把新语法和更宽语言能力当主线。
 - 最小 `stdlib` 属于 P0 可用性，不属于后置语言扩面；没有可依赖的 `core/option/result/test` 包，真实项目仍会退化成手写样例集合。
-- 当前 `stdlib` 是真实标准库 workspace，不是测试夹具；但 `IntOption` / `BoolOption`、`IntResult` / `BoolResult`、`sum3_int` / `sum4_int` / `sum5_int` 这类 API 是受限后端下的过渡形态，不应继续作为长期设计方向扩张。
-- 泛型 public API、generic `Option[T]` / `Result[T, E]`、数组/迭代式聚合能力现在进入 P0 stdlib unblock 路径；可变参数语法仍需单独设计和 lowering，不直接拿来绕过当前 stdlib API 问题。
+- 当前 `stdlib` 是真实标准库 workspace，不是测试夹具；但 `IntOption` / `BoolOption`、`IntResult` / `BoolResult`、`sum3_int` / `sum4_int` / `sum5_int` 这类 API 是受限后端下的过渡 helper，不应继续作为长期设计方向扩张。
+- generic `Option[T]` / `Result[T, E]` carrier 已经进入可执行路径；下一步优先补泛型 helper、公用集合抽象和真实 downstream smoke，而不是继续堆 concrete/fixed-arity helper。可变参数语法仍需单独设计和 lowering，不直接拿来绕过当前 stdlib API 问题。
 - 从现在开始，每一轮功能迭代必须优先落到生产代码；只有测试或文档改动，不再计作一轮功能推进。
 - 不再用固定日期承诺完成 P0；节奏改为每一轮尽力交付一个可验证切片，并用回归和文档更新收口。
 
@@ -131,12 +131,12 @@
 完成标准：
 
 - `stdlib/packages/core` 能被 `ql check/build/test` 验证，并提供第一批稳定基础函数。（已落地整数/布尔 helper，含符号、比较、三/四/五值 extrema、三值 median、3/4/5 项整数聚合、2/3/4/5 项均值、安全 quotient/remainder、3/4/5 项 Bool all/any/none 聚合、单边/双边/无序边界 clamp、边界归一化、绝对差、range span、range/bounds 距离、零值/正负/非正/非负、奇偶、闭/开区间、无序边界区间、区间外/无序边界外、3/4/5 项升/降序判断、整除、余数、因子、容差内/外检查和基础布尔组合）
-- `stdlib/packages/option` 能被 `ql check/build/test` 验证，并提供当前 dependency bridge 可执行的 concrete option surface。（已落地 `IntOption` / `BoolOption` 的 some/none 构造、is_some/is_none 判定、unwrap_or、or / or_option 与默认值 helper；泛型 `Option[T]` / prelude 集成继续后置）
-- `stdlib/packages/result` 能被 `ql check/build/test` 验证，并提供当前 dependency bridge 可执行的 concrete result surface。（已落地 `IntResult` / `BoolResult` 的 ok/err 构造、is_ok/is_err 判定、`unwrap_result_or_*`、`or_result_*`、error-code helper、无损 error-to-option helper，以及 concrete Option/Result 互转 helper；泛型 `Result[T, E]` / prelude 集成继续后置）
+- `stdlib/packages/option` 能被 `ql check/build/test` 验证，并提供当前 dependency bridge 可执行的 option surface。（已落地 `Option[T]` generic carrier，以及 `IntOption` / `BoolOption` 的 some/none 构造、is_some/is_none 判定、unwrap_or、or / or_option 与默认值 helper；generic helper / prelude 集成继续后置）
+- `stdlib/packages/result` 能被 `ql check/build/test` 验证，并提供当前 dependency bridge 可执行的 result surface。（已落地 `Result[T, E]` generic carrier，以及 `IntResult` / `BoolResult` 的 ok/err 构造、is_ok/is_err 判定、`unwrap_result_or_*`、`or_result_*`、error-code helper、无损 error-to-option helper，以及 concrete Option/Result 互转 helper；generic helper / prelude 集成继续后置）
 - `stdlib/packages/array` 能被 `ql check/build/test` 验证，并提供当前 dependency bridge 可执行的固定长度数组 helper。（已落地 `Int` 数组 sum/product/min/max 与 `Bool` 数组 all/any/none 的 3/4/5 长度 helper；这是 collection-shaped 过渡面，泛型数组 helper、动态集合和迭代器继续由 generic public API / backend 路线解锁）
 - `stdlib/packages/test` 能提供 smoke-test 友好的断言辅助，并通过 package-aware smoke test 直接导入自身 public helpers。（已落地 true/false、bool equality/ne/logic/implies、Bool all/any/none、Bool-to-Int、int equality/order、zero/nonzero、max/min/median、sum/product/average、sign/compare、abs/abs-diff/range-span/bounds、quotient/remainder/has-remainder/factor、Option/Result carrier、转换与 error extraction 断言、2-6 路 status 组合、正负/非正/非负、区间、无序边界区间、单边/双边 clamp / range-distance、3/4/5 项升/降序、奇偶、整除和容差内/外断言）
 - 用户项目模板能依赖 `std.core` / `std.option` / `std.result` / `std.array` / `std.test` 并通过 `ql test`。（已落地 `ql project init --stdlib <path>` 的 package 与 workspace member 生成路径，并且生成的 lib/main/smoke 都会真实消费 `std.array`）
-- `stdlib` 当前已发布的 concrete API 继续使用稳定语言面并保持可执行；generic `Option[T]` / `Result[T, E]` 和 generic public helper 不再作为远期后置项，而是先用 failing tests 驱动 dependency bridge / monomorphization / codegen 打通后再替换 concrete 主路径。
+- `stdlib` 当前已发布的 concrete API 继续使用稳定语言面并保持可执行；generic `Option[T]` / `Result[T, E]` carriers 已经进入可执行路径，接下来用 failing tests 驱动 generic helper / collection helper / prelude / monomorphization / codegen，而不是继续把 carrier 设计拖成远期后置项。
 - 数组/集合 helper 是替代 `sum3/4/5`、`all3/4/5` 这类固定参数复制的近期方向；可变参数语法需要独立设计 ABI、`.qi` 表示、typeck、LSP 和 lowering，先进入设计 gate，不直接承诺为下一轮实现。
 
 ## 下一轮（已排定）

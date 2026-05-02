@@ -47,7 +47,12 @@ fn project_status_reports_workspace_members_targets_dependencies_and_interfaces_
     let project_root = write_status_workspace(&temp);
 
     let mut command = ql_command(&workspace_root);
-    command.args(["project", "status", &project_root.to_string_lossy(), "--json"]);
+    command.args([
+        "project",
+        "status",
+        &project_root.to_string_lossy(),
+        "--json",
+    ]);
     let output = run_command_capture(&mut command, "`ql project status --json` workspace");
     let (stdout, stderr) =
         expect_success("project-status-json", "project status json", &output).unwrap();
@@ -61,7 +66,11 @@ fn project_status_reports_workspace_members_targets_dependencies_and_interfaces_
     let members = actual["members"]
         .as_array()
         .expect("project status members should be an array");
-    assert_eq!(members.len(), 2, "project status should report both members");
+    assert_eq!(
+        members.len(),
+        2,
+        "project status should report both members"
+    );
     let app = members
         .iter()
         .find(|member| member["package_name"] == "app")
@@ -75,7 +84,10 @@ fn project_status_reports_workspace_members_targets_dependencies_and_interfaces_
     assert_eq!(app["dependencies"][0]["dependency_path"], "../core");
     assert_eq!(app["dependencies"][1]["kind"], "local");
     assert_eq!(app["dependencies"][1]["member"], JsonValue::Null);
-    assert_eq!(app["dependencies"][1]["dependency_path"], "../../vendor/core");
+    assert_eq!(
+        app["dependencies"][1]["dependency_path"],
+        "../../vendor/core"
+    );
 
     let core = members
         .iter()

@@ -11,6 +11,11 @@ use std.option.some_int as option_some_int
 use std.option.unwrap_or_bool as option_unwrap_or_bool
 use std.option.unwrap_or_int as option_unwrap_or_int
 
+pub enum Result[T, E] {
+    Ok(T),
+    Err(E),
+}
+
 pub enum IntResult {
     Ok(Int),
     Err(Int),
