@@ -476,6 +476,105 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_package_tests_support_current_package_generic_function_expression_arguments() {
+    if !toolchain_available("`ql test` current package generic function expression arguments") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-current-package-generic-function-expressions");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source root for generic function expression test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "app/src/lib.ql",
+        r#"
+pub fn identity[T](value: T) -> T {
+    return value
+}
+
+pub fn choose[T](fallback: T, value: T) -> T {
+    return value
+}
+"#,
+    );
+    temp.write(
+        "app/tests/smoke.ql",
+        r#"
+use app.choose as choose
+use app.identity as identity
+
+fn main() -> Int {
+    let number: Int = identity(1 + 2)
+    let flag: Bool = choose(value: !(false || false), fallback: false)
+    let ordered: Bool = identity(1 < 2)
+    let pair: (Int, Bool) = identity((number, flag))
+    let values: [Int; 3] = identity([number, 2 + 3, 4])
+    if pair[1] && ordered && values[0] + values[1] + values[2] == 12 {
+        return 0
+    }
+    return 1
+}
+"#,
+    );
+
+    let package_output = static_library_output_path(&project_root.join("target/ql/debug"), "lib");
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test` current package generic public function expression arguments",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-current-package-generic-function-expressions",
+        "package tests importing current package generic function with expression arguments",
+        &output,
+    )
+    .expect("package-path `ql test` should infer current package generic public functions from expression arguments");
+    expect_empty_stderr(
+        "project-test-current-package-generic-function-expressions",
+        "package tests importing current package generic function with expression arguments",
+        &stderr,
+    )
+    .expect("expression-argument generic function package test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-current-package-generic-function-expressions",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("expression-argument generic function package test should report a passing smoke test");
+    expect_file_exists(
+        "project-test-current-package-generic-function-expressions",
+        &package_output,
+        "current package library",
+        "`ql test` current package generic public function expression arguments",
+    )
+    .expect("current package library should build before the expression-argument test bridge runs");
+    expect_file_exists(
+        "project-test-current-package-generic-function-expressions",
+        &smoke_output,
+        "current package generic function expression-argument test executable",
+        "`ql test` current package generic public function expression arguments",
+    )
+    .expect(
+        "expression-argument generic function package test should emit the smoke test executable",
+    );
+}
+
+#[test]
 fn test_package_tests_support_current_package_generic_function_from_generic_carriers() {
     if !toolchain_available("`ql test` current package generic carrier function test") {
         return;

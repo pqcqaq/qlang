@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use ql_ast::{
-    self, CallArg, Expr, ExprKind, FunctionDecl, ItemKind, Module, Param, Pattern, PatternKind,
-    TypeExpr, TypeExprKind,
+    self, BinaryOp, CallArg, Expr, ExprKind, FunctionDecl, ItemKind, Module, Param, Pattern,
+    PatternKind, TypeExpr, TypeExprKind, UnaryOp,
 };
 use ql_span::Span;
 
@@ -1030,12 +1030,161 @@ fn infer_dependency_generic_expr_type(
         ExprKind::Integer(_) => Some(InferredType::primitive("Int")),
         ExprKind::Bool(_) => Some(InferredType::primitive("Bool")),
         ExprKind::String { .. } => Some(InferredType::primitive("String")),
+        ExprKind::Tuple(items) => {
+            let items = items
+                .iter()
+                .map(|item| infer_dependency_generic_expr_type(item, bindings))
+                .collect::<Option<Vec<_>>>()?;
+            Some(InferredType {
+                rendered: render_inferred_tuple_type(&items),
+                kind: InferredTypeKind::Tuple(items),
+            })
+        }
+        ExprKind::Array(items) => {
+            let (first, rest) = items.split_first()?;
+            let element = infer_dependency_generic_expr_type(first, bindings)?;
+            for item in rest {
+                let item_ty = infer_dependency_generic_expr_type(item, bindings)?;
+                if item_ty != element {
+                    return None;
+                }
+            }
+            Some(InferredType {
+                rendered: format!("[{}; {}]", element.rendered, items.len()),
+                kind: InferredTypeKind::Array {
+                    element: Box::new(element),
+                    len: items.len().to_string(),
+                },
+            })
+        }
         ExprKind::Name(name) => bindings.get(name).cloned(),
         ExprKind::Call { callee, args } => {
             infer_single_field_generic_variant_call_type(callee, args, bindings)
         }
+        ExprKind::Binary { left, op, right } => {
+            let left = infer_dependency_generic_expr_type(left, bindings)?;
+            let right = infer_dependency_generic_expr_type(right, bindings)?;
+            infer_dependency_generic_binary_expr_type(*op, &left, &right)
+        }
+        ExprKind::Unary { op, expr } => {
+            let expr = infer_dependency_generic_expr_type(expr, bindings)?;
+            infer_dependency_generic_unary_expr_type(*op, &expr)
+        }
         _ => None,
     }
+}
+
+fn render_inferred_tuple_type(items: &[InferredType]) -> String {
+    let mut rendered = String::from("(");
+    rendered.push_str(
+        &items
+            .iter()
+            .map(|item| item.rendered.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    if items.len() == 1 {
+        rendered.push(',');
+    }
+    rendered.push(')');
+    rendered
+}
+
+fn infer_dependency_generic_binary_expr_type(
+    op: BinaryOp,
+    left: &InferredType,
+    right: &InferredType,
+) -> Option<InferredType> {
+    match op {
+        BinaryOp::OrOr | BinaryOp::AndAnd if are_inferred_bool_types(left, right) => {
+            Some(InferredType::primitive("Bool"))
+        }
+        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem
+            if left == right && is_inferred_numeric_type(left) =>
+        {
+            Some(left.clone())
+        }
+        BinaryOp::EqEq | BinaryOp::BangEq
+            if left == right && is_inferred_equality_comparable_type(left) =>
+        {
+            Some(InferredType::primitive("Bool"))
+        }
+        BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Lt | BinaryOp::LtEq
+            if left == right && is_inferred_ordered_comparable_type(left) =>
+        {
+            Some(InferredType::primitive("Bool"))
+        }
+        BinaryOp::Assign => None,
+        _ => None,
+    }
+}
+
+fn infer_dependency_generic_unary_expr_type(
+    op: UnaryOp,
+    expr: &InferredType,
+) -> Option<InferredType> {
+    match op {
+        UnaryOp::Not if is_inferred_bool_type(expr) => Some(InferredType::primitive("Bool")),
+        UnaryOp::Neg if is_inferred_numeric_type(expr) => Some(expr.clone()),
+        UnaryOp::Await | UnaryOp::Spawn => None,
+        _ => None,
+    }
+}
+
+fn are_inferred_bool_types(left: &InferredType, right: &InferredType) -> bool {
+    is_inferred_bool_type(left) && is_inferred_bool_type(right)
+}
+
+fn is_inferred_bool_type(ty: &InferredType) -> bool {
+    is_inferred_builtin_type(ty, "Bool")
+}
+
+fn is_inferred_equality_comparable_type(ty: &InferredType) -> bool {
+    is_inferred_numeric_type(ty) || is_inferred_bool_type(ty) || is_inferred_string_type(ty)
+}
+
+fn is_inferred_ordered_comparable_type(ty: &InferredType) -> bool {
+    is_inferred_numeric_type(ty) || is_inferred_string_type(ty)
+}
+
+fn is_inferred_string_type(ty: &InferredType) -> bool {
+    is_inferred_builtin_type(ty, "String")
+}
+
+fn is_inferred_numeric_type(ty: &InferredType) -> bool {
+    matches!(
+        inferred_named_builtin_type(ty),
+        Some(
+            "Int"
+                | "UInt"
+                | "I8"
+                | "I16"
+                | "I32"
+                | "I64"
+                | "ISize"
+                | "U8"
+                | "U16"
+                | "U32"
+                | "U64"
+                | "USize"
+                | "F32"
+                | "F64"
+        )
+    )
+}
+
+fn is_inferred_builtin_type(ty: &InferredType, expected: &str) -> bool {
+    inferred_named_builtin_type(ty) == Some(expected)
+}
+
+fn inferred_named_builtin_type(ty: &InferredType) -> Option<&str> {
+    let InferredTypeKind::Named { path, args } = &ty.kind else {
+        return None;
+    };
+    if !args.is_empty() || path.len() != 1 {
+        return None;
+    }
+    path.first().map(String::as_str)
 }
 
 fn infer_single_field_generic_variant_call_type(
@@ -1155,6 +1304,97 @@ fn run() -> Int {
             .next()
             .expect("one named-argument substitution should be inferred");
         assert_eq!(substitutions.get("T").map(String::as_str), Some("Int"));
+    }
+
+    #[test]
+    fn infers_substitutions_from_scalar_expressions() {
+        let dependency = parse_module(
+            r#"
+package dep
+
+pub fn identity[T](value: T) -> T {
+    return value
+}
+"#,
+        );
+        let root = parse_module(
+            r#"
+use dep.identity as identity
+
+fn run() -> Int {
+    let number: Int = identity(1 + 2)
+    let flag: Bool = identity(!(false || false))
+    let ordered: Bool = identity(1 < 2)
+    if flag && ordered {
+        return number
+    }
+    return 0
+}
+"#,
+        );
+
+        let substitutions = collect_public_function_instantiations(
+            &root,
+            &["dep".to_owned()],
+            function(&dependency, "identity"),
+        );
+
+        assert_eq!(substitutions.len(), 2);
+        assert!(
+            substitutions
+                .iter()
+                .any(|item| { item.get("T").map(String::as_str) == Some("Int") })
+        );
+        assert!(
+            substitutions
+                .iter()
+                .any(|item| { item.get("T").map(String::as_str) == Some("Bool") })
+        );
+    }
+
+    #[test]
+    fn infers_substitutions_from_tuple_and_array_literals() {
+        let dependency = parse_module(
+            r#"
+package dep
+
+pub fn identity[T](value: T) -> T {
+    return value
+}
+"#,
+        );
+        let root = parse_module(
+            r#"
+use dep.identity as identity
+
+fn run() -> Int {
+    let pair: (Int, Bool) = identity((1 + 2, !false))
+    let values: [Int; 3] = identity([1, 2 + 3, 4])
+    if pair[1] {
+        return values[0]
+    }
+    return 0
+}
+"#,
+        );
+
+        let substitutions = collect_public_function_instantiations(
+            &root,
+            &["dep".to_owned()],
+            function(&dependency, "identity"),
+        );
+
+        assert_eq!(substitutions.len(), 2);
+        assert!(
+            substitutions
+                .iter()
+                .any(|item| { item.get("T").map(String::as_str) == Some("(Int, Bool)") })
+        );
+        assert!(
+            substitutions
+                .iter()
+                .any(|item| { item.get("T").map(String::as_str) == Some("[Int; 3]") })
+        );
     }
 
     #[test]
