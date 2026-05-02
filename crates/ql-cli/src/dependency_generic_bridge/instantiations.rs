@@ -1398,6 +1398,51 @@ fn run() -> Int {
     }
 
     #[test]
+    fn infers_substitutions_from_generic_array_parameters() {
+        let dependency = parse_module(
+            r#"
+package dep
+
+pub fn first3[T](values: [T; 3]) -> T {
+    return values[0]
+}
+"#,
+        );
+        let root = parse_module(
+            r#"
+use dep.first3 as first3
+
+fn run() -> Int {
+    let value: Int = first3([1, 2 + 3, 4])
+    let flag: Bool = first3([true, false, true])
+    if flag {
+        return value
+    }
+    return 0
+}
+"#,
+        );
+
+        let substitutions = collect_public_function_instantiations(
+            &root,
+            &["dep".to_owned()],
+            function(&dependency, "first3"),
+        );
+
+        assert_eq!(substitutions.len(), 2);
+        assert!(
+            substitutions
+                .iter()
+                .any(|item| { item.get("T").map(String::as_str) == Some("Int") })
+        );
+        assert!(
+            substitutions
+                .iter()
+                .any(|item| { item.get("T").map(String::as_str) == Some("Bool") })
+        );
+    }
+
+    #[test]
     fn infers_substitution_from_single_field_generic_variant_call() {
         let dependency = parse_module(
             r#"

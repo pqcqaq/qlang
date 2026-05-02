@@ -11,7 +11,8 @@ pub(super) fn default_package_test_source() -> &'static str {
 }
 
 pub(super) fn stdlib_package_source() -> &'static str {
-    r#"use std.array.sum3_int_array as sum3_int_array
+    r#"use std.array.first3_array as first3_array
+use std.array.sum3_int_array as sum3_int_array
 use std.core.clamp_int as clamp_int
 use std.option.some as option_some
 use std.option.unwrap_or as option_unwrap_or
@@ -21,7 +22,7 @@ use std.result.unwrap_result_or as result_unwrap_result_or
 
 pub fn run() -> Int {
     let result_value: Result[Int, Int] = result_ok(option_unwrap_or(option_some(42), 0))
-    return clamp_int(result_unwrap_result_or(result_value, 0) + sum3_int_array([1, 2, 3]), 0, 100)
+    return clamp_int(result_unwrap_result_or(result_value, 0) + sum3_int_array([1, 2, first3_array([3, 4, 5])]), 0, 100)
 }
 "#
 }
@@ -72,6 +73,7 @@ mod tests {
         assert!(lib.contains("use std.result.Result as Result"));
         assert!(lib.contains("use std.result.ok as result_ok"));
         assert!(lib.contains("use std.result.unwrap_result_or as result_unwrap_result_or"));
+        assert!(lib.contains("use std.array.first3_array"));
         assert!(lib.contains("use std.array.sum3_int_array"));
         assert!(main.contains("use std.core.bool_to_int"));
         assert!(main.contains("use std.array.all3_bool_array"));
@@ -82,6 +84,8 @@ mod tests {
         assert!(smoke.contains("use std.test.expect_generic_int_result_ok"));
         assert!(smoke.contains("use std.test.expect_generic_int_result_to_option_some"));
         assert!(smoke.contains("use std.test.expect_generic_int_option_ok_or"));
+        assert!(smoke.contains("use std.array.first3_array"));
+        assert!(smoke.contains("use std.array.last5_array"));
         assert!(smoke.contains("use std.array.max5_int_array"));
         assert!(smoke.contains("use std.option.Option as Option"));
         assert!(smoke.contains("use std.result.Result as Result"));

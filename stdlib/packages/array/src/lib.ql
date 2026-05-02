@@ -1,5 +1,29 @@
 package std.array
 
+pub fn first3_array[T](values: [T; 3]) -> T {
+    return values[0]
+}
+
+pub fn first4_array[T](values: [T; 4]) -> T {
+    return values[0]
+}
+
+pub fn first5_array[T](values: [T; 5]) -> T {
+    return values[0]
+}
+
+pub fn last3_array[T](values: [T; 3]) -> T {
+    return values[2]
+}
+
+pub fn last4_array[T](values: [T; 4]) -> T {
+    return values[3]
+}
+
+pub fn last5_array[T](values: [T; 5]) -> T {
+    return values[4]
+}
+
 pub fn sum3_int_array(values: [Int; 3]) -> Int {
     return values[0] + values[1] + values[2]
 }

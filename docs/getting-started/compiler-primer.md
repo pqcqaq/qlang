@@ -381,7 +381,7 @@ ql project init demo-package
 ql project init demo-package --stdlib path/to/language_q/stdlib
 ```
 
-这会在新 package 的 `[dependencies]` 中写入 quoted-key 形式的 `std.core` / `std.option` / `std.result` / `std.array` / `std.test` 本地依赖，并生成直接消费这些 package 的 `src/lib.ql`、`src/main.ql` 与 `tests/smoke.ql`；生成的 `src/lib.ql` 会直接使用 generic `std.option.some` / `std.option.unwrap_or`、generic `std.result.ok` / `std.result.Result` / `std.result.unwrap_result_or`，生成的 smoke test 会使用 `std.test` 的 concrete/generic carrier 断言覆盖 `std.option` / `std.result`，不会再携带本地手写 generic carrier status 函数，并通过 `std.test` 转换断言覆盖 concrete Option/Result helper 与 error extraction helper，同时在显式 `Option[Int]` 上下文消费 `std.option.none_option`。workspace 初始化也支持同一个 `--stdlib <path>` 选项。
+这会在新 package 的 `[dependencies]` 中写入 quoted-key 形式的 `std.core` / `std.option` / `std.result` / `std.array` / `std.test` 本地依赖，并生成直接消费这些 package 的 `src/lib.ql`、`src/main.ql` 与 `tests/smoke.ql`；生成的 `src/lib.ql` 会直接使用 generic `std.option.some` / `std.option.unwrap_or`、generic `std.result.ok` / `std.result.Result` / `std.result.unwrap_result_or`，以及 generic `std.array.first3_array`，生成的 smoke test 会使用 `std.test` 的 concrete/generic carrier 断言覆盖 `std.option` / `std.result`，不会再携带本地手写 generic carrier status 函数，并通过 `std.test` 转换断言覆盖 concrete/generic Option/Result helper、Result/Option conversion、error extraction 和 generic fixed-array accessor，同时在显式 `Option[Int]` / `Option[Bool]` 上下文消费 `std.option.none_option`。workspace 初始化也支持同一个 `--stdlib <path>` 选项。
 
 初始化 workspace：
 
