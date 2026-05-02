@@ -9,6 +9,10 @@ use super::{
     relative_path_from,
 };
 
+mod templates;
+
+pub(crate) use templates::default_package_main_source;
+
 const STDLIB_PACKAGES: [(&str, &str); 5] = [
     ("std.core", "core"),
     ("std.option", "option"),
@@ -56,6 +60,38 @@ pub(crate) fn sync_stdlib_interfaces(
     })
 }
 
+pub(crate) fn project_init_path(
+    path: &Path,
+    workspace: bool,
+    package_name: Option<&str>,
+    stdlib_path: Option<&Path>,
+) -> Result<(), u8> {
+    let target_root = path.to_path_buf();
+    let package_name = match project_init_package_name(&target_root, workspace, package_name) {
+        Ok(package_name) => package_name,
+        Err(message) => {
+            eprintln!("error: `ql project init` {message}");
+            return Err(1);
+        }
+    };
+
+    let created_paths = if workspace {
+        init_workspace_project(&target_root, &package_name, stdlib_path)
+    } else {
+        init_package_project(&target_root, &package_name, stdlib_path)
+    }
+    .map_err(|message| {
+        eprintln!("error: `ql project init` {message}");
+        1
+    })?;
+
+    for path in created_paths {
+        println!("created: {}", normalize_path(&path));
+    }
+
+    Ok(())
+}
+
 pub(crate) fn ensure_target_root(target_root: &Path) -> Result<(), String> {
     if target_root.exists() && !target_root.is_dir() {
         return Err(format!(
@@ -78,19 +114,19 @@ pub(crate) fn create_package_scaffold(
     let test_path = target_root.join("tests").join("smoke.ql");
     let manifest = render_package_manifest(package_name, dependencies);
     let package_source = if stdlib_template {
-        stdlib_package_source()
+        templates::stdlib_package_source()
     } else {
-        default_package_source()
+        templates::default_package_source()
     };
     let main_source = if stdlib_template {
-        stdlib_package_main_source()
+        templates::stdlib_package_main_source()
     } else {
-        default_package_main_source()
+        templates::default_package_main_source()
     };
     let test_source = if stdlib_template {
-        super::stdlib_package_test_source()
+        templates::stdlib_package_test_source()
     } else {
-        default_package_test_source()
+        templates::default_package_test_source()
     };
 
     write_new_file(&manifest_path, &manifest)?;
@@ -124,8 +160,70 @@ pub(crate) fn render_workspace_manifest(package_name: &str) -> String {
     format!("[workspace]\nmembers = [\"packages/{package_name}\"]\n")
 }
 
-pub(crate) fn default_package_main_source() -> &'static str {
-    "fn main() -> Int {\n    return 0\n}\n"
+fn project_init_package_name(
+    target_root: &Path,
+    workspace: bool,
+    package_name: Option<&str>,
+) -> Result<String, String> {
+    let package_name = match package_name {
+        Some(package_name) => package_name.to_owned(),
+        None if workspace => "app".to_owned(),
+        None => target_root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                format!(
+                    "could not derive a package name from `{}`; rerun with `--name <package>`",
+                    normalize_path(target_root)
+                )
+            })?,
+    };
+
+    super::validate_project_package_name(&package_name)?;
+    Ok(package_name)
+}
+
+fn init_package_project(
+    target_root: &Path,
+    package_name: &str,
+    stdlib_path: Option<&Path>,
+) -> Result<Vec<PathBuf>, String> {
+    ensure_target_root(target_root)?;
+    let dependencies = resolve_stdlib_dependencies(target_root, stdlib_path)?;
+    let created_paths = create_package_scaffold(
+        target_root,
+        package_name,
+        &dependencies,
+        stdlib_path.is_some(),
+    )?;
+    sync_stdlib_interfaces(&[target_root.join("qlang.toml")], stdlib_path)?;
+    Ok(created_paths)
+}
+
+fn init_workspace_project(
+    target_root: &Path,
+    package_name: &str,
+    stdlib_path: Option<&Path>,
+) -> Result<Vec<PathBuf>, String> {
+    ensure_target_root(target_root)?;
+
+    let workspace_manifest_path = target_root.join("qlang.toml");
+    let member_dir = target_root.join("packages").join(package_name);
+    let workspace_manifest = render_workspace_manifest(package_name);
+
+    write_new_file(&workspace_manifest_path, &workspace_manifest)?;
+    let mut created_paths = vec![workspace_manifest_path];
+    let dependencies = resolve_stdlib_dependencies(&member_dir, stdlib_path)?;
+    created_paths.extend(create_package_scaffold(
+        &member_dir,
+        package_name,
+        &dependencies,
+        stdlib_path.is_some(),
+    )?);
+    sync_stdlib_interfaces(&[member_dir.join("qlang.toml")], stdlib_path)?;
+    Ok(created_paths)
 }
 
 fn validate_stdlib_package(package_root: &Path, expected_name: &str) -> Result<(), String> {
@@ -250,42 +348,6 @@ fn toml_string_literal(value: &str) -> String {
     }
     rendered.push('"');
     rendered
-}
-
-fn default_package_source() -> &'static str {
-    "pub fn run() -> Int {\n    return 0\n}\n"
-}
-
-fn default_package_test_source() -> &'static str {
-    "fn main() -> Int {\n    return 0\n}\n"
-}
-
-fn stdlib_package_source() -> &'static str {
-    r#"use std.array.sum3_int_array as sum3_int_array
-use std.core.clamp_int as clamp_int
-use std.option.some_int as some_int
-use std.option.unwrap_or_int as unwrap_or_int
-use std.result.ok_int as result_ok_int
-use std.result.unwrap_result_or_int as result_unwrap_or_int
-
-pub fn run() -> Int {
-    return clamp_int(result_unwrap_or_int(result_ok_int(unwrap_or_int(some_int(42), 0)), 0) + sum3_int_array([1, 2, 3]), 0, 100)
-}
-"#
-}
-
-fn stdlib_package_main_source() -> &'static str {
-    r#"use std.array.all3_bool_array as all3_bool_array
-use std.core.bool_to_int as bool_to_int
-use std.option.some_bool as some_bool
-use std.option.unwrap_or_bool as unwrap_or_bool
-use std.result.ok_bool as result_ok_bool
-use std.result.unwrap_result_or_bool as result_unwrap_or_bool
-
-fn main() -> Int {
-    return 1 - bool_to_int(result_unwrap_or_bool(result_ok_bool(all3_bool_array([true, unwrap_or_bool(some_bool(true), false), true])), false))
-}
-"#
 }
 
 #[cfg(test)]

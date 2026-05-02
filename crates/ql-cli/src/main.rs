@@ -1004,7 +1004,7 @@ fn run() -> Result<(), u8> {
                     let path = path
                         .or_else(|| env::current_dir().ok())
                         .unwrap_or_else(|| PathBuf::from("."));
-                    project_init_path(
+                    project_init::project_init_path(
                         &path,
                         workspace,
                         package_name.as_deref(),
@@ -11296,38 +11296,6 @@ fn emit_c_header_path(path: &Path, options: &CHeaderOptions) -> Result<(), u8> {
     }
 }
 
-fn project_init_path(
-    path: &Path,
-    workspace: bool,
-    package_name: Option<&str>,
-    stdlib_path: Option<&Path>,
-) -> Result<(), u8> {
-    let target_root = path.to_path_buf();
-    let package_name = match project_init_package_name(&target_root, workspace, package_name) {
-        Ok(package_name) => package_name,
-        Err(message) => {
-            eprintln!("error: `ql project init` {message}");
-            return Err(1);
-        }
-    };
-
-    let created_paths = if workspace {
-        init_workspace_project(&target_root, &package_name, stdlib_path)
-    } else {
-        init_package_project(&target_root, &package_name, stdlib_path)
-    }
-    .map_err(|message| {
-        eprintln!("error: `ql project init` {message}");
-        1
-    })?;
-
-    for path in created_paths {
-        println!("created: {}", normalize_path(&path));
-    }
-
-    Ok(())
-}
-
 fn project_add_path(path: &Path, package_name: &str, dependencies: &[String]) -> Result<(), u8> {
     if let Err(message) = validate_project_package_name(package_name) {
         eprintln!("error: `ql project add` {message}");
@@ -11718,31 +11686,6 @@ fn project_remove_dependency_from_all_workspace_members(
     Ok(())
 }
 
-fn project_init_package_name(
-    target_root: &Path,
-    workspace: bool,
-    package_name: Option<&str>,
-) -> Result<String, String> {
-    let package_name = match package_name {
-        Some(package_name) => package_name.to_owned(),
-        None if workspace => "app".to_owned(),
-        None => target_root
-            .file_name()
-            .and_then(|name| name.to_str())
-            .filter(|name| !name.is_empty())
-            .map(str::to_owned)
-            .ok_or_else(|| {
-                format!(
-                    "could not derive a package name from `{}`; rerun with `--name <package>`",
-                    normalize_path(target_root)
-                )
-            })?,
-    };
-
-    validate_project_package_name(&package_name)?;
-    Ok(package_name)
-}
-
 fn validate_project_package_name(package_name: &str) -> Result<(), String> {
     if package_name.trim().is_empty() {
         return Err("requires a non-empty package name".to_owned());
@@ -11768,47 +11711,6 @@ fn absolute_user_path(path: &Path) -> PathBuf {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(path)
     }
-}
-
-fn init_package_project(
-    target_root: &Path,
-    package_name: &str,
-    stdlib_path: Option<&Path>,
-) -> Result<Vec<PathBuf>, String> {
-    project_init::ensure_target_root(target_root)?;
-    let dependencies = project_init::resolve_stdlib_dependencies(target_root, stdlib_path)?;
-    let created_paths = project_init::create_package_scaffold(
-        target_root,
-        package_name,
-        &dependencies,
-        stdlib_path.is_some(),
-    )?;
-    project_init::sync_stdlib_interfaces(&[target_root.join("qlang.toml")], stdlib_path)?;
-    Ok(created_paths)
-}
-
-fn init_workspace_project(
-    target_root: &Path,
-    package_name: &str,
-    stdlib_path: Option<&Path>,
-) -> Result<Vec<PathBuf>, String> {
-    project_init::ensure_target_root(target_root)?;
-
-    let workspace_manifest_path = target_root.join("qlang.toml");
-    let member_dir = target_root.join("packages").join(package_name);
-    let workspace_manifest = project_init::render_workspace_manifest(package_name);
-
-    project_init::write_new_file(&workspace_manifest_path, &workspace_manifest)?;
-    let mut created_paths = vec![workspace_manifest_path];
-    let dependencies = project_init::resolve_stdlib_dependencies(&member_dir, stdlib_path)?;
-    created_paths.extend(project_init::create_package_scaffold(
-        &member_dir,
-        package_name,
-        &dependencies,
-        stdlib_path.is_some(),
-    )?);
-    project_init::sync_stdlib_interfaces(&[member_dir.join("qlang.toml")], stdlib_path)?;
-    Ok(created_paths)
 }
 
 fn resolve_project_workspace_manifest(path: &Path) -> Result<ql_project::ProjectManifest, String> {

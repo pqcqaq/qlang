@@ -48,7 +48,7 @@
 - 每一轮都选择当前最能提升可用性的切片，做到实现、回归、文档一起提交。
 - 每轮结束时必须能说明本轮让真实项目多走通了哪条路径，不能只报告“清理了一些代码”。
 - 维护性重构优先拆 `ql-cli`、`ql-lsp`、`ql-codegen-llvm`、`ql-analysis` 这类超大文件里已有回归保护的子系统边界；每个拆分切片必须保持行为不变并跑对应回归。
-- `ql project init` 的 stdlib 依赖准备、manifest 渲染、脚手架文件创建和默认模板归 `crates/ql-cli/src/project_init.rs` 承载；`main.rs` 只保留命令解析、错误打印和编排。
+- `ql project init` 的命令执行、stdlib 依赖准备、manifest 渲染和脚手架文件创建归 `crates/ql-cli/src/project_init.rs` 承载；默认 scaffold 模板归 `crates/ql-cli/src/project_init/templates.rs` 承载；`main.rs` 只保留命令分发和其它 project 子命令编排。
 - 如果 `stdlib` 暴露出 backend / project / LSP 缺口，优先修真实阻塞项；不为绕过缺口而降低 `stdlib` 设计边界。
 - 如果某个 API 明显应该用泛型或集合抽象表达，不继续堆 concrete/fixed-arity 版本；先补泛型、数组/迭代或可变参数所需的编译器路径。
 
