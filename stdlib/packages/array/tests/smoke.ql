@@ -1,6 +1,9 @@
 use std.array.all3_bool_array as all3_bool_array
 use std.array.all4_bool_array as all4_bool_array
 use std.array.all5_bool_array as all5_bool_array
+use std.array.at3_array_or as at3_array_or
+use std.array.at4_array_or as at4_array_or
+use std.array.at5_array_or as at5_array_or
 use std.array.any3_bool_array as any3_bool_array
 use std.array.any4_bool_array as any4_bool_array
 use std.array.any5_bool_array as any5_bool_array
@@ -47,10 +50,12 @@ fn sum6(first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int
 fn main() -> Int {
     let generic_int_status = sum6(check_int(first3_array([2, 3, 4]), 2), check_int(first4_array([2, 3, 4, 5]), 2), check_int(first5_array([2, 3, 4, 5, 6]), 2), check_int(last3_array([2, 3, 4]), 4), check_int(last4_array([2, 3, 4, 5]), 5), check_int(last5_array([2, 3, 4, 5, 6]), 6))
     let generic_bool_status = sum6(check_bool(first3_array([true, false, false]), true), check_bool(first4_array([false, true, true, true]), false), check_bool(first5_array([true, false, true, false, true]), true), check_bool(last3_array([true, false, true]), true), check_bool(last4_array([true, true, false, false]), false), check_bool(last5_array([false, true, false, true, false]), false))
+    let generic_at_int_status = sum6(check_int(at3_array_or([2, 3, 4], 1, 99), 3), check_int(at4_array_or([2, 3, 4, 5], 3, 99), 5), check_int(at5_array_or([2, 3, 4, 5, 6], 4, 99), 6), check_int(at3_array_or([2, 3, 4], 5, 99), 99), check_int(at4_array_or([2, 3, 4, 5], 0, 99), 2), check_int(at5_array_or([2, 3, 4, 5, 6], 2, 99), 4))
+    let generic_at_bool_status = sum6(check_bool(at3_array_or([true, false, true], 1, true), false), check_bool(at4_array_or([false, true, true, false], 3, true), false), check_bool(at5_array_or([true, false, true, false, true], 4, false), true), check_bool(at3_array_or([true, false, true], 5, false), false), check_bool(at4_array_or([false, true, true, false], 0, true), false), check_bool(at5_array_or([true, false, true, false, true], 2, false), true))
     let numeric_status = sum6(check_int(sum3_int_array([2, 3, 4]), 9), check_int(sum4_int_array([2, 3, 4, 5]), 14), check_int(sum5_int_array([2, 3, 4, 5, 6]), 20), check_int(product3_int_array([2, 3, 4]), 24), check_int(product4_int_array([2, 3, 4, 5]), 120), check_int(product5_int_array([2, 3, 4, 5, 6]), 720))
     let extrema_status = sum6(check_int(max3_int_array([3, 9, 5]), 9), check_int(max4_int_array([3, 9, 5, 7]), 9), check_int(max5_int_array([3, 9, 5, 7, 11]), 11), check_int(min3_int_array([3, 9, 5]), 3), check_int(min4_int_array([3, 9, 5, 7]), 3), check_int(min5_int_array([3, 9, 5, 7, 1]), 1))
     let bool_all_status = sum6(check_bool(all3_bool_array([true, true, true]), true), check_bool(all4_bool_array([true, true, true, false]), false), check_bool(all5_bool_array([true, true, true, true, true]), true), check_bool(any3_bool_array([false, false, true]), true), check_bool(any4_bool_array([false, false, false, false]), false), check_bool(any5_bool_array([false, false, false, false, true]), true))
     let bool_none_status = sum6(check_bool(none3_bool_array([false, false, false]), true), check_bool(none4_bool_array([false, false, true, false]), false), check_bool(none5_bool_array([false, false, false, false, false]), true), 0, 0, 0)
 
-    return generic_int_status + generic_bool_status + numeric_status + extrema_status + bool_all_status + bool_none_status
+    return generic_int_status + generic_bool_status + generic_at_int_status + generic_at_bool_status + numeric_status + extrema_status + bool_all_status + bool_none_status
 }

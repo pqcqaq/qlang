@@ -24,6 +24,54 @@ pub fn last5_array[T](values: [T; 5]) -> T {
     return values[4]
 }
 
+pub fn at3_array_or[T](values: [T; 3], index: Int, fallback: T) -> T {
+    if index == 0 {
+        return values[0]
+    }
+    if index == 1 {
+        return values[1]
+    }
+    if index == 2 {
+        return values[2]
+    }
+    return fallback
+}
+
+pub fn at4_array_or[T](values: [T; 4], index: Int, fallback: T) -> T {
+    if index == 0 {
+        return values[0]
+    }
+    if index == 1 {
+        return values[1]
+    }
+    if index == 2 {
+        return values[2]
+    }
+    if index == 3 {
+        return values[3]
+    }
+    return fallback
+}
+
+pub fn at5_array_or[T](values: [T; 5], index: Int, fallback: T) -> T {
+    if index == 0 {
+        return values[0]
+    }
+    if index == 1 {
+        return values[1]
+    }
+    if index == 2 {
+        return values[2]
+    }
+    if index == 3 {
+        return values[3]
+    }
+    if index == 4 {
+        return values[4]
+    }
+    return fallback
+}
+
 pub fn sum3_int_array(values: [Int; 3]) -> Int {
     return values[0] + values[1] + values[2]
 }

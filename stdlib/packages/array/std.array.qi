@@ -16,6 +16,12 @@ pub fn last4_array[T](values: [T; 4]) -> T
 
 pub fn last5_array[T](values: [T; 5]) -> T
 
+pub fn at3_array_or[T](values: [T; 3], index: Int, fallback: T) -> T
+
+pub fn at4_array_or[T](values: [T; 4], index: Int, fallback: T) -> T
+
+pub fn at5_array_or[T](values: [T; 5], index: Int, fallback: T) -> T
+
 pub fn sum3_int_array(values: [Int; 3]) -> Int
 
 pub fn sum4_int_array(values: [Int; 4]) -> Int

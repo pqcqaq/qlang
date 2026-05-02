@@ -3,6 +3,9 @@ package std.test
 use std.array.all3_bool_array as array_all3_bool
 use std.array.all4_bool_array as array_all4_bool
 use std.array.all5_bool_array as array_all5_bool
+use std.array.at3_array_or as array_at3_or
+use std.array.at4_array_or as array_at4_or
+use std.array.at5_array_or as array_at5_or
 use std.array.any3_bool_array as array_any3_bool
 use std.array.any4_bool_array as array_any4_bool
 use std.array.any5_bool_array as array_any5_bool
@@ -318,6 +321,30 @@ pub fn expect_bool_array_last4(values: [Bool; 4], expected: Bool) -> Int {
 
 pub fn expect_bool_array_last5(values: [Bool; 5], expected: Bool) -> Int {
     return expect_bool_eq(array_last5(values), expected)
+}
+
+pub fn expect_int_array_at3(values: [Int; 3], index: Int, fallback: Int, expected: Int) -> Int {
+    return expect_int_eq(array_at3_or(values, index, fallback), expected)
+}
+
+pub fn expect_int_array_at4(values: [Int; 4], index: Int, fallback: Int, expected: Int) -> Int {
+    return expect_int_eq(array_at4_or(values, index, fallback), expected)
+}
+
+pub fn expect_int_array_at5(values: [Int; 5], index: Int, fallback: Int, expected: Int) -> Int {
+    return expect_int_eq(array_at5_or(values, index, fallback), expected)
+}
+
+pub fn expect_bool_array_at3(values: [Bool; 3], index: Int, fallback: Bool, expected: Bool) -> Int {
+    return expect_bool_eq(array_at3_or(values, index, fallback), expected)
+}
+
+pub fn expect_bool_array_at4(values: [Bool; 4], index: Int, fallback: Bool, expected: Bool) -> Int {
+    return expect_bool_eq(array_at4_or(values, index, fallback), expected)
+}
+
+pub fn expect_bool_array_at5(values: [Bool; 5], index: Int, fallback: Bool, expected: Bool) -> Int {
+    return expect_bool_eq(array_at5_or(values, index, fallback), expected)
 }
 
 pub fn expect_int_array_sum3(values: [Int; 3], expected: Int) -> Int {
