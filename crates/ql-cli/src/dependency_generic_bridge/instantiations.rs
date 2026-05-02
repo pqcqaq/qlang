@@ -4,9 +4,16 @@ use ql_ast::{
     self, CallArg, Expr, ExprKind, FunctionDecl, ItemKind, Module, Param, Pattern, PatternKind,
     TypeExpr, TypeExprKind,
 };
+use ql_span::Span;
 
-type TypeSubstitutions = BTreeMap<String, String>;
+pub(super) type TypeSubstitutions = BTreeMap<String, String>;
 type ValueTypeBindings = BTreeMap<String, InferredType>;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct PublicFunctionCallInstantiation {
+    pub(super) callee_span: Span,
+    pub(super) substitutions: TypeSubstitutions,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct InferredType {
@@ -142,19 +149,31 @@ impl InferredType {
     }
 }
 
-pub(super) fn collect_public_function_instantiations(
+#[cfg(test)]
+fn collect_public_function_instantiations(
     root_module: &Module,
     module_import_path: &[String],
     function: &FunctionDecl,
 ) -> BTreeSet<TypeSubstitutions> {
+    collect_public_function_call_instantiations(root_module, module_import_path, function)
+        .into_iter()
+        .map(|instantiation| instantiation.substitutions)
+        .collect()
+}
+
+pub(super) fn collect_public_function_call_instantiations(
+    root_module: &Module,
+    module_import_path: &[String],
+    function: &FunctionDecl,
+) -> Vec<PublicFunctionCallInstantiation> {
     let local_names =
         dependency_imported_local_names(root_module, module_import_path, function.name.as_str());
     if local_names.is_empty() {
-        return BTreeSet::new();
+        return Vec::new();
     }
 
     let root_bindings = collect_root_value_type_bindings(root_module);
-    let mut instantiations = BTreeSet::new();
+    let mut instantiations = Vec::new();
     for item in &root_module.items {
         collect_dependency_generic_function_instantiations_from_item(
             item,
@@ -222,7 +241,7 @@ fn collect_dependency_generic_function_instantiations_from_item(
     local_names: &BTreeSet<String>,
     dependency_function: &FunctionDecl,
     root_bindings: &ValueTypeBindings,
-    instantiations: &mut BTreeSet<TypeSubstitutions>,
+    instantiations: &mut Vec<PublicFunctionCallInstantiation>,
 ) {
     match &item.kind {
         ItemKind::Function(root_function) => {
@@ -326,7 +345,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
     local_names: &BTreeSet<String>,
     function: &FunctionDecl,
     bindings: &mut ValueTypeBindings,
-    instantiations: &mut BTreeSet<TypeSubstitutions>,
+    instantiations: &mut Vec<PublicFunctionCallInstantiation>,
     return_expected_ty: Option<&TypeExpr>,
     tail_expected_ty: Option<&TypeExpr>,
 ) {
@@ -447,7 +466,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
     local_names: &BTreeSet<String>,
     function: &FunctionDecl,
     bindings: &ValueTypeBindings,
-    instantiations: &mut BTreeSet<TypeSubstitutions>,
+    instantiations: &mut Vec<PublicFunctionCallInstantiation>,
 ) {
     match &expr.kind {
         ExprKind::Call { callee, args } => {
@@ -460,7 +479,10 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                     bindings,
                 )
             {
-                instantiations.insert(substitutions);
+                instantiations.push(PublicFunctionCallInstantiation {
+                    callee_span: callee.span,
+                    substitutions,
+                });
             }
             collect_dependency_generic_function_instantiations_from_expr(
                 callee,

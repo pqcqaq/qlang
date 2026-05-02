@@ -6315,6 +6315,12 @@ struct PreparedProjectTargetBuild {
     additional_link_inputs: Vec<PathBuf>,
 }
 
+#[derive(Clone, Debug, Default)]
+struct RenderedDependencyBridgeItems {
+    declarations: String,
+    source_rewrites: Vec<dependency_generic_bridge::SourceRewrite>,
+}
+
 fn build_project_source_target(
     workspace_members: &[WorkspaceBuildTargets],
     command_label: &str,
@@ -6489,14 +6495,16 @@ fn prepare_project_target_build_quiet(
     } else {
         String::new()
     };
-    let bridge_code =
-        join_dependency_bridge_sections(&dependency_bridge_items, &public_function_exports);
+    let bridge_code = join_dependency_bridge_sections(
+        &dependency_bridge_items.declarations,
+        &public_function_exports,
+    );
 
-    let source_override = if bridge_code.is_empty() {
-        None
-    } else {
-        Some(append_dependency_declarations(&source, &bridge_code))
-    };
+    let source_override = dependency_bridge_source_override(
+        &source,
+        &bridge_code,
+        &dependency_bridge_items.source_rewrites,
+    );
 
     Ok(PreparedProjectTargetBuild {
         source_override,
@@ -6586,14 +6594,16 @@ fn prepare_project_target_build(
         Ok(items) => items,
         Err(code) => return Err(code),
     };
-    let bridge_code =
-        join_dependency_bridge_sections(&dependency_bridge_items, &public_function_exports);
+    let bridge_code = join_dependency_bridge_sections(
+        &dependency_bridge_items.declarations,
+        &public_function_exports,
+    );
 
-    let source_override = if bridge_code.is_empty() {
-        None
-    } else {
-        Some(append_dependency_declarations(&source, &bridge_code))
-    };
+    let source_override = dependency_bridge_source_override(
+        &source,
+        &bridge_code,
+        &dependency_bridge_items.source_rewrites,
+    );
 
     Ok(PreparedProjectTargetBuild {
         source_override,
@@ -6649,14 +6659,15 @@ fn prepare_project_test_target_build(
         Ok(items) => items,
         Err(code) => return Err(code),
     };
-    let bridge_code =
-        join_dependency_bridge_sections(&dependency_bridge_items, &package_bridge_items);
+    let bridge_code = join_dependency_bridge_sections(
+        &dependency_bridge_items.declarations,
+        &package_bridge_items.declarations,
+    );
+    let mut source_rewrites = dependency_bridge_items.source_rewrites;
+    source_rewrites.extend(package_bridge_items.source_rewrites);
 
-    let source_override = if bridge_code.is_empty() {
-        None
-    } else {
-        Some(append_dependency_declarations(&source, &bridge_code))
-    };
+    let source_override =
+        dependency_bridge_source_override(&source, &bridge_code, &source_rewrites);
 
     Ok(PreparedProjectTargetBuild {
         source_override,
@@ -6672,6 +6683,56 @@ fn append_dependency_declarations(source: &str, dependency_declarations: &str) -
         combined.push('\n');
     }
     combined
+}
+
+fn dependency_bridge_source_override(
+    source: &str,
+    dependency_declarations: &str,
+    source_rewrites: &[dependency_generic_bridge::SourceRewrite],
+) -> Option<String> {
+    if dependency_declarations.is_empty() && source_rewrites.is_empty() {
+        return None;
+    }
+
+    let rewritten_source = apply_dependency_source_rewrites(source, source_rewrites);
+    if dependency_declarations.is_empty() {
+        Some(rewritten_source)
+    } else {
+        Some(append_dependency_declarations(
+            &rewritten_source,
+            dependency_declarations,
+        ))
+    }
+}
+
+fn apply_dependency_source_rewrites(
+    source: &str,
+    source_rewrites: &[dependency_generic_bridge::SourceRewrite],
+) -> String {
+    let mut rewrites = source_rewrites.to_vec();
+    rewrites.sort_by(|left, right| {
+        right
+            .span
+            .start
+            .cmp(&left.span.start)
+            .then_with(|| right.span.end.cmp(&left.span.end))
+    });
+
+    let mut rewritten = source.to_owned();
+    let mut next_start = source.len();
+    for rewrite in rewrites {
+        if rewrite.span.start > rewrite.span.end
+            || rewrite.span.end > source.len()
+            || !source.is_char_boundary(rewrite.span.start)
+            || !source.is_char_boundary(rewrite.span.end)
+            || rewrite.span.end > next_start
+        {
+            continue;
+        }
+        rewritten.replace_range(rewrite.span.start..rewrite.span.end, &rewrite.replacement);
+        next_start = rewrite.span.start;
+    }
+    rewritten
 }
 
 fn join_dependency_bridge_sections(primary: &str, secondary: &str) -> String {
@@ -6895,7 +6956,7 @@ fn render_direct_dependency_bridge_items(
     manifest_path: &Path,
     source: &str,
     report_failure: bool,
-) -> Result<String, u8> {
+) -> Result<RenderedDependencyBridgeItems, u8> {
     let value_declarations = render_direct_dependency_public_value_declarations(
         command_label,
         manifest_path,
@@ -6942,16 +7003,18 @@ fn render_direct_dependency_bridge_items(
     let declarations = join_dependency_bridge_sections(&declarations, &extern_declarations);
     let declarations =
         join_dependency_bridge_sections(&declarations, &function_forwarders.forwarders);
-    Ok(join_dependency_bridge_sections(
-        &declarations,
-        &method_forwarders.forwarders,
-    ))
+    let declarations =
+        join_dependency_bridge_sections(&declarations, &method_forwarders.forwarders);
+    Ok(RenderedDependencyBridgeItems {
+        declarations,
+        source_rewrites: function_forwarders.source_rewrites,
+    })
 }
 
 fn render_direct_dependency_bridge_items_quiet(
     manifest_path: &Path,
     source: &str,
-) -> Result<String, PrepareProjectTargetBuildError> {
+) -> Result<RenderedDependencyBridgeItems, PrepareProjectTargetBuildError> {
     let value_declarations =
         render_direct_dependency_public_value_declarations_quiet(manifest_path, source)?;
     let function_forwarders = render_direct_dependency_public_function_forwarders_quiet(
@@ -6984,10 +7047,12 @@ fn render_direct_dependency_bridge_items_quiet(
     let declarations = join_dependency_bridge_sections(&declarations, &extern_declarations);
     let declarations =
         join_dependency_bridge_sections(&declarations, &function_forwarders.forwarders);
-    Ok(join_dependency_bridge_sections(
-        &declarations,
-        &method_forwarders.forwarders,
-    ))
+    let declarations =
+        join_dependency_bridge_sections(&declarations, &method_forwarders.forwarders);
+    Ok(RenderedDependencyBridgeItems {
+        declarations,
+        source_rewrites: function_forwarders.source_rewrites,
+    })
 }
 
 struct PackageBridgeModule {
@@ -7034,19 +7099,19 @@ fn render_package_under_test_bridge_items(
     manifest_path: &Path,
     source: &str,
     report_failure: bool,
-) -> Result<String, u8> {
+) -> Result<RenderedDependencyBridgeItems, u8> {
     let Some(member) = workspace_members.iter().find(|member| {
         normalize_path(&member.member_manifest_path) == normalize_path(manifest_path)
     }) else {
-        return Ok(String::new());
+        return Ok(RenderedDependencyBridgeItems::default());
     };
     let root_source_module = match parse_source(source) {
         Ok(module) => module,
-        Err(_) => return Ok(String::new()),
+        Err(_) => return Ok(RenderedDependencyBridgeItems::default()),
     };
     let bridge_modules = package_under_test_bridge_modules(command_label, member, report_failure)?;
     if bridge_modules.is_empty() {
-        return Ok(String::new());
+        return Ok(RenderedDependencyBridgeItems::default());
     }
 
     let package_name = member.package_name.as_str();
@@ -7059,6 +7124,7 @@ fn render_package_under_test_bridge_items(
     let occupied_root_names = collect_top_level_definition_names(&root_source_module);
 
     let mut forwarders = Vec::new();
+    let mut source_rewrites = Vec::new();
     let mut required_types_by_module_path = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
     let mut function_owners = BTreeMap::<String, DependencyExternOwner>::new();
     for module in &bridge_modules {
@@ -7074,6 +7140,7 @@ fn render_package_under_test_bridge_items(
             &mut required_types_by_module_path,
             &mut function_owners,
             &mut forwarders,
+            &mut source_rewrites,
         )
         .map_err(|error| {
             if !report_failure {
@@ -7148,10 +7215,12 @@ fn render_package_under_test_bridge_items(
         })?;
     }
 
-    Ok(join_dependency_bridge_sections(
-        &type_declarations.join("\n\n"),
-        &forwarders.join("\n\n"),
-    ))
+    let declarations =
+        join_dependency_bridge_sections(&type_declarations.join("\n\n"), &forwarders.join("\n\n"));
+    Ok(RenderedDependencyBridgeItems {
+        declarations,
+        source_rewrites,
+    })
 }
 
 fn render_direct_dependency_extern_declarations(
@@ -7345,6 +7414,7 @@ struct RenderedDependencyPublicValueDeclarations {
 #[derive(Default)]
 struct RenderedDependencyPublicFunctionForwarders {
     forwarders: String,
+    source_rewrites: Vec<dependency_generic_bridge::SourceRewrite>,
     required_types_by_module_path: BTreeMap<Vec<String>, BTreeSet<String>>,
 }
 
@@ -7668,6 +7738,7 @@ fn render_direct_dependency_public_function_forwarders(
     let occupied_root_names = collect_top_level_definition_names(&root_source_module);
 
     let mut forwarders = Vec::new();
+    let mut source_rewrites = Vec::new();
     let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
     let mut required_types_by_module_path = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
 
@@ -7714,6 +7785,7 @@ fn render_direct_dependency_public_function_forwarders(
             &mut required_types_by_module_path,
             &mut owners_by_symbol,
             &mut forwarders,
+            &mut source_rewrites,
             |dependency_source_path| {
                 fs::read_to_string(dependency_source_path).map_err(|error| {
                     if report_failure {
@@ -7786,6 +7858,7 @@ fn render_direct_dependency_public_function_forwarders(
 
     Ok(RenderedDependencyPublicFunctionForwarders {
         forwarders: forwarders.join("\n\n"),
+        source_rewrites,
         required_types_by_module_path,
     })
 }
@@ -7818,6 +7891,7 @@ fn render_direct_dependency_public_function_forwarders_quiet(
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut forwarders = Vec::new();
+    let mut source_rewrites = Vec::new();
     let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
     let mut required_types_by_module_path = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
 
@@ -7859,6 +7933,7 @@ fn render_direct_dependency_public_function_forwarders_quiet(
             &mut required_types_by_module_path,
             &mut owners_by_symbol,
             &mut forwarders,
+            &mut source_rewrites,
             |dependency_source_path| {
                 fs::read_to_string(dependency_source_path).map_err(|error| {
                     PrepareProjectTargetBuildError {
@@ -7899,6 +7974,7 @@ fn render_direct_dependency_public_function_forwarders_quiet(
 
     Ok(RenderedDependencyPublicFunctionForwarders {
         forwarders: forwarders.join("\n\n"),
+        source_rewrites,
         required_types_by_module_path,
     })
 }
@@ -7913,6 +7989,7 @@ fn collect_dependency_public_function_forwarders_from_modules<E>(
     required_types_by_module_path: &mut BTreeMap<Vec<String>, BTreeSet<String>>,
     owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
     forwarders: &mut Vec<String>,
+    source_rewrites: &mut Vec<dependency_generic_bridge::SourceRewrite>,
     mut read_source: impl FnMut(&Path) -> Result<String, E>,
     mut parse_source_module: impl FnMut(&Path, &str) -> Result<Module, E>,
     mut map_bridge_error: impl FnMut(DependencyPublicFunctionForwarderError) -> E,
@@ -7940,6 +8017,7 @@ fn collect_dependency_public_function_forwarders_from_modules<E>(
             required_types_by_module_path,
             owners_by_symbol,
             forwarders,
+            source_rewrites,
         )
         .map_err(&mut map_bridge_error)?;
     }
@@ -9054,6 +9132,7 @@ fn collect_dependency_module_public_function_forwarders(
     required_types_by_module_path: &mut BTreeMap<Vec<String>, BTreeSet<String>>,
     owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
     forwarders: &mut Vec<String>,
+    source_rewrites: &mut Vec<dependency_generic_bridge::SourceRewrite>,
 ) -> Result<(), DependencyPublicFunctionForwarderError> {
     let module_import_path = dependency_interface_module_import_path(dependency_package, module);
     let type_candidates = dependency_public_type_bridge_candidates(module);
@@ -9072,7 +9151,7 @@ fn collect_dependency_module_public_function_forwarders(
             continue;
         }
         if dependency_generic_bridge::supports_public_function_specialization(function) {
-            let Some(forwarder) = dependency_generic_bridge::render_public_function_specialization(
+            let Some(rendered) = dependency_generic_bridge::render_public_function_specializations(
                 &module_import_path,
                 function,
                 contents,
@@ -9086,7 +9165,7 @@ fn collect_dependency_module_public_function_forwarders(
                 dependency_package,
                 dependency_manifest_path,
                 &function.name,
-                forwarder,
+                rendered.declarations,
                 owners_by_symbol,
                 forwarders,
             )
@@ -9101,6 +9180,7 @@ fn collect_dependency_module_public_function_forwarders(
                     .or_default()
                     .extend(type_dependencies);
             }
+            source_rewrites.extend(rendered.call_rewrites);
             continue;
         }
         if !supports_dependency_public_function_import_bridge(function) {

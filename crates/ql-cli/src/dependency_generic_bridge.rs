@@ -1,8 +1,20 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ql_ast::{self, FunctionDecl, Module, Param, Visibility};
 
 mod instantiations;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceRewrite {
+    pub span: ql_span::Span,
+    pub replacement: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RenderedPublicFunctionSpecializations {
+    pub declarations: String,
+    pub call_rewrites: Vec<SourceRewrite>,
+}
 
 pub fn supports_public_function_specialization(function: &FunctionDecl) -> bool {
     function.visibility == Visibility::Public
@@ -17,61 +29,92 @@ pub fn supports_public_function_specialization(function: &FunctionDecl) -> bool 
             .all(|param| matches!(param, Param::Regular { .. }))
 }
 
-pub fn render_public_function_specialization(
+pub fn render_public_function_specializations(
     module_import_path: &[String],
     function: &FunctionDecl,
     contents: &str,
     root_module: &Module,
-) -> Option<String> {
+) -> Option<RenderedPublicFunctionSpecializations> {
     if !supports_public_function_specialization(function) || function.body.is_none() {
         return None;
     }
-    let instantiations = instantiations::collect_public_function_instantiations(
+    let call_instantiations = instantiations::collect_public_function_call_instantiations(
         root_module,
         module_import_path,
         function,
     );
-    if instantiations.len() != 1 {
-        return None;
-    }
-    let substitutions = instantiations.into_iter().next()?;
-    if function
-        .generics
-        .iter()
-        .any(|generic| !substitutions.contains_key(&generic.name))
-    {
+    if call_instantiations.is_empty() {
         return None;
     }
 
+    let mut concrete_instantiations = BTreeSet::new();
+    for instantiation in &call_instantiations {
+        if function
+            .generics
+            .iter()
+            .any(|generic| !instantiation.substitutions.contains_key(&generic.name))
+        {
+            return None;
+        }
+        concrete_instantiations.insert(instantiation.substitutions.clone());
+    }
+
+    let mut declarations = Vec::new();
+    for substitutions in &concrete_instantiations {
+        declarations.push(render_public_function_specialized_forwarder(
+            module_import_path,
+            function,
+            contents,
+            substitutions,
+        )?);
+    }
+
+    let call_rewrites = call_instantiations
+        .into_iter()
+        .map(|instantiation| SourceRewrite {
+            span: instantiation.callee_span,
+            replacement: dependency_public_function_specialized_local_forwarder_name(
+                module_import_path,
+                &function.name,
+                function,
+                &instantiation.substitutions,
+            ),
+        })
+        .collect();
+
+    Some(RenderedPublicFunctionSpecializations {
+        declarations: declarations.join("\n\n"),
+        call_rewrites,
+    })
+}
+
+fn render_public_function_specialized_forwarder(
+    module_import_path: &[String],
+    function: &FunctionDecl,
+    contents: &str,
+    substitutions: &BTreeMap<String, String>,
+) -> Option<String> {
     let params =
-        render_dependency_bridge_param_list_with_substitutions(function, contents, &substitutions);
+        render_dependency_bridge_param_list_with_substitutions(function, contents, substitutions);
     let return_suffix = render_dependency_bridge_return_suffix_with_substitutions(
         function,
         contents,
-        &substitutions,
-    );
-    let callable_type = render_dependency_bridge_callable_type_with_substitutions(
-        function,
-        contents,
-        &substitutions,
+        substitutions,
     );
     let specialized_name = dependency_public_function_specialized_local_forwarder_name(
         module_import_path,
         &function.name,
         function,
-        &substitutions,
+        substitutions,
     );
     let body = replace_generic_identifiers(
         span_text(contents, function.body.as_ref()?.span).trim(),
-        &substitutions,
+        substitutions,
     );
 
-    let mut rendered = format!("fn {specialized_name}({params}){return_suffix} {body}\n\n");
-    rendered.push_str(&format!(
-        "const {}: {callable_type} = {specialized_name}",
-        function.name
-    ));
-    Some(rendered)
+    Some(format!(
+        "fn {specialized_name}({params}){return_suffix} {body}"
+    ))
 }
 
 fn render_dependency_bridge_param_list_with_substitutions(
@@ -91,31 +134,6 @@ fn render_dependency_bridge_param_list_with_substitutions(
         })
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn render_dependency_bridge_callable_type_with_substitutions(
-    function: &FunctionDecl,
-    contents: &str,
-    substitutions: &BTreeMap<String, String>,
-) -> String {
-    let params =
-        function
-            .params
-            .iter()
-            .filter_map(|param| match param {
-                Param::Regular { ty, .. } => Some(
-                    render_dependency_bridge_type_with_substitutions(ty, contents, substitutions),
-                ),
-                Param::Receiver { .. } => None,
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-    let return_ty = function
-        .return_type
-        .as_ref()
-        .map(|ty| render_dependency_bridge_type_with_substitutions(ty, contents, substitutions))
-        .unwrap_or_else(|| "()".to_owned());
-    format!("({params}) -> {return_ty}")
 }
 
 fn render_dependency_bridge_return_suffix_with_substitutions(

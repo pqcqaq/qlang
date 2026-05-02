@@ -282,6 +282,104 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_package_tests_support_current_package_generic_public_function_multiple_instantiations() {
+    if !toolchain_available(
+        "`ql test` current package multi-instantiation generic public function test",
+    ) {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-current-package-multiple-generic-instantiations");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source root for multiple generic function instantiations");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "app/src/lib.ql",
+        r#"
+pub fn identity[T](value: T) -> T {
+    return value
+}
+"#,
+    );
+    temp.write(
+        "app/tests/smoke.ql",
+        r#"
+use app.identity as identity
+
+fn bool_score(value: Bool) -> Int {
+    if value {
+        return 5
+    }
+    return 0
+}
+
+fn main() -> Int {
+    let number: Int = identity(7)
+    let flag: Bool = identity(true)
+    if number + bool_score(flag) == 12 {
+        return 0
+    }
+    return 1
+}
+"#,
+    );
+
+    let package_output = static_library_output_path(&project_root.join("target/ql/debug"), "lib");
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test` current package multiple generic public function instantiations",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-current-package-multiple-generic-instantiations",
+        "package tests importing current package generic function with multiple concrete instantiations",
+        &output,
+    )
+    .expect("package-path `ql test` should support multiple current package generic function instantiations");
+    expect_empty_stderr(
+        "project-test-current-package-multiple-generic-instantiations",
+        "package tests importing current package generic function with multiple concrete instantiations",
+        &stderr,
+    )
+    .expect("multiple generic function package test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-current-package-multiple-generic-instantiations",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("multiple generic function package test should report a passing smoke test");
+    expect_file_exists(
+        "project-test-current-package-multiple-generic-instantiations",
+        &package_output,
+        "current package library",
+        "`ql test` current package multiple generic public function instantiations",
+    )
+    .expect("current package library should build before the multiple generic test bridge runs");
+    expect_file_exists(
+        "project-test-current-package-multiple-generic-instantiations",
+        &smoke_output,
+        "current package multiple generic function test executable",
+        "`ql test` current package multiple generic public function instantiations",
+    )
+    .expect("multiple generic function package test should emit the smoke test executable");
+}
+
+#[test]
 fn test_package_tests_support_current_package_generic_function_from_generic_carriers() {
     if !toolchain_available("`ql test` current package generic carrier function test") {
         return;
