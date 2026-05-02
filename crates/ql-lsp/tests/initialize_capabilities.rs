@@ -4,8 +4,8 @@ use common::request::initialize_service;
 use ql_lsp::Backend;
 use tower_lsp::LspService;
 use tower_lsp::lsp_types::{
-    FoldingRangeProviderCapability, OneOf, SelectionRangeProviderCapability,
-    SemanticTokensFullOptions, SemanticTokensServerCapabilities,
+    CodeActionKind, CodeActionProviderCapability, FoldingRangeProviderCapability, OneOf,
+    SelectionRangeProviderCapability, SemanticTokensFullOptions, SemanticTokensServerCapabilities,
 };
 
 #[tokio::test(flavor = "current_thread")]
@@ -45,6 +45,22 @@ async fn initialize_declares_rich_editor_capabilities() {
         capabilities.document_range_formatting_provider,
         Some(OneOf::Left(true))
     ));
+    let Some(CodeActionProviderCapability::Options(code_action)) =
+        capabilities.code_action_provider.as_ref()
+    else {
+        panic!(
+            "codeAction provider should declare option capabilities, got {:?}",
+            capabilities.code_action_provider
+        )
+    };
+    assert_eq!(code_action.resolve_provider, Some(true));
+    assert_eq!(
+        code_action.code_action_kinds,
+        Some(vec![
+            CodeActionKind::QUICKFIX,
+            CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+        ])
+    );
     let on_type = capabilities
         .document_on_type_formatting_provider
         .as_ref()

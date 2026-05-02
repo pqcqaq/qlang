@@ -1,14 +1,15 @@
 mod common;
 
 use common::request::{
-    TempDir, code_action_via_request, did_open_via_request,
+    TempDir, code_action_resolve_via_request, code_action_via_request,
+    code_action_via_request_with_only, did_open_via_request,
     initialize_service_with_workspace_roots, nth_offset, offset_to_position,
 };
 use ql_diagnostics::UNRESOLVED_TYPE_CODE;
 use ql_lsp::Backend;
 use tower_lsp::LspService;
 use tower_lsp::lsp_types::{
-    CodeActionOrCommand, Diagnostic, NumberOrString, Position, Range, TextEdit, Url,
+    CodeActionKind, CodeActionOrCommand, Diagnostic, NumberOrString, Position, Range, TextEdit, Url,
 };
 
 fn unresolved_type_diagnostic(source: &str, name: &str) -> Diagnostic {
@@ -185,5 +186,89 @@ name = "app"
             .contains("[dependencies]\ncore = \"../core\"\n"),
         "actual manifest edit: {:#?}",
         manifest_edits[0],
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn code_action_resolve_preserves_quickfix_action() {
+    let temp = TempDir::new("ql-lsp-code-action-resolve");
+    let app_source = r#"package demo.app
+
+pub fn build(config: Config) -> Int {
+    return 1
+}
+"#;
+    let app_manifest = r#"
+[package]
+name = "app"
+
+[dependencies]
+core = { path = "../core" }
+"#;
+    let (workspace_root_uri, app_uri, _) = setup_workspace(&temp, app_manifest, app_source);
+    let diagnostic = unresolved_type_diagnostic(app_source, "Config");
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service_with_workspace_roots(&mut service, vec![workspace_root_uri]).await;
+    did_open_via_request(&mut service, app_uri.clone(), app_source.to_owned()).await;
+
+    let actions = code_action_via_request(
+        &mut service,
+        app_uri,
+        diagnostic.range,
+        vec![diagnostic.clone()],
+    )
+    .await
+    .expect("code action request should return actions");
+    let CodeActionOrCommand::CodeAction(action) = actions[0].clone() else {
+        panic!("expected code action, got {:#?}", actions[0])
+    };
+
+    let resolved = code_action_resolve_via_request(&mut service, action.clone()).await;
+
+    assert_eq!(resolved, action);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn source_organize_imports_sorts_and_deduplicates_use_block() {
+    let temp = TempDir::new("ql-lsp-code-action-organize-imports");
+    let source = r#"package demo.app
+
+use demo.zed.Widget
+use demo.core.Config
+use demo.core.Config
+
+pub fn build() -> Int {
+    return 1
+}
+"#;
+    let source_path = temp.write("main.ql", source);
+    let uri = Url::from_file_path(&source_path).expect("source path should convert to URI");
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service_with_workspace_roots(&mut service, vec![]).await;
+    did_open_via_request(&mut service, uri.clone(), source.to_owned()).await;
+
+    let actions = code_action_via_request_with_only(
+        &mut service,
+        uri.clone(),
+        Range::new(Position::new(0, 0), Position::new(0, 0)),
+        Vec::new(),
+        Some(vec![CodeActionKind::SOURCE_ORGANIZE_IMPORTS]),
+    )
+    .await
+    .expect("source.organizeImports request should return actions");
+
+    assert_eq!(actions.len(), 1, "actual actions: {actions:#?}");
+    let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+        panic!("expected code action, got {:#?}", actions[0])
+    };
+    assert_eq!(action.title, "Organize imports");
+    assert_eq!(action.kind, Some(CodeActionKind::SOURCE_ORGANIZE_IMPORTS));
+    let changes = action_changes(&actions[0]);
+    assert_eq!(
+        changes.get(&uri),
+        Some(&vec![TextEdit::new(
+            Range::new(Position::new(2, 0), Position::new(5, 0)),
+            "use demo.core.Config\nuse demo.zed.Widget\n".to_owned(),
+        )]),
     );
 }

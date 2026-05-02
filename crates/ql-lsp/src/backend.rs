@@ -23,7 +23,7 @@ use tower_lsp::lsp_types::request::{
     GotoImplementationResponse, GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
 };
 use tower_lsp::lsp_types::{
-    CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
+    CodeAction, CodeActionKind, CodeActionOptions, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, CompletionItem as LspCompletionItem, CompletionOptions,
     CompletionParams, CompletionResponse, DeclarationCapability, Diagnostic, DiagnosticSeverity,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
@@ -260,6 +260,29 @@ fn line_content_spans(source: &str) -> Vec<(Span, &str)> {
         line_start = offset + ch.len_utf8();
     }
     if line_start < source.len() || source.ends_with('\n') {
+        lines.push((
+            Span::new(line_start, source.len()),
+            &source[line_start..source.len()],
+        ));
+    }
+    lines
+}
+
+fn full_line_spans(source: &str) -> Vec<(Span, &str)> {
+    let mut lines = Vec::new();
+    let mut line_start = 0usize;
+    for (offset, ch) in source.char_indices() {
+        if ch != '\n' {
+            continue;
+        }
+        let line_end = offset + ch.len_utf8();
+        lines.push((
+            Span::new(line_start, line_end),
+            &source[line_start..line_end],
+        ));
+        line_start = line_end;
+    }
+    if line_start < source.len() {
         lines.push((
             Span::new(line_start, source.len()),
             &source[line_start..source.len()],
@@ -1346,6 +1369,81 @@ fn auto_import_code_actions_for_source(
         CodeActionOrCommand::Command(command) => command.title.clone(),
     });
     actions
+}
+
+fn organize_imports_code_action(uri: &Url, source: &str) -> Option<CodeActionOrCommand> {
+    let edit = organize_imports_edit(source)?;
+    let mut changes = HashMap::new();
+    changes.insert(uri.clone(), vec![edit]);
+    Some(CodeActionOrCommand::CodeAction(CodeAction {
+        title: "Organize imports".to_owned(),
+        kind: Some(CodeActionKind::SOURCE_ORGANIZE_IMPORTS),
+        diagnostics: None,
+        edit: Some(WorkspaceEdit::new(changes)),
+        command: None,
+        is_preferred: Some(true),
+        disabled: None,
+        data: None,
+    }))
+}
+
+fn organize_imports_edit(source: &str) -> Option<TextEdit> {
+    let lines = full_line_spans(source);
+    let first_import = lines.iter().position(|(_, line)| is_use_line(line))?;
+    let import_count = lines[first_import..]
+        .iter()
+        .take_while(|(_, line)| is_use_line(line))
+        .count();
+    if import_count == 0 {
+        return None;
+    }
+    let last_import = first_import + import_count - 1;
+
+    let mut imports = lines[first_import..=last_import]
+        .iter()
+        .map(|(_, line)| trim_line_ending(line).to_owned())
+        .collect::<Vec<_>>();
+    let original = imports.clone();
+    imports.sort();
+    imports.dedup();
+    if imports == original {
+        return None;
+    }
+
+    let new_text = imports
+        .into_iter()
+        .map(|line| format!("{line}\n"))
+        .collect::<String>();
+    let span = Span::new(lines[first_import].0.start, lines[last_import].0.end);
+    Some(TextEdit::new(span_to_range(source, span), new_text))
+}
+
+fn is_use_line(line: &str) -> bool {
+    trim_line_ending(line).starts_with("use ")
+}
+
+fn trim_line_ending(line: &str) -> &str {
+    line.trim_end_matches(['\r', '\n'])
+}
+
+fn code_action_kind_requested(only: &Option<Vec<CodeActionKind>>, kind: &CodeActionKind) -> bool {
+    let Some(only) = only.as_ref() else {
+        return true;
+    };
+    only.is_empty()
+        || only
+            .iter()
+            .any(|requested| code_action_kind_includes(requested, kind))
+}
+
+fn code_action_kind_includes(requested: &CodeActionKind, kind: &CodeActionKind) -> bool {
+    let requested = requested.as_str();
+    let kind = kind.as_str();
+    requested.is_empty()
+        || kind == requested
+        || kind
+            .strip_prefix(requested)
+            .is_some_and(|suffix| suffix.starts_with('.'))
 }
 
 fn import_missing_dependency_code_actions_for_position(
@@ -9081,6 +9179,17 @@ fn completion_options() -> CompletionOptions {
     }
 }
 
+fn code_action_options() -> CodeActionProviderCapability {
+    CodeActionProviderCapability::Options(CodeActionOptions {
+        code_action_kinds: Some(vec![
+            CodeActionKind::QUICKFIX,
+            CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+        ]),
+        resolve_provider: Some(true),
+        ..CodeActionOptions::default()
+    })
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
@@ -9116,7 +9225,7 @@ impl LanguageServer for Backend {
                     retrigger_characters: Some([")"].into_iter().map(str::to_owned).collect()),
                     work_done_progress_options: Default::default(),
                 }),
-                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+                code_action_provider: Some(code_action_options()),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 document_range_formatting_provider: Some(OneOf::Left(true)),
                 document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
@@ -9741,24 +9850,37 @@ impl LanguageServer for Backend {
         let Some(source) = self.documents.get(&uri).await else {
             return Ok(None);
         };
-        let documents = self.documents.entries().await;
-        let workspace_roots = self.workspace_roots.read().await.clone();
-        let actions = auto_import_code_actions_for_source(
-            &uri,
-            &source,
-            &params.context.diagnostics,
-            documents.clone(),
-            &workspace_roots,
-        );
-        let mut actions = actions;
-        actions.extend(import_missing_dependency_code_actions_for_position(
-            &uri,
-            &source,
-            params.range.start,
-            documents,
-            &workspace_roots,
-        ));
+        let mut actions = Vec::new();
+        if code_action_kind_requested(&params.context.only, &CodeActionKind::QUICKFIX) {
+            let documents = self.documents.entries().await;
+            let workspace_roots = self.workspace_roots.read().await.clone();
+            actions.extend(auto_import_code_actions_for_source(
+                &uri,
+                &source,
+                &params.context.diagnostics,
+                documents.clone(),
+                &workspace_roots,
+            ));
+            actions.extend(import_missing_dependency_code_actions_for_position(
+                &uri,
+                &source,
+                params.range.start,
+                documents,
+                &workspace_roots,
+            ));
+        }
+        if code_action_kind_requested(
+            &params.context.only,
+            &CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+        ) && let Some(action) = organize_imports_code_action(&uri, &source)
+        {
+            actions.push(action);
+        }
         Ok((!actions.is_empty()).then_some(actions))
+    }
+
+    async fn code_action_resolve(&self, params: CodeAction) -> Result<CodeAction> {
+        Ok(params)
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {

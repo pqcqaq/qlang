@@ -4,7 +4,7 @@
 
 **Goal:** Bring Qlang editor experience close to the TypeScript language server baseline by fixing visible syntax UX first, then expanding backend LSP capability in small verified slices.
 
-**Status 2026-05-02:** The first rich-editor slices are implemented: VS Code grammar now mirrors the lexer keyword set, `qlsp` declares and serves keyword hover, keyword/snippet completion, `completionItem/resolve` documentation/detail enrichment, semantic tokens full/range with lexical tokens and modifiers, signature help, local type inlay hints, folding ranges, selection ranges, range formatting, and on-type formatting. Remaining TypeScript-parity work is still code lens, codeAction resolve/source actions, call/type hierarchy, file-operation hooks, and a deeper AST/type-driven implementation of signature/inlay/folding/selection.
+**Status 2026-05-02:** The first rich-editor slices are implemented: VS Code grammar now mirrors the lexer keyword set, `qlsp` declares and serves keyword hover, keyword/snippet completion, `completionItem/resolve` documentation/detail enrichment, semantic tokens full/range with lexical tokens and modifiers, signature help, local type inlay hints, folding ranges, selection ranges, range formatting, on-type formatting, `codeAction/resolve`, and `source.organizeImports`. Remaining TypeScript-parity work is still code lens, richer source actions, call/type hierarchy, file-operation hooks, and a deeper AST/type-driven implementation of signature/inlay/folding/selection.
 
 **Architecture:** Keep `ql-analysis` as the semantic truth source and keep `ql-lsp` as the protocol bridge. VS Code lexical coloring stays in the extension TextMate grammar; semantic coloring, hover, navigation, diagnostics, actions, and workspace intelligence stay behind `qlsp`.
 
@@ -28,16 +28,16 @@ Important correction: TypeScript keyword coloring is not mainly produced by LSP 
 
 ## Original Qlang Gap
 
-Current `qlsp` already declares diagnostics through publish, hover, definition, declaration, typeDefinition, implementation, references, documentHighlight, documentSymbol, workspaceSymbol, completion, codeAction, documentFormatting, semanticTokens/full, prepareRename, and rename.
+Current `qlsp` already declares diagnostics through publish, hover, definition, declaration, typeDefinition, implementation, references, documentHighlight, documentSymbol, workspaceSymbol, completion, codeAction with resolve, document/range/on-type formatting, semanticTokens full/range, prepareRename, and rename.
 
 The visible UX gap that motivated this plan was:
 
 - `editors/vscode/qlang/syntaxes/qlang.tmLanguage.json` misses lexer keywords such as `package`, `loop`, `where`, `is`, `as`, `satisfies`, and `none`.
 - `crates/ql-lsp/src/bridge.rs` semantic token legend only has symbol categories. It has no token modifiers and no range support.
 - `crates/ql-lsp/src/backend.rs` has no keyword hover path. Hover only works for semantic symbols and dependency-backed symbols.
-- `qlsp` does not declare or implement signature help, inlay hints, folding range, selection range, code lens, completion resolve, range formatting, on-type formatting, semantic token range, workspace execute commands, file-operation hooks, call hierarchy, or type hierarchy.
+- `qlsp` does not yet declare or implement code lens, richer source actions, workspace execute commands, file-operation hooks, call hierarchy, or type hierarchy.
 - Diagnostics are current-document first with package preflight fallback; there is no workspace diagnostics pipeline.
-- Code actions are useful but narrow: unresolved-symbol auto import and missing dependency quick fixes only.
+- Code actions are useful but narrow: unresolved-symbol auto import, missing dependency quick fixes, idempotent resolve, and top-level organize imports only.
 
 ## Implementation Order
 
@@ -187,9 +187,9 @@ The visible UX gap that motivated this plan was:
 1. Add a workspace document graph that tracks open files, manifests, package roots, local dependencies, and interface freshness.
 2. Publish diagnostics for open workspace files after debounced changes.
 3. Add diagnostics for stale `.qi`, missing package exports, duplicate package names, broken local dependency paths, and import resolution failures.
-4. Add code actions for organize imports, add missing dependency, remove unused imports, create missing package section, and regenerate interface.
-5. Add codeAction resolve and source action kinds.
-6. Run diagnostics and code action tests.
+4. Partly done: add `source.organizeImports` for sorting/deduplicating consecutive top-level `use ...` blocks; remove unused imports, create missing package section, and regenerate interface remain open.
+5. Done: add `codeAction/resolve`, advertised quickfix/source action kinds, and `context.only` filtering.
+6. Done for this slice: `cargo test -p ql-lsp --test code_action_request --test initialize_capabilities --test request_smoke`.
 7. Commit as `feat: add workspace diagnostics and source actions`.
 
 ### Task 10: Navigation and Refactor Parity

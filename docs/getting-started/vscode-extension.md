@@ -28,7 +28,7 @@
 - documentFormatting / rangeFormatting / onTypeFormatting
 - documentSymbol / workspaceSymbol
 - semanticTokens/full / semanticTokens/range（range 与 full 共用 workspace/open-doc token 路径）
-- codeAction（unresolved symbol auto-import / missing workspace dependency quick fix）
+- codeAction / codeAction resolve（unresolved symbol auto-import / missing workspace dependency quick fix / source.organizeImports）
 - conservative rename / narrow workspace rename
 
 ## 当前边界
@@ -36,6 +36,7 @@
 - 这仍然不是完整 workspace-wide index。
 - diagnostics 仍只发布当前打开文档；当前 buffer 干净时才补 manifest / interface preflight 错误，不做 workspace-wide diagnostics 推送。
 - formatting 复用 `ql fmt`，支持 parseable source 的整文档格式化、能安全落在请求范围内的逐行 range formatting，以及只作用于触发行的 on-type formatting；无法安全拆成局部行 edit 的格式化差异会保守返回空 edit。
+- `source.organizeImports` 当前只对连续顶层 `use ...` block 做排序和去重；不会重写分组 import、删除未使用 import 或跨文件推断。
 - `signatureHelp`、`inlayHint`、`foldingRange`、`selectionRange` 已有可用基础实现，但不是 TypeScript 那种完整 workspace service。
 - rename 只开放 same-file 和一部分 source-backed dependency / workspace root 保守路径。
 - 插件不自带 `qlsp` 二进制；没有 Marketplace 发布流。

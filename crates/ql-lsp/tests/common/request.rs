@@ -16,14 +16,15 @@ use tower_lsp::lsp_types::request::{
     GotoImplementationResponse, GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
 };
 use tower_lsp::lsp_types::{
-    CodeActionOrCommand, CompletionItem as LspCompletionItem, CompletionParams, CompletionResponse,
-    Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentFormattingParams, DocumentHighlight, DocumentOnTypeFormattingParams,
-    DocumentRangeFormattingParams, DocumentSymbolParams, DocumentSymbolResponse, FoldingRange,
-    FoldingRangeParams, FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, Hover,
-    HoverParams, InitializeParams, InitializeResult, InlayHint, InlayHintParams, Location,
-    Position, PrepareRenameResponse, Range, ReferenceContext, ReferenceParams, RenameParams,
-    SelectionRange, SelectionRangeParams, SemanticTokensParams, SemanticTokensRangeParams,
+    CodeAction, CodeActionKind, CodeActionOrCommand, CompletionItem as LspCompletionItem,
+    CompletionParams, CompletionResponse, Diagnostic, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
+    DocumentHighlight, DocumentOnTypeFormattingParams, DocumentRangeFormattingParams,
+    DocumentSymbolParams, DocumentSymbolResponse, FoldingRange, FoldingRangeParams,
+    FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
+    InitializeParams, InitializeResult, InlayHint, InlayHintParams, Location, Position,
+    PrepareRenameResponse, Range, ReferenceContext, ReferenceParams, RenameParams, SelectionRange,
+    SelectionRangeParams, SemanticTokensParams, SemanticTokensRangeParams,
     SemanticTokensRangeResult, SemanticTokensResult, SignatureHelp, SignatureHelpParams,
     SymbolInformation, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
     TextDocumentPositionParams, TextEdit, Url, VersionedTextDocumentIdentifier, WorkspaceEdit,
@@ -386,6 +387,16 @@ pub async fn code_action_via_request(
     range: Range,
     diagnostics: Vec<Diagnostic>,
 ) -> Option<Vec<CodeActionOrCommand>> {
+    code_action_via_request_with_only(service, uri, range, diagnostics, None).await
+}
+
+pub async fn code_action_via_request_with_only(
+    service: &mut LspService<Backend>,
+    uri: Url,
+    range: Range,
+    diagnostics: Vec<Diagnostic>,
+    only: Option<Vec<CodeActionKind>>,
+) -> Option<Vec<CodeActionOrCommand>> {
     let value = request_value(
         service,
         "textDocument/codeAction",
@@ -396,11 +407,20 @@ pub async fn code_action_via_request(
             "range": range,
             "context": {
                 "diagnostics": diagnostics,
+                "only": only,
             },
         }),
     )
     .await;
     serde_json::from_value(value).expect("textDocument/codeAction result should deserialize")
+}
+
+pub async fn code_action_resolve_via_request(
+    service: &mut LspService<Backend>,
+    action: CodeAction,
+) -> CodeAction {
+    let value = request_value(service, "codeAction/resolve", json!(action)).await;
+    serde_json::from_value(value).expect("codeAction/resolve result should deserialize")
 }
 
 pub async fn references_via_request(

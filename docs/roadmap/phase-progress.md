@@ -62,7 +62,7 @@
 - `workspace/symbol` 对 source-preferred 本地依赖的排除现在按 manifest 身份而不是 package name 执行；真实项目里即使存在同名本地依赖，也不会再把另一个依赖的 `.qi` symbol 一起过滤掉。
 - 同名本地依赖的 type / enum / enum member、method / trait method / extend method `workspace/symbol` 现在也有 open-documents 与 `workspace_roots` 回归保护；`[dependencies]` 本地路径依赖入口也已锁住“源码优先返回当前依赖，同时保留兄弟依赖 `.qi` 符号”这条组合场景。
 - `workspace/symbol` 现在也有真实 LSP request 回归，直接覆盖 workspace root 无打开文档、open unsaved 本地依赖源码优先、同名本地依赖隔离三条入口级合同。
-- `textDocument/codeAction` 现在也有 unresolved type 的真实 LSP request 回归，直接覆盖已有依赖的 auto-import，以及 sibling workspace member 缺依赖时“插 `use` + 补 `qlang.toml`”的组合 quick fix。
+- `textDocument/codeAction` 现在也有 unresolved type 的真实 LSP request 回归，直接覆盖已有依赖的 auto-import，以及 sibling workspace member 缺依赖时“插 `use` + 补 `qlang.toml`”的组合 quick fix；`codeAction/resolve` 会保持现有 quickfix action/edit 幂等返回，`source.organizeImports` 当前可对连续顶层 `use ...` block 排序去重。
 - 这一轮把 `textDocument/references` 与 `textDocument/documentHighlight` 也补进了真实 `LspService` request smoke；当前已把 workspace dependency references、current-file documentHighlight 的入口级合同锁住。
 - 这一轮把 `textDocument/typeDefinition`、`textDocument/documentSymbol`、`textDocument/semanticTokens/full` 也补进了真实 `LspService` request smoke；当前 same-file 显式类型名跳转、document symbol 嵌套返回、semantic token full data 的协议入口已被锁住。
 - 这一轮把 `textDocument/prepareRename` / `rename` 也补进真实 `LspService` request 回归；当前 same-file rename 的 range/placeholder 与同文件 `WorkspaceEdit` 返回合同已经直接覆盖协议入口，workspace source-root function rename 也已锁住从 import use 发起并返回 app / sibling consumer / defining source 三侧 edits 的真实 request 路径。
