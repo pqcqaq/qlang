@@ -306,6 +306,11 @@ pub struct Box[T] {
     value: T,
 }
 
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+
 pub fn identity[T](value: T) -> T {
     return value
 }
@@ -313,13 +318,22 @@ pub fn identity[T](value: T) -> T {
 pub fn keep_box[T](value: Box[T]) -> Box[T] {
     return value
 }
+
+pub fn is_some[T](value: Option[T]) -> Bool {
+    return match value {
+        Option.Some(_) => true,
+        Option.None => false,
+    }
+}
 "#,
     );
     temp.write(
         "app/tests/smoke.ql",
         r#"
 use app.Box as Box
+use app.Option as Option
 use app.identity as identity
+use app.is_some as is_some
 use app.keep_box as keep_box
 
 fn check(value: Box[Int]) -> Int {
@@ -330,7 +344,7 @@ fn check(value: Box[Int]) -> Int {
 
 fn main() -> Int {
     let value: Box[Int] = Box { value: 42 }
-    if check(value) == 42 {
+    if check(value) == 42 && is_some(Option.Some(42)) {
         return 0
     }
     return 1

@@ -142,7 +142,7 @@
 
 ## 下一轮（已排定）
 
-- stdlib/generics：按 [Stdlib Generics and Collections Roadmap](/plans/2026-05-02-stdlib-generics-and-collections-roadmap) 推进；`std.array` 的固定数组过渡面已先落地，generic type / carrier 执行面、uninstantiated generic function declaration 面、primitive literal / typed value / generic carrier inferred single-instantiation generic public function bridge，以及 `std.option` / `std.result` 首批 generic helper smoke 已被回归锁住。下一刀继续把实例推断扩到更多表达式调用点和完整 monomorphization 表，补 bridge 专用符号命名、LLVM specialization、collection helper 和 generic constructor 返回上下文推断，而不是再扩 concrete helper。
+- stdlib/generics：按 [Stdlib Generics and Collections Roadmap](/plans/2026-05-02-stdlib-generics-and-collections-roadmap) 推进；`std.array` 的固定数组过渡面已先落地，generic type / carrier 执行面、uninstantiated generic function declaration 面、primitive literal / typed value / generic carrier / 单字段 generic enum variant constructor inferred single-instantiation generic public function bridge，以及 `std.option` / `std.result` 首批 generic helper smoke 已被回归锁住。下一刀继续把实例推断扩到更多表达式调用点和完整 monomorphization 表，补 bridge 专用符号命名、LLVM specialization、collection helper 和 generic constructor 返回上下文推断，而不是再扩 concrete helper。
 - stdlib/API：暂停继续堆新的重复参数 `foo3/foo4/foo5` 式 helper；现有 concrete Option/Result 和 fixed-arity helper 保留为兼容面，新的主路径优先设计 generic carrier、数组/集合 helper 和后续可变参数。
 - backend：继续扩 direct local dependency 下真实项目高频的 public value/type/member 调用面；短期重点从非泛型 alias 转到 generic public API 的实例化、桥接和 codegen。后续仍优先修 `stdlib` / 模板暴露的真实阻塞。
 - LSP：`textDocument/implementation` 的已完成基线已明显超出这里最初记录，当前准确支持面以 `current-supported-surface.md` 为准；继续扩更宽的 implementation index，但不压过 P0 stdlib / backend 阻塞项。

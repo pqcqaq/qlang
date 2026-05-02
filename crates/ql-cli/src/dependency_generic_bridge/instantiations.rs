@@ -868,8 +868,35 @@ fn infer_dependency_generic_expr_type(
         ExprKind::Bool(_) => Some(InferredType::primitive("Bool")),
         ExprKind::String { .. } => Some(InferredType::primitive("String")),
         ExprKind::Name(name) => bindings.get(name).cloned(),
+        ExprKind::Call { callee, args } => {
+            infer_single_field_generic_variant_call_type(callee, args, bindings)
+        }
         _ => None,
     }
+}
+
+fn infer_single_field_generic_variant_call_type(
+    callee: &Expr,
+    args: &[CallArg],
+    bindings: &ValueTypeBindings,
+) -> Option<InferredType> {
+    let ExprKind::Member { object, .. } = &callee.kind else {
+        return None;
+    };
+    let ExprKind::Name(type_name) = &object.kind else {
+        return None;
+    };
+    let [CallArg::Positional(value)] = args else {
+        return None;
+    };
+    let arg_ty = infer_dependency_generic_expr_type(value, bindings)?;
+    Some(InferredType {
+        rendered: format!("{type_name}[{}]", arg_ty.rendered),
+        kind: InferredTypeKind::Named {
+            path: vec![type_name.clone()],
+            args: vec![arg_ty],
+        },
+    })
 }
 
 #[cfg(test)]
@@ -922,6 +949,53 @@ fn run() -> Int {
             &root,
             &["std".to_owned(), "option".to_owned()],
             function(&dependency, "unwrap_or"),
+        );
+
+        assert_eq!(instantiations.len(), 1);
+        let substitutions = instantiations
+            .iter()
+            .next()
+            .expect("one substitution should be inferred");
+        assert_eq!(substitutions.get("T").map(String::as_str), Some("Int"));
+    }
+
+    #[test]
+    fn infers_substitution_from_single_field_generic_variant_call() {
+        let dependency = parse_module(
+            r#"
+package std.option
+
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+
+pub fn is_some[T](value: Option[T]) -> Bool {
+    return match value {
+        Option.Some(_) => true,
+        Option.None => false,
+    }
+}
+"#,
+        );
+        let root = parse_module(
+            r#"
+use std.option.Option as Option
+use std.option.is_some as option_is_some
+
+fn run() -> Int {
+    if option_is_some(Option.Some(42)) {
+        return 0
+    }
+    return 1
+}
+"#,
+        );
+
+        let instantiations = collect_public_function_instantiations(
+            &root,
+            &["std".to_owned(), "option".to_owned()],
+            function(&dependency, "is_some"),
         );
 
         assert_eq!(instantiations.len(), 1);
