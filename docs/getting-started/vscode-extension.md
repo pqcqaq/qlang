@@ -20,7 +20,7 @@
 - references
 - documentHighlight
 - completion
-- completionItem/resolve（当前用于补齐缺失的 keyword / symbol 文档和 detail）
+- completionItem/resolve（当前用于从 completion data 补齐缺失的 keyword / symbol / dependency detail 与 markdown 文档）
 - signatureHelp
 - inlayHint（当前覆盖稳定的局部变量推断类型提示）
 - foldingRange

@@ -67,7 +67,7 @@
 
 ### LSP 与 VSCode
 
-- same-file 语义已经接通：hover、keyword hover、definition、declaration、typeDefinition、references、documentHighlight、completion、completion resolve（补齐缺失文档/detail）、signatureHelp、inlayHint、foldingRange、selectionRange、semanticTokens/full、semanticTokens/range、documentSymbol、document/range/on-type formatting、codeLens、rename。
+- same-file 语义已经接通：hover、keyword hover、definition、declaration、typeDefinition、references、documentHighlight、completion、completion resolve（通过 completion data 恢复缺失的 keyword / symbol / dependency detail 与 markdown 文档；dependency field/member completion 会保留类型文档）、signatureHelp、inlayHint、foldingRange、selectionRange、semanticTokens/full、semanticTokens/range、documentSymbol、document/range/on-type formatting、codeLens、rename。
 - `workspace/symbol` 已落地。
 - `textDocument/codeAction` 第一版已落地：当前会对 unresolved value/type 提供 quick fix，并从 workspace member / 本地依赖源码或 `.qi` 的 `package ...` 声明推导完整 `use ...` 路径；若候选来自未声明的 sibling workspace member，还会同时给当前 package `qlang.toml` 补本地 `[dependencies]` 项。显式 `use demo.xxx...` 指向未声明的 sibling workspace member 时，也会直接提供只改 manifest 的 missing-dependency quick fix。`codeAction/resolve` 现在已声明并保持现有 action/edit 幂等返回；`source.organizeImports` 已支持对连续顶层 `use ...` block 排序去重，并按 `context.only` 与 quickfix 分流。真实 LSP request 回归已锁住 unresolved type auto-import、“插 `use` + 补 manifest”、quickfix resolve 和 source organize imports 入口。
 - `textDocument/codeLens` 第一版已落地：当前只在可解析的当前文档内工作，会为 document symbols 生成 references / implementations lenses，并用 VSCode `editor.action.showReferences` 展示位置；`codeLens/resolve` 已声明并保持幂等返回。真实 LSP request 回归已锁住 reference lens、implementation lens、resolve 幂等和 parse-error 空结果。

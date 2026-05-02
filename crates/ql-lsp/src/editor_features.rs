@@ -1,6 +1,7 @@
 use ql_analysis::Analysis;
 use ql_lexer::{Token, TokenKind, lex};
 use ql_span::Span;
+use serde_json::Value as JsonValue;
 use tower_lsp::lsp_types::{
     CompletionItem as LspCompletionItem, CompletionItemKind, CompletionResponse,
     CompletionTextEdit, Documentation, FoldingRange, Hover, HoverContents, InlayHint,
@@ -9,8 +10,10 @@ use tower_lsp::lsp_types::{
     SignatureInformation, TextEdit,
 };
 
+use crate::bridge::completion_documentation_from_parts;
 use crate::bridge::{position_to_offset, span_to_range};
 
+#[derive(Clone, Copy)]
 struct KeywordInfo {
     category: &'static str,
     summary: &'static str,
@@ -45,28 +48,32 @@ pub fn completion_for_keywords(source: &str, position: Position) -> Option<Compl
 }
 
 pub fn resolve_completion_item(mut item: LspCompletionItem) -> LspCompletionItem {
-    if item.detail.is_none()
-        && let Some(info) = keyword_kind_for_label(&item.label).and_then(keyword_info)
-    {
-        item.detail = Some(format!("{} keyword", info.category));
+    let keyword_info = keyword_kind_for_label(&item.label).and_then(keyword_info);
+    let data_detail = completion_item_data_string(&item, "detail");
+    let data_type = completion_item_data_string(&item, "ty");
+
+    if item.detail.is_none() {
+        item.detail = keyword_info
+            .map(|info| format!("{} keyword", info.category))
+            .or_else(|| data_detail.clone());
     }
 
     if item.documentation.is_none() {
-        if let Some(info) = keyword_kind_for_label(&item.label).and_then(keyword_info) {
+        if let Some(info) = keyword_info {
             item.documentation = Some(keyword_documentation(info));
-        } else if let Some(detail) = item
-            .detail
-            .as_ref()
-            .filter(|detail| !detail.trim().is_empty())
-        {
-            item.documentation = Some(Documentation::MarkupContent(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: format!("```ql\n{detail}\n```"),
-            }));
+        } else if let Some(detail) = item.detail.as_deref().or(data_detail.as_deref()) {
+            item.documentation = completion_documentation_from_parts(detail, data_type.as_deref());
         }
     }
 
     item
+}
+
+fn completion_item_data_string(item: &LspCompletionItem, key: &str) -> Option<String> {
+    let data: &JsonValue = item.data.as_ref()?;
+    let data = data.as_object()?;
+    let value = data.get(key)?.as_str()?;
+    Some(value.to_owned())
 }
 
 pub fn signature_help_for_analysis(

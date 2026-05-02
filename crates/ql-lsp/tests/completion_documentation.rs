@@ -5,7 +5,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_analysis::{analyze_package, analyze_source};
 use ql_lsp::bridge::{completion_for_analysis, completion_for_package_analysis};
-use tower_lsp::lsp_types::{CompletionResponse, Documentation, MarkupKind, Position};
+use serde_json::Value as JsonValue;
+use tower_lsp::lsp_types::{
+    CompletionItem as LspCompletionItem, CompletionResponse, Documentation, MarkupKind, Position,
+};
 
 struct TempDir {
     path: PathBuf,
@@ -57,6 +60,11 @@ fn offset_to_position(source: &str, offset: usize) -> Position {
     Position::new(line, prefix[line_start..].chars().count() as u32)
 }
 
+fn completion_item_data_string<'a>(item: &'a LspCompletionItem, key: &str) -> Option<&'a str> {
+    let data: &JsonValue = item.data.as_ref()?;
+    data.get(key)?.as_str()
+}
+
 #[test]
 fn completion_bridge_surfaces_markdown_documentation_for_same_file_items() {
     let source = r#"
@@ -82,11 +90,16 @@ fn main() -> Int {
         .into_iter()
         .find(|item| item.label == "helper")
         .expect("helper completion should exist");
-    let Some(Documentation::MarkupContent(markup)) = helper.documentation else {
+    let Some(Documentation::MarkupContent(markup)) = helper.documentation.as_ref() else {
         panic!("completion documentation should use markdown")
     };
     assert_eq!(markup.kind, MarkupKind::Markdown);
     assert!(markup.value.contains("fn helper(value: Int) -> Int"));
+    assert_eq!(
+        completion_item_data_string(&helper, "detail"),
+        Some("fn helper(value: Int) -> Int")
+    );
+    assert_eq!(completion_item_data_string(&helper, "ty"), None);
 }
 
 #[test]
@@ -153,12 +166,17 @@ pub fn main() -> Int {
         .into_iter()
         .find(|item| item.label == "flag")
         .expect("field completion should exist");
-    let Some(Documentation::MarkupContent(markup)) = field.documentation else {
+    let Some(Documentation::MarkupContent(markup)) = field.documentation.as_ref() else {
         panic!("dependency completion documentation should use markdown")
     };
     assert_eq!(markup.kind, MarkupKind::Markdown);
     assert!(markup.value.contains("field flag: Bool"));
     assert!(markup.value.contains("Type: `Bool`"));
+    assert_eq!(
+        completion_item_data_string(&field, "detail"),
+        Some("field flag: Bool")
+    );
+    assert_eq!(completion_item_data_string(&field, "ty"), Some("Bool"));
 }
 
 #[test]
@@ -233,12 +251,17 @@ pub fn main(config: Cfg) -> Int {
         .into_iter()
         .find(|item| item.label == "child")
         .expect("member field completion should exist");
-    let Some(Documentation::MarkupContent(field_markup)) = field.documentation else {
+    let Some(Documentation::MarkupContent(field_markup)) = field.documentation.as_ref() else {
         panic!("member field documentation should use markdown")
     };
     assert_eq!(field_markup.kind, MarkupKind::Markdown);
     assert!(field_markup.value.contains("field child: Child"));
     assert!(field_markup.value.contains("Type: `Child`"));
+    assert_eq!(
+        completion_item_data_string(&field, "detail"),
+        Some("field child: Child")
+    );
+    assert_eq!(completion_item_data_string(&field, "ty"), Some("Child"));
 
     let Some(CompletionResponse::Array(method_items)) = completion_for_package_analysis(
         source,
@@ -252,10 +275,15 @@ pub fn main(config: Cfg) -> Int {
         .into_iter()
         .find(|item| item.label == "get")
         .expect("member method completion should exist");
-    let Some(Documentation::MarkupContent(method_markup)) = method.documentation else {
+    let Some(Documentation::MarkupContent(method_markup)) = method.documentation.as_ref() else {
         panic!("member method documentation should use markdown")
     };
     assert_eq!(method_markup.kind, MarkupKind::Markdown);
     assert!(method_markup.value.contains("fn get(self) -> Child"));
     assert!(method_markup.value.contains("Type: `Child`"));
+    assert_eq!(
+        completion_item_data_string(&method, "detail"),
+        Some("fn get(self) -> Child")
+    );
+    assert_eq!(completion_item_data_string(&method, "ty"), Some("Child"));
 }

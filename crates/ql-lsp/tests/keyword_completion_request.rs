@@ -93,3 +93,137 @@ async fn completion_resolve_enriches_items_without_inline_docs() {
         "symbol resolve should turn detail into markdown documentation: {resolved_symbol:#?}",
     );
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn completion_resolve_recovers_symbol_documentation_from_completion_data() {
+    let temp = TempDir::new("ql-lsp-completion-resolve-data");
+    let source_path = temp.write(
+        "completion.ql",
+        r#"
+fn helper(value: Int) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    hel
+}
+"#,
+    );
+    let source = std::fs::read_to_string(&source_path).expect("source should read");
+    let uri = Url::from_file_path(&source_path).expect("source path should convert to URI");
+    let mut service =
+        initialized_service_with_open_documents(vec![(uri.clone(), source.clone())]).await;
+
+    let completion = completion_via_request(
+        &mut service,
+        uri,
+        offset_to_position(&source, nth_offset(&source, "hel", 1) + "hel".len()),
+    )
+    .await
+    .expect("semantic completion should be available");
+    let items = match completion {
+        CompletionResponse::Array(items) => items,
+        CompletionResponse::List(list) => list.items,
+    };
+    let helper = items
+        .into_iter()
+        .find(|item| item.label == "helper")
+        .expect("helper completion should exist");
+    let mut stripped_helper = helper.clone();
+    stripped_helper.detail = None;
+    stripped_helper.documentation = None;
+
+    let resolved_helper = completion_resolve_via_request(&mut service, stripped_helper).await;
+    assert_eq!(
+        resolved_helper.detail.as_deref(),
+        Some("fn helper(value: Int) -> Int")
+    );
+    assert!(
+        completion_documentation(&resolved_helper).contains("fn helper(value: Int) -> Int"),
+        "resolve should rebuild symbol markdown docs from completion data: {resolved_helper:#?}",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn completion_resolve_recovers_dependency_documentation_from_completion_data() {
+    let temp = TempDir::new("ql-lsp-completion-resolve-dependency-data");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    flag: Bool,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn main() -> Int {
+    let built = Cfg { fl: true }
+    1
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let source_path = app_root.join("src/lib.ql");
+    let uri = Url::from_file_path(&source_path).expect("source path should convert to URI");
+    let mut service =
+        initialized_service_with_open_documents(vec![(uri.clone(), source.to_owned())]).await;
+
+    let completion = completion_via_request(
+        &mut service,
+        uri,
+        offset_to_position(source, nth_offset(source, "fl", 1) + "fl".len()),
+    )
+    .await
+    .expect("dependency completion should be available");
+    let items = match completion {
+        CompletionResponse::Array(items) => items,
+        CompletionResponse::List(list) => list.items,
+    };
+    let field = items
+        .into_iter()
+        .find(|item| item.label == "flag")
+        .expect("dependency field completion should exist");
+    let mut stripped_field = field.clone();
+    stripped_field.detail = None;
+    stripped_field.documentation = None;
+
+    let resolved_field = completion_resolve_via_request(&mut service, stripped_field).await;
+    assert_eq!(resolved_field.detail.as_deref(), Some("field flag: Bool"));
+    assert!(
+        completion_documentation(&resolved_field).contains("field flag: Bool"),
+        "resolve should rebuild dependency field docs from completion data: {resolved_field:#?}",
+    );
+    assert!(
+        completion_documentation(&resolved_field).contains("Type: `Bool`"),
+        "resolve should preserve the dependency field type in markdown docs: {resolved_field:#?}",
+    );
+}

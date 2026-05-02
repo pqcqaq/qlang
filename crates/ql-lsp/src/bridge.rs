@@ -12,6 +12,7 @@ use ql_diagnostics::{
 };
 use ql_lexer::{TokenKind, lex};
 use ql_span::Span;
+use serde_json::json;
 use tower_lsp::lsp_types::request::{
     GotoDeclarationResponse, GotoImplementationResponse, GotoTypeDefinitionResponse,
 };
@@ -1068,6 +1069,7 @@ pub(crate) fn completion_response(
             kind: Some(completion_item_kind(item.kind)),
             detail: Some(item.detail.clone()),
             documentation: completion_documentation(&item),
+            data: completion_item_data(&item),
             text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(
                 span_to_range(source, replace_span),
                 item.insert_text,
@@ -1083,13 +1085,20 @@ pub(crate) fn completion_response(
 }
 
 fn completion_documentation(item: &ql_analysis::CompletionItem) -> Option<Documentation> {
+    completion_documentation_from_parts(&item.detail, item.ty.as_deref())
+}
+
+pub(crate) fn completion_documentation_from_parts(
+    detail: &str,
+    ty: Option<&str>,
+) -> Option<Documentation> {
     let mut sections = Vec::new();
 
-    if !item.detail.trim().is_empty() {
-        sections.push(format!("```ql\n{}\n```", item.detail));
+    if !detail.trim().is_empty() {
+        sections.push(format!("```ql\n{detail}\n```"));
     }
 
-    if let Some(ty) = &item.ty {
+    if let Some(ty) = ty {
         sections.push(format!("Type: `{ty}`"));
     }
 
@@ -1099,6 +1108,17 @@ fn completion_documentation(item: &ql_analysis::CompletionItem) -> Option<Docume
             value: sections.join("\n\n"),
         })
     })
+}
+
+fn completion_item_data(item: &ql_analysis::CompletionItem) -> Option<serde_json::Value> {
+    if item.detail.trim().is_empty() && item.ty.is_none() {
+        return None;
+    }
+
+    Some(json!({
+        "detail": item.detail,
+        "ty": item.ty,
+    }))
 }
 
 pub fn semantic_tokens_legend() -> SemanticTokensLegend {
