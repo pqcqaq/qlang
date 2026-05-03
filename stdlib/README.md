@@ -16,10 +16,10 @@
 
 - `std.option.Option[T]` 和 `std.result.Result[T, E]`
 - `std.array` 的 canonical length-generic helpers
-- `std.test` 的断言 helpers
+- `std.test` 的普通断言和 length-generic 数组断言 helpers
 
 保留的 concrete API 和固定参数 helper 只是兼容面，不是继续扩张方向。
-固定长度数组 helper 当前只作为转调 canonical API 的薄兼容层维护；新代码应直接导入 canonical helpers。
+固定长度数组 helper 当前只作为薄兼容层维护；新代码应直接导入 canonical/generic helpers。
 
 ## 本地依赖
 

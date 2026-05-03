@@ -33,7 +33,7 @@
 - 当前跨包执行仍是保守切片：bridgeable `const/static`、受限顶层 free function、`extern "c"`、部分 type/value bridge、受限 receiver method。
 - public generic free function 已支持 direct-call 多实例 specialization，前提是类型参数能从字面量、简单表达式、tuple / fixed-array literal、projection、显式 typed value、carrier value、单字段 enum variant constructor 或显式结果上下文推断。
 - dependency generic specialization 会递归处理同依赖模块内的 generic helper 直调，允许兼容 wrapper 转调 canonical generic API。
-- `std.option.Option[T]`、`std.result.Result[T, E]`、`std.array` 的 canonical length-generic helpers、`std.test` 的断言 helpers 已进入真实 smoke；数组固定长度 helper 只保留为兼容层。
+- `std.option.Option[T]`、`std.result.Result[T, E]`、`std.array` 的 canonical length-generic helpers、`std.test` 的普通断言和 length-generic 数组断言 helpers 已进入真实 smoke；数组固定长度 helper 只保留为兼容层。
 
 ### LSP 与 VSCode
 

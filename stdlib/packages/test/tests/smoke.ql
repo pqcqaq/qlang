@@ -5,27 +5,35 @@ use std.test.expect_bool_and as expect_bool_and
 use std.test.expect_bool_array_all3 as expect_bool_array_all3
 use std.test.expect_bool_array_all4 as expect_bool_array_all4
 use std.test.expect_bool_array_all5 as expect_bool_array_all5
+use std.test.expect_bool_array_all as expect_bool_array_all
 use std.test.expect_bool_array_at3 as expect_bool_array_at3
 use std.test.expect_bool_array_at4 as expect_bool_array_at4
 use std.test.expect_bool_array_at5 as expect_bool_array_at5
+use std.test.expect_bool_array_at as expect_bool_array_at
 use std.test.expect_bool_array_any3 as expect_bool_array_any3
 use std.test.expect_bool_array_any4 as expect_bool_array_any4
 use std.test.expect_bool_array_any5 as expect_bool_array_any5
+use std.test.expect_bool_array_any as expect_bool_array_any
 use std.test.expect_bool_array_contains3 as expect_bool_array_contains3
 use std.test.expect_bool_array_contains4 as expect_bool_array_contains4
 use std.test.expect_bool_array_contains5 as expect_bool_array_contains5
+use std.test.expect_bool_array_contains as expect_bool_array_contains
 use std.test.expect_bool_array_count3 as expect_bool_array_count3
 use std.test.expect_bool_array_count4 as expect_bool_array_count4
 use std.test.expect_bool_array_count5 as expect_bool_array_count5
+use std.test.expect_bool_array_count as expect_bool_array_count
 use std.test.expect_bool_array_first3 as expect_bool_array_first3
 use std.test.expect_bool_array_first4 as expect_bool_array_first4
 use std.test.expect_bool_array_first5 as expect_bool_array_first5
+use std.test.expect_bool_array_first as expect_bool_array_first
 use std.test.expect_bool_array_last3 as expect_bool_array_last3
 use std.test.expect_bool_array_last4 as expect_bool_array_last4
 use std.test.expect_bool_array_last5 as expect_bool_array_last5
+use std.test.expect_bool_array_last as expect_bool_array_last
 use std.test.expect_bool_array_none3 as expect_bool_array_none3
 use std.test.expect_bool_array_none4 as expect_bool_array_none4
 use std.test.expect_bool_array_none5 as expect_bool_array_none5
+use std.test.expect_bool_array_none as expect_bool_array_none
 use std.test.expect_bool_array_repeat3 as expect_bool_array_repeat3
 use std.test.expect_bool_array_repeat4 as expect_bool_array_repeat4
 use std.test.expect_bool_array_repeat5 as expect_bool_array_repeat5
@@ -89,27 +97,35 @@ use std.test.expect_int_abs_diff as expect_int_abs_diff
 use std.test.expect_int_array_at3 as expect_int_array_at3
 use std.test.expect_int_array_at4 as expect_int_array_at4
 use std.test.expect_int_array_at5 as expect_int_array_at5
+use std.test.expect_int_array_at as expect_int_array_at
 use std.test.expect_int_array_contains3 as expect_int_array_contains3
 use std.test.expect_int_array_contains4 as expect_int_array_contains4
 use std.test.expect_int_array_contains5 as expect_int_array_contains5
+use std.test.expect_int_array_contains as expect_int_array_contains
 use std.test.expect_int_array_count3 as expect_int_array_count3
 use std.test.expect_int_array_count4 as expect_int_array_count4
 use std.test.expect_int_array_count5 as expect_int_array_count5
+use std.test.expect_int_array_count as expect_int_array_count
 use std.test.expect_int_array_first3 as expect_int_array_first3
 use std.test.expect_int_array_first4 as expect_int_array_first4
 use std.test.expect_int_array_first5 as expect_int_array_first5
+use std.test.expect_int_array_first as expect_int_array_first
 use std.test.expect_int_array_last3 as expect_int_array_last3
 use std.test.expect_int_array_last4 as expect_int_array_last4
 use std.test.expect_int_array_last5 as expect_int_array_last5
+use std.test.expect_int_array_last as expect_int_array_last
 use std.test.expect_int_array_max3 as expect_int_array_max3
 use std.test.expect_int_array_max4 as expect_int_array_max4
 use std.test.expect_int_array_max5 as expect_int_array_max5
+use std.test.expect_int_array_max as expect_int_array_max
 use std.test.expect_int_array_min3 as expect_int_array_min3
 use std.test.expect_int_array_min4 as expect_int_array_min4
 use std.test.expect_int_array_min5 as expect_int_array_min5
+use std.test.expect_int_array_min as expect_int_array_min
 use std.test.expect_int_array_product3 as expect_int_array_product3
 use std.test.expect_int_array_product4 as expect_int_array_product4
 use std.test.expect_int_array_product5 as expect_int_array_product5
+use std.test.expect_int_array_product as expect_int_array_product
 use std.test.expect_int_array_repeat3 as expect_int_array_repeat3
 use std.test.expect_int_array_repeat4 as expect_int_array_repeat4
 use std.test.expect_int_array_repeat5 as expect_int_array_repeat5
@@ -119,6 +135,7 @@ use std.test.expect_int_array_reverse5 as expect_int_array_reverse5
 use std.test.expect_int_array_sum3 as expect_int_array_sum3
 use std.test.expect_int_array_sum4 as expect_int_array_sum4
 use std.test.expect_int_array_sum5 as expect_int_array_sum5
+use std.test.expect_int_array_sum as expect_int_array_sum
 use std.test.expect_int_average2 as expect_int_average2
 use std.test.expect_int_average3 as expect_int_average3
 use std.test.expect_int_average4 as expect_int_average4
@@ -325,6 +342,11 @@ fn main() -> Int {
     let generic_result_conversion_status = sum4(check_int(expect_generic_int_result_to_option_some(Result.Ok(31), 31), 0), check_int(expect_generic_int_result_to_option_none(Result.Err(8)), 0), check_int(expect_generic_bool_result_to_option_some(Result.Ok(false), false), 0), check_int(expect_generic_bool_result_to_option_none(Result.Err(9)), 0))
     let generic_result_error_option_status = sum4(check_int(expect_generic_int_result_error_some(Result.Err(0), 0), 0), check_int(expect_generic_int_result_error_none(Result.Ok(31)), 0), check_int(expect_generic_bool_result_error_some(Result.Err(0), 0), 0), check_int(expect_generic_bool_result_error_none(Result.Ok(false)), 0))
     let generic_option_conversion_status = sum4(check_int(expect_generic_int_option_ok_or(Option.Some(31), 8, 31), 0), check_int(expect_generic_int_option_ok_or_err(Option.None, 8), 0), check_int(expect_generic_bool_option_ok_or(Option.Some(true), 9, true), 0), check_int(expect_generic_bool_option_ok_or_err(generic_none_bool, 9), 0))
+    let generic_array_access_status = sum4(check_int(expect_int_array_first([9, 8, 7, 6], 9), 0), check_int(expect_int_array_last([9, 8, 7, 6], 6), 0), check_int(expect_bool_array_first([false, true, true], false), 0), check_int(expect_bool_array_last([false, true, true], true), 0))
+    let generic_array_at_status = sum4(check_int(expect_int_array_at([2, 3, 4, 5], 2, 99, 4), 0), check_int(expect_int_array_at([2, 3, 4], 8, 99, 99), 0), check_int(expect_bool_array_at([true, false, true], 1, true, false), 0), check_int(expect_bool_array_at([true, false, true], 8, false, false), 0))
+    let generic_array_query_status = sum4(check_int(expect_int_array_contains([2, 3, 4, 5], 3, true), 0), check_int(expect_int_array_count([2, 3, 2, 2, 4], 2, 3), 0), check_int(expect_bool_array_contains([true, false, true], false, true), 0), check_int(expect_bool_array_count([true, false, true, false], false, 2), 0))
+    let generic_array_aggregate_status = sum4(check_int(expect_int_array_sum([2, 3, 4, 5], 14), 0), check_int(expect_int_array_product([2, 3, 4], 24), 0), check_int(expect_int_array_max([3, 9, 5, 7], 9), 0), check_int(expect_int_array_min([3, 9, 5, 7], 3), 0))
+    let generic_array_bool_aggregate_status = sum4(check_int(expect_bool_array_all([true, true, true], true), 0), check_int(expect_bool_array_any([false, false, true, false], true), 0), check_int(expect_bool_array_none([false, false, false, false, false], true), 0), 0)
     let array_int_access_pass = sum4(check_int(expect_int_array_first3([2, 3, 4], 2), 0), check_int(expect_int_array_first4([2, 3, 4, 5], 2), 0), check_int(expect_int_array_first5([2, 3, 4, 5, 6], 2), 0), check_int(expect_int_array_last3([2, 3, 4], 4), 0))
     let array_int_access5_pass = sum4(check_int(expect_int_array_last4([2, 3, 4, 5], 5), 0), check_int(expect_int_array_last5([2, 3, 4, 5, 6], 6), 0), 0, 0)
     let array_bool_access_pass = sum4(check_int(expect_bool_array_first3([true, false, false], true), 0), check_int(expect_bool_array_first4([false, true, true, true], false), 0), check_int(expect_bool_array_first5([true, false, true, false, true], true), 0), check_int(expect_bool_array_last3([true, false, true], true), 0))
@@ -352,5 +374,5 @@ fn main() -> Int {
     let order_status = sum4(order_pass + order4_pass + order5_pass, order_failure + order4_failure + order5_failure, compare_sign_pass, compare_sign_more_pass + compare_sign_failure)
     let number_status = sum4(number_pass, sign_pass, number_failure, sign_failure)
     let status_status = sum4(status_bool, status_merge, status_merge_large, status_expect)
-    return check_int(sum4(bool_status, int_status, range_status, sum4(order_status, number_status, status_status, sum4(sign_boundary, transform_pass + transform_core_pass + transform_clamp_pass, transform_failure + transform_core_failure + transform_clamp_failure, sum4(aggregate_pass + aggregate5_pass + extrema_pass + division_pass, average_pass + extrema4_pass + extrema5_pass + division_bool_pass + transform_bound_pass, aggregate_failure + aggregate5_failure + extrema_failure + division_failure, average_failure + extrema4_failure + extrema5_failure + division_zero_failure + transform_bound_failure)))), 0) + option_status + option_or_status + option_failure + result_status + result_or_status + result_failure + result_conversion_status + option_conversion_status + result_conversion_failure + option_conversion_failure + result_error_status + result_error_failure + generic_option_status + generic_option_or_status + generic_option_failure + generic_result_status + generic_result_or_status + generic_result_error_status + generic_result_failure + generic_result_conversion_status + generic_result_error_option_status + generic_option_conversion_status + array_int_access_pass + array_int_access5_pass + array_bool_access_pass + array_bool_access5_pass + array_int_at_pass + array_bool_at_pass + array_int_transform_pass + array_repeat_pass + array_bool_transform_pass + array_int_query_pass + array_bool_query_pass + array_int_aggregate_pass + array_int_aggregate5_pass + array_int_extrema_pass + array_bool_aggregate_pass + array_bool_aggregate5_pass + array_bool_none5_pass + array_failure + array_at_failure + array_transform_failure + array_query_failure
+    return check_int(sum4(bool_status, int_status, range_status, sum4(order_status, number_status, status_status, sum4(sign_boundary, transform_pass + transform_core_pass + transform_clamp_pass, transform_failure + transform_core_failure + transform_clamp_failure, sum4(aggregate_pass + aggregate5_pass + extrema_pass + division_pass, average_pass + extrema4_pass + extrema5_pass + division_bool_pass + transform_bound_pass, aggregate_failure + aggregate5_failure + extrema_failure + division_failure, average_failure + extrema4_failure + extrema5_failure + division_zero_failure + transform_bound_failure)))), 0) + option_status + option_or_status + option_failure + result_status + result_or_status + result_failure + result_conversion_status + option_conversion_status + result_conversion_failure + option_conversion_failure + result_error_status + result_error_failure + generic_option_status + generic_option_or_status + generic_option_failure + generic_result_status + generic_result_or_status + generic_result_error_status + generic_result_failure + generic_result_conversion_status + generic_result_error_option_status + generic_option_conversion_status + generic_array_access_status + generic_array_at_status + generic_array_query_status + generic_array_aggregate_status + generic_array_bool_aggregate_status + array_int_access_pass + array_int_access5_pass + array_bool_access_pass + array_bool_access5_pass + array_int_at_pass + array_bool_at_pass + array_int_transform_pass + array_repeat_pass + array_bool_transform_pass + array_int_query_pass + array_bool_query_pass + array_int_aggregate_pass + array_int_aggregate5_pass + array_int_extrema_pass + array_bool_aggregate_pass + array_bool_aggregate5_pass + array_bool_none5_pass + array_failure + array_at_failure + array_transform_failure + array_query_failure
 }

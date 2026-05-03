@@ -9,7 +9,7 @@
 - `std.array` 已有 canonical length-generic access/query/count/aggregate helpers
 - `std.array` 固定长度 access/query/count helper 已收敛为转调 canonical API 的兼容层
 - dependency generic bridge 已支持 wrapper specialization 体内继续转调同模块 generic helper
-- `std.test` 已能复用这些 helpers 做下游 smoke
+- `std.test` 已提供 length-generic 数组断言 helpers，并用 downstream smoke 覆盖不同长度实例
 - `ql project init --stdlib` 已能生成能直接跑 `check/build/run/test` 的项目模板
 
 concrete `IntOption` / `BoolOption`、`IntResult` / `BoolResult`、3/4/5 fixed-arity helper 只是兼容面，不再是主方向。
@@ -18,8 +18,8 @@ concrete `IntOption` / `BoolOption`、`IntResult` / `BoolResult`、3/4/5 fixed-a
 
 1. 继续把 generic public API 的执行面补完整，优先修真正影响下游 smoke 的缺口。
 2. 继续把 `std.array` 剩余 `reverse` / `repeat` 固定长度过渡面往 canonical length-generic API 收敛。
-3. 继续把 `std.test`、项目模板和 downstream smoke 保持在同一套真实 contract 上。
-4. 继续把 `reverse` / `repeat`、method/value generic import、完整 monomorphization 留在明确的后续阶段。
+3. 继续把项目模板和 downstream smoke 保持在同一套真实 contract 上。
+4. 继续把 method/value generic import、完整 monomorphization 留在明确的后续阶段。
 
 ## Rules
 

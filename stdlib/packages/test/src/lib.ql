@@ -1,23 +1,11 @@
 package std.test
 
-use std.array.all_bool_array as array_all_bool
-use std.array.at_array_or as array_at_or
-use std.array.any_bool_array as array_any_bool
-use std.array.contains_array as array_contains
-use std.array.count_array as array_count
-use std.array.first_array as array_first
-use std.array.last_array as array_last
-use std.array.max_int_array as array_max_int
-use std.array.min_int_array as array_min_int
-use std.array.none_bool_array as array_none_bool
-use std.array.product_int_array as array_product_int
 use std.array.repeat3_array as array_repeat3
 use std.array.repeat4_array as array_repeat4
 use std.array.repeat5_array as array_repeat5
 use std.array.reverse3_array as array_reverse3
 use std.array.reverse4_array as array_reverse4
 use std.array.reverse5_array as array_reverse5
-use std.array.sum_int_array as array_sum_int
 use std.core.abs_diff_int as abs_diff_int
 use std.core.abs_int as abs_int
 use std.core.all3_bool as all3_bool
@@ -263,268 +251,415 @@ pub fn expect_int_eq(actual: Int, expected: Int) -> Int {
     return 1
 }
 
+pub fn expect_int_array_first[N](values: [Int; N], expected: Int) -> Int {
+    return expect_int_eq(values[0], expected)
+}
+
+pub fn expect_int_array_last[N](values: [Int; N], expected: Int) -> Int {
+    var last = values[0]
+    for value in values {
+        last = value
+    }
+    return expect_int_eq(last, expected)
+}
+
+pub fn expect_bool_array_first[N](values: [Bool; N], expected: Bool) -> Int {
+    return expect_bool_eq(values[0], expected)
+}
+
+pub fn expect_bool_array_last[N](values: [Bool; N], expected: Bool) -> Int {
+    var last = values[0]
+    for value in values {
+        last = value
+    }
+    return expect_bool_eq(last, expected)
+}
+
+pub fn expect_int_array_at[N](values: [Int; N], index: Int, fallback: Int, expected: Int) -> Int {
+    var current_index = 0
+    for value in values {
+        if current_index == index {
+            return expect_int_eq(value, expected)
+        };
+        current_index = current_index + 1
+    }
+    return expect_int_eq(fallback, expected)
+}
+
+pub fn expect_bool_array_at[N](values: [Bool; N], index: Int, fallback: Bool, expected: Bool) -> Int {
+    var current_index = 0
+    for value in values {
+        if current_index == index {
+            return expect_bool_eq(value, expected)
+        };
+        current_index = current_index + 1
+    }
+    return expect_bool_eq(fallback, expected)
+}
+
+pub fn expect_int_array_contains[N](values: [Int; N], needle: Int, expected: Bool) -> Int {
+    for value in values {
+        if value == needle {
+            return expect_bool_eq(true, expected)
+        }
+    }
+    return expect_bool_eq(false, expected)
+}
+
+pub fn expect_bool_array_contains[N](values: [Bool; N], needle: Bool, expected: Bool) -> Int {
+    for value in values {
+        if value == needle {
+            return expect_bool_eq(true, expected)
+        }
+    }
+    return expect_bool_eq(false, expected)
+}
+
+pub fn expect_int_array_count[N](values: [Int; N], needle: Int, expected: Int) -> Int {
+    var count = 0
+    for value in values {
+        if value == needle {
+            count = count + 1
+        }
+    }
+    return expect_int_eq(count, expected)
+}
+
+pub fn expect_bool_array_count[N](values: [Bool; N], needle: Bool, expected: Int) -> Int {
+    var count = 0
+    for value in values {
+        if value == needle {
+            count = count + 1
+        }
+    }
+    return expect_int_eq(count, expected)
+}
+
+pub fn expect_int_array_sum[N](values: [Int; N], expected: Int) -> Int {
+    var total = 0
+    for value in values {
+        total = total + value
+    }
+    return expect_int_eq(total, expected)
+}
+
+pub fn expect_int_array_product[N](values: [Int; N], expected: Int) -> Int {
+    var total = 1
+    for value in values {
+        total = total * value
+    }
+    return expect_int_eq(total, expected)
+}
+
+pub fn expect_int_array_max[N](values: [Int; N], expected: Int) -> Int {
+    var selected = values[0]
+    for value in values {
+        if value > selected {
+            selected = value
+        }
+    }
+    return expect_int_eq(selected, expected)
+}
+
+pub fn expect_int_array_min[N](values: [Int; N], expected: Int) -> Int {
+    var selected = values[0]
+    for value in values {
+        if value < selected {
+            selected = value
+        }
+    }
+    return expect_int_eq(selected, expected)
+}
+
+pub fn expect_bool_array_all[N](values: [Bool; N], expected: Bool) -> Int {
+    for value in values {
+        if !value {
+            return expect_bool_eq(false, expected)
+        }
+    }
+    return expect_bool_eq(true, expected)
+}
+
+pub fn expect_bool_array_any[N](values: [Bool; N], expected: Bool) -> Int {
+    for value in values {
+        if value {
+            return expect_bool_eq(true, expected)
+        }
+    }
+    return expect_bool_eq(false, expected)
+}
+
+pub fn expect_bool_array_none[N](values: [Bool; N], expected: Bool) -> Int {
+    for value in values {
+        if value {
+            return expect_bool_eq(false, expected)
+        }
+    }
+    return expect_bool_eq(true, expected)
+}
+
 pub fn expect_int_array_first3(values: [Int; 3], expected: Int) -> Int {
-    return expect_int_eq(array_first(values), expected)
+    return expect_int_array_first(values, expected)
 }
 
 pub fn expect_int_array_first4(values: [Int; 4], expected: Int) -> Int {
-    return expect_int_eq(array_first(values), expected)
+    return expect_int_array_first(values, expected)
 }
 
 pub fn expect_int_array_first5(values: [Int; 5], expected: Int) -> Int {
-    return expect_int_eq(array_first(values), expected)
+    return expect_int_array_first(values, expected)
 }
 
 pub fn expect_int_array_last3(values: [Int; 3], expected: Int) -> Int {
-    return expect_int_eq(array_last(values), expected)
+    return expect_int_array_last(values, expected)
 }
 
 pub fn expect_int_array_last4(values: [Int; 4], expected: Int) -> Int {
-    return expect_int_eq(array_last(values), expected)
+    return expect_int_array_last(values, expected)
 }
 
 pub fn expect_int_array_last5(values: [Int; 5], expected: Int) -> Int {
-    return expect_int_eq(array_last(values), expected)
+    return expect_int_array_last(values, expected)
 }
 
 pub fn expect_bool_array_first3(values: [Bool; 3], expected: Bool) -> Int {
-    return expect_bool_eq(array_first(values), expected)
+    return expect_bool_array_first(values, expected)
 }
 
 pub fn expect_bool_array_first4(values: [Bool; 4], expected: Bool) -> Int {
-    return expect_bool_eq(array_first(values), expected)
+    return expect_bool_array_first(values, expected)
 }
 
 pub fn expect_bool_array_first5(values: [Bool; 5], expected: Bool) -> Int {
-    return expect_bool_eq(array_first(values), expected)
+    return expect_bool_array_first(values, expected)
 }
 
 pub fn expect_bool_array_last3(values: [Bool; 3], expected: Bool) -> Int {
-    return expect_bool_eq(array_last(values), expected)
+    return expect_bool_array_last(values, expected)
 }
 
 pub fn expect_bool_array_last4(values: [Bool; 4], expected: Bool) -> Int {
-    return expect_bool_eq(array_last(values), expected)
+    return expect_bool_array_last(values, expected)
 }
 
 pub fn expect_bool_array_last5(values: [Bool; 5], expected: Bool) -> Int {
-    return expect_bool_eq(array_last(values), expected)
+    return expect_bool_array_last(values, expected)
 }
 
 pub fn expect_int_array_at3(values: [Int; 3], index: Int, fallback: Int, expected: Int) -> Int {
-    return expect_int_eq(array_at_or(values, index, fallback), expected)
+    return expect_int_array_at(values, index, fallback, expected)
 }
 
 pub fn expect_int_array_at4(values: [Int; 4], index: Int, fallback: Int, expected: Int) -> Int {
-    return expect_int_eq(array_at_or(values, index, fallback), expected)
+    return expect_int_array_at(values, index, fallback, expected)
 }
 
 pub fn expect_int_array_at5(values: [Int; 5], index: Int, fallback: Int, expected: Int) -> Int {
-    return expect_int_eq(array_at_or(values, index, fallback), expected)
+    return expect_int_array_at(values, index, fallback, expected)
 }
 
 pub fn expect_bool_array_at3(values: [Bool; 3], index: Int, fallback: Bool, expected: Bool) -> Int {
-    return expect_bool_eq(array_at_or(values, index, fallback), expected)
+    return expect_bool_array_at(values, index, fallback, expected)
 }
 
 pub fn expect_bool_array_at4(values: [Bool; 4], index: Int, fallback: Bool, expected: Bool) -> Int {
-    return expect_bool_eq(array_at_or(values, index, fallback), expected)
+    return expect_bool_array_at(values, index, fallback, expected)
 }
 
 pub fn expect_bool_array_at5(values: [Bool; 5], index: Int, fallback: Bool, expected: Bool) -> Int {
-    return expect_bool_eq(array_at_or(values, index, fallback), expected)
+    return expect_bool_array_at(values, index, fallback, expected)
 }
 
 pub fn expect_int_array_reverse3(values: [Int; 3], expected_first: Int, expected_last: Int) -> Int {
     let reversed: [Int; 3] = array_reverse3(values)
-    return expect_int_eq(array_first(reversed), expected_first) + expect_int_eq(array_last(reversed), expected_last)
+    return expect_int_eq(reversed[0], expected_first) + expect_int_eq(reversed[2], expected_last)
 }
 
 pub fn expect_int_array_reverse4(values: [Int; 4], expected_first: Int, expected_last: Int) -> Int {
     let reversed: [Int; 4] = array_reverse4(values)
-    return expect_int_eq(array_first(reversed), expected_first) + expect_int_eq(array_last(reversed), expected_last)
+    return expect_int_eq(reversed[0], expected_first) + expect_int_eq(reversed[3], expected_last)
 }
 
 pub fn expect_int_array_reverse5(values: [Int; 5], expected_first: Int, expected_last: Int) -> Int {
     let reversed: [Int; 5] = array_reverse5(values)
-    return expect_int_eq(array_first(reversed), expected_first) + expect_int_eq(array_last(reversed), expected_last)
+    return expect_int_eq(reversed[0], expected_first) + expect_int_eq(reversed[4], expected_last)
 }
 
 pub fn expect_bool_array_reverse3(values: [Bool; 3], expected_first: Bool, expected_last: Bool) -> Int {
     let reversed: [Bool; 3] = array_reverse3(values)
-    return expect_bool_eq(array_first(reversed), expected_first) + expect_bool_eq(array_last(reversed), expected_last)
+    return expect_bool_eq(reversed[0], expected_first) + expect_bool_eq(reversed[2], expected_last)
 }
 
 pub fn expect_bool_array_reverse4(values: [Bool; 4], expected_first: Bool, expected_last: Bool) -> Int {
     let reversed: [Bool; 4] = array_reverse4(values)
-    return expect_bool_eq(array_first(reversed), expected_first) + expect_bool_eq(array_last(reversed), expected_last)
+    return expect_bool_eq(reversed[0], expected_first) + expect_bool_eq(reversed[3], expected_last)
 }
 
 pub fn expect_bool_array_reverse5(values: [Bool; 5], expected_first: Bool, expected_last: Bool) -> Int {
     let reversed: [Bool; 5] = array_reverse5(values)
-    return expect_bool_eq(array_first(reversed), expected_first) + expect_bool_eq(array_last(reversed), expected_last)
+    return expect_bool_eq(reversed[0], expected_first) + expect_bool_eq(reversed[4], expected_last)
 }
 
 pub fn expect_int_array_repeat3(value: Int, expected: Int) -> Int {
     let repeated: [Int; 3] = array_repeat3(value)
-    return expect_int_eq(array_first(repeated), expected) + expect_int_eq(array_last(repeated), expected)
+    return expect_int_eq(repeated[0], expected) + expect_int_eq(repeated[2], expected)
 }
 
 pub fn expect_int_array_repeat4(value: Int, expected: Int) -> Int {
     let repeated: [Int; 4] = array_repeat4(value)
-    return expect_int_eq(array_first(repeated), expected) + expect_int_eq(array_last(repeated), expected)
+    return expect_int_eq(repeated[0], expected) + expect_int_eq(repeated[3], expected)
 }
 
 pub fn expect_int_array_repeat5(value: Int, expected: Int) -> Int {
     let repeated: [Int; 5] = array_repeat5(value)
-    return expect_int_eq(array_first(repeated), expected) + expect_int_eq(array_last(repeated), expected)
+    return expect_int_eq(repeated[0], expected) + expect_int_eq(repeated[4], expected)
 }
 
 pub fn expect_bool_array_repeat3(value: Bool, expected: Bool) -> Int {
     let repeated: [Bool; 3] = array_repeat3(value)
-    return expect_bool_eq(array_first(repeated), expected) + expect_bool_eq(array_last(repeated), expected)
+    return expect_bool_eq(repeated[0], expected) + expect_bool_eq(repeated[2], expected)
 }
 
 pub fn expect_bool_array_repeat4(value: Bool, expected: Bool) -> Int {
     let repeated: [Bool; 4] = array_repeat4(value)
-    return expect_bool_eq(array_first(repeated), expected) + expect_bool_eq(array_last(repeated), expected)
+    return expect_bool_eq(repeated[0], expected) + expect_bool_eq(repeated[3], expected)
 }
 
 pub fn expect_bool_array_repeat5(value: Bool, expected: Bool) -> Int {
     let repeated: [Bool; 5] = array_repeat5(value)
-    return expect_bool_eq(array_first(repeated), expected) + expect_bool_eq(array_last(repeated), expected)
+    return expect_bool_eq(repeated[0], expected) + expect_bool_eq(repeated[4], expected)
 }
 
 pub fn expect_int_array_contains3(values: [Int; 3], needle: Int, expected: Bool) -> Int {
-    return expect_bool_eq(array_contains(values, needle), expected)
+    return expect_int_array_contains(values, needle, expected)
 }
 
 pub fn expect_int_array_contains4(values: [Int; 4], needle: Int, expected: Bool) -> Int {
-    return expect_bool_eq(array_contains(values, needle), expected)
+    return expect_int_array_contains(values, needle, expected)
 }
 
 pub fn expect_int_array_contains5(values: [Int; 5], needle: Int, expected: Bool) -> Int {
-    return expect_bool_eq(array_contains(values, needle), expected)
+    return expect_int_array_contains(values, needle, expected)
 }
 
 pub fn expect_bool_array_contains3(values: [Bool; 3], needle: Bool, expected: Bool) -> Int {
-    return expect_bool_eq(array_contains(values, needle), expected)
+    return expect_bool_array_contains(values, needle, expected)
 }
 
 pub fn expect_bool_array_contains4(values: [Bool; 4], needle: Bool, expected: Bool) -> Int {
-    return expect_bool_eq(array_contains(values, needle), expected)
+    return expect_bool_array_contains(values, needle, expected)
 }
 
 pub fn expect_bool_array_contains5(values: [Bool; 5], needle: Bool, expected: Bool) -> Int {
-    return expect_bool_eq(array_contains(values, needle), expected)
+    return expect_bool_array_contains(values, needle, expected)
 }
 
 pub fn expect_int_array_count3(values: [Int; 3], needle: Int, expected: Int) -> Int {
-    return expect_int_eq(array_count(values, needle), expected)
+    return expect_int_array_count(values, needle, expected)
 }
 
 pub fn expect_int_array_count4(values: [Int; 4], needle: Int, expected: Int) -> Int {
-    return expect_int_eq(array_count(values, needle), expected)
+    return expect_int_array_count(values, needle, expected)
 }
 
 pub fn expect_int_array_count5(values: [Int; 5], needle: Int, expected: Int) -> Int {
-    return expect_int_eq(array_count(values, needle), expected)
+    return expect_int_array_count(values, needle, expected)
 }
 
 pub fn expect_bool_array_count3(values: [Bool; 3], needle: Bool, expected: Int) -> Int {
-    return expect_int_eq(array_count(values, needle), expected)
+    return expect_bool_array_count(values, needle, expected)
 }
 
 pub fn expect_bool_array_count4(values: [Bool; 4], needle: Bool, expected: Int) -> Int {
-    return expect_int_eq(array_count(values, needle), expected)
+    return expect_bool_array_count(values, needle, expected)
 }
 
 pub fn expect_bool_array_count5(values: [Bool; 5], needle: Bool, expected: Int) -> Int {
-    return expect_int_eq(array_count(values, needle), expected)
+    return expect_bool_array_count(values, needle, expected)
 }
 
 pub fn expect_int_array_sum3(values: [Int; 3], expected: Int) -> Int {
-    return expect_int_eq(array_sum_int(values), expected)
+    return expect_int_array_sum(values, expected)
 }
 
 pub fn expect_int_array_sum4(values: [Int; 4], expected: Int) -> Int {
-    return expect_int_eq(array_sum_int(values), expected)
+    return expect_int_array_sum(values, expected)
 }
 
 pub fn expect_int_array_sum5(values: [Int; 5], expected: Int) -> Int {
-    return expect_int_eq(array_sum_int(values), expected)
+    return expect_int_array_sum(values, expected)
 }
 
 pub fn expect_int_array_product3(values: [Int; 3], expected: Int) -> Int {
-    return expect_int_eq(array_product_int(values), expected)
+    return expect_int_array_product(values, expected)
 }
 
 pub fn expect_int_array_product4(values: [Int; 4], expected: Int) -> Int {
-    return expect_int_eq(array_product_int(values), expected)
+    return expect_int_array_product(values, expected)
 }
 
 pub fn expect_int_array_product5(values: [Int; 5], expected: Int) -> Int {
-    return expect_int_eq(array_product_int(values), expected)
+    return expect_int_array_product(values, expected)
 }
 
 pub fn expect_int_array_max3(values: [Int; 3], expected: Int) -> Int {
-    return expect_int_eq(array_max_int(values), expected)
+    return expect_int_array_max(values, expected)
 }
 
 pub fn expect_int_array_max4(values: [Int; 4], expected: Int) -> Int {
-    return expect_int_eq(array_max_int(values), expected)
+    return expect_int_array_max(values, expected)
 }
 
 pub fn expect_int_array_max5(values: [Int; 5], expected: Int) -> Int {
-    return expect_int_eq(array_max_int(values), expected)
+    return expect_int_array_max(values, expected)
 }
 
 pub fn expect_int_array_min3(values: [Int; 3], expected: Int) -> Int {
-    return expect_int_eq(array_min_int(values), expected)
+    return expect_int_array_min(values, expected)
 }
 
 pub fn expect_int_array_min4(values: [Int; 4], expected: Int) -> Int {
-    return expect_int_eq(array_min_int(values), expected)
+    return expect_int_array_min(values, expected)
 }
 
 pub fn expect_int_array_min5(values: [Int; 5], expected: Int) -> Int {
-    return expect_int_eq(array_min_int(values), expected)
+    return expect_int_array_min(values, expected)
 }
 
 pub fn expect_bool_array_all3(values: [Bool; 3], expected: Bool) -> Int {
-    return expect_bool_eq(array_all_bool(values), expected)
+    return expect_bool_array_all(values, expected)
 }
 
 pub fn expect_bool_array_all4(values: [Bool; 4], expected: Bool) -> Int {
-    return expect_bool_eq(array_all_bool(values), expected)
+    return expect_bool_array_all(values, expected)
 }
 
 pub fn expect_bool_array_all5(values: [Bool; 5], expected: Bool) -> Int {
-    return expect_bool_eq(array_all_bool(values), expected)
+    return expect_bool_array_all(values, expected)
 }
 
 pub fn expect_bool_array_any3(values: [Bool; 3], expected: Bool) -> Int {
-    return expect_bool_eq(array_any_bool(values), expected)
+    return expect_bool_array_any(values, expected)
 }
 
 pub fn expect_bool_array_any4(values: [Bool; 4], expected: Bool) -> Int {
-    return expect_bool_eq(array_any_bool(values), expected)
+    return expect_bool_array_any(values, expected)
 }
 
 pub fn expect_bool_array_any5(values: [Bool; 5], expected: Bool) -> Int {
-    return expect_bool_eq(array_any_bool(values), expected)
+    return expect_bool_array_any(values, expected)
 }
 
 pub fn expect_bool_array_none3(values: [Bool; 3], expected: Bool) -> Int {
-    return expect_bool_eq(array_none_bool(values), expected)
+    return expect_bool_array_none(values, expected)
 }
 
 pub fn expect_bool_array_none4(values: [Bool; 4], expected: Bool) -> Int {
-    return expect_bool_eq(array_none_bool(values), expected)
+    return expect_bool_array_none(values, expected)
 }
 
 pub fn expect_bool_array_none5(values: [Bool; 5], expected: Bool) -> Int {
-    return expect_bool_eq(array_none_bool(values), expected)
+    return expect_bool_array_none(values, expected)
 }
 
 pub fn expect_int_ne(actual: Int, unexpected: Int) -> Int {
