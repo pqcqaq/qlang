@@ -259,6 +259,36 @@ pub(super) fn collect_local_function_type_bindings(root_module: &Module) -> Func
     bindings
 }
 
+pub(super) fn collect_specialized_body_call_instantiations(
+    caller_function: &FunctionDecl,
+    target_function: &FunctionDecl,
+    caller_substitutions: &TypeSubstitutions,
+    function_bindings: &FunctionTypeBindings,
+) -> Vec<PublicFunctionCallInstantiation> {
+    let Some(body) = &caller_function.body else {
+        return Vec::new();
+    };
+    let local_names = BTreeSet::from([target_function.name.clone()]);
+    let mut bindings = ValueTypeBindings::new();
+    collect_function_param_type_bindings_with_substitutions(
+        caller_function,
+        caller_substitutions,
+        &mut bindings,
+    );
+    let mut instantiations = Vec::new();
+    collect_dependency_generic_function_instantiations_from_block(
+        body,
+        &local_names,
+        target_function,
+        &mut bindings,
+        function_bindings,
+        &mut instantiations,
+        None,
+        None,
+    );
+    instantiations
+}
+
 fn collect_root_value_type_bindings(root_module: &Module) -> ValueTypeBindings {
     let mut bindings = ValueTypeBindings::new();
     for item in &root_module.items {
@@ -927,6 +957,21 @@ fn collect_function_param_type_bindings(function: &FunctionDecl, bindings: &mut 
             continue;
         };
         if let Some(ty) = InferredType::from_type_expr(ty) {
+            bindings.insert(name.clone(), ty);
+        }
+    }
+}
+
+fn collect_function_param_type_bindings_with_substitutions(
+    function: &FunctionDecl,
+    substitutions: &TypeSubstitutions,
+    bindings: &mut ValueTypeBindings,
+) {
+    for param in &function.params {
+        let Param::Regular { name, ty, .. } = param else {
+            continue;
+        };
+        if let Some(ty) = inferred_type_from_type_expr_with_substitutions(ty, substitutions) {
             bindings.insert(name.clone(), ty);
         }
     }

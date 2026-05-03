@@ -43,72 +43,39 @@ pub fn count_array[T, N](values: [T; N], needle: T) -> Int {
 }
 
 pub fn first3_array[T](values: [T; 3]) -> T {
-    return values[0]
+    return first_array(values)
 }
 
 pub fn first4_array[T](values: [T; 4]) -> T {
-    return values[0]
+    return first_array(values)
 }
 
 pub fn first5_array[T](values: [T; 5]) -> T {
-    return values[0]
+    return first_array(values)
 }
 
 pub fn last3_array[T](values: [T; 3]) -> T {
-    var last = values[0]
-    for value in values {
-        last = value
-    }
-    return last
+    return last_array(values)
 }
 
 pub fn last4_array[T](values: [T; 4]) -> T {
-    var last = values[0]
-    for value in values {
-        last = value
-    }
-    return last
+    return last_array(values)
 }
 
 pub fn last5_array[T](values: [T; 5]) -> T {
-    var last = values[0]
-    for value in values {
-        last = value
-    }
-    return last
+    return last_array(values)
 }
 
 pub fn at3_array_or[T](values: [T; 3], index: Int, fallback: T) -> T {
-    var current_index = 0
-    for value in values {
-        if current_index == index {
-            return value
-        };
-        current_index = current_index + 1
-    }
-    return fallback
+    return at_array_or(values, index, fallback)
 }
 
 pub fn at4_array_or[T](values: [T; 4], index: Int, fallback: T) -> T {
-    var current_index = 0
-    for value in values {
-        if current_index == index {
-            return value
-        };
-        current_index = current_index + 1
-    }
-    return fallback
+    return at_array_or(values, index, fallback)
 }
 
 pub fn at5_array_or[T](values: [T; 5], index: Int, fallback: T) -> T {
-    var current_index = 0
-    for value in values {
-        if current_index == index {
-            return value
-        };
-        current_index = current_index + 1
-    }
-    return fallback
+    return at_array_or(values, index, fallback)
 }
 
 pub fn reverse3_array[T](values: [T; 3]) -> [T; 3] {
@@ -136,60 +103,27 @@ pub fn repeat5_array[T](value: T) -> [T; 5] {
 }
 
 pub fn contains3_array[T](values: [T; 3], needle: T) -> Bool {
-    for value in values {
-        if value == needle {
-            return true
-        }
-    }
-    return false
+    return contains_array(values, needle)
 }
 
 pub fn contains4_array[T](values: [T; 4], needle: T) -> Bool {
-    for value in values {
-        if value == needle {
-            return true
-        }
-    }
-    return false
+    return contains_array(values, needle)
 }
 
 pub fn contains5_array[T](values: [T; 5], needle: T) -> Bool {
-    for value in values {
-        if value == needle {
-            return true
-        }
-    }
-    return false
+    return contains_array(values, needle)
 }
 
 pub fn count3_array[T](values: [T; 3], needle: T) -> Int {
-    var count = 0
-    for value in values {
-        if value == needle {
-            count = count + 1
-        }
-    }
-    return count
+    return count_array(values, needle)
 }
 
 pub fn count4_array[T](values: [T; 4], needle: T) -> Int {
-    var count = 0
-    for value in values {
-        if value == needle {
-            count = count + 1
-        }
-    }
-    return count
+    return count_array(values, needle)
 }
 
 pub fn count5_array[T](values: [T; 5], needle: T) -> Int {
-    var count = 0
-    for value in values {
-        if value == needle {
-            count = count + 1
-        }
-    }
-    return count
+    return count_array(values, needle)
 }
 
 pub fn sum_int_array[N](values: [Int; N]) -> Int {

@@ -19,7 +19,7 @@
 - `std.test` 的断言 helpers
 
 保留的 concrete API 和固定参数 helper 只是兼容面，不是继续扩张方向。
-固定长度数组 helper 当前只作为薄兼容层维护；新代码应直接导入 canonical helpers。
+固定长度数组 helper 当前只作为转调 canonical API 的薄兼容层维护；新代码应直接导入 canonical helpers。
 
 ## 本地依赖
 

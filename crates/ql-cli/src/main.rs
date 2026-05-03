@@ -6329,12 +6329,16 @@ fn render_local_generic_function_specializations(source: &str) -> RenderedDepend
 
     let mut declarations = Vec::new();
     let mut source_rewrites = Vec::new();
+    let mut rendered_specializations = BTreeSet::new();
     for item in &module.items {
         let ItemKind::Function(function) = &item.kind else {
             continue;
         };
         let Some(rendered) = dependency_generic_bridge::render_local_function_specializations(
-            function, source, &module,
+            function,
+            source,
+            &module,
+            &mut rendered_specializations,
         ) else {
             continue;
         };
@@ -7160,6 +7164,7 @@ fn render_package_under_test_bridge_items(
     let mut source_rewrites = Vec::new();
     let mut required_types_by_module_path = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
     let mut function_owners = BTreeMap::<String, DependencyExternOwner>::new();
+    let mut rendered_specializations = BTreeSet::new();
     for module in &bridge_modules {
         collect_dependency_module_public_function_forwarders(
             package_name,
@@ -7174,6 +7179,7 @@ fn render_package_under_test_bridge_items(
             &mut function_owners,
             &mut forwarders,
             &mut source_rewrites,
+            &mut rendered_specializations,
         )
         .map_err(|error| {
             if !report_failure {
@@ -7774,6 +7780,7 @@ fn render_direct_dependency_public_function_forwarders(
     let mut source_rewrites = Vec::new();
     let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
     let mut required_types_by_module_path = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
+    let mut rendered_specializations = BTreeSet::new();
 
     for dependency in direct_dependencies {
         let dependency_package = match package_name(&dependency) {
@@ -7819,6 +7826,7 @@ fn render_direct_dependency_public_function_forwarders(
             &mut owners_by_symbol,
             &mut forwarders,
             &mut source_rewrites,
+            &mut rendered_specializations,
             |dependency_source_path| {
                 fs::read_to_string(dependency_source_path).map_err(|error| {
                     if report_failure {
@@ -7927,6 +7935,7 @@ fn render_direct_dependency_public_function_forwarders_quiet(
     let mut source_rewrites = Vec::new();
     let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
     let mut required_types_by_module_path = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
+    let mut rendered_specializations = BTreeSet::new();
 
     for dependency_manifest in direct_dependencies {
         let dependency_package = package_name(&dependency_manifest)
@@ -7967,6 +7976,7 @@ fn render_direct_dependency_public_function_forwarders_quiet(
             &mut owners_by_symbol,
             &mut forwarders,
             &mut source_rewrites,
+            &mut rendered_specializations,
             |dependency_source_path| {
                 fs::read_to_string(dependency_source_path).map_err(|error| {
                     PrepareProjectTargetBuildError {
@@ -8023,6 +8033,7 @@ fn collect_dependency_public_function_forwarders_from_modules<E>(
     owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
     forwarders: &mut Vec<String>,
     source_rewrites: &mut Vec<dependency_generic_bridge::SourceRewrite>,
+    rendered_specializations: &mut BTreeSet<String>,
     mut read_source: impl FnMut(&Path) -> Result<String, E>,
     mut parse_source_module: impl FnMut(&Path, &str) -> Result<Module, E>,
     mut map_bridge_error: impl FnMut(DependencyPublicFunctionForwarderError) -> E,
@@ -8051,6 +8062,7 @@ fn collect_dependency_public_function_forwarders_from_modules<E>(
             owners_by_symbol,
             forwarders,
             source_rewrites,
+            rendered_specializations,
         )
         .map_err(&mut map_bridge_error)?;
     }
@@ -9166,6 +9178,7 @@ fn collect_dependency_module_public_function_forwarders(
     owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
     forwarders: &mut Vec<String>,
     source_rewrites: &mut Vec<dependency_generic_bridge::SourceRewrite>,
+    rendered_specializations: &mut BTreeSet<String>,
 ) -> Result<(), DependencyPublicFunctionForwarderError> {
     let module_import_path = dependency_interface_module_import_path(dependency_package, module);
     let type_candidates = dependency_public_type_bridge_candidates(module);
@@ -9190,6 +9203,7 @@ fn collect_dependency_module_public_function_forwarders(
                 contents,
                 root_module,
                 module,
+                rendered_specializations,
             ) else {
                 return Err(DependencyPublicFunctionForwarderError::UnsupportedGeneric {
                     symbol: function.name.clone(),

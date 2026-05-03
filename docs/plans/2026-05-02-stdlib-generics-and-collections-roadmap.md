@@ -7,7 +7,8 @@
 - `std.core`、`std.option`、`std.result`、`std.array`、`std.test` 都已存在
 - generic `Option[T]` / `Result[T, E]` 已可执行
 - `std.array` 已有 canonical length-generic access/query/count/aggregate helpers
-- `std.array` 固定长度 access/query/count helper 已收敛为兼容层，不再维护手写分支算法
+- `std.array` 固定长度 access/query/count helper 已收敛为转调 canonical API 的兼容层
+- dependency generic bridge 已支持 wrapper specialization 体内继续转调同模块 generic helper
 - `std.test` 已能复用这些 helpers 做下游 smoke
 - `ql project init --stdlib` 已能生成能直接跑 `check/build/run/test` 的项目模板
 
