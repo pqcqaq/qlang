@@ -2,772 +2,146 @@
 
 ## 目标
 
-工具链围绕统一 CLI 与共享 analysis 边界组织。实现分层见 [实现算法与分层边界](/architecture/implementation-algorithms)。
+工具链围绕统一 CLI、共享 analysis 边界和 project-aware 工作流组织。实现分层见 [实现算法与分层边界](/architecture/implementation-algorithms)。
 
 ## 命令入口
 
-统一入口命令为 `ql`。当前源码已实现的子命令如下：
+统一入口是 `ql`。当前已实现：
 
 - `ql check`
 - `ql fmt`
 - `ql mir`
 - `ql ownership`
-- `ql run`
 - `ql runtime`
-- `ql test`
 - `ql build`
+- `ql run`
+- `ql test`
 - `ql project`
 - `ql ffi`
 
-这里的 `ql runtime` 与 `ql run` 不是一回事：前者输出 runtime requirement / hook ABI 检查信息，后者会按 executable build 规则构建并执行程序。
+`ql runtime` 输出 runtime 要求和 hook ABI 检查信息；`ql run` 按 executable build 规则构建并执行程序。
 
-`new`、`init`、`doc`、`bench`、`clean` 等更宽命令面仍属于规划，不在本页按已实现能力展开。
-
-## 子工具
+## 关键子工具
 
 ### `ql build`
 
-P4/P5 地基已经落地；当前一边保守扩展 Phase 7 async library/program build 子集，一边推进 Phase 8 的 package/`.qi` 工具链入口。现阶段 `ql build` 的职责是：
+职责：
 
-- 读取单个 `.ql` 文件，或从 package/workspace 入口解析保守 build targets
-- 复用 `ql-analysis` 完成 parse / HIR / resolve / typeck / MIR
-- 在无语义错误时调用 `ql-codegen-llvm`
-- 输出文本 LLVM IR、对象文件、动态库、静态库和基础可执行文件
+- 读取单个 `.ql` 文件，或从 package/workspace 入口解析 build targets
+- 复用 analysis 完成 parse / HIR / resolve / typeck / MIR
+- 在无语义错误时调用 LLVM codegen
 
-当前实现边界：
+常用形态：
 
-- `ql-cli` 只负责参数解析与诊断渲染
-- `ql-driver` 负责 build orchestration
-- `ql-codegen-llvm` 负责 MIR 子集 -> LLVM IR
+```powershell
+ql build demo.ql
+ql build demo --emit llvm-ir
+ql build demo --profile release
+ql build workspace --package app --target src/main.ql
+ql build workspace --json
+```
 
-当前可用命令形态：
-
-- `ql build <file-or-dir>`
-- `ql build <file-or-dir> --profile <debug|release>`
-- `ql build <file> --emit llvm-ir`
-- `ql build <file> --emit obj`
-- `ql build <file> --emit exe`
-- `ql build <file> --emit dylib`
-- `ql build <file> --emit staticlib`
-- `ql build <file> --release`
-- `ql build <file> -o <output>`
-- `ql build <package-or-workspace-dir> --emit llvm-ir`
-- `ql build <package-or-workspace-dir> --profile <debug|release>`
-- `ql build <package-or-workspace-dir> --package <name>`
-- `ql build <package-or-workspace-dir> --bin <name>`
-- `ql build <package-or-workspace-dir> --target <path> -o <output>`
-- `ql build <file-or-dir> --json`
-- `ql build <file> --emit dylib --header`
-- `ql build <file> --emit staticlib --header-surface imports`
-- `ql build <file> --emit dylib --header-output <output>`
-
-当前默认输出路径：
-
-- `target/ql/debug/<stem>.ll`
-- `target/ql/release/<stem>.ll`
-- `target/ql/debug/<stem>.obj` / `target/ql/debug/<stem>.o`
-- `target/ql/release/<stem>.obj` / `target/ql/release/<stem>.o`
-- `target/ql/debug/<stem>.exe` / `target/ql/debug/<stem>`
-- `target/ql/release/<stem>.exe` / `target/ql/release/<stem>`
-- 如果入口是 package/workspace，则默认输出根目录改为各 package 自己的根路径，也就是 `<package>/target/ql/<profile>/...`；workspace build 不会再把多个 member 的默认产物混到同一个调用目录。默认约定 target 会保留 `src/` 之后的相对目录结构，例如 `src/bin/tools/repl.ql -> target/ql/debug/bin/tools/repl.ll`；显式 target 声明也走同一套规则，例如 `[[bin]] path = "src/tools/repl.ql" -> target/ql/debug/tools/repl.ll`。
-- 多 target 的 project-aware build 默认仍显式拒绝 `--output` 和 `--header-output`；这些单路径参数只在最终解析结果收窄到 single-target 时可用。现在可以用 `--package <name>` 先选 workspace member，再用 `--lib|--bin <name>|--target <path>` 继续把结果收窄到单个 target；如果多个 target 会解析到同一个默认 artifact 或 header 输出路径，也会在真正 build 前先显式失败。`ql build` 现在还会递归解析 manifest 里的本地 path dependency package，并按“依赖先、root 后”的顺序把这些 package 纳入同一轮构建；其中被 selector 直接选中的 root package 继续保留用户显式传入的 `--output` / `--header-output` / `--header` 行为，而 dependency-only package 会强制回到各自包根下的默认 artifact 路径，不复用 root 的单路径输出参数。当前这条 project-aware build 路径还额外打开了几条很窄的 dependency bridge 例外：direct dependency 暴露的 bridgeable public `const/static` values、受限 public top-level free function（非 `async` / 非 `unsafe`、无 generics / `where`、仅普通参数）、public `extern "c"` 符号、public `struct` / `enum` declaration bridge（含在签名里显式实例化的泛型 `struct/enum`，以及期望类型明确的泛型 struct literal / field projection）、非 opaque 非泛型 `type alias` declaration bridge，以及这些 bridgeable public 非泛型 `struct` 上的受限 public receiver method forwarder。CLI 会把实际导入的 bridgeable public `const/static` values 作为声明注入 root build，也会为 public `struct` / `enum` / 非 opaque 非泛型 `type alias` 注入 type declaration，继续为受限 public free function / `extern "c"` 符号注入 wrapper，为受限 public receiver method 注入 forwarder，并在需要链接时附上已预构建的 dependency staticlibs；其中 value bridge 当前只覆盖 data-only initializer，并允许递归引用同模块其他 public `const/static`。实际导入的 public generic free function 可以在 root 侧为多个直接调用生成多个本地 specialization，前提是每次调用的所有 generic 参数都能从 primitive 字面量、基础数值/布尔/比较表达式、tuple / fixed-array 字面量、一层 tuple/fixed-array projection、block / unsafe block tail、两侧结果一致的简单 `if` / `match` 表达式、显式 typed value、generic carrier value、`Option.Some(42)` 这类单字段 generic enum variant constructor，或显式返回类型 / typed initializer 结果上下文推断出来；位置实参与命名实参都会按形参声明顺序参与同一套 direct-call 推断；这包括同一 `identity[T]` 的 `Int` + `Bool` 多实例、`T = (Int, Bool)` / `T = [Int; 3]` 这类 aggregate literal 实例、projection/control-flow 参数实例，也包括 `std.option.none_option()` 这类零参数 helper 在显式 `Option[T]` 上下文里的路径。未推断、方法和 escaping function value 仍显式拒绝。如果实际导入的直依赖 type/value/function/extern 同名，target-prep 仍会分别以 `dependency-type-conflict` / `dependency-value-conflict` / `dependency-function-conflict` / `dependency-extern-conflict` 显式失败；root source 的同名顶层定义也会分别触发 `dependency-type-local-conflict` / `dependency-value-local-conflict` / `dependency-function-local-conflict`。除此之外，完整泛型函数单态化、泛型 alias lowering、超出这些 receiver method forwarder 的普通跨包 Qlang method 与更宽的 dependency value/member lowering 仍未开放。`--emit-interface` 现在允许在 package/workspace build 上使用，并且会在每个 package 的全部 discovered targets 构建成功后只发射一次默认 `.qi`。如果这次调用没有显式传 `--emit`，`lib` target 会保守落成 `staticlib`，`bin` / fallback `source` target 继续沿当前 single-file 默认 emit；一旦显式传了 `--emit`，整次 project-aware build 仍共享同一种 artifact 形态。`ql build` 现在也支持 `--profile <debug|release>`；对于 package/workspace 路径，如果 CLI 没有显式传 `--profile` 或 `--release`，则会按 `package profile -> workspace profile -> debug` 的顺序解析默认 profile。
-- 非泛型、非 opaque `type Alias = Target` 现在在普通值上下文按透明 alias 处理：typeck 会在 return、call argument、assignment、array/branch unification、pattern literal、bool/numeric/string 操作中递归查看 alias target；LLVM backend 已跟进当前 direct lowering 所需的 alias 赋值、数组/字段值检查、二元操作和 callable 参数断言，并由 build/run/test 回归锁住 `Count -> Score -> Int` 这类跨包签名、alias 算术和 wrapper 调用。`opaque type` 与泛型 alias 仍不透明，`impl` / `extend` dispatch 与 `textDocument/implementation` 继续按 alias 自身身份匹配，不透传到底层类型。
-- `ql build --json` 现已把构建结果导出为稳定的 `ql.build.v1` schema，覆盖 source build 与 project-aware build 两条成功路径，以及六类 project 失败结果：project-aware preflight failure（当前已覆盖 `project-context`、`manifest-load`、`target-discovery`、`target-selection`、`output-planning`，以及 selected package 无 discovered targets 的 `build-plan` 校验）、build-plan recursion failure（当前稳定继续落到 `stage = build-plan`，并已覆盖 local dependency cycle 与递归 dependency target-discovery / manifest failure）、dependency/interface prep failure（当前稳定落到 `stage = dependency-interface-prep`）、per-target target-prep failure（当前稳定落到 `stage = target-prep`，已覆盖 direct dependency extern 冲突、direct dependency public function 冲突，以及依赖 manifest / interface artifact / target source 读取这类更深的准备阶段失败）、build-side interface emit failure，以及 actual target build failure。当前 JSON 会稳定导出请求路径、`scope`（`file` / `project`）、resolved `project_manifest_path`、请求的 `emit/profile`、`profile_overridden`、`emit_interface`，以及按实际构建顺序展开的 `built_targets` 与 `interfaces`；成功时 `status = "ok"` 且 `failure = null`，失败时 `status = "failed"` 且 `failure` 会定位到 preflight failure point、build-plan recursion failure point、dependency/interface prep failure point、per-target target-prep failure point、build-side interface emit failure point 或失败 target。actual target build failure 继续使用 `diagnostics` / `invalid-input` / `io` / `toolchain` 这四类 `error_kind` 及对应细节；preflight failure、build-plan recursion failure、dependency/interface prep failure、per-target target-prep failure 与 build-side interface emit failure 则额外稳定导出 `stage`，并按场景补 `selector`、`conflict_path`、`target_count`、`output_path`、`source_root`、`failing_source_count`、`first_failing_source`、`owner_manifest_path`、`dependency_manifest_path`、`dependency_package`、`interface_path`、`reference_manifest_path`、`reference`、`failing_dependency_count`、`first_failing_dependency_manifest`、`cycle_manifests`、`symbol`、`first_dependency_package`、`first_dependency_manifest_path`、`conflicting_dependency_package`、`conflicting_dependency_manifest_path`、`io_path` 等 detail。`built_targets` 当前收敛成 `manifest_path`、`package_name`、`selected`、`dependency_only`、`kind`、`path`、`emit`、`profile`、`artifact_path`、`c_header_path`；`interfaces` 当前收敛成 `manifest_path`、`package_name`、`selected`、`status`（`wrote` / `up-to-date`）与 `path`。project-aware build 在前置同步 dependency `.qi` 时也会保持 stdout 静默，因此 JSON stdout 现在可以直接给脚本/CI 消费，不会被 `wrote interface: ...` 这类预备日志污染；之前剩下的 per-target dependency extern / public-function bridge prep 这块失败面，现在也已稳定留在 stdout JSON contract 内，而不会再绕回 stderr-only 退出。
-- `target/ql/debug/<stem>.dll` / `target/ql/debug/lib<stem>.so` / `target/ql/debug/lib<stem>.dylib`
-- `target/ql/release/<stem>.dll` / `target/ql/release/lib<stem>.so` / `target/ql/release/lib<stem>.dylib`
-- `target/ql/debug/<stem>.lib` / `target/ql/debug/lib<stem>.a`
-- `target/ql/release/<stem>.lib` / `target/ql/release/lib<stem>.a`
-
-当 `--emit` 是 `dylib` 或 `staticlib` 且启用了 build-side header 时：
-
-- `--header` 生成默认 `exports` surface
-- `--header-surface exports|imports|both` 会隐式启用 header sidecar
-- `--header-output <output>` 也会隐式启用 header sidecar
-- 未显式指定 header 输出路径时，header 会写到主 library artifact 同目录，但使用源码 stem 而不是 library 文件名：
-  - `target/ql/debug/libffi_export.so` + `--header` -> `target/ql/debug/ffi_export.h`
-  - `target/ql/debug/math.lib` + `--header-surface imports` -> `target/ql/debug/math.imports.h`
-
-当前支持矩阵刻意收窄为：
-
-- 顶层 free function
-- `extern "c"` 顶层声明、extern block 声明与顶层函数定义
-- `main` 入口
-- 标量整数 / `Bool` / `Void`
-- direct function call
-- fixed-shape iterable 的 sync `for`（当前覆盖 fixed-array 与 homogeneous tuple）
-- 普通表达式与 `if` / `while` 条件里可直接 materialize same-file foldable `const` / `static` item value 及其 same-file `use ... as ...` alias；当前已支持的 tuple / fixed-array / plain-struct literal 子集、能经由 struct field / tuple index / fixed-array index 回收到同一条 foldable source 的 computed/projected item value，以及由 foldable bool condition 或最小 literal `match` arm 选择出的 branch-selected item value，都会复用同一条 const-evaluation lowering；当前 const `match` 只折叠 `Bool` / `Int` literal-or-path pattern + catch-all 与可折叠 bool guard 子集
-- 普通表达式、`if` / `while` 条件里的 `Bool` 短路 `&&` / `||`
-- `if` 表达式的类型检查会先结合 control-flow summary 决定哪些分支仍会继续执行；只有两侧都贯通时才要求分支值类型一致，一侧已经 `return` / `break` / `continue` / 不可贯通时，表达式类型取另一侧或 `Void`
-- 最小 literal `match` lowering：`Bool` scrutinee 仅支持 unguarded `true` / `false` / same-file foldable `const` / `static`-backed bare path pattern（含 same-file local import alias）+ `_` 或单名 binding catch-all arm，并额外接受 literal `if true` / `if false` guard、same-file foldable `const` / `static`-backed `Bool` guard 与其 same-file `use ... as ...` 别名；这条 `Bool` const folding 现也覆盖由当前支持的 `!`、`&&`、`||`、`==`、`!=` 与整数比较子集构成的 computed same-file foldable `const` / `static` `Bool` expression；当 guard 恰好就是当前 `Bool` scrutinee 自身、其一层 unary `!`，或“当前 scrutinee 与可折叠 `Bool` literal/const/static/alias 做 `==` / `!=` 比较”时，literal `true` / `false` arm 现也会在 lowering 前直接折叠成 always/skip，从而收回 `match flag { true if flag => ...; false => ... }` 与 `match flag { true if flag == ON => ...; false => ... }` 这类此前误判成“缺少 fallback”的最小 ordered 子集；同一条 direct bool-valued guard 子集现在也不再额外要求 later arm 提供 guaranteed fallback coverage，因此 `match flag { true if enabled => ...; false => ... }` 这类 partial dynamic guard 也能直接进入 lowering；包裹当前 bool guard 子集的一层 unary `!`、由当前 bool guard 子集继续组合出的 runtime `&&` / `||`、当前 arm 单名 binding catch-all 变量作为 direct scalar operand 参与 guard，也可作为 fixed-array 只读投影里的 dynamic index operand 参与 guard，并且现在也可直接作为只读 struct-field / tuple literal-index / fixed-array index projection root 参与 guard；fixed-array 只读 guard projection 的 index 现也接受当前 runtime `Int` scalar 子集，不只用于 local / parameter / `self` / 当前 arm binding root，也用于 same-file `const` / `static` aggregate root 及其 same-file `use ... as ...` alias，例如 `values[index + 1]`、`values[current + 1]`、`VALUES[index + 1]` 与 `INPUT[state.offset]`，但 tuple index 仍要求 foldable constant；当前简单 scalar comparison guard 子集（`Bool` `==` / `!=`，以及由 integer literal、unary-negated supported `Int` operand、same-file foldable `const` / `static`-backed `Int` 与其 same-file `use ... as ...` 别名、由当前支持的 `Int` operand 继续递归组成的最小整数算术表达式（`+` / `-` / `*` / `/` / `%`）、以 local / parameter / `self` 或当前 arm 单名 binding 为根的 read-only scalar projection operand、same-file `const` / `static` aggregate root 上沿当前 runtime `Int` index 子集的 fixed-array projection operand、以及能经由 struct field / tuple literal-index / fixed-array index 折叠成 scalar 的 same-file foldable `const` / `static`-backed aggregate projection 及其 same-file `use ... as ...` 别名组成的 `Int` `==` / `!=` / `>` / `>=` / `<` / `<=`；其中 tuple / fixed-array index operand 现也接受同一条可折叠的 same-file const/static-backed `Int` arithmetic 子集），以及 direct bool-valued guard 子集（same-scope `Bool` local / parameter、以 local / parameter / `self` 或当前 arm 单名 binding 为根的 read-only bool scalar projection、以及能折叠成 `Bool` 的 same-file foldable `const` / `static`-backed aggregate projection 及其 same-file `use ... as ...` 别名）；`Int` scrutinee 仅支持 unguarded integer literal / unary-negated integer literal / same-file foldable `const` / `static`-backed bare path pattern（含 same-file local import alias）+ `_` 或单名 binding catch-all arm，并额外接受同一组 literal / const/static-backed / scalar-comparison guard 子集，以及 integer-literal arm 或 guarded catch-all arm 上的同一组 direct bool-valued guard 子集；对于其他当前可加载 scrutinee，backend 现在也开放保守的 catch-all-only 子集：`_` / 单名 binding catch-all arm，以及这些 catch-all arm 上的同一组 bool guard 子集；这条 integer direct-bool dynamic guard 现在也不再额外要求 later unguarded catch-all fallback，因此 `match value { 1 if enabled => ...; 2 => ... }` 这类 partial dynamic guard 也能直接进入 lowering；不能折叠成 `Bool`/`Int` 的 bare path pattern 仍显式拒绝
-- 上述 `match` guard 标量子集现在也包含 direct resolved sync guard calls：返回 `Bool` 的 direct/local-import-alias 调用可直接作为 guard，返回 `Int` 的同类调用可参与当前 `Int` 标量比较与命名实参重排子集；同一条 direct/sync 路径也已开放 loadable tuple / non-generic struct / fixed-array 返回值作为只读 projection root，以及 local / current-binding / item-root / projection-root / call-root / inline aggregate 组成的当前聚合实参子集；async guard call 与更广的调用表达式仍未开放。
-- 保守的 async `staticlib` 子集：async library body、当前最小 `match` lowering、scalar/tuple/array/struct/void `await`、task-handle-aware `spawn`、以及 fixed-shape iterable 的 `for await`（当前覆盖 fixed-array 与 homogeneous tuple）
-- 最小 async `dylib` 子集：在仍通过同步 `extern "c"` 顶层导出暴露公开 ABI 时，内部 async helper / 当前最小 `match` lowering / `await` / 已支持的 task-handle lowering 也可进入 library build，并对 fixed-shape iterable 打开同一条 `for await` lowering
-- `crates/ql-cli/tests/codegen.rs` 现已把 `fixtures/codegen/pass/async_library_for_await_tuple.ql` 与 `fixtures/codegen/pass/ffi_export_async_for_await_tuple.ql` 收进 `staticlib` / `dylib` pass matrix，显式锁住 homogeneous tuple `for await` 在两条 library build surface 上都会稳定通过；此前遗留的 `unsupported_async_for_await_library_build` / `unsupported_async_for_await_dylib_build` 旧失败合同已删除
-- `crates/ql-cli/tests/codegen.rs` 现也已把 `fixtures/codegen/pass/async_library_task_array_for_await.ql` 与 `fixtures/codegen/pass/ffi_export_async_task_tuple_for_await.ql` 收进 `staticlib` / `dylib` pass matrix，显式锁住 direct task-array auto-await `for await` 与 direct task-tuple auto-await `for await` 在当前两条 library build surface 上都会稳定通过
-- `crates/ql-cli/tests/codegen.rs` 现进一步补齐 direct task-backed `for await` 的 library 对称矩阵：`fixtures/codegen/pass/async_library_task_tuple_for_await.ql` 与 `fixtures/codegen/pass/ffi_export_async_task_array_for_await.ql` 也已分别进入 `staticlib` / `dylib` pass matrix，因此当前 direct task-array 与 direct task-tuple auto-await `for await` 都已在两条 library build surface 上有显式 contract
-- `crates/ql-cli/tests/codegen.rs` 现也已把 aggregate param/result family 锁进两条 library surface：新增 `fixtures/codegen/pass/async_library_aggregate_param_result_families.ql` 与 `fixtures/codegen/pass/ffi_export_async_aggregate_param_result_families.ql`，并用这对 family fixture 合并掉此前分散的 `async_library_recursive_aggregate_params.ql`、`async_library_zero_sized_aggregate_results.ql`、`async_library_zero_sized_aggregate_params.ql` 三条 `staticlib` only case；当前显式覆盖 recursive aggregate 参数、zero-sized array/struct result，以及 zero-sized aggregate 参数在 `staticlib` / `dylib` 上的对称成功构建合同
-- `crates/ql-cli/tests/codegen.rs` 现也已把 async library `match` family 锁进两条 library surface：`fixtures/codegen/pass/async_library_match_families.ql` 与 `fixtures/codegen/pass/ffi_export_async_match_families.ql` 现已在同一对 fixture 里显式覆盖 awaited scalar scrutinee + direct-call guard、awaited aggregate scrutinee + projection guard、awaited aggregate scrutinee + aggregate guard-call arg / call-backed aggregate guard-call arg、same-file import-alias rooted awaited helper / guard helper variants、awaited scrutinee + item/import-alias-backed inline guard combos、awaited scrutinee + direct call-backed guard combos、awaited scrutinee + inline aggregate guard-call arg combos、awaited scrutinee + inline projection-root guard combos、awaited scalar scrutinee + nested call-root runtime projection guard variants、awaited scalar scrutinee + nested call-root inline projection/inline aggregate guard-call combos、awaited scrutinee + item-backed nested call-root guard variants、awaited scrutinee + call-backed nested call-root guard variants、awaited scrutinee + alias-backed nested call-root guard variants，以及 awaited aggregate current-binding / read-only projection-root backed nested call-root guard variants；因此当前 library-mode async 子集已不再只公开 `await` / `spawn` / `for await`，也已公开既有最小 `match` lowering 在 async helper body 内的更完整稳定构建合同
-- `crates/ql-cli/tests/codegen.rs` 现也已把 aggregate await / projected spawn family 锁进两条 library surface：`fixtures/codegen/pass/async_library_aggregate_await_families.ql` 与 `fixtures/codegen/pass/ffi_export_async_aggregate_await_families.ql` 已在同一对 fixture 里显式覆盖 scalar/tuple/struct/array/nested aggregate `await`，tuple projection `await|spawn`，zero-sized task-array projection `await`，以及 struct-field projection `await|spawn`；此前分散的 `async_library_scalar_await.ql`、`async_library_tuple_await.ql`、`async_library_struct_await.ql`、`async_library_array_await.ql`、`async_library_nested_aggregate_await.ql`、`async_library_projected_tuple_await.ql`、`async_library_projected_tuple_spawn.ql`、`async_library_projected_array_await.ql`、`async_library_projected_struct_field_await.ql`、`async_library_projected_struct_field_spawn.ql` 这组 `staticlib` only case 现已被 family 吸收删除，因此当前 library-mode async 子集已不再把这些 aggregate await / projected submit 路径留在离散单点合同里
-- `crates/ql-cli/tests/codegen.rs` 现也已把 aggregate-carried / nested task-handle payload family 锁进两条 library surface：`fixtures/codegen/pass/async_library_task_handle_payload_families.ql` 与 `fixtures/codegen/pass/ffi_export_async_task_handle_payload_families.ql` 已在同一对 fixture 里显式覆盖 async helper 返回 task-array payload、task-tuple payload、含 task field 的 nested aggregate payload，以及 `Task[Wrap]` result 的 chained `await`；此前单点的 `async_library_task_handle_tuple_payload.ql`、`async_library_task_handle_array_payload.ql`、`async_library_nested_aggregate_task_handle_payload.ql` 与更早的 `async_library_nested_task_handle.ql` 也已被 family 吸收删除，因此当前 library-mode async 子集已不再只锁定 task-handle flow 与 projection consume，也锁住了 aggregate-carried payload contract
-- `crates/ql-cli/tests/codegen.rs` 现也已把 direct/helper task-handle flow family 锁进两条 library surface：`fixtures/codegen/pass/async_library_task_handle_flow_families.ql` 与 `fixtures/codegen/pass/ffi_export_async_task_handle_flow_families.ql` 已在同一对 fixture 里显式覆盖 direct call `await`、direct local-handle `await`、helper-returned handle `await`、helper-bound handle `await`、local-return handle `await`、forwarded handle `await`、direct call `spawn`、direct-bound `spawn`、helper `spawn`、helper-bound `spawn` 与 `spawn forward(task)`，并同时覆盖 `Task[Int]` 与 `Task[Wrap]`；此前零散的 `async_library_task_handle.ql`、`async_library_bound_task_handle.ql`、`async_library_local_return_task_handle.ql`、`async_library_zero_sized_task_handle.ql`、`async_library_bound_zero_sized_task_handle.ql`、`async_library_local_return_zero_sized_task_handle.ql`、`async_library_forward_task_handle.ql`、`async_library_forward_zero_sized_task_handle.ql`、`async_library_direct_handle.ql`，以及对应的 `spawn_*` 单点 fixture 也已被 family 吸收删除，因此当前 library-mode async 子集已不再只锁定 projection consume，也锁住了最常见的 task-handle 流转 contract
-- `crates/ql-cli/tests/codegen.rs` 现也已把 stable-dynamic task-handle 成功路径锁进两条 library surface：`fixtures/codegen/pass/async_library_dynamic_task_handle_paths.ql` 与 `fixtures/codegen/pass/ffi_export_async_dynamic_task_handle_paths.ql` 已在同一对 fixture 里显式覆盖 projected-root dynamic reinit、aliased projected-root dynamic reinit、composed dynamic reinit、alias-sourced composed dynamic reinit、guard-refined literal reinit、generic dynamic array assignment，以及 dynamic sibling-safe `spawn` + fallback consume；此前零散的 `async_library_dynamic_task_handle_array_assignment.ql`、`async_library_dynamic_task_handle_spawn_sibling.ql`、`async_library_composed_dynamic_task_handle_reinit.ql` 与 `async_library_alias_sourced_composed_dynamic_task_handle_reinit.ql` 也已被 family 吸收删除，因此当前 library-mode async 子集已不再只锁定 literal/projection consume，也锁住了更完整的稳定动态路径成功 contract
-- `crates/ql-cli/tests/codegen.rs` 现也已把 aliased projected-root repackage family 锁进两条 library surface：新增 `fixtures/codegen/pass/async_library_aliased_projected_root_repackage_families.ql` 与 `fixtures/codegen/pass/ffi_export_async_aliased_projected_root_repackage_families.ql`，在同一对 fixture 里显式覆盖 source-root reinit 之后经 tuple、struct 与 nested aggregate 重新包装的 task-handle `await` 路径；此前零散的 `async_library_aliased_projected_root_task_handle_tuple_repackage_reinit.ql` 与已被 dynamic family 吸收的 `async_library_aliased_projected_root_dynamic_task_handle_reinit.ql` 也已删除，因此当前 library-mode async 子集已不再只在 program-mode 合同里承载 alias-root aggregate repackage
-- `crates/ql-cli/tests/codegen.rs` 现也已把 aliased projected-root spawn family 锁进两条 library surface：新增 `fixtures/codegen/pass/async_library_aliased_projected_root_spawn_families.ql` 与 `fixtures/codegen/pass/ffi_export_async_aliased_projected_root_spawn_families.ql`，在同一对 fixture 里显式覆盖 source-root reinit 之后经 nested struct aggregate、fixed-array aggregate、nested fixed-array aggregate，以及 helper-forwarded nested fixed-array aggregate 重包装后再 `spawn -> await running` 的路径，因此当前 library-mode async 子集也已不再只在 program-mode 合同里承载 alias-root aggregate submit
-- 对应的 program-mode public surface 本轮也继续补上 same-file arithmetic item / same-file `use ... as ...` alias 变体：`199_async_main_aliased_projected_root_repackage_families.ql` 现已显式覆盖 `alias[ARITH_INDEX_ALIAS]`、`alias[ARITH_SLOT_ALIAS.value]`，以及 `alias[alias_slots[row]]` 这类 arithmetic alias-sourced composed-dynamic 路径在普通与 guard-refined 两种形态下进入 tuple / nested aggregate repackage 后再 `await` 的路径，并继续推进到 guarded bundle-alias-forwarded、bundle-alias-inline-forwarded、queued-root-forwarded、queued-root-inline-forwarded、queued-root-alias-forwarded、queued-root-alias-inline-forwarded、queued-root-chain-forwarded、queued-root-chain-inline-forwarded、queued-local-alias、queued-local-chain、queued-local-forwarded、queued-local-inline-forwarded、bundle-chain-forwarded 与 bundle-chain-inline-forwarded await；`200_async_main_aliased_projected_root_spawn_families.ql` 则继续覆盖同一批 arithmetic alias-root / projected-root / alias-sourced composed-dynamic 路径在普通与 guard-refined 两种形态下进入 fixed-array / helper-forwarded nested fixed-array repackage 后再 `spawn -> await` 的路径，并继续推进到 guarded bundle-alias-forwarded、bundle-alias-inline-forwarded、queued-root-forwarded、queued-root-inline-forwarded、queued-root-alias-forwarded、queued-root-alias-inline-forwarded、queued-root-chain-forwarded、queued-root-chain-inline-forwarded、queued-local-alias、queued-local-chain、queued-local-forwarded、queued-local-inline-forwarded、bundle-chain-forwarded 与 bundle-chain-inline-forwarded spawn
-- program-mode public surface 现也单独补上 guarded arithmetic forwarded helper flow：`225_async_main_guarded_arithmetic_forwarded_task_handle_flows.ql` 显式覆盖 same-file `use ... as ...` alias 包裹的 arithmetic static source 在 guard-refined alias-sourced composed-dynamic path 上先经 `forward(...)` 再 direct `await`、以及经 direct queued `spawn -> await` 的路径
-- `crates/ql-cli/tests/codegen.rs` 现也已把 guard-refined dynamic path family 锁进两条 library surface：新增 `fixtures/codegen/pass/async_library_guard_refined_dynamic_path_families.ql` 与 `fixtures/codegen/pass/ffi_export_async_guard_refined_dynamic_path_families.ql`，在同一对 fixture 里显式覆盖 direct dynamic guard refine、projected dynamic guard refine、aliased projected-root guard refine、const-backed alias-root guard refine，以及 static-alias-backed alias-root guard refine；此前零散的 `async_library_guard_refined_dynamic_task_handle_reinit.ql` 已被 family 吸收删除，因此当前 library-mode async 子集已不再只靠单点 `staticlib` case 承载 equality-guard refined dynamic path
-- `crates/ql-cli/tests/codegen.rs` 现也已把 projected reinit family 锁进两条 library surface：新增 `fixtures/codegen/pass/async_library_projected_reinit_families.ql` 与 `fixtures/codegen/pass/ffi_export_async_projected_reinit_families.ql`，在同一对 fixture 里显式覆盖 fixed-array literal projected reinit、conditional literal reinit、stable projected dynamic reinit、conditional projected dynamic reinit，以及 projected-root dynamic reinit；此前零散的 `async_library_projected_array_reinit.ql`、`async_library_projected_array_conditional_reinit.ql`、`async_library_projected_dynamic_array_reinit.ql`、`async_library_projected_dynamic_array_conditional_reinit.ql` 与 `async_library_projected_root_dynamic_task_handle_reinit.ql` 也已被 family 吸收删除，因此当前 library-mode async 子集已不再把 projected reinit 路径留在 `staticlib` only 合同里
-- `crates/ql-cli/tests/codegen.rs` 现也已把 projected task-handle consume / submit 的主干 family 一次锁进两条 library surface：`fixtures/codegen/pass/async_library_task_handle_consume_families.ql` 与 `fixtures/codegen/pass/ffi_export_async_task_handle_consume_families.ql` 已在同一对 fixture 里显式覆盖 direct call-root、same-file import-alias call-root、direct nested call-root、same-file import-alias nested call-root、direct awaited-aggregate、same-file import-alias awaited-aggregate、direct inline aggregate 与 same-file import-alias inline aggregate 上的 projected task-handle `await` / `spawn`，因此当前 library-mode async 子集已不再只停留在 local projection consume
-- `crates/ql-cli/tests/codegen.rs` 现也已把 unparenthesized inline aggregate projected fixed-shape `for await` 锁进两条 library surface：`fixtures/codegen/pass/async_library_inline_without_parens_for_await.ql` 与 `fixtures/codegen/pass/ffi_export_async_inline_without_parens_for_await.ql` 已在同一对 fixture 里显式覆盖 direct unparenthesized inline projected scalar array/tuple、direct unparenthesized inline projected task tuple 与 deeper projected task-array root，以及同一批路径在 same-file import alias helper 参与下的 alias-backed inline variant，因此当前 library-mode `for await` 已能直接消费无需额外包裹括号的 inline aggregate iterable head
-- `crates/ql-cli/tests/codegen.rs` 现也已把 parenthesized inline aggregate projected fixed-shape `for await` 锁进两条 library surface：`fixtures/codegen/pass/async_library_inline_for_await.ql` 与 `fixtures/codegen/pass/ffi_export_async_inline_for_await.ql` 已在同一对 fixture 里显式覆盖 direct inline projected scalar array/tuple、direct inline projected task tuple 与 deeper projected task-array root，以及同一批路径在 same-file import alias helper 参与下的 alias-backed inline variant，因此当前 library-mode `for await` 已能直接消费 parenthesized inline aggregate iterable head
-- `crates/ql-cli/tests/codegen.rs` 现也已把 same-file import-alias awaited-aggregate fixed-shape `for await` 锁进两条 library surface：`fixtures/codegen/pass/async_library_import_alias_awaited_for_await.ql` 与 `fixtures/codegen/pass/ffi_export_async_import_alias_awaited_for_await.ql` 已显式覆盖 import-aliased awaited projected scalar array/tuple root 与 import-aliased awaited projected task tuple/array root，因此当前 library-mode `for await` 已能直接消费由 same-file import alias 包裹的 async helper aggregate root
-- `crates/ql-cli/tests/codegen.rs` 现也已把 same-file import-alias fixed-shape `for await` 锁进两条 library surface：`fixtures/codegen/pass/async_library_import_alias_for_await.ql` 与 `fixtures/codegen/pass/ffi_export_async_import_alias_for_await.ql` 已在同一对 fixture 里显式覆盖 import-aliased direct call-root scalar array/tuple、import-aliased direct task tuple 与 projected task-array root，以及 import-aliased nested call-root scalar array/tuple、nested task tuple 与 deeper projected task-array root，因此当前 library-mode `for await` 已能直接消费 same-file import alias 包裹的 call-root / nested call-root iterable expression
-- `crates/ql-cli/tests/codegen.rs` 现也已把 nested call-root projected fixed-shape `for await` 锁进两条 library surface：`fixtures/codegen/pass/async_library_nested_call_root_for_await.ql` 与 `fixtures/codegen/pass/ffi_export_async_nested_call_root_for_await.ql` 已显式覆盖 nested call-root scalar array/tuple 与 deeper projected task-array root，因此当前 library-mode `for await` 已能直接消费嵌套 call-root aggregate projection
-- `crates/ql-cli/tests/codegen.rs` 现也已把 awaited-aggregate projected fixed-shape `for await` 锁进两条 library surface：`fixtures/codegen/pass/async_library_awaited_projected_for_await.ql` 与 `fixtures/codegen/pass/ffi_export_async_awaited_projected_for_await.ql` 已显式覆盖 awaited projected scalar array/tuple root 与 awaited projected task tuple/array root，因此当前 library-mode `for await` 已能直接消费当前受支持 async helper 返回的 aggregate root
-- `crates/ql-cli/tests/codegen.rs` 现也已把 direct call-root fixed-shape `for await` 锁进两条 library surface：`fixtures/codegen/pass/async_library_call_root_for_await.ql` 与 `fixtures/codegen/pass/ffi_export_async_call_root_for_await.ql` 已显式覆盖 direct call-root scalar array/tuple 与 direct call-root task array/tuple，因此当前 library-mode `for await` 已从 local/direct root 扩到 direct call-root iterable expression
-- `crates/ql-cli/tests/codegen.rs` 现继续把 projected fixed-shape `for await` 的 library 合同补齐到两条公开 surface：`fixtures/codegen/pass/async_library_projected_for_await.ql` 与 `fixtures/codegen/pass/ffi_export_async_projected_for_await.ql` 已分别锁住 projected scalar array/tuple root 与 projected task array/tuple root 在 `staticlib` / `dylib` 下都会稳定通过，因此当前 library-mode `for await` 已不再局限于 direct iterable root
-- 最小 async executable 子集：`BuildEmit::Executable` 下的 `async fn main`、已接入的 task-handle / aggregate payload lowering，以及 fixed-shape iterable 的 `for await`
-- sync/async `unsafe fn` body 现也会沿当前普通 function / `async fn main` lowering 路径继续进入 executable build surface，而不再被 LLVM backend 预先拒绝
-- 注意：上述 async executable 描述表示当前目标和已打通的保守子集，不等于整个 async/codegen regression suite 已全绿；如果条目与测试现状冲突，以 `crates/ql-codegen-llvm/src/tests/*`、`crates/ql-cli/tests/codegen.rs` 和最新测试结果为准。
-- projected task-handle operand：tuple index / fixed-array literal index / struct-field 只读投影，也包括它们的递归嵌套组合，以及 direct call-root / nested call-root consume（例如 `await pair[0]`、`await tasks[0]`、`spawn pair.task`、`await pending[0].task`、`await tuple_tasks(10)[0]`、`spawn pair_tasks(11).left`、`await bundle_tasks(20).tasks[0]`）
-- sync/async executable surface 现也显式锁住 ordinary assignment-expression 子集：mutable local、tuple literal-index、same-file `const` / `static` / `use ... as ...` alias 驱动并支持 immutable direct local alias 复用的 foldable integer constant expression tuple index、struct-field 与 fixed-array literal-index assignment 继续走既有 statement lowering，而且当前本地 executable smoke contract 也已继续推进到 projected-root / nested projected-root / call-root nested projected-root / import-alias call-root nested projected-root / inline nested projected-root tuple / struct-field / fixed-array literal-index 链式写入，让“赋值表达式结果值可继续参与后续普通标量计算”这条用户面不只停留在 direct-root 形态
-- executable surface 现也显式锁住 dynamic array assignment 子集：sync program mode 已公开 non-`Task[...]` element dynamic array / nested dynamic array assignment，并继续推进到 projected-root dynamic array projection；同一条 sync surface 现在也已公开这些 dynamic array write 的 assignment-expression result form，并继续推进到 nested projected-root、call-root nested projected-root、import-alias call-root nested projected-root 与 inline nested projected-root 组合。async `fn main` 也已公开 direct-root `Task[...]` dynamic array write-before-consume success path，并继续推进到 projected-root write-before-consume success path；同时普通非 `Task[...]` 标量数组写入也已推进到 async executable surface，覆盖 direct-root、projected-root、call-root nested projected-root、import-alias call-root nested projected-root 与 inline nested projected-root 这几条 runtime-index path，并补上 assignment-expression result form
-- dynamic fixed-array `Task[...]` 子集：generic dynamic path 继续保持 sibling-safe consume/spawn 与 maybe-overlap write/reinit，而 same immutable stable source path 会获得 precise consume/reinit；这条稳定化路径现在也已覆盖 same-file `const` / `static` item 及其 same-file `use ... as ...` alias，因此 `tasks[index]`、`tasks[slot.value]`、`tasks[INDEX]`、`tasks[STATIC_INDEX]`、`tasks[INDEX_ALIAS.value]` 都会尽量回收到同一条 stable 或 literal/projection path，而不是无差别退化成 generic dynamic overlap
-- 同一条 dynamic fixed-array `Task[...]` 稳定化路径现在也接受 foldable integer arithmetic expression，因此 `tasks[1 - 1]`、`tasks[slot.value + 0]` 与 `tasks[ARITH_INDEX]` 这类 consume/reinit 也会折回 concrete literal/projection lifecycle
-- 同一条 dynamic fixed-array `Task[...]` 稳定化路径现在也接受 direct inline foldable `if` / 最小 literal `match` integer expression，因此 `tasks[if true { 0 } else { 1 }]` 与 `tasks[match 1 { 1 => 0, _ => 1 }]` 这类 consume/reinit 会直接折回 concrete literal lifecycle
-- 同一条 dynamic fixed-array `Task[...]` 稳定化路径现在也接受 branch-selected `const` / `static` item value，因此 item 里经由 foldable `if` / 最小 literal `match` 选出的整数值或聚合投影值，也能在 `tasks[SELECTED]` 与 `tasks[SELECTED_SLOT.value]` 这类 consume/reinit 上折回 concrete literal/projection lifecycle
-- 上述 branch-selected item-value 路径现在也已显式锁进 same-file `use ... as ...` alias public surface，因此 `tasks[SELECTED_INDEX_ALIAS]` 与 `tasks[SELECTED_SLOT_ALIAS.value]` 这类 executable consume/reinit 不再只依赖内部 canonicalization 假设
-- 同一条 arithmetic-backed item-value 路径现在也已显式锁进 same-file `use ... as ...` alias public surface，因此 `tasks[ARITH_INDEX_ALIAS]` 与 `tasks[ARITH_SLOT_ALIAS.value]` 这类 executable consume/reinit 也不再只依赖内部 canonicalization 假设
-- 同一条 equality-guard refinement 现在也接受 arithmetic-backed refined source，以及这些 source 的 same-file `use ... as ...` alias 包裹形态，因此 `if ARITH_INDEX == 0 { await tasks[ARITH_INDEX]; tasks[0] = ... }`、`if ARITH_INDEX_ALIAS == 0 { await tasks[ARITH_INDEX_ALIAS]; tasks[0] = ... }` 与 `if ARITH_SLOT_ALIAS.value == 0 { await alias[ARITH_SLOT_ALIAS.value]; pending.tasks[0] = ... }` 这类 guarded consume/reinit 也会回收到 concrete literal/projection lifecycle
-- arithmetic / compare / `Bool` unary `!` / short-circuit `&&` / `||` / branch / return
-- `.ll` 文本产物始终可用
-- `.obj` / `.o` / 基础 `.exe` 产物依赖 clang-style compiler
-- `.dll` / `.so` / `.dylib` 产物依赖 clang-style compiler
-- `.lib` / `.a` 产物依赖 clang-style compiler 与 archive tool
-- codegen 会在 program mode 下把 Qlang 用户入口 lower 成内部符号，并额外生成宿主 `main` wrapper
-- `dylib` 和 `staticlib` 都走 library mode，因此当前单文件库不要求顶层 `main`
-- async public build 当前已开放两类受控子集：`staticlib` 与 `dylib` 都支持已接入 backend 的 async library body，并为 fixed-shape iterable 打开 `for await` lowering；`BuildEmit::LlvmIr` / `BuildEmit::Object` / `BuildEmit::Executable` 也已开放 `async fn main` 的最小程序入口生命周期与 fixed-shape iterable `for await` 子集。其中 `dylib` 仍只开放不暴露 async ABI 的最小 library-style 子集；更广义的 async program/bootstrap surface，以及更广义的 dynamic/generalized iterable 仍保持保守拒绝
-- `crates/ql-cli/tests/executable_examples.rs` 当前编码了最小 async executable program subset 的 smoke contract；当前仓库已经提交 `ramdon_tests/async_program_surface_examples/` 基线目录，并会按当前注册的 `222` 个 async case 执行
-- 下文若继续引用 `ramdon_tests/...` 文件名，它们指向当前仓库已提交的 smoke corpus；该目录仍在 `.gitignore` 中，因此开发者本地也可继续追加样例
-- `174_async_main_spawned_aggregate_results.ql` 到 `225_async_main_guarded_arithmetic_forwarded_task_handle_flows.ql` 现进一步把 regular-size / spawned / zero-sized / recursive aggregate result family、regular-size / zero-sized helper-returned / forwarded task-handle flow、regular-size tuple / array / nested aggregate task-handle payload family、regular-size / zero-sized / recursive aggregate param family、zero-sized projected task-handle `await` / `spawn` consume、zero-sized projected reinit、zero-sized conditional `spawn/await/reinit` family、regular-size conditional task-handle flow、bound local task-handle `spawn` flow、regular-size returned / nested / struct-carried task-handle shape family、regular-size projected reinit family、stable-dynamic path family、guard-refined dynamic path family、static-alias-backed projected-root dynamic reinit family、aliased projected-root repackage/spawn family、guarded arithmetic forwarded helper flow surface、`async unsafe fn` body surface、ordinary assignment-expression surface、direct-root dynamic task-array assignment surface、tuple literal-index assignment-expression surface、projected-root / nested projected-root / call-root nested projected-root / import-alias call-root nested projected-root / inline nested projected-root tuple / struct-field / fixed-array literal-index assignment-expression surface、projected-root dynamic task-array assignment surface、async mutable-local assignment-expression surface、async scalar dynamic non-`Task[...]` array assignment surface，以及 direct-root / projected-root / nested projected-root / call-root nested projected-root / import-alias call-root nested projected-root / inline nested projected-root dynamic array assignment-expression surface 推进到 `async fn main` 的真实 build-and-run surface
-- 其中 `ramdon_tests/async_program_surface_examples/107_async_main_import_alias_named_calls.ql`、`108_async_main_import_alias_direct_submit.ql`、`109_async_main_import_alias_aggregate_submit.ql`、`110_async_main_import_alias_array_submit.ql`、`111_async_main_import_alias_tuple_submit.ql`、`112_async_main_import_alias_forward_submit.ql`、`113_async_main_import_alias_helper_task_submit.ql`、`114_async_main_import_alias_helper_forward_submit.ql`、`121_async_main_import_alias_awaited_aggregate_task_array_for_await.ql`、`127_async_main_import_alias_helper_task_tuple_for_await.ql`、`131_async_main_import_alias_awaited_aggregate_task_tuple_for_await.ql` 与 `135_async_main_import_alias_task_tuple_for_await.ql` 进一步把 same-file function import alias call lowering 推进到 `async fn main` 的真实 build-and-run surface，覆盖 alias-root direct call、direct `await`、direct `spawn`、aggregate-carried、fixed-array-carried、tuple-carried、helper-forwarded、helper-returned task-handle、helper-returned-task + helper-forwarded submit，以及 direct/helper-returned/awaited-aggregate/inline-awaited fixed-array task-array `for await`、direct/helper-returned homogeneous task-tuple `for await`、以及 import-aliased awaited-aggregate task-tuple `for await` 中对每个元素自动 `await` 后再绑定循环变量的组合路径；`115_async_main_import_alias_task_array_for_await.ql`、`116_async_main_import_alias_helper_task_array_for_await.ql`、`117_async_main_projected_task_array_for_await.ql`、`118_async_main_void_task_array_for_await.ql`、`119_async_main_awaited_aggregate_task_array_for_await.ql`、`120_async_main_awaited_nested_aggregate_task_array_for_await.ql`、`122_async_main_inline_awaited_task_array_for_await.ql`、`123_async_main_awaited_tuple_projected_task_array_for_await.ql`、`124_async_main_awaited_array_projected_task_array_for_await.ql`、`125_async_main_tuple_for_await.ql`、`126_async_main_task_tuple_for_await.ql`、`128_async_main_projected_task_tuple_for_await.ql`、`129_async_main_awaited_aggregate_task_tuple_for_await.ql`、`130_async_main_awaited_tuple_projected_task_tuple_for_await.ql`、`132_async_main_inline_awaited_task_tuple_for_await.ql`、`133_async_main_awaited_nested_aggregate_task_tuple_for_await.ql`、`134_async_main_awaited_array_projected_task_tuple_for_await.ql`、`135_async_main_import_alias_task_tuple_for_await.ql` 与 `136_async_main_void_task_tuple_for_await.ql` 还分别锁住了 helper-returned fixed-array task root、projected fixed-array task root、`Task[Void]` wildcard、awaited aggregate task root、awaited nested aggregate task root、inline-awaited fixed-array task root、awaited tuple-projected task root、awaited array-projected task root、homogeneous tuple iterable root、task-tuple auto-await iterable root、projected task-tuple root、awaited aggregate task-tuple root、awaited tuple-projected task-tuple root、inline-awaited task-tuple root、awaited nested aggregate task-tuple root、awaited array-projected task-tuple root、direct import-alias task-tuple root，以及 `Task[Void]` task-tuple wildcard 的 executable public surface
-- 其中 `137_async_main_const_tuple_for_await.ql`、`138_async_main_static_array_for_await.ql`、`139_async_main_import_alias_projected_const_tuple_for_await.ql`、`140_async_main_import_alias_projected_static_array_for_await.ql`、`141_async_main_import_alias_const_tuple_for_await.ql` 与 `142_async_main_import_alias_static_array_for_await.ql` 进一步把 same-file `const` / `static` fixed-shape root 及其 same-file import-alias projected/direct root 的 scalar `for await` lowering 推进到 `async fn main` 的真实 build-and-run surface；这条 public slice 现在已经显式覆盖 direct const tuple root、direct static array root、import-aliased projected const tuple root、import-aliased projected static array root、import-aliased direct const tuple root，以及 import-aliased direct static array root
-- `143_async_main_call_root_projected_task_handle_consumes.ql` 则进一步把 direct call-root / projected call-root task-handle consume 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 direct call-root tuple projection await、direct call-root struct-field projection spawn，以及 direct projected call-root fixed-array projection await/spawn
-- `144_async_main_call_root_fixed_shape_for_await.ql` 则继续把 direct call-root / projected call-root fixed-shape iterable `for await` 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 direct call-root fixed-array scalar iterable、direct call-root homogeneous tuple scalar iterable、direct call-root task-tuple auto-await iterable，以及 projected call-root task-array iterable
-- `145_async_main_import_alias_call_root_fixed_shape_for_await.ql` 则继续把 same-file import-alias call-root / projected call-root fixed-shape iterable `for await` 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 import-aliased direct fixed-array scalar iterable、import-aliased direct homogeneous tuple scalar iterable、import-aliased direct task-tuple auto-await iterable，以及 import-aliased projected task-array iterable
-- `146_async_main_nested_call_root_fixed_shape_for_await.ql` 则继续把 nested call-root projected fixed-shape iterable `for await` 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 nested call-root scalar fixed-array iterable、nested call-root scalar homogeneous tuple iterable、nested call-root task-tuple auto-await iterable，以及更深一层 nested call-root projected task-array iterable
-- `147_async_main_import_alias_nested_call_root_fixed_shape_for_await.ql` 则继续把 same-file import-alias nested call-root projected fixed-shape iterable `for await` 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 import-aliased nested call-root scalar fixed-array iterable、import-aliased nested call-root scalar homogeneous tuple iterable、import-aliased nested call-root task-tuple auto-await iterable，以及 import-aliased deeper projected task-array iterable
-- `148_async_main_import_alias_call_root_projected_task_handle_consumes.ql` 则继续把 same-file import-alias call-root projected task-handle consume 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 import-aliased call-root tuple projection await、import-aliased call-root struct-field projection spawn，以及 import-aliased call-root projected task-array await/spawn
-- `149_async_main_import_alias_nested_call_root_projected_task_handle_consumes.ql` 则继续把 same-file import-alias nested call-root projected task-handle consume 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 import-aliased nested call-root tuple projection await、import-aliased nested call-root struct-field projection spawn，以及 import-aliased deeper projected task-array await/spawn
-- `150_async_main_import_alias_awaited_aggregate_projected_task_handle_consumes.ql` 则继续把 same-file import-alias awaited-aggregate projected task-handle consume 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 import-aliased awaited-aggregate tuple projection await、import-aliased awaited-aggregate struct-field projection spawn，以及 import-aliased awaited-aggregate deeper projected task-array await/spawn
-- `151_async_main_awaited_aggregate_projected_task_handle_consumes.ql` 则继续把 direct awaited-aggregate projected task-handle consume 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 direct awaited-aggregate tuple projection await、direct awaited-aggregate struct-field projection spawn，以及 direct awaited-aggregate deeper projected task-array await/spawn
-- `152_async_main_inline_projected_fixed_shape_for_await.ql` 则继续把带括号的 inline aggregate projected fixed-shape `for await` 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 inline projected fixed-array scalar iterable、inline projected homogeneous tuple scalar iterable、inline projected task-tuple auto-await iterable，以及更深一层 inline projected task-array iterable
-- `153_async_main_inline_projected_task_handle_consumes.ql` 则继续把带括号的 inline aggregate projected task-handle consume 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 inline projected tuple task-handle await、inline projected struct-field task-handle spawn，以及更深一层 inline projected task-array await/spawn
-- `154_async_main_import_alias_inline_projected_task_handle_consumes.ql` 则继续把 same-file import-alias inline aggregate projected task-handle consume 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 alias-backed inline projected tuple task-handle await、alias-backed inline projected struct-field task-handle spawn，以及 alias-backed inline projected task-array await/spawn
-- `155_async_main_import_alias_inline_projected_fixed_shape_for_await.ql` 则继续把 same-file import-alias inline aggregate projected fixed-shape `for await` 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 alias-backed inline projected fixed-array scalar iterable、alias-backed inline projected homogeneous tuple scalar iterable、alias-backed inline projected task-tuple auto-await iterable，以及 alias-backed inline projected task-array iterable
-- `156_async_main_awaited_aggregate_projected_fixed_shape_for_await.ql` 则继续把 awaited-aggregate projected fixed-shape `for await` 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 awaited projected fixed-array scalar iterable、awaited projected homogeneous tuple scalar iterable、awaited projected task-tuple auto-await iterable，以及 awaited projected task-array iterable
-- `157_async_main_import_alias_awaited_aggregate_projected_fixed_shape_for_await.ql` 则继续把 same-file import-alias awaited-aggregate projected fixed-shape `for await` 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 alias-backed awaited projected fixed-array scalar iterable、alias-backed awaited projected homogeneous tuple scalar iterable、alias-backed awaited projected task-tuple auto-await iterable，以及 alias-backed awaited projected task-array iterable
-- `158_async_main_nested_call_root_projected_task_handle_consumes.ql` 则继续把 direct nested call-root projected task-handle consume 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 direct nested call-root tuple projection await、direct nested call-root struct-field projection spawn，以及 direct deeper projected task-array await/spawn
-- `159_async_main_inline_projected_fixed_shape_for_await_without_parens.ql` 则继续把不带括号的 inline aggregate projected fixed-shape `for await` 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 unparenthesized inline projected fixed-array scalar iterable、unparenthesized inline projected homogeneous tuple scalar iterable、unparenthesized inline projected task-tuple auto-await iterable，以及 unparenthesized inline projected task-array iterable
-- `160_async_main_awaited_match_guards.ql` 到 `173_async_main_awaited_match_nested_call_root_inline_combos.ql` 则继续把 awaited `match` guard surface 推进到 `async fn main` 的真实 build-and-run surface，显式覆盖 awaited scalar scrutinee + direct-call guard、awaited aggregate scrutinee + projection guard、awaited aggregate scrutinee + aggregate guard-call arg / call-backed aggregate guard-call arg、same-file import-alias rooted awaited helper / guard helper 组合、awaited scrutinee + item/import-alias-backed inline guard 组合、awaited scrutinee + direct call-backed guard 组合、awaited scrutinee + inline aggregate guard-call arg 组合、awaited scrutinee + inline projection-root guard 组合、awaited scalar scrutinee + nested call-root runtime projection guard 组合、awaited scalar scrutinee + nested call-root inline projection/inline aggregate guard-call 组合、awaited scrutinee + item-backed / call-backed / alias-backed nested call-root guard 组合，以及 awaited aggregate current-binding / read-only projection-root backed nested call-root guard 组合
-- `39_sync_unparenthesized_inline_projected_control_flow_heads.ql` 则继续把不带括号的 inline aggregate projected `if` / `while` / `match` 头推进到真实 sync build-and-run surface，显式覆盖 unparenthesized inline projected bool `if` condition、unparenthesized inline projected bool `while` condition，以及 unparenthesized inline projected `match` scrutinee
-- `crates/ql-cli/tests/codegen.rs` 当前也已把 direct resolved sync guard-call `match`、call-projection-root guard `match`、aggregate-call-arg guard `match`、inline-aggregate-call-arg guard `match`、inline-projection-root guard `match`、item/import-alias-backed inline guard combo `match`、call-backed inline guard combo `match`、call-root nested runtime projection `match`、nested-call-root inline combo `match`、item-backed nested-call-root combo `match`、call-backed nested-call-root combo `match`、alias-backed nested-call-root combo `match`、binding-backed nested-call-root combo `match` 与 projection-backed nested-call-root combo `match` 显式锁进 CLI 的 `llvm-ir` / `obj` / `exe` pass matrix：`fixtures/codegen/pass/match_guard_direct_calls.ql` 覆盖 `enabled()` 这类 bool guard call 与 `offset(delta: 2, value: current) == 22` 这类命名实参重排后的 integer guard-call 组合，`fixtures/codegen/pass/match_guard_call_projection_roots.ql` 继续覆盖 `pair(current)[1]`、`state(current).value` 与 `values(current)[1]` 这类 call-root projection guard，`fixtures/codegen/pass/match_guard_aggregate_call_args.ql` 显式锁住 `enabled(current)`、`matches(pair(current), 22)` 与 `contains(values(current), 4)` 这类 loadable aggregate 直接流入 guard-call 参数的路径，`fixtures/codegen/pass/match_guard_inline_aggregate_call_args.ql` 继续把 `enabled(State { ready: true })`、`matches((0, current), 22)` 与 `contains([current, current + 1, current + 2], 4)` 这类 inline aggregate literal 直接作为 guard-call 实参的路径纳入公开 CLI 合同，`fixtures/codegen/pass/match_guard_inline_projection_roots.ql` 则进一步把 `(0, current)[1]`、`State { value: current }.value` 与 `[current, current + 1, current + 2][1]` 这类 inline aggregate literal projection-root guard 纳入公开 CLI 合同，`fixtures/codegen/pass/match_guard_item_backed_inline_combos.ql` 继续把 `enabled(extra: true, state: state)`、`(INPUT[0], current)[1]` 与 `[INPUT[0], current + 1, INPUT[2]][current - 2]` 这类 same-file item/import-alias-backed inline guard 组合也纳入公开 CLI 合同，`fixtures/codegen/pass/match_guard_call_backed_combos.ql` 则继续把 `enabled(extra: ready(true), state: State { ready: ready(true) })`、`matches((seed(0), current), 22)` 与 `items(current)[slot(current)]` 这类 direct sync call-backed inline guard 组合纳入公开 CLI 合同，`fixtures/codegen/pass/match_guard_call_root_nested_runtime_projection.ql` 则继续把 `pack(current).values[offset(current)]`、`ready(pack(current).values[offset(current)])` 与 `check(expected: 4, value: pack(current).values[offset(current)])` 这类 call-root nested runtime projection guard 组合纳入公开 CLI 合同，`fixtures/codegen/pass/match_guard_nested_call_root_inline_combos.ql` 则继续把 `[pack(current)[slot(current)], current + 1, 6][0]`、`contains([pack(3)[slot(3)], current, 9], 4)` 与 `pair(left: pack(current)[slot(current)], right: 8)[0]` 这类 nested-call-root inline aggregate / projection / guard-call 组合纳入公开 CLI 合同，`fixtures/codegen/pass/match_guard_item_backed_nested_call_root_combos.ql` 则继续把 `enabled(extra: INPUT[0] == bundle(3)[offset(3)], state: state(bundle(3)[offset(3)] == 4))`、`[bundle(current)[offset(current)], INPUT[1], INPUT[2]][0]` 与 `check(expected: INPUT[0], value: [bundle(current)[offset(current)], 8, 9][0])` 这类 item-backed nested-call-root guard 组合纳入公开 CLI 合同，`fixtures/codegen/pass/match_guard_call_backed_nested_call_root_combos.ql` 则继续把 `enabled(extra: flag(pack(3)[slot(3)] == 4), state: state(flag(pack(3)[slot(3)] == 4)))`、`[pack(current)[slot(current)], seed(8), seed(9)][0]` 与 `check(expected: seed(4), value: [pack(current)[slot(current)], seed(8), 9][0])` 这类 call-backed nested-call-root guard 组合纳入公开 CLI 合同，`fixtures/codegen/pass/match_guard_alias_backed_nested_call_root_combos.ql` 则继续把 `allow(extra: flag(pack(3)[slot(3)] == literal(4)), state: make(flag(pack(3)[slot(3)] == literal(4))))`、`[pack(current)[slot(current)], literal(8), literal(9)][0]` 与 `check(expected: literal(4), value: [pack(current)[slot(current)], literal(8), 9][0])` 这类 alias-backed nested-call-root guard 组合纳入公开 CLI 合同，`fixtures/codegen/pass/match_guard_binding_backed_nested_call_root_combos.ql` 则继续把 `enabled(extra: bundle(current.value)[offset(current.value)] == 4, state: current)`、`[bundle(current.value)[offset(current.value)], current.value + 5, 9][0]` 与 `matches(expected: 4, value: [bundle(current.value)[offset(current.value)], current.value, 9][0])` 这类 binding-backed nested-call-root guard 组合纳入公开 CLI 合同，而 `fixtures/codegen/pass/match_guard_projection_backed_nested_call_root_combos.ql` 则继续把 `enabled(extra: bundle(config.slot.value)[offset(config.slot.value)] == 4, state: state(bundle(config.slot.value)[offset(config.slot.value)] == 4))`、`[bundle(config.slot.value)[offset(config.slot.value)], current + 5, 9][0]` 与 `matches(expected: 4, value: [bundle(config.slot.value)[offset(config.slot.value)], current, 9][0])` 这类 projection-backed nested-call-root guard 组合纳入公开 CLI 合同，不再只依赖 driver 单测和 sync executable 样例间接证明
-- `crates/ql-cli/tests/codegen.rs` 现在也把 direct call-root fixed-shape `for` 显式锁进 CLI 的 `llvm-ir` / `obj` / `exe` pass matrix：`fixtures/codegen/pass/for_call_root_fixed_shapes.ql` 继续覆盖 `for value in array_values(10)`、`for value in tuple_values(7)` 与 `for value in make_payload(3).values` 这三条 direct call-root / projected call-root fixed-array / homogeneous tuple iterable 路径，不再只依赖 sync executable 样例间接证明
-- `crates/ql-cli/tests/codegen.rs` 现在也把 same-file import-alias call-root fixed-shape `for` 显式锁进 CLI 的 `llvm-ir` / `obj` / `exe` pass matrix：`fixtures/codegen/pass/import_alias_call_root_fixed_shapes.ql` 继续覆盖 `for value in values(10)`、`for value in pairs(7)` 与 `for value in payload(3).values` 这三条 alias-call canonicalization 后的 call-root / projected call-root fixed-array / homogeneous tuple iterable 路径，不再只依赖 sync executable 样例间接证明
-- `crates/ql-cli/tests/codegen.rs` 现在也把 nested call-root fixed-shape `for` 显式锁进 CLI 的 `llvm-ir` / `obj` / `exe` pass matrix：`fixtures/codegen/pass/nested_call_root_fixed_shapes.ql` 继续覆盖 `for value in array_env(10).payload.values`、`for value in tuple_env(7).payload.values` 与 `for value in deep_env(3).outer.payload.values` 这三条 nested projected call-root fixed-array / homogeneous tuple iterable 路径，不再只依赖 sync executable 样例间接证明
-- `crates/ql-cli/tests/codegen.rs` 现在也把 same-file import-alias nested call-root fixed-shape `for` 显式锁进 CLI 的 `llvm-ir` / `obj` / `exe` pass matrix：`fixtures/codegen/pass/import_alias_nested_call_root_fixed_shapes.ql` 继续覆盖 `for value in arrays(10).payload.values`、`for value in tuples(7).payload.values` 与 `for value in deep(3).outer.payload.values` 这三条 alias-call canonicalization 后的 nested projected call-root fixed-array / homogeneous tuple iterable 路径，不再只依赖 sync executable 样例间接证明
-- sync executable smoke contract 现也覆盖本地忽略目录中的代表性样例名 `ramdon_tests/executable_examples/04_sync_static_item_values.ql` 到 `39_sync_unparenthesized_inline_projected_control_flow_heads.ql`：除了 same-file foldable `const` / `static` item value 普通表达式 / bool 条件 lowering、direct named call argument lowering、same-file function import alias call lowering、direct fixed-array `for`、direct homogeneous tuple `for`、projected fixed-shape `for`、same-file `const` / `static` fixed-shape root 与 same-file `use ... as ...` const alias 的 sync `for` lowering、direct call-root / projected call-root fixed-shape `for` lowering、same-file import-alias call-root / projected call-root fixed-shape `for` lowering、nested call-root projected fixed-shape `for` lowering、same-file import-alias nested call-root projected fixed-shape `for` lowering、带括号 inline aggregate projected fixed-shape `for` lowering、same-file import-alias 带括号 inline aggregate projected fixed-shape `for` lowering、不带括号的 inline aggregate projected fixed-shape `for` lowering，以及不带括号的 inline aggregate projected `if` / `while` / `match` 头 lowering 之外，现在也已经把 bool `match` scrutinee self-guard folding、scrutinee-bool-comparison guard folding、bool partial dynamic guard lowering、integer partial dynamic guard lowering、当前 arm binding 作为 read-only struct/tuple/fixed-array projection root 的 guard lowering、非 `Bool` / `Int` current-loadable scrutinee 的单名 binding catch-all lowering、same-file `const` / `static` / import-alias aggregate root 上带运行时数组索引的 guard lowering、direct resolved sync scalar guard-call lowering、direct resolved sync aggregate guard-call projection-root lowering、direct resolved sync aggregate guard-call argument lowering、direct resolved sync inline aggregate-literal guard-call argument lowering、inline aggregate-literal projection-root guard lowering、same-file item/import-alias-backed inline aggregate 组合 guard lowering、direct sync call-backed guard 组合 lowering、direct sync call-root nested runtime projection lowering、nested call-root inline guard 组合 lowering、same-file item-backed nested call-root 组合 guard lowering、call-backed nested call-root 组合 lowering、alias-backed nested call-root 组合 lowering、binding-backed nested call-root 组合 lowering，以及 projection-backed nested call-root 组合 guard lowering 一并锁进真实 `--emit exe` 合同
-- `dylib` 当前要求模块里至少存在一个 public 顶层 `extern "c"` 函数定义，避免生成没有明确导出面的共享库
-- direct `extern "c"` 调用现在会在 program mode 和 library mode 下都 lower 成 LLVM `declare @symbol` + `call @symbol`
-- 顶层 `extern "c"` 函数定义现在会 lower 成稳定 C 符号名，例如 `define i64 @q_add(...)`
-- Windows 上 `dylib` 链接会为这些稳定导出符号显式追加 `/EXPORT:<symbol>`，确保 DLL 导出表和 Qlang 的 exported C surface 保持一致
-- `dylib` / `staticlib` 现在还可以在构建成功后直接附带 C header sidecar，而不需要额外再跑一次 `ql ffi header`
-- build-side header 会复用同一份 analysis 结果，而不是重新 parse / resolve / typeck
-- build-side header 只允许出现在 `dylib` / `staticlib` 上；对 `llvm-ir` / `obj` / `exe` 会直接拒绝
-- 如果显式 `--header-output` 与主 artifact 路径相同，driver 会在真正构建前直接报错，避免 header 覆盖库文件
-- 如果 library 已成功产出但 sidecar header 生成失败，driver 会回收刚生成的主 artifact，避免留下“库成功、头文件失败”的半成功状态
-- program mode 的入口 `main` 仍必须使用默认 Qlang ABI；如果需要导出稳定 C 符号，应定义独立的 `extern "c"` helper
-- `extern` callable 现在有共享 callable identity，因此 extern block 调用也能稳定参与参数类型检查与代码生成
-- first-class function value 不会再把后端打崩，而是返回结构化 unsupported diagnostics
-- Windows 上如果使用 `QLANG_CLANG` 覆盖路径，建议指向 `clang.exe` 或 `.cmd` wrapper，而不是裸 `.ps1`
-- 如果使用 `QLANG_AR` 覆盖路径，建议指向 `llvm-ar` / `ar` / `llvm-lib.exe` / `lib.exe` 或对应 `.cmd` wrapper
-- 如果 `QLANG_AR` 指向的 wrapper 文件名本身看不出是 `ar` 风格还是 `lib` 风格，可以额外设置 `QLANG_AR_STYLE=ar|lib`
-- Windows 下如果 PATH 中没有 clang / archiver，`ql-driver` 现在还会 best-effort 探测常见 LLVM 安装目录，包括 Scoop 的 `llvm/current/bin`、`%LOCALAPPDATA%\\Programs\\LLVM\\bin`、`%ProgramFiles%\\LLVM\\bin` 与 `%ProgramFiles(x86)%\\LLVM\\bin`
-- 当这些位置也没有找到工具时，`ToolchainError::NotFound` 会把候选路径直接放进 hint，减少“只知道要配环境变量，但不知道应该指向哪里”的恢复成本
-
-当前明确未完成：
-
-- 独立 linker family discovery
-- runtime startup object
-- first-class function value lowering
-- closure lowering
-- 更广义的 projection assignment（当前已开放 tuple-index / struct-field / fixed-array literal-index write、非 `Task[...]` 元素的 dynamic array assignment，以及 `Task[...]` 动态数组的 generic maybe-overlap write/reinit + same immutable stable index path precise consume/reinit 子集）、更广义 `for` / `for await` lowering（当前已开放 sync fixed-shape `for`，以及 library-mode 与 `BuildEmit::Executable` `async fn main` 子集下的 fixed-shape iterable `for await`，其中 fixed-shape 当前覆盖 fixed-array 与 homogeneous tuple）、更广义 `match` lowering（当前只开放 `Bool` scrutinee + unguarded `true` / `false` / same-file const/static/alias bare path + `_` 或单名 binding catch-all arm、`Int` scrutinee + unguarded integer literal / same-file const/static/alias bare path + `_` 或单名 binding catch-all arm，以及其他 current-loadable scrutinee 上的 `_` / 单名 binding catch-all arm 子集；这些子集额外接受 literal `if true` / `if false` guard、same-file foldable `const` / `static`-backed `Bool` guard 与其 same-file `use ... as ...` 别名、包裹当前 bool guard 子集的一层 unary `!`、由当前 bool guard 子集继续组合出的 runtime `&&` / `||`、当前 arm 单名 binding catch-all 变量作为 direct scalar operand 参与 guard，以及当前 `Bool ==/!=` 与 `Int ==/!=/>/>=/</<=` 的简单 scalar comparison guard 子集；其中 `Int` operand 当前开放 integer literal、same-file foldable `const` / `static`-backed `Int` 与其 same-file `use ... as ...` 别名、由当前支持的 `Int` operand 继续递归组成的最小整数算术表达式（`+` / `-` / `*` / `/` / `%`）、以 local / parameter / `self` 或当前 arm 单名 binding 为根的 read-only struct field / tuple literal-index / fixed-array index projection，以及能经由这些投影折叠成 scalar 的 same-file foldable `const` / `static`-backed aggregate root 及其 same-file `use ... as ...` alias，而 direct bool guard operand 当前开放 same-scope `Bool` local / parameter、以 local / parameter / `self` 或当前 arm 单名 binding 为根的 read-only bool scalar projection，以及能折叠成 `Bool` 的 same-file foldable `const` / `static`-backed aggregate root 及其 same-file `use ... as ...` alias；`Bool` scrutinee 子集额外接受这组 direct bool guard，而 `Int` scrutinee 子集额外接受 integer-literal arm / guarded catch-all arm 上的同一组 direct bool guard；超出当前 catch-all-only non-scalar scrutinee 子集、或超出当前只读 struct-field / tuple-index / fixed-array-index 子集的 current-arm projection 用法仍显式拒绝；不能折叠成 `Bool` / `Int` 的 bare path pattern 仍显式拒绝）与更广义 aggregate / cleanup lowering
-- 任意共享库 surface、exported ABI 的 linkage/visibility 控制与 richer ABI surface
-- extern ABI 与 runtime glue 的其余部分
-
-这些边界当前仍保持关闭，用于控制 Phase 4 的后端范围。
+输出以 `target/ql/<profile>/...` 为默认根。project-aware build 会按 package/workspace 语义解析本地依赖，并保留当前支持的 dependency bridge 切片。
 
 ### `ql run`
 
-`ql run` 的职责是把 executable build 与进程执行收成同一个入口，优先服务真实项目开发，而不是继续要求用户先手写 build 命令、再手动定位产物路径。
-
-当前可用命令形态：
-
-- `ql run <file-or-dir>`
-- `ql run <file-or-dir> --profile <debug|release>`
-- `ql run <file-or-dir> --release`
-- `ql run <workspace-dir> --package <name> --bin <name>`
-- `ql run <package-dir> --target <path>`
-- `ql run <file-or-dir> --json`
-- `ql run <file-or-dir> -- <args...>`
-
-当前实现边界：
-
-- 单文件路径会直接按 `BuildEmit::Executable` build，然后执行产物。
-- package directory、`qlang.toml`、workspace directory 与 workspace-only 根 manifest 会复用 `ql project targets` 的发现结果；其中 path-only 的 `[lib].path` / `[[bin]].path` 也已进入同一套发现面。
-- `ql project targets --json` 现已把这套发现结果导出为稳定的 `ql.project.targets.v1` schema，成员顺序与文本模式一致，都会先按 workspace 本地依赖顺序排好，再输出每个 package 的 `kind + path` target 列表，方便 CI/脚本直接消费。
-- `ql project graph --json` 现已把 package/workspace graph 导出为稳定的 `ql.project.graph.v1` schema，覆盖顶层 manifest/package/workspace/references、package interface 状态、reference interface 状态，以及 workspace root 下已展开的 member graph，方便脚本和编辑器直接消费同一套 graph 真相面，而不是再解析终端文本。
-- 当前 runnable target 仅包括 `bin` 与 fallback `source`；`lib` 明确不会参与 `run`。
-- project-aware `ql run` 默认仍要求解析结果里恰好只有一个 runnable target；如果没有 runnable target，或有多个 runnable target，CLI 会显式失败并提示重跑 `ql project targets <path>` 检查发现结果。但现在也可以用 `--package <name>`、`--bin <name>` 或 `--target <path>` 在多 target 项目里稳定选中唯一 runnable target，而显式 `[[bin]].path` 也会直接进入这套 runnable target 选择面。
-- project-aware `ql run` 现在还会在真正构建 root executable 前，递归解析该 package 的本地 path dependency 闭包，并静默同步 root package 所需的 dependency `.qi`、静默预构建 dependency-only package；这些依赖包会落到各自默认 artifact 路径，不会复用 root executable 的输出参数，也不会把 interface/build 成功提示混进程序 stdout/stderr。当前真正能跨包执行的调用面仍然很窄，稳定边界是 direct dependency 的 bridgeable public `const/static` values、受限 public top-level free function（非泛型路径要求非 `async` / 非 `unsafe`、无 `where`、仅普通参数；泛型路径开放 direct-call 多实例本地特化，并要求所有 generic 参数可由参数、基础表达式、tuple / fixed-array 字面量、typed value、generic carrier、单字段 variant constructor 或显式结果上下文推断）、public `extern "c"` 符号、public `struct` / `enum` declaration bridge（含显式实例化泛型签名和期望类型明确的泛型 struct literal / field projection）、非 opaque `type alias` declaration bridge，以及这些 bridgeable public `struct` 上的受限 public receiver method forwarder；其中 value bridge 当前只覆盖 data-only initializer，并允许递归引用同模块其他 public `const/static`。如果实际导入的直依赖 type/value/function/extern 同名，target-prep 仍会分别以 `dependency-type-conflict` / `dependency-value-conflict` / `dependency-function-conflict` / `dependency-extern-conflict` 显式失败。更宽的普通跨包 Qlang method 与其他 dependency value/member lowering 仍不会因为有依赖预构建就自动可用。
-- `--profile <debug|release>` 与 `--release` 会显式选择 executable build profile；如果 project-aware `ql run` 没有传这些 CLI 选项，则会按 `package profile -> workspace profile -> debug` 的顺序解析默认 profile。
-- `--json` 现已导出第一版机器可消费运行结果，schema 为 `ql.run.v1`；成功时会稳定输出请求路径、scope、resolved manifest、requested profile、program args、built target，以及捕获到的程序 stdout/stderr 与 exit code。若程序本身返回非零退出码，CLI 会先输出 JSON，再保持相同退出码退出。当前 build/spawn/no-exit-code 失败也会落在这条 stdout JSON contract 内；selector / project preflight 这类更早失败仍保留既有 stderr surface。
-- `-- <args...>` 会原样转发给最终可执行文件。
-- 成功执行时，`ql run` 会直接复用 `ql build --emit exe` 的默认输出布局，然后执行解析出的二进制；stdout/stderr 归被执行程序本身所有，不额外混入 build 成功提示，并直接透传子进程退出码。
+- 复用 `ql build`
+- 构建后执行目标程序
+- 支持 project-aware 入口、`--list`、`--json`
 
 ### `ql test`
 
-`ql test` 当前先落成第一版 project-aware harness，而不是完整单元测试框架。目标是让 package/workspace 在今天的 manifest、语义分析与代码生成边界下，至少能稳定跑起一组真实 `.ql` 测试程序。
-
-当前可用命令形态：
-
-- `ql test <file-or-dir>`
-- `ql test <file-or-dir> --profile <debug|release>`
-- `ql test <file-or-dir> --release`
-- `ql test <workspace-dir> --package <name>`
-- `ql test <file-or-dir> --list`
-- `ql test <file-or-dir> --filter <substring>`
-- `ql test <file-or-dir> --json`
-
-当前实现边界：
-
-- 单文件路径会把该 `.ql` 文件按 executable 构建并执行。
-- package directory、`qlang.toml`、workspace directory 与 workspace-only 根 manifest 会递归发现各 package 下的 `tests/**/*.ql`。
-- `--package <name>` 现在会先把 discovery 范围收窄到单个 package/workspace member，然后再继续走同一套 smoke / UI test 发现、`--list` 与 `--filter` 流程。
-- `--json` 现在会把同一套 discovery/执行结果导出成第一版机器可消费测试输出，schema 为 `ql.test.v1`；当前稳定边界覆盖 `status: "listed" | "ok" | "failed" | "no-tests" | "no-match"` 五类结果，并稳定导出 request path、requested profile、package/filter/list 选项、discovery 计数、selected targets、passed/failed 计数和 failure 明细。target 当前收敛成 `path + kind (+ effective smoke profile)`，failure 当前收敛成 `build` / `run` / `spawn` / `ui` 四类；manifest 加载失败、package selector/path 失败、dependency/interface 预备失败这类更早错误仍保留既有 stderr failure surface，不在这条 JSON slice 里假装已经完全结构化。
-- `--profile <debug|release>` 与 `--release` 会显式选择普通 executable smoke test 的 build profile；如果 project-aware `ql test` 没有传这些 CLI 选项，则会按 `package profile -> workspace profile -> debug` 的顺序解析默认 profile。UI snapshot tests 仍直接走 analysis/diagnostics，不消费 build profile。
-- `tests/ui/**/*.ql` 现在会走第一版项目内 UI test 合同：直接按单文件语义分析执行，要求源码产生 diagnostics，并与相邻 `.stderr` snapshot 做精确比对；这里的诊断路径按 package root 下的相对测试路径渲染，例如 `tests/ui/type_error.ql`。
-- 除了 `tests/ui/**/*.ql` 之外，其余发现到的测试文件仍都会独立构建成 executable，然后顺序执行。
-- project-aware `ql test` 现在也会在真正执行 smoke tests 前，递归解析这些测试所属 package 的本地 path dependency 闭包，并静默预构建 dependency-only package；同时会预构建被测 package 的 library target，让 smoke test 可以通过当前 package 名导入受限 public top-level free function。这些预构建不会污染正常的 `test ... ok/FAILED` 输出，而 UI snapshot tests 仍完全绕过这层 build-prep graph。普通 smoke tests 当前能稳定跨包调用的边界仍然很窄，只覆盖 direct dependency 的 bridgeable public `const/static` values、受限 public top-level free function（非泛型路径要求非 `async` / 非 `unsafe`、无 `where`、仅普通参数；泛型路径开放 direct-call 多实例本地特化，并要求所有 generic 参数可由参数、基础表达式、tuple / fixed-array 字面量、typed value、generic carrier、单字段 variant constructor 或显式结果上下文推断）、public `extern "c"` 符号、public `struct` / `enum` declaration bridge（含显式实例化泛型签名和期望类型明确的泛型 struct literal / field projection）、非 opaque `type alias` declaration bridge，以及这些 bridgeable public `struct` 上的受限 public receiver method forwarder；这类 method forwarder 已覆盖直接调用和经不可变局部 alias 的 method value direct call。其中 value bridge 当前只覆盖 data-only initializer，并允许递归引用同模块其他 public `const/static`。如果实际导入的直依赖 type/value/function/extern 同名，target-prep 仍会分别以 `dependency-type-conflict` / `dependency-value-conflict` / `dependency-function-conflict` / `dependency-extern-conflict` 失败，不等于完整 project dependency semantics 已经进入测试执行面。
-- `--list` 只打印这次 discovery 到的测试文件，不 build、不 run；smoke 与 UI tests 共用同一套 discovery/list 输出。
-- `--filter <substring>` 会在 discovery 之后按测试 display path 做子串过滤，方便缩小到单个文件或一组目录前缀；smoke 与 UI tests 共用同一套 filter。
-- executable smoke test 当前通过条件只有一个：测试进程退出码为 `0`。
-- workspace member 没有测试时当前会保守跳过；只有整次请求范围里完全没有发现测试文件时，CLI 才会显式失败；如果 discovery 成功但 `--filter` 之后没有匹配项，也会单独显式失败。
-- 成功时 stdout 只输出测试状态与汇总；失败时 stderr 会打印 smoke test 的退出码和捕获到的 stdout/stderr，或 UI test 的 snapshot mismatch / 读取失败等细节。
-- `ql project init` 现在会默认生成 `src/main.ql` 与 `tests/smoke.ql`，确保新脚手架可以直接进入 `ql check` / `ql run` / `ql test`。当传入 `--stdlib <path>` 时，init 会静默预备这些 stdlib path dependency 的 `.qi` interface artifact，所以新项目不需要先手动执行 `ql check --sync-interfaces` 才能进入普通 `ql check`。
-- 当前项目内 UI test 仍只覆盖单文件 diagnostics snapshot，不等于完整 integration/doc/benchmark harness 已开放。
-
-### `ql ffi`
-
-P5 当前已经落地最小可用的 C header emit slice：
-
-- `ql ffi header <file>`
-- `ql ffi header <file> --surface exports`
-- `ql ffi header <file> --surface imports`
-- `ql ffi header <file> --surface both`
-- `ql ffi header <file> -o <output>`
-- `ql build <file> --emit dylib|staticlib --header`
-- `ql build <file> --emit dylib|staticlib --header-surface exports|imports|both`
-- `ql build <file> --emit dylib|staticlib --header-output <output>`
-
-当前默认输出路径：
-
-- `target/ql/ffi/<stem>.h`
-- `target/ql/ffi/<stem>.imports.h`
-- `target/ql/ffi/<stem>.ffi.h`
-
-build-side sidecar 默认输出路径：
-
-- `<library-dir>/<source-stem>.h`
-- `<library-dir>/<source-stem>.imports.h`
-- `<library-dir>/<source-stem>.ffi.h`
-
-当前 `ql ffi header` 的职责是：
-
-- 读取单个 `.ql` 文件
-- 复用 `ql-analysis` 完成 parse / HIR / resolve / typeck
-- 默认投影 public 顶层 `extern "c"` 函数定义作为 exported surface
-- 在 `--surface imports` 下投影顶层 `extern "c"` 声明和 `extern "c"` block 成员声明
-- 在 `--surface both` 下按源码顺序合并 import/export surface
-- 将当前已支持的标量 / `String` / 指针类型投影到确定性的 C declaration
-- 输出 include guard、`<stdbool.h>` / `<stdint.h>`、C++ `extern "C"` wrapper
-- include guard 会按最终输出头文件名生成，避免 export/import/both 三份 header 互相冲突
-
-而 `ql build` 上的 header sidecar 只是复用同一套投影逻辑，但把默认输出目录改成 library artifact 同目录，并挂到 build orchestration 上统一交付。
-
-当前支持矩阵刻意收窄为：
-
-- 顶层 `pub extern "c" fn ... { ... }`
-- 顶层 `extern "c" fn ...`
-- `extern "c" { fn ... }`
-- `Bool` / `Void`
-- `Int` / `UInt` / `I8` / `I16` / `I32` / `I64` / `ISize`
-- `U8` / `U16` / `U32` / `U64` / `USize`
-- `F32` / `F64`
-- `String`，当前稳定投影为 `typedef struct ql_string { const uint8_t* ptr; int64_t len; } ql_string;`
-- 原始指针和多级原始指针
-- `exports` / `imports` / `both` 三种 surface 选择
-- 按源码顺序稳定输出 declaration
-
-当前明确未完成：
-
-- struct / tuple / callable / function-pointer ABI
-- layout 校验与 richer diagnostics
-- exported symbol 的 visibility/linkage 控制
-- bridge code generation
-
-### `ql check`
-
-当前 `ql check` 已经进入 Phase 2 的第一层语义阶段，不再只是 parser 验证。
-
-当前可用命令形态：
-
-- `ql check <file-or-dir>`
-- `ql check <file-or-dir> --sync-interfaces`
-- `ql check <file-or-dir> --json`
-- `ql check <file-or-dir> --sync-interfaces --json`
-
-它现在负责：
-
-- 读取单个 `.ql` 文件并执行 lexer / parser 验证
-- 将 AST lowering 到 HIR
-- 在 HIR 上执行名称解析与作用域图构建
-- 运行第一批 semantic checks
-- 对目录执行批量检查
-- 统一输出带 span 的 parser 与 semantic diagnostics
-
-当前已落地的 semantic checks 包括：
-
-- top-level duplicate definition
-- duplicate generic parameter
-- duplicate function parameter
-- duplicate enum variant
-- duplicate method in trait / impl / extend block
-- duplicate binding inside a pattern
-- duplicate field in `struct` declaration
-- duplicate field in `struct` pattern
-- duplicate field in `struct` literal
-- duplicate named call argument
-- positional argument after named arguments
-- invalid use of `self` outside a method receiver scope
-- return-value type mismatches
-- non-`Bool` conditions in `if` / `while` / match guards
-- callable arity / argument type mismatches
-- tuple destructuring arity mismatches
-- struct literal unknown-field / missing-field / field-type mismatches
-- source-level fixed array type expr `[T; N]` lowering and compatibility checks
-- expected fixed-array context guided array literal item diagnostics
-- equality operand compatibility mismatches
-- comparison operand compatible-numeric mismatches
-- unknown struct member access
-- pattern root / literal type mismatches in destructuring and `match`
-- calling non-callable values
-
-当前 `ql check` 的内部边界也进一步明确了：
-
-- `ql-analysis` 负责统一 parse / HIR / resolve / typeck 分析入口
-- `ql-cli` 不再自己拼装语义流水线，而是消费 `ql-analysis`
-- 这让 CLI、测试和未来 LSP 可以共享同一份分析快照，而不是各自拷贝一份流程
-- `ql-analysis` 现在还额外暴露了 position-based query surface：
-  - `symbol_at(offset)`
-  - `hover_at(offset)`
-  - `definition_at(offset)`
-  - `references_at(offset)`
-  - `completions_at(offset)`
-  - `semantic_tokens()`
-  - `prepare_rename_at(offset)`
-- `rename_at(offset, new_name)`
-- 这组 API 当前已经能回答 item / local / param / generic / receiver `self` / named type root / pattern root / struct literal root 的基础语义查询，并导出同文件 completion 与 semantic tokens 所需的稳定语义数据
-- import alias 现在会作为 source-backed binding 进入同一份 query index，因此可以返回真实 definition span，并参与同文件 hover / references / rename / semantic tokens；builtin type 则继续作为非 source-backed stable symbol 参与 hover / references / semantic tokens，但不提供 definition / rename
-- 当 import alias 的原始路径恰好是单段、且命中同文件 root struct item 时，field label query / rename 与 struct literal 字段检查也会继续沿用原 struct item / field symbol；struct 或 enum pattern root 也会沿同一条 canonicalization 回到本地 item
-
-这一层现在还有两个明确的架构保证：
-
-- AST 会保留 declaration name、generic param、regular param、pattern field、struct literal field、named call arg、closure param 的精确 name span
-- receiver param 现在也会保留精确 span，而不是退化成整个函数 span
-- HIR 会提前正规化 shorthand sugar，例如 struct pattern / struct literal 的缩写字段，后续 name resolution 和 type checking 不需要再区分“缩写”和“完整写法”
-
-现在又额外补上了一条关键边界：
-
-- `ql-resolve` 专门承接 lexical scope graph 与 best-effort name resolution，避免把作用域查找逻辑散落进 `ql-typeck`
-- 当前 resolution 故意只做保守诊断：先落地 `self` misuse 与 bare single-segment value/type root 的 unresolved，不抢跑 multi-segment unresolved global / unresolved type 的全面报错，这样可以先把语义架构打稳，再补 import / module / prelude 规则
-- `ql-typeck` 现在已经不只是 duplicate checker，而是开始承接真正的 first-pass typing；但它依然刻意保守，未知成员访问、通用索引协议结果、未建模模块语义仍然会回退成 `unknown`，避免过早把当前样例集打成错误；当前只对 source-level fixed array、inferred array，以及同文件 foldable integer constant expression / immutable direct local alias-backed constant tuple index 开了一层稳定 typing
-- top-level `const` / `static` 的声明类型现在会进入后续表达式 typing，因此函数值常量的调用也能拿到参数类型诊断
-
-当前目录扫描策略也已经收紧，避免把仓库噪音当成真实源码：
-
-- 会跳过 `target`、`node_modules`、`dist`、`build`、`coverage`
-- 会跳过隐藏目录
-- 会跳过仓库里的 `fixtures/` 和临时测试目录，例如 `ramdon_tests/`
-- 如果用户显式传入某个 fixture 文件或 fail fixture 目录，仍然允许直接检查
-
-这个策略不是“保守”，而是为了避免 `ql check .` 在仓库根目录误扫失败夹具、构建产物和杂项测试目录，污染真实前端回归结果。
-
-当前仍需明确的状态边界：
-
-- 默认参数仍是设计稿能力，不属于当前已经实现并验证的 `ql check` 语义范围
-- `ql check --json` 现已提供第一版机器可消费输出，schema 为 `ql.check.v1`
-- 当前 JSON 稳定边界只覆盖两类结果：成功时的 `status: "ok"`，以及源码 diagnostics 失败时的 `status: "diagnostics"`
-- 这条输出会稳定导出 `scope`（`files` / `package` / `workspace`）、`checked_files`、`diagnostic_files`、`loaded_interfaces`、`written_interfaces`、`failing_manifests` 等字段；diagnostics 会继续细化到 file / diagnostic / label / span
-- manifest 加载失败、reference 解析失败、interface artifact 失败这类更宽 failure model 当前仍保留既有 stderr failure surface，不在这轮 JSON slice 里假装已经完全结构化
-
-当前测试基建也已经进入下一层：
-
-- `crates/ql-typeck/tests/` 继续承载 crate-local duplicates / typing / rendering 回归
-- `crates/ql-analysis` 现在承载统一分析边界和查询 API 的单元测试
-- 仓库根 `tests/ui/` 现在开始承载黑盒 UI diagnostics fixture
-- `crates/ql-cli/tests/ui.rs` 负责驱动真实 `ql` 二进制，对 parser / resolve / semantic / type diagnostics 的最终 stderr 做 snapshot 比对
-
-当前工具链与文档基线常用的验证命令包括：
-
-- `cargo test`
-- `cargo test -p ql-lsp --lib`
-- `cargo test -p ql-lsp --lib open_local_dependency`
-- `cargo test -p ql-lsp --test bridge`
-- `cargo test -p ql-lsp --test implementation_request`
-- `cargo test -p ql-cli --test codegen`
-- 在 clang-style compiler 与 archiver 可用时：`cargo test -p ql-cli --test ffi`
-- `cargo test -p ql-cli --test ffi_header`
-- `cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit llvm-ir`
-- `cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_library.ql --emit staticlib`
-- `cargo run -p ql-cli -- build fixtures/codegen/pass/extern_c_library.ql --emit staticlib --header-surface imports`
-- `cargo run -p ql-cli -- ffi header tests/ffi/pass/extern_c_export.ql`
-- `cargo run -p ql-cli -- ffi header tests/ffi/header/extern_c_surface.ql --surface imports`
-- 在 clang 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit obj`
-- 在 clang 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit exe`
-- 在 clang 与 archiver 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build tests/ffi/pass/extern_c_export.ql --emit staticlib --header`
-- `npm run build` in `docs/`
-
-当前新增的黑盒 codegen harness 位于：
-
-- `crates/ql-cli/tests/codegen.rs`
-- `tests/codegen/pass/`
-- `tests/codegen/fail/`
-
-它会直接驱动真实 `ql build`，锁定：
-
-- LLVM IR 快照
-- extern C direct-call LLVM IR 快照
-- mock object / executable / static library 产物
-- build-side export/import header sidecar 快照
-- build 路径上的 unsupported diagnostics
-
-当前还新增了第一版真实 FFI smoke harness：
-
-- `crates/ql-cli/tests/ffi.rs`
-- `tests/ffi/pass/`
-- `tests/ffi/pass/*.header-surface`
-
-静态库回归会在 clang-style compiler 和 archiver 可用时：
-
-- 构建导出 `extern "c"` 符号的 Qlang `staticlib`
-- 在同一次 `ql build --header-output` 里生成对应的 C 头文件
-- 用包含该头文件的真实 C harness 链接该库
-- 运行宿主可执行文件确认导出符号可被调用
-- imported-host 夹具还会通过 `both` surface header 同时拿到 imported/exported 声明，并验证 Qlang 导出函数体内的 imported C 调用能真实命中宿主实现
-- `crates/ql-cli/tests/ffi.rs` 现在直接复用 `ql-driver` 的 toolchain discover 结果，因此这些回归对 clang / archiver 的可用性判断与真实 `ql build` 路径保持一致
-- 当前 imported-host staticlib 已覆盖：
-  - extern block declaration
-  - top-level extern declaration
-
-共享库回归会在 clang-style compiler 可用时：
-
-- 构建导出 `extern "c"` 符号的 Qlang `dylib`
-- 在同一次 `ql build --header-output` 里生成对应的 C 头文件
-- 用真实 C loader harness 编译宿主可执行文件
-- 运行宿主可执行文件，并在进程内通过 `LoadLibraryA` / `dlopen` 解析并调用导出符号
-
-当前 `.header-surface` fixture 元数据规则：
-
-- 不存在时默认 `exports`
-- 存在时内容必须是 `exports` / `imports` / `both`
-- 这让 FFI harness 可以在不硬编码 case 名称的前提下，为 imported-host 夹具切换到 combined surface
-
-### `qlsp`
-
-LSP 服务端，复用编译器 HIR 与查询系统。长期目标支持：
-
-- go to definition
-- find references
-- document highlight
-- hover
-- completion
-- semantic tokens
-- rename
-- code action
-- diagnostics
-
-当前已经有的地基：
-
-- `ql-analysis` 已提供最小可用的 hover / definition / references 查询面
-- `ql-analysis` 现在还提供基于稳定 symbol identity 的 same-file references 查询面
-- struct field 与唯一 method candidate 的 member token 现在也能直接复用同一套查询面
-- explicit struct literal / struct pattern field label 现在也能直接复用同一套 field 查询面
-- enum variant declaration / pattern use / constructor use 现在也能直接复用同一套查询面
-- `ql-analysis` 现在也能基于同一份 occurrence 索引导出 same-file semantic tokens
-- `ql-analysis` 现在也已把 resolved dependency import roots、dependency-backed value roots、enum variant、显式 struct field label 与唯一 method member 收进 package-aware semantic-token truth surface；`qlsp` 会在健康 package/workspace 上把这层高亮叠到同一份 editor token stream，而且 dependency import roots 现在会优先覆盖 generic import token 并提升成解析后的真实 symbol kind，而不是另起一套 LSP heuristics；即使当前文件本身有 parse errors 或 source diagnostics，只要 package/dependency 上下文还能 best-effort 恢复，这条 dependency-backed semantic-token 保留面也会继续留住，而且 broken-source fallback 下的 dependency import roots 现在也会按 resolved dependency symbol kind 继续保留；同一条 best-effort fallback 现在也开始保留 dependency import-root 的常用 hover / definition / declaration / references / `typeDefinition` / `prepareRename` / `rename`，而 workspace/package import root 现在也已开始优先命中唯一 workspace 源码定义上的 `hover` / `definition` / `declaration`；如果命中的是 type-like import root，`typeDefinition` 也会优先命中同一份 workspace 源码定义，而 `references` 现在也会在当前文件 import occurrences 之外，额外带上 workspace 其他源码文件里的同路径 import occurrences，以及 workspace source 文件里的同文件 occurrences。对 dependency-backed current-document symbols，这条 source-preferred `references` 在 healthy package/workspace 且能唯一回溯到 workspace 源码目标时，会以当前文件 occurrence 为起点：include declaration 时把声明位点替换成 workspace 源码定义，并额外并入 workspace source 文件里的同文件 occurrences，以及 workspace 其他源码文件里解析到同一 dependency definition target 的 dependency-backed occurrences；include declaration 关闭时也会保留这类源码优先合并，只是不把源码定义本身并回结果。当前回归已锁定 source function / source method / source enum variant / source struct field 四类，但仍不是完整 workspace-wide reference index。parse-error 文件里也会继续保留源码优先 `hover` / `definition` / `declaration` / `references` / `typeDefinition`，以及 current-document `documentHighlight` / `prepareRename` / `rename`；另外，dependency import-backed current-document value `references` 现在也已进入同一条 parse-error 合同，会继续带出 workspace 源码定义与其他 workspace 文件里的同目标 dependency-backed occurrences，而同一条 broken-source fallback 现在也已显式锁住这类 import-backed value root 的源码优先 `hover` / `definition` / `declaration` / `typeDefinition`、current-document `documentHighlight` / `prepareRename` / `rename`，以及 direct `.field` / `.method()` member completion 与同轴 `hover` / `definition` / `declaration` / `references`（现在也覆盖 `load().value` / `load().get(`、`load_children()[0].value` 这类 import-root 直接调用结果，以及 `maybe_load()?.value` / `maybe_load()?.get(`、`maybe_children()?[0].value` 这类 question-call / root indexed receiver），并额外锁住 `let current = load_children()[0]` / `let current = maybe_children()?[0]` 这类 root import-call indexed value-root、`(if ...)[0].leaf` / `(match ...)[0].leaf` 这类 root structured question-indexed bracket-target field member query、`(if ...)[0].leaf()` / `(match ...)[0].leaf()` 这类 method member query 的 `hover` / `definition` / `references`，以及这些 field / method member 自身的 current-document `prepareRename` / `rename`，和 `let current = (if flag { maybe_children()? } else { maybe_children()? })[0]` / `let current = (match flag { true => maybe_children()?, false => maybe_children()? })[0]` 这类 root structured question-indexed value-root 的 `hover` / `definition` / `typeDefinition` / `references`，以及 current-document `documentHighlight` / `prepareRename` / `rename`；direct question-unwrapped receiver 现在也已进入同一条 parse-error fallback，锁住 member completion 与同轴 `hover` / `definition` / `declaration` / `references` / `typeDefinition`，以及 current-document `prepareRename` / `rename`（如 `config.child?.leaf -> Leaf`、`config.child()?.leaf() -> Leaf`）；true parse-error 下的 indexed receiver-field query 现在也已沿同一条 fallback 锁住 `config.children[0].value`、`load_children()[0].value` 与 `maybe_children()?[0].value` 这类 `hover` / `definition` / `declaration` / `references`；direct local alias value roots derived from dependency method returns（如 `let current = config.child()?`）也继续沿用同一条 parse-error fallback，当前已锁住 alias-root `hover` / `definition` / `references`、alias-member completion，以及 current-document `prepareRename` / `rename`；这些 parse-error fallback rename 仍只改当前文档 occurrence；source-backed dependency member/variant 与 workspace root symbol 的受限 workspace edits 走独立路径；在 `include declaration = false` 下会跳过那些 cross-file definition sites。这条 parse-error 扩展当前仍只覆盖已有独立回归锁定的 syntax-local receiver slice，以及 root import-call indexed receiver-field / value-root slices，以及 root structured question-indexed member / value-root slices，不等于任意 indexed/structured receiver，或更宽的 method-result member surface
-- source-backed dependency `method / field / enum variant` 与 workspace root `function / const / static / struct / enum / trait / type alias` 现在已开放受限 workspace rename / workspace edits；其他 import / local / member 场景仍沿用 same-file 或保守子集。
-- `qlsp` 的第一版已经落地在 `crates/ql-lsp`
-- parse-error rename 的保守合同这轮也再补了一格：`config.child()?.leaf().value` 这类 question-unwrapped method-result member field 在 broken source 下同样会继续保留 current-document `prepareRename` / `rename`，但仍然只改当前文档 occurrence。
-- 当前通过 stdio 运行，复用 `ql-analysis`
-- 当前已实现：
-  - `textDocument/didOpen`
-  - `textDocument/didChange`（full sync）
-  - `textDocument/didClose`
-  - `textDocument/hover`
-  - `textDocument/definition`
-  - `textDocument/declaration`
-  - `textDocument/typeDefinition`
-  - `textDocument/implementation`
-  - `textDocument/references`（当前为 same-file + package-aware current-document occurrences；workspace/package import root 会额外并入 workspace 其他源码文件里的同路径 import occurrences 与 workspace source 文件里的同文件 occurrences；dependency-backed current-document symbols 在 healthy package/workspace 且能唯一回溯到 workspace 源码目标时，也会并入 workspace source 文件里的同文件 occurrences，以及 workspace 其他源码文件里解析到同一 dependency definition target 的 dependency-backed occurrences；include declaration 时会优先用唯一 workspace 源码定义替换声明位点，但还不是完整 workspace-wide reference index）
-  - `textDocument/documentHighlight`（当前为 current-document occurrence highlighting，复用 same-file / package-aware references；parse-error 文件里的 workspace/package import root，以及 dependency import-backed current-document value root 也会继续保留当前文档高亮）
-  - `textDocument/completion`（当前为 same-file lexical scope + parsed member token + parsed enum variant path，且支持 local import alias -> local enum item 的 variant follow-through，并保留 escaped identifier 的合法 insert text）
-  - `textDocument/codeAction`
-  - `textDocument/semanticTokens/full`（当前为 same-file source-backed symbol + healthy package/workspace 下的 package-aware dependency-backed tokens）
-  - `textDocument/formatting`
-  - `textDocument/prepareRename`（当前仍是保守 prepare-rename；parse-error 文件里的 workspace/package import root、dependency import-backed current-document value root、`let current = config.child()?` 这类 local method-result alias root、`let current = config.child()?.leaf()` 这类 question-unwrapped method-result value-root、`config.child()?.leaf` / `config.child()?.leaf()` 这类 direct question-unwrapped field / method member，以及 `(if ...)[0].leaf` / `(match ...)[0].leaf()` 这类 root structured question-indexed field / method member 也会继续保留）
-  - `textDocument/rename`（当前以 same-file 为默认保守面；direct import 若没有显式 `as`，rename 会保留原始 import path 并插入 alias，而不是直接改写导入目标；parse-error 文件里的 workspace/package import root、dependency import-backed current-document value root、`let current = config.child()?` 这类 local method-result alias root、`let current = config.child()?.leaf()` 这类 question-unwrapped method-result value-root、`config.child()?.leaf` / `config.child()?.leaf()` 这类 direct question-unwrapped field / method member，以及 `(if ...)[0].leaf` / `(match ...)[0].leaf()` 这类 root structured question-indexed field / method member 也会继续保留当前文档内的保守重命名；source-backed dependency `method / field / enum variant` 与 workspace root `function / const / static / struct / enum / trait / type alias` 另有受限 workspace edits）
-  - parse-error 文件里的 question-unwrapped method-result member field 现在也已进入同一条 same-file rename 面，例如 `config.child()?.leaf().value` 在 broken source 下也会继续保留 current-document `prepareRename` / `rename`
-  - `textDocument/publishDiagnostics`
-  - `workspace/symbol`
-- LSP 协议桥接已单独分层：
-  - 位置 `Position <-> byte offset` 换算
-  - `Span -> Range`
-  - compiler diagnostics -> LSP diagnostics
-  - analysis hover / definition / references / completion / semantic tokens / rename -> LSP response
-- 这意味着 `qlsp` 的第一版不需要重新发明一套“源码位置 -> 语义实体”的逻辑
-- 当前 same-file rename 也明确只开放保守符号集：function / const / static / struct / enum / variant / trait / type alias / import / field / method（仅唯一 candidate）/ local / parameter / generic
-- 这组 type-namespace item rename 现在也已经由 analysis / LSP 回归明确锁住：`type`、`opaque type`、`struct`、`enum`、`trait` 不依赖协议层特判，而是继续走统一 `QueryIndex`
-- 这组 root value-item rename 现在也已经由 analysis / LSP 回归明确锁住：`function`、`const`、`static` 不依赖协议层特判，而是继续走统一 `QueryIndex`
-- 同一组 type-namespace item 现在也已经有 references / semantic-token parity 回归，确保 `type`、`opaque type`、`struct`、`enum`、`trait` 的 query、LSP references 与语义高亮继续站在同一份 item occurrence 上
-- 这组 item 现在还额外有 hover / definition parity 回归，确保 `type`、`opaque type`、`struct`、`enum`、`trait` 的导航与悬浮信息继续落回同一份 definition span，而不是在 bridge 层退化成字符串级猜测
-- same-file type-namespace item surface 现在也已经有显式聚合回归：`type`、`opaque type`、`struct`、`enum`、`trait` 会继续共享同一组 item truth surface，因此 hover / definition / references / semantic tokens 不需要分别靠零散的单类回归来兜底
-- global value item 现在也已经有 query parity 回归：`const`、`static` 的 item definition 与 value-use 会继续共享同一份 `QueryIndex` truth surface，因此 hover / definition / references / semantic tokens 不需要在 LSP 层额外补特判
-- `extern` callable surface 现在也已经有 same-file parity 回归：无论是 `extern` block 成员、顶层 `extern "c"` 声明，还是带 body 的顶层 `extern "c"` 函数定义，定义点与 call site 都会继续共享同一份 `Function` truth surface，因此 hover / definition / references / rename / semantic tokens 不需要在 LSP 层额外做 extern 特判
-- extern callable 的 value completion 现在也已经有显式 parity 回归：analysis 会继续把 `extern` block 成员、顶层 `extern "c"` 声明和顶层 `extern "c"` 函数定义作为 `function` 候选产出，LSP bridge 会继续把它们投影成 `FUNCTION` completion item，并沿用同一份 detail / insert-text / text-edit 语义
-- ordinary free function 现在也已经有 same-file query parity 回归：direct call site 会继续共享同一份 `Function` truth surface，因此 hover / definition / references 不需要在 LSP 层额外补自由函数特判
-- ordinary free function 现在也已经有 same-file semantic-token parity 回归：declaration 与 direct call site 会继续共享同一份 `Function` truth surface，因此 semantic tokens 不需要在 LSP 层额外补自由函数特判
-- same-file callable surface 现在也已经有显式聚合回归：`extern` block callable、顶层 `extern "c"` 声明、顶层 `extern "c"` 定义与 ordinary free function 会继续共享同一组 callable truth surface，因此 hover / definition / references / semantic tokens 不需要分别靠零散的单类回归来兜底
-- plain import alias symbol 现在也已经有 same-file parity 回归：`import` binding 会继续作为 source-backed symbol 共享同一份 truth surface，因此 hover / definition / references / semantic tokens 不需要在 analysis 与 LSP 两层分别做例外处理
-- plain import alias 的 type-context completion 现在也已经有显式 parity 回归：analysis 会继续产出 `import` 候选，LSP bridge 会继续把它投影为 `MODULE` completion item，并沿用同一份 insert-text / text-edit 语义
-- free function 的 lexical value completion 现在也已经有显式 parity 回归：analysis 会继续产出 `function` 候选，LSP bridge 会继续把它投影为 `FUNCTION` completion item，并沿用同一份 insert-text / text-edit 语义
-- plain import alias 的 lexical value completion 现在也已经有显式 parity 回归：analysis 会继续产出 source-backed `import` 候选，LSP bridge 会继续把它投影为 `MODULE` completion item，并沿用同一份 insert-text / text-edit 语义
-- builtin type 与 local struct item 的 type-context completion 现在也已经有显式 parity 回归：analysis 会继续产出这两类 type 候选，LSP bridge 会继续把它们投影为 `CLASS` / `STRUCT` completion item，并沿用同一份 insert-text / text-edit 语义
-- same-file type alias 的 type-context completion 现在也已经有显式 parity 回归：analysis 会继续产出 `type alias` 候选，LSP bridge 会继续把它投影为 `CLASS` completion item，并沿用同一份 insert-text / text-edit 语义
-- same-file `opaque type` 的 type-context completion 现在也已经有显式 parity 回归：analysis 会继续产出 `TypeAlias`-backed opaque alias 候选，LSP bridge 会继续把它投影为 `CLASS` completion item，并沿用 `opaque type ...` detail 与同一份 insert-text / text-edit 语义
-- same-file generic 的 type-context completion 现在也已经有显式 parity 回归：analysis 会继续产出 `generic` 候选，LSP bridge 会继续把它投影为 `TYPE_PARAMETER` completion item，并沿用同一份 detail / insert-text / text-edit 语义
-- same-file enum 的 type-context completion 现在也已经有显式 parity 回归：analysis 会继续产出 `enum` 候选，LSP bridge 会继续把它投影为 `ENUM` completion item，并沿用同一份 detail / insert-text / text-edit 语义
-- same-file trait 的 type-context completion 现在也已经有显式 parity 回归：analysis 会继续产出 `trait` 候选，LSP bridge 会继续把它投影为 `INTERFACE` completion item，并沿用同一份 detail / insert-text / text-edit 语义
-- stable receiver field completion 现在也已经有显式 parity 回归：analysis 会继续产出 `field` 候选，LSP bridge 会继续把它投影为 `FIELD` completion item，并沿用同一份 detail / insert-text / text-edit 语义
-- stable receiver unique method completion 现在也已经有显式 parity 回归：analysis 会继续产出唯一 `method` 候选，LSP bridge 会继续把它投影为 `METHOD` completion item，并沿用同一份 detail / insert-text / text-edit 语义
-- same-file const / static 的 value completion 现在也已经有显式 parity 回归：analysis 会继续产出 `const` / `static` 候选，LSP bridge 会继续把它们投影为 `CONSTANT` completion item，并沿用同一份 detail / insert-text / text-edit 语义
-- same-file local 的 value completion 现在也已经有显式 parity 回归：analysis 会继续产出 `local` 候选，LSP bridge 会继续把它投影为 `VARIABLE` completion item，并沿用同一份 detail / insert-text / text-edit 语义
-- same-file parameter 的 value completion 现在也已经有显式 parity 回归：analysis 会继续产出 `parameter` 候选，LSP bridge 会继续把它投影为 `VARIABLE` completion item，并沿用同一份 detail / insert-text / text-edit 语义
-- same-file lexical value candidate-list parity 现在也已经有显式回归：analysis / LSP 会继续让 import / const / static / extern callable / free function / local / parameter 这些 already-supported value surface 共享同一份有序候选列表、detail 渲染与 replacement text-edit 投影，而不是让这组 editor-facing 契约分散在单类候选测试里
-- same-file enum variant completion 现在也已经有显式 parity 回归：analysis 会继续产出 parsed enum path 上的 `variant` 候选，LSP bridge 会继续把它投影为 `ENUM_MEMBER` completion item，并沿用同一份 detail / insert-text / text-edit 语义
-- same-file import alias variant completion 现在也已经有显式 parity 回归：analysis 会继续让指向同文件根 enum item 的 local import alias path 产出 `variant` 候选，LSP bridge 会继续把它投影为 `ENUM_MEMBER` completion item，并沿用同一份 detail / insert-text / text-edit 语义
-- same-file import alias struct-variant completion 现在也已经有显式 parity 回归：analysis 会继续让指向同文件根 enum item 的 local import alias struct-literal path 产出 struct-style `variant` 候选，LSP bridge 会继续把它投影为 `ENUM_MEMBER` completion item，并沿用同一份 detail / insert-text / text-edit 语义
-- remaining same-file variant-path completion contexts 现在也已经有显式 parity 回归：analysis 会继续产出 direct struct-literal path 以及 direct/local-import-alias pattern path 上既有的 `variant` 候选，LSP bridge 会继续把它们投影为 `ENUM_MEMBER` completion item，并沿用同一份 detail / insert-text / text-edit 语义
-- same-file variant-path candidate-list parity 现在也已经有显式回归：analysis / LSP 会继续让 enum-root / struct-literal / pattern path 及其 same-file import-alias 镜像上下文共享同一份有序 `variant` 候选列表、detail 渲染与 replacement text-edit 投影，而不是让这组 editor-facing 契约停留在单个候选映射测试
-- deeper variant-like member chain 现在也明确保持关闭：只有 root enum item 或 same-file import alias 的第一段 variant tail 还能复用 enum variant truth surface，`Command.Retry.more` / `Cmd.Retry.more` 这类更深 member chain 不会再伪造 hover / definition / references 或 `ENUM_MEMBER` completion
-- deeper struct-literal / pattern variant-like path 现在也明确保持关闭：只有严格两段 `Root.Variant` path 才继续复用 enum variant truth surface，`Command.Scope.Config { ... }` / `Cmd.Scope.Retry(...)` 这类更深 path 不会再伪造 hover / definition / references / rename / semantic tokens 或 `ENUM_MEMBER` completion
-- deeper struct-like path 的显式字段标签现在也已接回 field truth surface：`Point.Scope.Config { x: ... }` / `P.Scope.Config { x: ... }` 这类更深 path 会继续复用字段标签的 hover / definition / references / rename / semantic tokens / completion / `typeDefinition`
-- deeper struct-like shorthand token 现在也有显式 parity 回归：即使 `Point.Scope.Config { x }` / `Point.Scope.Config { source }` 这类路径上的显式字段标签已经接回 field surface，analysis 仍会把 shorthand token 保留在 local / binding / import lexical surface，LSP bridge 也会继续按该 lexical symbol 提供 hover / definition / references / semantic tokens / rename，并保持 raw binding edit 而不是伪造 `label: new_name` 扩写
-- same-file completion filtering parity 现在也已经有显式回归：analysis 会继续按 lexical scope visibility/shadowing 与 impl-preferred member filtering 产出候选，LSP bridge 会继续原样投影这些结果，而不会在协议层额外扩张或放宽歧义 surface；其中 lexical value visibility 的聚合回归现在也已经显式覆盖 import / function / local 的 detail 与 text-edit 投影，而 impl-preferred member 聚合回归现在也已经显式覆盖 surviving candidate count 以及稳定 detail / text-edit 投影
-- same-file completion candidate-list parity 现在也已经有显式回归：analysis 会继续按 type-context 与 stable-member 的完整候选列表产出结果，LSP bridge 会继续原样投影这些列表，而不会在协议层悄悄改变排序、命名空间边界或完整成员集合；其中 type-context 总表现在已经显式覆盖 builtin / import / struct / `type` / `opaque type` / `enum` / `trait` / generic，而 stable-member 总表也已经显式覆盖 method / field 的 detail 与 text-edit 投影
-- shorthand struct field token query parity 现在也已经有显式回归：analysis 会继续把 `Point { x }` 这种 shorthand token 视为 local/binding surface，LSP bridge 会继续按这个结果提供 hover / definition，而不会在协议层把 shorthand token 误投影成 struct field
-- direct same-file variant / explicit field-label query parity 现在也已经有显式回归：analysis 会继续把 direct enum variant token 与 direct explicit struct field label 的 definition / references 原样投影给 LSP，而不是只在 import-alias follow-through 路径上有端到端覆盖
-- direct same-file variant / explicit field-label semantic-token parity 现在也已经有显式回归：analysis 会继续把 direct enum variant token 与 direct explicit struct field label 的 highlighting occurrence 原样投影给 LSP semantic tokens，而不是只在 import-alias follow-through 路径或聚合总表里被间接覆盖
-- same-file direct symbol surface 现在也已经有显式聚合回归：direct enum variant token 与 direct explicit struct field label 会继续共享同一组 direct-symbol truth surface，因此 hover / definition / references / semantic tokens 不需要分别靠零散的单类回归来兜底
-- direct stable-member query parity 现在也已经有显式回归：analysis 会继续把 direct field member 与唯一 method member 的 hover / definition / references 原样投影给 LSP，而不是只剩字段 hover 或其他间接覆盖
-- direct stable-member semantic-token parity 现在也已经有显式回归：analysis 会继续把 direct field member 与唯一 method member 的 highlighting occurrence 原样投影给 LSP semantic tokens，而不是只靠聚合总表测试间接覆盖
-- same-file direct member surface 现在也已经有显式聚合回归：direct field member 与唯一 method member 会继续共享同一组 direct-member truth surface，因此 hover / definition / references / semantic tokens 不需要分别靠零散的单类回归来兜底
-- impl-preferred member query parity 现在也已经有显式回归：analysis 会继续把 impl-over-extend 的既有 direct member 选择结果原样投影给 LSP hover / definition / references，而不是在桥接层重新解释同名成员优先级
-- lexical semantic symbol 现在也已经有 same-file parity 回归：`generic`、`parameter`、`local`、`receiver self` 与 `builtin type` 会继续共享同一份 lexical truth surface；其中 builtin type 仍没有 source-backed declaration，所以 definition / rename 保持关闭，但 hover / references / semantic tokens 已经显式回归锁住
-- lexical rename surface 现在也已经有显式回归：`generic`、`parameter`、`local` 会继续沿用 analysis 的 same-file rename 结果直通到 LSP，而 `receiver self` / `builtin type` 继续返回 closed surface，不在协议层做特判补开
-- 显式字段标签虽然已经能 hover / definition / references 到 struct field，shorthand `Point { x }` token 仍故意保守地继续解析为 local/binding；但从 source-backed field symbol 发起 rename 时，这些 shorthand site 会被自动扩写成显式标签，而从 shorthand token 上发起的 renameable binding rename 现在也会保持这条展开逻辑；这条回归已经明确覆盖 local / parameter / import / function / const / static；同文件 local import alias -> local struct item 的路径现在也会继续复用这条 field rename surface
-- 其中 free-function shorthand binding rename 现在也已经有显式 LSP parity 回归：analysis 会继续把 shorthand token 解析为 `function` binding，bridge 会继续保留 field label 并只改 declaration / use，而不是把这类 site 退化成普通字段编辑
-- 但这还不是完整 LSP 语义层：当前 completion 只做到 same-file lexical scope + parsed member token + parsed enum variant path，以及 local import alias -> local enum item 的 variant follow-through；这条 follow-through 也已经进入 hover / definition / references / same-file rename / semantic tokens；同文件 local import alias -> local struct item 现在也已经进入显式字段标签与 field-driven shorthand rename 的 query surface；struct field、显式字段标签、唯一 method candidate、enum variant token 这些精确 query 已经可复用，而唯一 method candidate 现在也已进入 same-file rename；completion 现在也会把 keyword-named symbol 写回 escaped identifier；import-backed current-document value root 的 direct parse-error member completion / query（现在也覆盖 import-root 直接调用结果、question-call receiver，以及 root import-call indexed receiver-field `load_children()[0].value` / `maybe_children()?[0].value`，root import-call indexed value-root `let current = load_children()[0]` / `let current = maybe_children()?[0]`，root structured question-indexed direct bracket-target field/member query `(if ...)[0].leaf` / `(match ...)[0].leaf`、`(if ...)[0].leaf()` / `(match ...)[0].leaf()`，以及这些 field / method member 自身的 current-document `prepareRename` / `rename`，和 root structured question-indexed value-root `let current = (if flag { maybe_children()? } else { maybe_children()? })[0]` / `let current = (match flag { true => maybe_children()?, false => maybe_children()? })[0]` 的 hover / definition / references / `typeDefinition`）、direct question-unwrapped receiver 的 parse-error member completion / query / `typeDefinition` / current-document `prepareRename` / `rename`，以及 parse-error 下 `let current = config.child()?` 这类 local method-result alias root 和 `let current = config.child()?.leaf()` 这类 question-unwrapped method-result value-root 的基础 query/completion 与 current-document `prepareRename` / `rename` 这轮也已补上，但 import-graph/module-path deeper completion、foreign import alias variant semantics、ambiguous method、更宽的 parse-error member/query surface，以及从 shorthand field token 本身发起的 field-symbol rename 和 cross-file rename 仍需要后续继续补齐
-
-### `qfmt`
-
-格式化器必须尽早做，并尽量做到：
-
-- 输出稳定
-- 风格单一
-- 对 AST 变化敏感度低
-
-现代语言生态一旦放任格式风格分裂，后面会一直付成本。
-
-当前阶段 `qfmt` 已覆盖的语法切片包括：
-
-- 基础声明：`const`、`static`、`type`、`opaque type`
-- 可调用声明：`fn`、`trait` method、`impl`、`extend`、`extern`
-- 类型表达式：named type、tuple、callable type、声明泛型、`where`
-- 表达式：调用、成员访问、结构体字面量、闭包、`unsafe`、`if`、`match`
-- 控制流：`while`、`loop`、`for`、`for await`
-- 模式：tuple、path、tuple-struct、struct、字面量、`_`
-
-Phase 1 结束后，`qfmt` 的下一步重点不是增加风格选项，而是跟随后续 HIR / diagnostics 演进，保持语法扩展时的稳定输出与可维护实现。
-
-### 当前已验证命令
-
-当前工具链基线常用的最小验证命令：
-
-- `cargo fmt`
-- `cargo test`
-- `cargo test -p ql-lsp --lib`
-- `cargo test -p ql-lsp --test bridge`
-- `cargo test -p ql-lsp --test implementation_request`
-- `cargo run -p ql-cli -- check fixtures/codegen/pass/minimal_build.ql`
-- `cargo run -p ql-cli -- run fixtures/codegen/pass/minimal_build.ql`
-- `cargo run -p ql-cli -- run <workspace-dir> -- --example-arg`
-- `cargo run -p ql-cli -- check <含重复定义/重复绑定的源码>`
-- 手工负例验证：`cargo run -p ql-cli -- check tests/ui/type_unknown_member.ql`
-- `cargo run -p ql-cli -- fmt fixtures/parser/pass/phase1_declarations.ql`
-- `npm run build` in `docs/`
-
-说明：
-
-- `fixtures/parser/pass/` 仍然是 parser / formatter regression surface，不再等价于“对当前完整语义流水线一定无错的输入”
-- 其中部分 fixture 故意保留了 `tick`、`IoError`、`parse_int` 这类占位符符号，用来覆盖语法面，而不是充当当前 `ql check` 的 semantic-clean sample
-
-### `qdoc`
-
-文档生成器负责：
-
-- 从公共 API 提取签名
-- 展示效果、错误、trait 约束和 FFI 标记
-- 输出静态站点内容
-
-### 测试工具
-
-`ql test` 当前已经落地第一版 project-aware harness：单文件可直接执行，package/workspace 会递归运行 `tests/**/*.ql`，其中 `tests/ui/**/*.ql` 也已接入第一版项目内 diagnostics snapshot。它后续仍不应停在这里，还应逐步支持：
-
-- doc tests
-- integration tests
-- benchmark harness
+- 支持单文件、package 和 workspace 入口
+- 递归执行 `tests/**/*.ql`
+- 支持 project-aware smoke / UI test 语义和 `--target`
+
+### `ql project`
+
+已落地的子命令以实际仓库行为为准，核心能力包括：
+
+- `init`
+- `add` / `remove`
+- `add-dependency` / `remove-dependency`
+- `status`
+- `dependencies` / `dependents`
+- `targets`
+- `graph`
+- `lock`
+- `emit-interface`
 
 ## 包与工作区
 
-当前已经落地的 manifest 输入面仍是最小子集：
+当前 manifest 仍是最小可用子集：
 
 - `[package].name`
 - `[workspace].members`
-- legacy `[references].packages`
-- `[dependencies]` 里的本地路径依赖；当前只接受 `dep = "../dep"` 或 `dep = { path = "../dep" }`
-- 第一版 `[profile].default`；当前只接受 `default = "debug"` 或 `default = "release"`，可写在 package manifest 或 workspace 根 manifest 上
+- `[dependencies]`
+- `[references].packages`
+- `[lib].path`
+- `[[bin]].path`
+- `[profile].default`
 
-这两种依赖写法目前都会先归一到既有 reference graph，因此 `ql project graph`、`.qi` 生命周期、`ql check --sync-interfaces` 与 dependency-backed analysis/LSP 仍共享同一套 reference/package model。workspace 级 `ql project targets` / `ql build` / `ql run` / `ql test` 现在也会按本地依赖关系优先处理上游 member，并在 workspace member 本地依赖形成环时显式失败；如果某个 member 同时被本轮 `ql test` 选中、又是其他被测 member 的依赖，测试预构建仍会按依赖身份补齐 bridgeable export staticlib，避免后续测试链接到未导出 wrapper 的 selected build。`ql test` 现在还会为每个被测 member 预构建自身 library target，使 `tests/**/*.ql` 可以通过当前 package 名导入受限 public top-level free function。staticlib 输出在归档前会先替换旧文件，避免重复预构建时把同一符号的多个 object 追加进 archive。package-aware `ql build` / `ql run` / `ql test` 在未显式传 CLI profile 时，也会按 `CLI override > package profile > workspace profile > debug` 的顺序解析默认 profile。当前 codegen/execution 层只在一组保守例外下真正穿过依赖边界：direct dependency 的 bridgeable public `const/static` values、受限 public top-level free function（非泛型路径要求非 `async` / 非 `unsafe`、无 `where`、仅普通参数；泛型路径开放 direct-call 多实例本地特化，并可从参数、基础表达式、tuple / fixed-array 字面量、typed value、generic carrier、单字段 variant constructor 或显式结果上下文推断）、public `extern "c"` 符号、public `struct` / `enum` declaration bridge（含显式实例化泛型签名和期望类型明确的泛型 struct literal / field projection）、非 opaque `type alias` declaration bridge，以及这些 bridgeable public `struct` 上的受限 public receiver method forwarder 会通过 dependency bridge + prebuilt staticlib 进入 root target；其中 value bridge 当前只覆盖 data-only initializer，并允许递归引用同模块其他 public `const/static`。超出这些 receiver method forwarder 的普通跨包 Qlang method 与更宽的 value/member 语义仍未开放。version、registry、feature 与更完整的 build profile 解析仍没有开放。
+项目模型要尽早覆盖工作区成员、目标、接口产物和本地依赖，因为编译器、标准库和 LSP 都依赖同一份图。
 
 ## 标准库
 
-仓库内 `stdlib` 现在是普通 Qlang workspace，不是编译器内置 prelude。`ql project init --stdlib <path>` 可以生成显式依赖 `std.core` / `std.option` / `std.result` / `std.array` / `std.test` 的 package 或 workspace member 模板。当前成员：
+仓库内 `stdlib` 现在是普通 Qlang workspace，不是内置 prelude。
 
-- `stdlib/packages/core`：package `std.core`，提供 `max_int`、`min_int`、`max3_int`、`max4_int`、`max5_int`、`min3_int`、`min4_int`、`min5_int`、`sum3_int`、`sum4_int`、`sum5_int`、`product3_int`、`product4_int`、`product5_int`、`average2_int`、`average3_int`、`average4_int`、`average5_int`、`quotient_or_zero_int`、`remainder_or_zero_int`、`clamp_int`、`clamp_min_int`、`clamp_max_int`、`clamp_bounds_int`、`lower_bound_int`、`upper_bound_int`、`abs_int`、`abs_diff_int`、`range_span_int`、`distance_to_range_int`、`distance_to_bounds_int`、`sign_int`、`compare_int`、`median3_int`、`is_zero_int`、`is_nonzero_int`、`is_positive_int`、`is_nonnegative_int`、`is_negative_int`、`is_nonpositive_int`、`is_even_int`、`is_odd_int`、`in_range_int`、`in_exclusive_range_int`、`in_bounds_int`、`in_exclusive_bounds_int`、`is_outside_range_int`、`is_outside_bounds_int`、`is_ascending_int`、`is_ascending4_int`、`is_ascending5_int`、`is_strictly_ascending_int`、`is_strictly_ascending4_int`、`is_strictly_ascending5_int`、`is_descending_int`、`is_descending4_int`、`is_descending5_int`、`is_strictly_descending_int`、`is_strictly_descending4_int`、`is_strictly_descending5_int`、`is_divisible_by_int`、`has_remainder_int`、`is_factor_of_int`、`is_within_int`、`is_not_within_int`、`bool_to_int`、`all3_bool`、`all4_bool`、`all5_bool`、`any3_bool`、`any4_bool`、`any5_bool`、`none3_bool`、`none4_bool`、`none5_bool`、`not_bool`、`and_bool`、`or_bool`、`xor_bool`、`implies_bool`。
-- `stdlib/packages/array`：package `std.array`，提供 canonical length-generic `first_array[T, N]` / `last_array[T, N]` / `at_array_or[T, N]` / `contains_array[T, N]` / `count_array[T, N]`，以及 canonical concrete-element length-generic aggregate `sum_int_array[N]` / `product_int_array[N]` / `max_int_array[N]` / `min_int_array[N]` / `all_bool_array[N]` / `any_bool_array[N]` / `none_bool_array[N]`；保留对应 3/4/5 compatibility wrapper，并提供固定长度 transform `reverse3_array` / `reverse4_array` / `reverse5_array` / `repeat3_array` / `repeat4_array` / `repeat5_array`。`contains_array` / `count_array` 及其兼容 API 依赖 builtin equality lowering，当前通过 `Int` / `Bool` / `String` smoke 覆盖，不表示用户自定义类型已经有通用 equality 约束。reverse/repeat 仍是固定长度过渡 API。
-- `stdlib/packages/option`：package `std.option`，提供可执行的 generic carrier `Option[T]`，以及 generic helper `some`、`none_option`、`is_some`、`is_none`、`unwrap_or`、`or_option`。concrete `IntOption` / `BoolOption` 和 `some_int`、`none_int`、`is_some_int`、`is_none_int`、`unwrap_or_int`、`or_int`、`or_option_int`、`value_or_zero_int`、`some_bool`、`none_bool`、`is_some_bool`、`is_none_bool`、`unwrap_or_bool`、`or_option_bool`、`value_or_false_bool`、`value_or_true_bool` 保留为 compatibility surface。generic carrier 现在已经能在 downstream concrete function signatures 和 smoke tests 里执行；generic helper function bridge 当前开放 direct-call 多实例、primitive 字面量、基础数值/布尔/比较表达式、tuple / fixed-array 字面量、显式 typed value、generic carrier value、`Option.Some(...)` 这类单字段 generic enum variant constructor，以及显式 `Option[T]` 结果上下文可推断的 free function 特化。`none_option()` 这种零参数 helper 需要显式 `Option[T]` 返回类型或 typed initializer 上下文；automatic prelude integration、完整单态化、method/value generic import 仍未开放。
-- `stdlib/packages/result`：package `std.result`，提供可执行的 generic carrier `Result[T, E]`，以及 generic helper `ok`、`err`、`is_ok`、`is_err`、`unwrap_result_or`、`or_result`、`error_or`、`ok_or`、`to_option`、`error_to_option`。concrete `IntResult` / `BoolResult` 和 `ok_int`、`err_int`、`is_ok_int`、`is_err_int`、`unwrap_result_or_int`、`or_result_int`、`error_or_zero_int`、`error_to_option_int`、`ok_or_int`、`to_option_int`、`ok_bool`、`err_bool`、`is_ok_bool`、`is_err_bool`、`unwrap_result_or_bool`、`or_result_bool`、`error_or_zero_bool`、`error_to_option_bool`、`ok_or_bool`、`to_option_bool` 保留为 compatibility surface。generic carrier 现在已经能在 downstream concrete function signatures 和 smoke tests 里执行；generic helper function bridge 当前开放 direct-call 多实例、primitive 字面量、基础数值/布尔/比较表达式、tuple / fixed-array 字面量、显式 typed value、generic carrier value、单字段 generic enum variant constructor 与显式结果上下文可推断的 free function 特化，automatic prelude integration、完整单态化、method/value generic import 仍未开放；当前 concrete 与 generic Option/Result 互转和无损 error extraction 通过 `std.result` 对 `std.option` 的本地依赖实现，并保持 basename 不与 `std.option` 冲突。
-- `stdlib/packages/test`：package `std.test`，提供基础 bool/int/range/order/status 断言、`expect_int_array_*` / `expect_bool_array_*` 数组断言、concrete/generic Option/Result carrier 断言、generic/concrete Option/Result 转换断言和 error extraction 断言；数组断言覆盖 accessor、fallback-index、reverse、repeat、contains、count 和 Int/Bool aggregate，并复用 `std.array` canonical aggregate API。它依赖 `std.array` / `std.option` / `std.result`，避免下游 smoke 继续手写数组或 carrier status 表达式。
+已使用的主路径是：
 
-`ql project init --stdlib` 的回归测试会把仓库内真实 `stdlib` manifest、源码和 smoke tests 复制到临时 fixture，再生成并运行 consumer package / workspace member；生成的 lib 会直接消费 `std.array.first_array` / `std.array.at_array_or` / `std.array.contains_array` / `std.array.count_array` / `std.array.sum_int_array` / `std.array.reverse3_array` / `std.array.repeat3_array`，生成的 main 会消费 `std.array.repeat3_array` / `std.array.contains_array` / `std.array.all_bool_array`，生成的 smoke 会通过 `std.test` array assertion、concrete/generic carrier 断言、generic/concrete `std.result` <-> `std.option` 转换断言和 error extraction 断言覆盖 stdlib。不要再维护手写 mini stdlib 副本，也不要在模板里重新手写 generic carrier 或数组 status 函数。
-生成的 consumer smoke test 会用 `merge_status4` / `merge_status5` / `merge_status6` 按语义分组组合断言状态，并用 `expect_status_ok(...)` 返回，避免模板退化成长串手写加法。
+- `std.core`
+- `std.option`
+- `std.result`
+- `std.array`
+- `std.test`
 
-消费 `std.core` / `std.option` / `std.result` / `std.array` / `std.test` 时，带点的包名需要用 quoted TOML key：
+推荐原则：
 
-```toml
-[dependencies]
-"std.core" = "../stdlib/packages/core"
-"std.option" = "../stdlib/packages/option"
-"std.result" = "../stdlib/packages/result"
-"std.array" = "../stdlib/packages/array"
-"std.test" = "../stdlib/packages/test"
-```
-
-Qlang 源码中仍按 package path 导入：
-
-```ql
-use std.core.is_divisible_by_int as is_divisible_by_int
-use std.array.at_array_or as at_array_or
-use std.array.contains_array as contains_array
-use std.array.count_array as count_array
-use std.array.repeat3_array as repeat3_array
-use std.array.reverse3_array as reverse3_array
-use std.array.sum_int_array as sum_int_array
-use std.option.some as option_some
-use std.option.none_option as option_none
-use std.option.unwrap_or as option_unwrap_or
-use std.result.Result as Result
-use std.result.ok as result_ok
-use std.result.unwrap_result_or as result_unwrap_result_or
-use std.test.expect_bool_eq as expect_bool_eq
-```
-
-这套 stdlib 当前使用已稳定的 direct local dependency bridge、受限 generic public free function direct-call 多实例特化，以及 package-local 非泛型调用方到本地 generic free function 的同类 specialization；自动 prelude、完整泛型单态化、泛型集合、IO、字符串完整库面和 registry/version solving 都继续后置。
-
-后续统一 manifest 仍应扩到：
-
-- package metadata
-- dependencies
-- features
-- build profiles
-- ffi libraries
-- workspace members
-
-工作区模型必须在早期就纳入，因为编译器、标准库、示例、FFI 包和工具链本身都会依赖它。
-
-借鉴 TypeScript 的 project references，Qlang 还应支持显式项目引用图：
-
-- 工作区成员能声明上游接口依赖
-- 增量构建优先基于接口产物判断失效范围
-- LSP 可直接消费依赖包的公共 API 元数据
+- generic carrier 和 canonical array API 优先
+- concrete wrappers 仅保留为兼容面
+- 生成项目模板必须能直接跑 `ql check/build/run/test`
 
 ## 接口产物
 
-Qlang 建议为每个包输出公共接口产物，例如 `.qi` 文件：
+Qlang 需要为每个包输出公共接口产物 `.qi`，用于：
 
-- 包含公共类型、函数签名、trait、effect、布局约束等元数据
-- 供下游类型检查和 LSP 使用
+- 供下游类型检查
+- 供 LSP 导航和补全
 - 避免每次都重新解析全部依赖源码
 
-这相当于把 TypeScript 的 declaration emit 和 project references 经验，转化为适合编译型系统语言的工程能力。
+这相当于把 TypeScript 的 declaration emit / project references 经验改造成编译型语言的工程能力。
 
 ## 编辑器体验
 
-LSP 的目标不是“有就行”，而是从第一阶段就支撑日常开发：
+LSP 的目标是从第一阶段就服务真实开发，而不是只做“能连上”：
 
-- 补全要基于真实类型，不是纯文本猜测
-- 报错位置要稳定
-- rename 要有跨文件可信度
-- code action 要能生成 `match` 分支、导入、trait stub
+- 补全必须基于真实类型
+- 报错位置必须稳定
+- rename 必须能处理当前支持的 workspace 切片
+- code action 必须能服务导入、`match`、stub 和常见修复
 
-Qlang 的目标不是“有一个能用的 LSP”，而是像 TypeScript 一样，把语言服务当成语言本体的一部分来设计。
+当前已支持的 workspace-aware 子集以 [当前支持基线](/roadmap/current-supported-surface) 为准。
 
 ## 发布与生态
 
-第一版 lockfile 已经落地，但当前只覆盖最小可复现输入面：
+当前已经有 `qlang.lock` 和机器可消费的 JSON 输出，但生态层仍是后置项。
 
-- 通过 `ql project lock [file-or-dir]` 在当前解析到的 package / workspace manifest 根目录写出 `qlang.lock`
-- 通过 `ql project lock --check [file-or-dir]` 在不改写文件的前提下校验 lockfile 是否仍与当前输入面一致
-- 通过 `ql project lock [file-or-dir] --json` 与 `ql project lock --check [file-or-dir] --json` 获取机器可消费结果；当前 schema 为 `ql.project.lock.result.v1`，并内嵌生成中的 `ql.project.lock.v1` lockfile 内容
-- 当前 lockfile 会锁 root manifest、workspace member roots、resolved local package graph、effective default profile，以及每个 package 的 target surface
+后续还要继续补：
 
-这还不是完整生态层的 package manager 合同。P1/P2 之后仍要继续补：
-
-- package registry / version solving
-- 更宽的 reproducible build 输入面
+- registry / version solving
+- 更完整的 reproducible build 输入面
 - binary caching
 - doc hosting
 - template generator
 
-这些都必须建立在前面的语义和构建基础上，而不是为了“看起来像成熟生态”提前堆功能。
+## 当前已验证命令
+
+```powershell
+cargo test
+cargo run -p ql-cli -- check fixtures/codegen/pass/minimal_build.ql
+cargo run -p ql-cli -- run fixtures/codegen/pass/minimal_build.ql
+cargo run -q -p ql-cli -- check --sync-interfaces stdlib
+cargo run -q -p ql-cli -- test stdlib
+```
+
+这份文档只描述当前工具链合同，不维护完整能力流水账。
