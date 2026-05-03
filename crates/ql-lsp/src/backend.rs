@@ -31,20 +31,23 @@ use tower_lsp::lsp_types::{
     CodeLensParams, Command, CompletionItem as LspCompletionItem, CompletionOptions,
     CompletionParams, CompletionResponse, DeclarationCapability, Diagnostic, DiagnosticSeverity,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentFormattingParams, DocumentHighlight, DocumentHighlightParams,
+    DocumentFilter, DocumentFormattingParams, DocumentHighlight, DocumentHighlightParams,
     DocumentOnTypeFormattingOptions, DocumentOnTypeFormattingParams, DocumentRangeFormattingParams,
     DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, FoldingRange, FoldingRangeParams,
     FoldingRangeProviderCapability, GotoDefinitionParams, GotoDefinitionResponse, Hover,
     HoverParams, HoverProviderCapability, ImplementationProviderCapability, InitializeParams,
     InitializeResult, InitializedParams, InlayHint, InlayHintParams, Location, MessageType,
-    NumberOrString, OneOf, Position, PrepareRenameResponse, Range, ReferenceParams, RenameOptions,
-    RenameParams, SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability,
-    SemanticTokensFullOptions, SemanticTokensOptions, SemanticTokensParams,
-    SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult,
-    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
-    SignatureHelpOptions, SignatureHelpParams, SymbolInformation, SymbolKind as LspSymbolKind,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextEdit, TypeDefinitionProviderCapability, Url, WorkspaceEdit,
+    NumberOrString, OneOf, Position, PrepareRenameResponse, Range, ReferenceParams, Registration,
+    RenameOptions, RenameParams, SelectionRange, SelectionRangeParams,
+    SelectionRangeProviderCapability, SemanticTokensFullOptions, SemanticTokensOptions,
+    SemanticTokensParams, SemanticTokensRangeParams, SemanticTokensRangeResult,
+    SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo,
+    SignatureHelp, SignatureHelpOptions, SignatureHelpParams, StaticRegistrationOptions,
+    SymbolInformation, SymbolKind as LspSymbolKind, TextDocumentPositionParams,
+    TextDocumentRegistrationOptions, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextEdit, TypeDefinitionProviderCapability, TypeHierarchyItem,
+    TypeHierarchyOptions, TypeHierarchyPrepareParams, TypeHierarchyRegistrationOptions,
+    TypeHierarchySubtypesParams, TypeHierarchySupertypesParams, Url, WorkspaceEdit,
     WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer};
@@ -75,7 +78,9 @@ use crate::bridge::{
     type_definition_for_analysis, type_definition_for_dependency_imports,
     type_definition_for_dependency_method_types, type_definition_for_dependency_struct_field_types,
     type_definition_for_dependency_values, type_definition_for_dependency_variants,
-    type_definition_for_package_analysis, workspace_symbols_for_analysis,
+    type_definition_for_package_analysis, type_hierarchy_prepare_for_analysis,
+    type_hierarchy_subtypes_for_analysis, type_hierarchy_supertypes_for_analysis,
+    workspace_symbols_for_analysis,
 };
 use crate::editor_features::{
     completion_for_keywords, folding_ranges_for_source, hover_for_keyword,
@@ -89,6 +94,7 @@ pub struct Backend {
     client: Client,
     documents: DocumentStore,
     workspace_roots: RwLock<Vec<PathBuf>>,
+    type_hierarchy_dynamic_registration: RwLock<bool>,
 }
 
 type OpenDocuments = HashMap<PathBuf, (Url, String)>;
@@ -105,6 +111,39 @@ impl Backend {
             client,
             documents: DocumentStore::default(),
             workspace_roots: RwLock::default(),
+            type_hierarchy_dynamic_registration: RwLock::default(),
+        }
+    }
+
+    async fn register_type_hierarchy_capability(&self) {
+        let registration = Registration {
+            id: "qlsp-type-hierarchy".to_owned(),
+            method: "textDocument/prepareTypeHierarchy".to_owned(),
+            register_options: serde_json::to_value(TypeHierarchyRegistrationOptions {
+                text_document_registration_options: TextDocumentRegistrationOptions {
+                    document_selector: Some(vec![DocumentFilter {
+                        language: Some("ql".to_owned()),
+                        scheme: Some("file".to_owned()),
+                        pattern: None,
+                    }]),
+                },
+                type_hierarchy_options: TypeHierarchyOptions {
+                    work_done_progress_options: Default::default(),
+                },
+                static_registration_options: StaticRegistrationOptions {
+                    id: Some("qlsp-type-hierarchy".to_owned()),
+                },
+            })
+            .ok(),
+        };
+
+        if let Err(error) = self.client.register_capability(vec![registration]).await {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!("failed to register type hierarchy capability: {error}"),
+                )
+                .await;
         }
     }
 
@@ -9295,6 +9334,14 @@ fn code_action_options() -> CodeActionProviderCapability {
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         *self.workspace_roots.write().await = configure_workspace_roots(&params);
+        let supports_dynamic_type_hierarchy = params
+            .capabilities
+            .text_document
+            .as_ref()
+            .and_then(|text_document| text_document.type_hierarchy.as_ref())
+            .and_then(|capabilities| capabilities.dynamic_registration)
+            .unwrap_or(false);
+        *self.type_hierarchy_dynamic_registration.write().await = supports_dynamic_type_hierarchy;
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
                 name: "qlsp".to_owned(),
@@ -9355,12 +9402,19 @@ impl LanguageServer for Backend {
                     prepare_provider: Some(true),
                     work_done_progress_options: Default::default(),
                 })),
+                experimental: Some(json!({
+                    "typeHierarchyProvider": true,
+                    "qlspDynamicTypeHierarchyProvider": supports_dynamic_type_hierarchy,
+                })),
                 ..Default::default()
             },
         })
     }
 
     async fn initialized(&self, _: InitializedParams) {
+        if *self.type_hierarchy_dynamic_registration.read().await {
+            self.register_type_hierarchy_capability().await;
+        }
         self.client
             .log_message(MessageType::INFO, "qlsp initialized")
             .await;
@@ -9893,6 +9947,57 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         Ok(call_hierarchy_outgoing_for_analysis(
+            &uri, &source, &analysis, position,
+        ))
+    }
+
+    async fn prepare_type_hierarchy(
+        &self,
+        params: TypeHierarchyPrepareParams,
+    ) -> Result<Option<Vec<TypeHierarchyItem>>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
+        Ok(type_hierarchy_prepare_for_analysis(
+            &uri, &source, &analysis, position,
+        ))
+    }
+
+    async fn supertypes(
+        &self,
+        params: TypeHierarchySupertypesParams,
+    ) -> Result<Option<Vec<TypeHierarchyItem>>> {
+        let uri = params.item.uri;
+        let position = params.item.selection_range.start;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
+        Ok(type_hierarchy_supertypes_for_analysis(
+            &uri, &source, &analysis, position,
+        ))
+    }
+
+    async fn subtypes(
+        &self,
+        params: TypeHierarchySubtypesParams,
+    ) -> Result<Option<Vec<TypeHierarchyItem>>> {
+        let uri = params.item.uri;
+        let position = params.item.selection_range.start;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
+        Ok(type_hierarchy_subtypes_for_analysis(
             &uri, &source, &analysis, position,
         ))
     }

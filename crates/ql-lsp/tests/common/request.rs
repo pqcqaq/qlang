@@ -29,8 +29,9 @@ use tower_lsp::lsp_types::{
     SelectionRange, SelectionRangeParams, SemanticTokensParams, SemanticTokensRangeParams,
     SemanticTokensRangeResult, SemanticTokensResult, SignatureHelp, SignatureHelpParams,
     SymbolInformation, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, TextEdit, Url, VersionedTextDocumentIdentifier, WorkspaceEdit,
-    WorkspaceFolder,
+    TextDocumentPositionParams, TextEdit, TypeHierarchyItem, TypeHierarchyPrepareParams,
+    TypeHierarchySubtypesParams, TypeHierarchySupertypesParams, Url,
+    VersionedTextDocumentIdentifier, WorkspaceEdit, WorkspaceFolder,
 };
 
 static NEXT_REQUEST_ID: AtomicI64 = AtomicI64::new(2);
@@ -768,6 +769,58 @@ pub async fn outgoing_calls_via_request(
     )
     .await;
     serde_json::from_value(value).expect("callHierarchy/outgoingCalls result should deserialize")
+}
+
+pub async fn prepare_type_hierarchy_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+    position: Position,
+) -> Option<Vec<TypeHierarchyItem>> {
+    let value = request_value(
+        service,
+        "textDocument/prepareTypeHierarchy",
+        json!(TypeHierarchyPrepareParams {
+            text_document_position_params: text_document_position(uri, position),
+            work_done_progress_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value)
+        .expect("textDocument/prepareTypeHierarchy result should deserialize")
+}
+
+pub async fn supertypes_via_request(
+    service: &mut LspService<Backend>,
+    item: TypeHierarchyItem,
+) -> Option<Vec<TypeHierarchyItem>> {
+    let value = request_value(
+        service,
+        "typeHierarchy/supertypes",
+        json!(TypeHierarchySupertypesParams {
+            item,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("typeHierarchy/supertypes result should deserialize")
+}
+
+pub async fn subtypes_via_request(
+    service: &mut LspService<Backend>,
+    item: TypeHierarchyItem,
+) -> Option<Vec<TypeHierarchyItem>> {
+    let value = request_value(
+        service,
+        "typeHierarchy/subtypes",
+        json!(TypeHierarchySubtypesParams {
+            item,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("typeHierarchy/subtypes result should deserialize")
 }
 
 pub async fn workspace_symbol_via_request(

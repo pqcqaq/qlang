@@ -25,12 +25,14 @@ use ql_project::{
 use ql_resolve::{ImportBinding, ResolutionMap, TypeResolution, resolve_module};
 use ql_span::Span;
 use ql_typeck::{Ty, TypeckResult, analyze_module as analyze_types};
-use query::QueryIndex;
+use query::{
+    QueryIndex, render_generics, render_struct_detail, render_type_alias_detail,
+};
 pub use query::{
     AsyncContextInfo, AsyncOperatorKind, CallHierarchyItem, CompletionItem, DefinitionTarget,
     DocumentSymbolTarget, HoverInfo, IncomingCall, LoopControlContextInfo, LoopControlKind,
     OutgoingCall, ReferenceTarget, RenameEdit, RenameError, RenameResult, RenameTarget,
-    SemanticTokenOccurrence, SymbolKind,
+    SemanticTokenOccurrence, SymbolKind, TypeHierarchyItem,
 };
 pub use runtime::RuntimeRequirement;
 
@@ -3679,6 +3681,44 @@ impl Analysis {
         self.index.outgoing_calls_at(offset)
     }
 
+    pub fn type_hierarchy_item_at(&self, offset: usize) -> Option<TypeHierarchyItem> {
+        self.index.type_hierarchy_item_at(offset)
+    }
+
+    pub fn supertypes_at(&self, offset: usize) -> Option<Vec<TypeHierarchyItem>> {
+        let item = self.type_hierarchy_item_at(offset)?;
+        let mut supertypes = Vec::new();
+        match item.kind {
+            SymbolKind::Struct | SymbolKind::Enum | SymbolKind::TypeAlias => {
+                let item_id = self.same_file_item_id_for_type_hierarchy_item(&item)?;
+                supertypes.extend(self.type_hierarchy_trait_items_for_type_item(item_id));
+                if item.kind == SymbolKind::TypeAlias
+                    && let Some(target) = self.type_alias_target_item(item_id)
+                {
+                    supertypes.push(target);
+                }
+            }
+            SymbolKind::Trait => {}
+            _ => return None,
+        }
+        sort_type_hierarchy_items(&mut supertypes);
+        Some(supertypes)
+    }
+
+    pub fn subtypes_at(&self, offset: usize) -> Option<Vec<TypeHierarchyItem>> {
+        let item = self.type_hierarchy_item_at(offset)?;
+        let item_id = self.same_file_item_id_for_type_hierarchy_item(&item)?;
+        let mut subtypes = match item.kind {
+            SymbolKind::Struct | SymbolKind::Enum | SymbolKind::TypeAlias => {
+                self.type_hierarchy_alias_items_for_type_item(item_id)
+            }
+            SymbolKind::Trait => self.type_hierarchy_type_items_for_trait_item(item_id),
+            _ => return None,
+        };
+        sort_type_hierarchy_items(&mut subtypes);
+        Some(subtypes)
+    }
+
     /// Return rename metadata when the symbol under `offset` is safe for same-file renaming.
     pub fn prepare_rename_at(&self, offset: usize) -> Option<RenameTarget> {
         self.index.prepare_rename_at(offset)
@@ -3769,6 +3809,29 @@ impl Analysis {
         })
     }
 
+    fn same_file_item_id_for_type_hierarchy_item(
+        &self,
+        item: &TypeHierarchyItem,
+    ) -> Option<ItemId> {
+        self.hir.items.iter().copied().find(|&item_id| {
+            match (&self.hir.item(item_id).kind, item.kind) {
+                (HirItemKind::Struct(struct_decl), SymbolKind::Struct) => {
+                    struct_decl.name_span == item.selection_span
+                }
+                (HirItemKind::Enum(enum_decl), SymbolKind::Enum) => {
+                    enum_decl.name_span == item.selection_span
+                }
+                (HirItemKind::TypeAlias(type_alias), SymbolKind::TypeAlias) => {
+                    type_alias.name_span == item.selection_span
+                }
+                (HirItemKind::Trait(trait_decl), SymbolKind::Trait) => {
+                    trait_decl.name_span == item.selection_span
+                }
+                _ => false,
+            }
+        })
+    }
+
     fn same_file_trait_method_for_definition_span(&self, span: Span) -> Option<(ItemId, String)> {
         self.hir.items.iter().copied().find_map(|item_id| {
             let HirItemKind::Trait(trait_decl) = &self.hir.item(item_id).kind else {
@@ -3780,6 +3843,121 @@ impl Analysis {
                 .find(|method| method.name_span == span)
                 .map(|method| (item_id, method.name.clone()))
         })
+    }
+
+    fn type_hierarchy_item_for_item_id(&self, item_id: ItemId) -> Option<TypeHierarchyItem> {
+        match &self.hir.item(item_id).kind {
+            HirItemKind::Struct(struct_decl) => Some(TypeHierarchyItem {
+                kind: SymbolKind::Struct,
+                name: struct_decl.name.clone(),
+                detail: render_struct_detail(
+                    struct_decl.is_data,
+                    &struct_decl.name,
+                    &struct_decl.generics,
+                ),
+                span: struct_decl.span,
+                selection_span: struct_decl.name_span,
+            }),
+            HirItemKind::Enum(enum_decl) => Some(TypeHierarchyItem {
+                kind: SymbolKind::Enum,
+                name: enum_decl.name.clone(),
+                detail: format!(
+                    "enum {}{}",
+                    enum_decl.name,
+                    render_generics(&enum_decl.generics)
+                ),
+                span: enum_decl.span,
+                selection_span: enum_decl.name_span,
+            }),
+            HirItemKind::Trait(trait_decl) => Some(TypeHierarchyItem {
+                kind: SymbolKind::Trait,
+                name: trait_decl.name.clone(),
+                detail: format!(
+                    "trait {}{}",
+                    trait_decl.name,
+                    render_generics(&trait_decl.generics)
+                ),
+                span: trait_decl.span,
+                selection_span: trait_decl.name_span,
+            }),
+            HirItemKind::TypeAlias(alias) => Some(TypeHierarchyItem {
+                kind: SymbolKind::TypeAlias,
+                name: alias.name.clone(),
+                detail: render_type_alias_detail(&self.hir, alias),
+                span: alias.span,
+                selection_span: alias.name_span,
+            }),
+            _ => None,
+        }
+    }
+
+    fn type_hierarchy_trait_items_for_type_item(&self, item_id: ItemId) -> Vec<TypeHierarchyItem> {
+        let mut items = Vec::new();
+        for &candidate_item_id in &self.hir.items {
+            let HirItemKind::Impl(impl_block) = &self.hir.item(candidate_item_id).kind else {
+                continue;
+            };
+            if self.type_item_for_type_id(impl_block.target) != Some(item_id) {
+                continue;
+            }
+            let Some(trait_item_id) = impl_block
+                .trait_ty
+                .and_then(|ty| self.type_item_for_type_id(ty))
+            else {
+                continue;
+            };
+            if let Some(item) = self.type_hierarchy_item_for_item_id(trait_item_id) {
+                items.push(item);
+            }
+        }
+        items
+    }
+
+    fn type_hierarchy_type_items_for_trait_item(&self, item_id: ItemId) -> Vec<TypeHierarchyItem> {
+        let mut items = Vec::new();
+        for &candidate_item_id in &self.hir.items {
+            let HirItemKind::Impl(impl_block) = &self.hir.item(candidate_item_id).kind else {
+                continue;
+            };
+            if impl_block
+                .trait_ty
+                .and_then(|trait_ty| self.type_item_for_type_id(trait_ty))
+                != Some(item_id)
+            {
+                continue;
+            }
+            let Some(target_item_id) = self.type_item_for_type_id(impl_block.target) else {
+                continue;
+            };
+            if let Some(item) = self.type_hierarchy_item_for_item_id(target_item_id) {
+                items.push(item);
+            }
+        }
+        items
+    }
+
+    fn type_hierarchy_alias_items_for_type_item(&self, item_id: ItemId) -> Vec<TypeHierarchyItem> {
+        let mut items = Vec::new();
+        for &candidate_item_id in &self.hir.items {
+            let HirItemKind::TypeAlias(alias) = &self.hir.item(candidate_item_id).kind else {
+                continue;
+            };
+            if self.type_item_for_type_id(alias.ty) != Some(item_id) {
+                continue;
+            }
+            if let Some(item) = self.type_hierarchy_item_for_item_id(candidate_item_id) {
+                items.push(item);
+            }
+        }
+        items
+    }
+
+    fn type_alias_target_item(&self, item_id: ItemId) -> Option<TypeHierarchyItem> {
+        let HirItemKind::TypeAlias(alias) = &self.hir.item(item_id).kind else {
+            return None;
+        };
+        let target_item_id = self.type_item_for_type_id(alias.ty)?;
+        self.type_hierarchy_item_for_item_id(target_item_id)
     }
 
     fn implementation_targets_for_type_item(&self, item_id: ItemId) -> Vec<ImplementationTarget> {
@@ -3867,6 +4045,23 @@ impl Analysis {
             _ => None,
         }
     }
+}
+
+fn sort_type_hierarchy_items(items: &mut Vec<TypeHierarchyItem>) {
+    items.sort_by_key(|item| {
+        (
+            item.selection_span.start,
+            item.selection_span.end,
+            item.name.clone(),
+        )
+    });
+    items.dedup_by_key(|item| {
+        (
+            item.selection_span.start,
+            item.selection_span.end,
+            item.kind,
+        )
+    });
 }
 
 /// Analyze one source string. Parse failures are returned as diagnostics directly.

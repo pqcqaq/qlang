@@ -7,6 +7,7 @@ use ql_analysis::{
     Analysis, AsyncOperatorKind, CallHierarchyItem as AnalysisCallHierarchyItem,
     DocumentSymbolTarget, HoverInfo, IncomingCall as AnalysisIncomingCall, LoopControlKind,
     OutgoingCall as AnalysisOutgoingCall, PackageAnalysis, RenameError, SymbolKind,
+    TypeHierarchyItem as AnalysisTypeHierarchyItem,
 };
 use ql_diagnostics::{
     Diagnostic as CompilerDiagnostic, DiagnosticSeverity as CompilerSeverity, Label,
@@ -24,8 +25,8 @@ use tower_lsp::lsp_types::{
     DocumentSymbol, DocumentSymbolResponse, Documentation, GotoDefinitionResponse, Hover,
     HoverContents, Location, MarkupContent, MarkupKind, NumberOrString, Position,
     PrepareRenameResponse, Range, SemanticToken, SemanticTokenModifier, SemanticTokenType,
-    SemanticTokens, SemanticTokensLegend, SemanticTokensResult, SymbolInformation, TextEdit, Url,
-    WorkspaceEdit,
+    SemanticTokens, SemanticTokensLegend, SemanticTokensResult, SymbolInformation, TextEdit,
+    TypeHierarchyItem, Url, WorkspaceEdit,
 };
 
 pub fn position_to_offset(source: &str, position: Position) -> Option<usize> {
@@ -891,6 +892,49 @@ pub fn call_hierarchy_outgoing_for_analysis(
     )
 }
 
+pub fn type_hierarchy_prepare_for_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    position: Position,
+) -> Option<Vec<TypeHierarchyItem>> {
+    let offset = position_to_offset(source, position)?;
+    let item = analysis.type_hierarchy_item_at(offset)?;
+    Some(vec![type_hierarchy_item(uri, source, item)])
+}
+
+pub fn type_hierarchy_supertypes_for_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    position: Position,
+) -> Option<Vec<TypeHierarchyItem>> {
+    let offset = position_to_offset(source, position)?;
+    let items = analysis.supertypes_at(offset)?;
+    Some(
+        items
+            .into_iter()
+            .map(|item| type_hierarchy_item(uri, source, item))
+            .collect(),
+    )
+}
+
+pub fn type_hierarchy_subtypes_for_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    position: Position,
+) -> Option<Vec<TypeHierarchyItem>> {
+    let offset = position_to_offset(source, position)?;
+    let items = analysis.subtypes_at(offset)?;
+    Some(
+        items
+            .into_iter()
+            .map(|item| type_hierarchy_item(uri, source, item))
+            .collect(),
+    )
+}
+
 pub fn references_for_dependency_variants(
     uri: &Url,
     source: &str,
@@ -1549,6 +1593,23 @@ fn outgoing_call(uri: &Url, source: &str, call: AnalysisOutgoingCall) -> CallHie
             .into_iter()
             .map(|span| span_to_range(source, span))
             .collect(),
+    }
+}
+
+fn type_hierarchy_item(
+    uri: &Url,
+    source: &str,
+    item: AnalysisTypeHierarchyItem,
+) -> TypeHierarchyItem {
+    TypeHierarchyItem {
+        name: item.name,
+        kind: document_symbol_kind(item.kind),
+        tags: None,
+        detail: Some(item.detail),
+        uri: uri.clone(),
+        range: span_to_range(source, item.span),
+        selection_range: span_to_range(source, item.selection_span),
+        data: None,
     }
 }
 

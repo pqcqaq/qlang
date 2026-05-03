@@ -223,6 +223,82 @@ fn caller(value: Int) -> Int {
 }
 
 #[test]
+fn type_hierarchy_queries_follow_same_file_traits_types_and_aliases() {
+    let source = r#"
+trait Printable {
+    fn print(self) -> Int
+}
+
+struct User {
+    id: Int,
+}
+
+enum Status {
+    Ready,
+}
+
+type Alias = User
+
+impl Printable for User {
+    fn print(self) -> Int {
+        return self.id
+    }
+}
+
+impl Printable for Status {
+    fn print(self) -> Int {
+        return 0
+    }
+}
+"#;
+
+    let analysis = analyzed(source);
+
+    let trait_item = analysis
+        .type_hierarchy_item_at(nth_offset(source, "Printable", 1))
+        .expect("trait definition should prepare type hierarchy");
+    assert_eq!(trait_item.kind, SymbolKind::Trait);
+    assert_eq!(trait_item.selection_span, nth_span(source, "Printable", 1));
+
+    let trait_subtypes = analysis
+        .subtypes_at(nth_offset(source, "Printable", 1))
+        .expect("trait should expose implementing types");
+    assert_eq!(
+        trait_subtypes
+            .iter()
+            .map(|item| (&item.kind, item.name.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(&SymbolKind::Struct, "User"), (&SymbolKind::Enum, "Status"),]
+    );
+
+    let user_supertypes = analysis
+        .supertypes_at(nth_offset(source, "User", 1))
+        .expect("type should expose implemented traits");
+    assert_eq!(user_supertypes.len(), 1);
+    assert_eq!(user_supertypes[0].kind, SymbolKind::Trait);
+    assert_eq!(user_supertypes[0].name, "Printable");
+
+    let user_subtypes = analysis
+        .subtypes_at(nth_offset(source, "User", 1))
+        .expect("type should expose aliases");
+    assert_eq!(user_subtypes.len(), 1);
+    assert_eq!(user_subtypes[0].kind, SymbolKind::TypeAlias);
+    assert_eq!(user_subtypes[0].name, "Alias");
+
+    let alias_supertypes = analysis
+        .supertypes_at(nth_offset(source, "Alias", 1))
+        .expect("alias should expose its target type");
+    assert_eq!(alias_supertypes.len(), 1);
+    assert_eq!(alias_supertypes[0].kind, SymbolKind::Struct);
+    assert_eq!(alias_supertypes[0].name, "User");
+
+    assert_eq!(
+        analysis.type_hierarchy_item_at(nth_offset(source, "print", 1)),
+        None
+    );
+}
+
+#[test]
 fn lexical_semantic_symbol_queries_follow_same_file_identity() {
     let source = r#"
 fn id[T](param: T) -> T {

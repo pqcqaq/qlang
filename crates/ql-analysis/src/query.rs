@@ -136,6 +136,16 @@ pub struct CallHierarchyItem {
     pub selection_span: Span,
 }
 
+/// One type declaration that can anchor same-file type hierarchy requests.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TypeHierarchyItem {
+    pub kind: SymbolKind,
+    pub name: String,
+    pub detail: String,
+    pub span: Span,
+    pub selection_span: Span,
+}
+
 /// One caller entry for a same-file call hierarchy request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IncomingCall {
@@ -238,6 +248,7 @@ pub(crate) struct QueryIndex {
     type_definitions: Vec<TypeDefinitionOccurrence>,
     call_hierarchy_items: Vec<CallHierarchyItem>,
     call_hierarchy_sites: Vec<CallHierarchySite>,
+    type_hierarchy_items: Vec<TypeHierarchyItem>,
     field_shorthand_occurrences: HashMap<FieldTarget, Vec<FieldShorthandOccurrence>>,
     binding_shorthand_occurrences: HashMap<SymbolKey, Vec<BindingShorthandOccurrence>>,
     struct_field_completion_items_by_root: HashMap<String, Vec<CompletionItem>>,
@@ -364,6 +375,22 @@ impl QueryIndex {
         }
         let selection_span = target.hover.definition_span?;
         self.call_hierarchy_items
+            .iter()
+            .find(|item| item.selection_span == selection_span)
+            .cloned()
+    }
+
+    pub(crate) fn type_hierarchy_item_at(&self, offset: usize) -> Option<TypeHierarchyItem> {
+        let target = self.occurrence_at(offset)?;
+        if !matches!(
+            target.hover.kind,
+            SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Trait | SymbolKind::TypeAlias
+        ) || target.hover.definition_span != Some(target.span)
+        {
+            return None;
+        }
+        let selection_span = target.hover.definition_span?;
+        self.type_hierarchy_items
             .iter()
             .find(|item| item.selection_span == selection_span)
             .cloned()
@@ -726,6 +753,7 @@ struct QueryIndexBuilder<'a> {
     type_definitions: Vec<TypeDefinitionOccurrence>,
     call_hierarchy_items: Vec<CallHierarchyItem>,
     call_hierarchy_sites: Vec<CallHierarchySite>,
+    type_hierarchy_items: Vec<TypeHierarchyItem>,
     item_defs: HashMap<ItemId, SymbolData>,
     function_defs: HashMap<FunctionRef, SymbolData>,
     variant_defs: HashMap<VariantTarget, SymbolData>,
@@ -769,6 +797,7 @@ impl<'a> QueryIndexBuilder<'a> {
             type_definitions: Vec::new(),
             call_hierarchy_items: Vec::new(),
             call_hierarchy_sites: Vec::new(),
+            type_hierarchy_items: Vec::new(),
             item_defs: HashMap::new(),
             function_defs: HashMap::new(),
             variant_defs: HashMap::new(),
@@ -816,6 +845,11 @@ impl<'a> QueryIndexBuilder<'a> {
         });
         self.call_hierarchy_sites
             .dedup_by(|left, right| left == right);
+        self.type_hierarchy_items
+            .sort_by_key(|item| (item.selection_span.start, item.selection_span.end));
+        self.type_hierarchy_items.dedup_by(|left, right| {
+            left.selection_span == right.selection_span && left.kind == right.kind
+        });
         self.completion_sites.sort_by_key(|site| {
             (
                 site.span.len(),
@@ -861,6 +895,7 @@ impl<'a> QueryIndexBuilder<'a> {
             type_definitions: self.type_definitions,
             call_hierarchy_items: self.call_hierarchy_items,
             call_hierarchy_sites: self.call_hierarchy_sites,
+            type_hierarchy_items: self.type_hierarchy_items,
             field_shorthand_occurrences: self.field_shorthand_occurrences,
             binding_shorthand_occurrences: self.binding_shorthand_occurrences,
             struct_field_completion_items_by_root: self.struct_field_completion_items_by_root,
@@ -1371,7 +1406,7 @@ impl<'a> QueryIndexBuilder<'a> {
                 self.index_expr_local_definitions(global.value);
             }
             ItemKind::Struct(struct_decl) => {
-                self.define_item(
+                let symbol = self.define_item(
                     item_id,
                     SymbolKind::Struct,
                     struct_decl.name.clone(),
@@ -1383,6 +1418,7 @@ impl<'a> QueryIndexBuilder<'a> {
                     ),
                     None,
                 );
+                self.index_type_hierarchy_item(&symbol, struct_decl.span);
 
                 if let Some(scope) = self.resolution.item_scope(item_id) {
                     self.index_generic_bindings(scope, &struct_decl.generics);
@@ -1401,7 +1437,7 @@ impl<'a> QueryIndexBuilder<'a> {
                 }
             }
             ItemKind::Enum(enum_decl) => {
-                self.define_item(
+                let symbol = self.define_item(
                     item_id,
                     SymbolKind::Enum,
                     enum_decl.name.clone(),
@@ -1413,6 +1449,7 @@ impl<'a> QueryIndexBuilder<'a> {
                     ),
                     None,
                 );
+                self.index_type_hierarchy_item(&symbol, enum_decl.span);
 
                 if let Some(scope) = self.resolution.item_scope(item_id) {
                     self.index_generic_bindings(scope, &enum_decl.generics);
@@ -1429,7 +1466,7 @@ impl<'a> QueryIndexBuilder<'a> {
                 }
             }
             ItemKind::Trait(trait_decl) => {
-                self.define_item(
+                let symbol = self.define_item(
                     item_id,
                     SymbolKind::Trait,
                     trait_decl.name.clone(),
@@ -1441,6 +1478,7 @@ impl<'a> QueryIndexBuilder<'a> {
                     ),
                     None,
                 );
+                self.index_type_hierarchy_item(&symbol, trait_decl.span);
 
                 if let Some(scope) = self.resolution.item_scope(item_id) {
                     self.index_generic_bindings(scope, &trait_decl.generics);
@@ -1496,7 +1534,7 @@ impl<'a> QueryIndexBuilder<'a> {
                 }
             }
             ItemKind::TypeAlias(alias) => {
-                self.define_item(
+                let symbol = self.define_item(
                     item_id,
                     SymbolKind::TypeAlias,
                     alias.name.clone(),
@@ -1504,6 +1542,7 @@ impl<'a> QueryIndexBuilder<'a> {
                     render_type_alias_detail(self.module, alias),
                     None,
                 );
+                self.index_type_hierarchy_item(&symbol, alias.span);
 
                 if let Some(scope) = self.resolution.item_scope(item_id) {
                     self.index_generic_bindings(scope, &alias.generics);
@@ -1988,6 +2027,22 @@ impl<'a> QueryIndexBuilder<'a> {
                 detail: symbol.detail.clone(),
                 span: function.span,
                 selection_span: function.name_span,
+            });
+        }
+    }
+
+    fn index_type_hierarchy_item(&mut self, symbol: &SymbolData, span: Span) {
+        if matches!(
+            symbol.kind,
+            SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Trait | SymbolKind::TypeAlias
+        ) && let Some(selection_span) = symbol.definition_span
+        {
+            self.type_hierarchy_items.push(TypeHierarchyItem {
+                kind: symbol.kind,
+                name: symbol.name.clone(),
+                detail: symbol.detail.clone(),
+                span,
+                selection_span,
             });
         }
     }
@@ -3437,12 +3492,12 @@ fn render_variant_detail(module: &Module, enum_name: &str, variant: &EnumVariant
     }
 }
 
-fn render_struct_detail(is_data: bool, name: &str, generics: &[GenericParam]) -> String {
+pub(crate) fn render_struct_detail(is_data: bool, name: &str, generics: &[GenericParam]) -> String {
     let keyword = if is_data { "data struct" } else { "struct" };
     format!("{} {}{}", keyword, name, render_generics(generics))
 }
 
-fn render_type_alias_detail(module: &Module, alias: &TypeAlias) -> String {
+pub(crate) fn render_type_alias_detail(module: &Module, alias: &TypeAlias) -> String {
     let keyword = if alias.is_opaque {
         "opaque type"
     } else {
@@ -3474,7 +3529,7 @@ fn render_generic_detail(generic: &GenericParam) -> String {
     }
 }
 
-fn render_generics(generics: &[GenericParam]) -> String {
+pub(crate) fn render_generics(generics: &[GenericParam]) -> String {
     if generics.is_empty() {
         return String::new();
     }
@@ -3541,7 +3596,7 @@ fn render_where_clause(module: &Module, predicates: &[WherePredicate]) -> String
     )
 }
 
-fn render_type(module: &Module, type_id: TypeId) -> String {
+pub(crate) fn render_type(module: &Module, type_id: TypeId) -> String {
     match &module.ty(type_id).kind {
         TypeKind::Pointer { is_const, inner } => {
             let qualifier = if *is_const { "const" } else { "mut" };

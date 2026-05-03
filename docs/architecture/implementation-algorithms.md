@@ -306,6 +306,8 @@
 - `definition_at`
 - `references_at`
 - `completions_at`
+- `call_hierarchy_item_at` / `incoming_calls_at` / `outgoing_calls_at`
+- `type_hierarchy_item_at` / `supertypes_at` / `subtypes_at`
 - `semantic_tokens`
 - `prepare_rename_at`
 - `rename_at`
@@ -781,7 +783,7 @@
 初始化时声明的主要能力包括：
 
 - full-sync text document lifecycle 与 diagnostics
-- hover、declaration、definition、typeDefinition、implementation、callHierarchy
+- hover、declaration、definition、typeDefinition、implementation、callHierarchy、typeHierarchy
 - references、documentHighlight、documentSymbol、workspaceSymbol
 - completion（含 `.` trigger）、codeAction、formatting
 - full document semantic tokens
@@ -803,7 +805,7 @@
    - 再回落到当前文件 `Analysis` 的 same-file query surface
 5. broken-source / parse-error
    - 只开放明确实现的保守 fallback，例如 dependency / workspace import 的 hover、definition、typeDefinition、references、documentHighlight、completion、semantic tokens 和受限 rename
-   - 需要完整语义的 formatting、documentSymbol、普通 same-file query、callHierarchy 等继续返回空结果
+   - 需要完整语义的 formatting、documentSymbol、普通 same-file query、callHierarchy、typeHierarchy 等继续返回空结果
 6. response bridge
    - 把 compiler span、diagnostic、query result、completion item、semantic token 和 workspace edit 投影成 LSP response
 
@@ -812,7 +814,7 @@
 - `Position <-> byte offset`
 - `Span -> Range`
 - 编译器 diagnostics -> LSP diagnostics
-- compiler hover / navigation / references / completion / semantic tokens / call hierarchy / rename -> LSP response
+- compiler hover / navigation / references / completion / semantic tokens / call hierarchy / type hierarchy / rename -> LSP response
 
 为什么这样设计：
 

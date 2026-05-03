@@ -92,6 +92,22 @@ async fn initialize_declares_rich_editor_capabilities() {
         capabilities.call_hierarchy_provider,
         Some(CallHierarchyServerCapability::Simple(true))
     ));
+    assert_eq!(
+        capabilities
+            .experimental
+            .as_ref()
+            .and_then(|value| value.get("typeHierarchyProvider"))
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        capabilities
+            .experimental
+            .as_ref()
+            .and_then(|value| value.get("qlspDynamicTypeHierarchyProvider"))
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
     assert!(matches!(
         capabilities.semantic_tokens_provider,
         Some(SemanticTokensServerCapabilities::SemanticTokensOptions(options))
