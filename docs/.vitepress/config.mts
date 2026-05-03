@@ -3,7 +3,7 @@ import { defineConfig } from "vitepress";
 export default defineConfig({
   lang: "zh-CN",
   title: "Qlang",
-  description: "一个面向 LLVM、强调安全、开发体验与多语言互操作的编译型语言预研文档站。",
+  description: "Qlang 编译器、工具链、标准库和开发计划文档。",
   lastUpdated: true,
   themeConfig: {
     nav: [
@@ -21,7 +21,8 @@ export default defineConfig({
         items: [
           { text: "首页", link: "/" },
           { text: "项目愿景", link: "/vision" },
-          { text: "P1-P6 阶段总览", link: "/roadmap/phase-progress" }
+          { text: "当前支持基线", link: "/roadmap/current-supported-surface" },
+          { text: "阶段总览", link: "/roadmap/phase-progress" }
         ]
       },
       {
@@ -66,7 +67,8 @@ export default defineConfig({
         text: "路线图",
         items: [
           { text: "功能清单", link: "/roadmap/feature-list" },
-          { text: "P1-P6 阶段总览", link: "/roadmap/phase-progress" },
+          { text: "当前支持基线", link: "/roadmap/current-supported-surface" },
+          { text: "阶段总览", link: "/roadmap/phase-progress" },
           { text: "开发计划", link: "/roadmap/development-plan" }
         ]
       },
@@ -74,12 +76,19 @@ export default defineConfig({
         text: "阶段设计稿",
         items: [
           { text: "设计稿总览", link: "/plans/" },
+          { text: "LSP parity", link: "/plans/2026-05-01-lsp-typescript-parity-roadmap" },
+          { text: "Stdlib generics", link: "/plans/2026-05-02-stdlib-generics-and-collections-roadmap" },
           { text: "Phase 0 设计冻结", link: "/plans/phase-0-design-freeze" },
           { text: "Phase 2 语义与类型检查", link: "/plans/phase-2-semantic-and-typing" },
           { text: "Phase 3 MIR 与所有权", link: "/plans/phase-3-mir-and-ownership" },
           { text: "Phase 4 后端与产物", link: "/plans/phase-4-backend-and-artifacts" },
           { text: "Phase 5 C FFI 与宿主互操作", link: "/plans/phase-5-ffi-and-c-abi" },
-          { text: "Phase 6 LSP 与编辑器语义", link: "/plans/phase-6-lsp-and-editor-experience" }
+          { text: "Phase 6 LSP 与编辑器语义", link: "/plans/phase-6-lsp-and-editor-experience" },
+          { text: "Phase 7 并发与互操作", link: "/plans/phase-7-concurrency-and-rust-interop" },
+          {
+            text: "Phase 8 workspace tooling",
+            link: "/plans/2026-04-05-phase8-interface-artifacts-and-cross-file-lsp"
+          }
         ]
       }
     ],

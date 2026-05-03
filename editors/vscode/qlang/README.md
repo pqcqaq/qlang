@@ -1,90 +1,59 @@
 # qlang VS Code Extension
 
-This extension is the repository-local VS Code client for Qlang.
+Repository-local VS Code thin client for Qlang.
 
-It stays intentionally thin:
+It:
 
-- registers the `qlang` language for `.ql` files
-- starts the existing `qlsp` language server over stdio
-- warns when the extension version and `qlsp` server version do not match
+- registers `.ql` files as `qlang`
+- starts `qlsp` over stdio
+- warns when the extension and server versions do not match
 
-The semantic contract still comes from [`crates/ql-lsp`](../../../crates/ql-lsp) and the repo tests.
+Semantic behavior lives in `crates/ql-lsp` and its tests.
 
-## Repository Development Mode
-
-Build the language server first:
+## Development
 
 ```powershell
 cargo build -p ql-lsp
-```
 
-Then build the extension:
-
-```powershell
 cd editors/vscode/qlang
 npm install
 npm run compile
+npm run test:grammar
 ```
 
-Open `editors/vscode/qlang` in VS Code and run the `Run qlang` launch configuration.
+Open this directory in VS Code and run `Run qlang`.
 
-By default the extension tries these server locations in order:
+Server lookup order:
 
 1. `qlang.server.path`
 2. `<repo>/target/debug/qlsp`
 3. `<repo>/target/release/qlsp`
 4. `qlsp` from `PATH`
 
-## Installed Usage Mode
+## Local Install
 
-There is no prebuilt release flow or Marketplace publish flow yet. Installed usage still means building matching artifacts from the same source checkout.
-
-Package a VSIX from the extension directory:
+There is no bundled server or Marketplace release yet. Build matching artifacts from the same checkout.
 
 ```powershell
 cd editors/vscode/qlang
 npm install
 npm run package:vsix
+code --install-extension dist/qlang-<package.json version>.vsix
 ```
 
-The package is written to:
-
-```text
-editors/vscode/qlang/dist/qlang-<package.json version>.vsix
-```
-
-Install it with:
-
-- `Extensions: Install from VSIX...`
-- or `code --install-extension editors/vscode/qlang/dist/qlang-<package.json version>.vsix`
-
-## Version Matching
-
-Use matching `ql` / `qlsp` / VSIX artifacts from the same checkout.
-
-Check the server version directly:
+Check the server:
 
 ```powershell
 qlsp --version
 ```
 
-At startup the extension reads LSP `serverInfo.version`.
-
-- matching versions continue normally
-- mismatched versions trigger a warning and point you to the README or `qlang.server.path`
-
 ## Settings
 
-- `qlang.server.path`: explicit path to the `qlsp` executable
-- `qlang.server.args`: extra arguments passed to `qlsp`
+- `qlang.server.path`
+- `qlang.server.args`
 
-Changing either setting restarts the client.
+## Scope
 
-## Current Scope
-
-- no bundled `qlsp` binary
-- no Marketplace publish flow
-- ships a TextMate grammar that mirrors the current lexer keyword set for base syntax coloring
-- relies on `qlsp` for keyword hover, semantic tokens full/range, completion resolve, completion, signature help, inlay hints, folding, selection ranges, formatting requests, code lenses, and code actions including organize imports
-
-The reliable editor surface is still conservative: current-document diagnostics with package preflight, same-file semantics, and the source-backed workspace/dependency slices already covered by `qlsp`.
+- TextMate grammar mirrors the current lexer keyword set.
+- `qlsp` provides hover, semantic tokens, completion, signature help, inlay hints, folding, selection, formatting, code actions, code lenses, hierarchy, references and rename.
+- The reliable surface is still conservative and follows `docs/roadmap/current-supported-surface.md`.

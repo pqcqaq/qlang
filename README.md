@@ -1,69 +1,59 @@
 # Qlang
 
-Qlang 是一门独立设计的编译型系统语言。这个仓库包含编译器、CLI、LSP、VSCode 插件和普通 `stdlib` workspace。
+Qlang 是一门编译型系统语言。这个仓库包含编译器、CLI、LSP、VSCode 插件、文档站和仓库内 `stdlib` workspace。
 
 ## 当前状态
 
-- 编译器主路径、project-aware CLI、基础 same-file tooling 和最小 `stdlib` 已可用。
-- 真实项目可以通过本地依赖、`ql project init/add/remove/...`、`ql build/run/test` 和 `qlsp` 形成最小闭环。
-- 目前仍以本地源码开发为主，没有预编译 release、Marketplace 发布或 registry 分发。
+- 可从源码构建并本地使用 `ql`、`qlsp` 和 VSIX。
+- `ql check/build/run/test` 已支持单文件和项目入口。
+- `ql project` 已支持本地 workspace、依赖、lock、interface 产物和 stdlib 模板。
+- LSP 已覆盖基础编辑体验，但仍不是完整 TypeScript 级 workspace service。
+- 还没有预编译 release、VSCode Marketplace 发布或 registry。
 
-## 先看这些文档
+当前事实以代码和回归测试为准，文档只记录入口、边界和开发顺序。
 
-- [当前支持基线](./docs/roadmap/current-supported-surface.md)
-- [开发计划](./docs/roadmap/development-plan.md)
-- [阶段总览](./docs/roadmap/phase-progress.md)
-- [Stdlib README](./stdlib/README.md)
-- [工具链设计](./docs/architecture/toolchain.md)
-- [类型系统](./docs/design/type-system.md)
-
-如果文档与实现冲突，以 `crates/*` 和回归测试为准。
-
-## 本地使用
-
-从同一份源码构建一套匹配版本的 CLI、LSP 和 VSCode 插件：
+## 快速开始
 
 ```powershell
 cargo install --path crates/ql-cli
 cargo install --path crates/ql-lsp
+
 cd editors/vscode/qlang
 npm install
 npm run package:vsix
 ```
 
-确认版本：
+创建并验证项目：
 
 ```powershell
-ql --version
-qlsp --version
+cargo run -q -p ql-cli -- project init D:\Projects\my-qlang-app --stdlib D:\Projects\language_q\stdlib
+cargo run -q -p ql-cli -- check D:\Projects\my-qlang-app
+cargo run -q -p ql-cli -- run D:\Projects\my-qlang-app
+cargo run -q -p ql-cli -- test D:\Projects\my-qlang-app
 ```
 
-常用命令：
+验证仓库：
 
 ```powershell
 cargo test
-cargo run -p ql-cli -- project init demo --workspace --name app --stdlib stdlib
-cargo run -p ql-cli -- check demo
-cargo run -p ql-cli -- build demo
-cargo run -p ql-cli -- run demo
-cargo run -p ql-cli -- test demo
-cargo run -q -p ql-cli -- check --sync-interfaces stdlib
+cd docs
+npm install
+npm run build
 ```
+
+## 主要文档
+
+- [当前支持基线](./docs/roadmap/current-supported-surface.md)
+- [开发计划](./docs/roadmap/development-plan.md)
+- [阶段总览](./docs/roadmap/phase-progress.md)
+- [安装与版本配套](./docs/getting-started/install.md)
+- [VSCode 插件](./docs/getting-started/vscode-extension.md)
+- [Stdlib](./stdlib/README.md)
 
 ## 仓库结构
 
 - `crates/`: 编译器、CLI、project/workspace、runtime、LSP
-- `docs/`: 文档站点与开发文档
-- `fixtures/`: parser / codegen / diagnostics fixtures
-- `tests/`: 集成与 FFI 测试输入
-- `ramdon_tests/`: executable smoke corpus
-- `examples/`: C / Rust FFI 示例
-- `editors/vscode/qlang/`: VSCode client
-
-## 文档开发
-
-```powershell
-cd docs
-npm install
-npm run dev
-```
+- `stdlib/`: 仓库内标准库 workspace
+- `editors/vscode/qlang/`: VSCode thin client
+- `fixtures/`、`tests/`、`ramdon_tests/`: 回归和 smoke 输入
+- `docs/`: 文档站、路线图、设计稿

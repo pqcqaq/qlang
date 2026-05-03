@@ -1,47 +1,36 @@
 # Stdlib Generics and Collections Roadmap
 
-## Current status
+目标是让 `stdlib` 成为真实项目可消费的普通 Qlang workspace，而不是测试夹具。
 
-`stdlib` 现在已经是可被真实项目消费的普通 workspace：
+## 已落地
 
-- `std.core`、`std.option`、`std.result`、`std.array`、`std.test` 都已存在
-- generic `Option[T]` / `Result[T, E]` 已可执行
-- `std.array` 已有 canonical length-generic access/query/count/aggregate helpers
-- 数组长度泛型参数已能在函数体内作为 `Int` 值读取，`std.array.len_array[T, N]` 已进入 smoke 和 downstream consumer 回归
-- `std.array` 固定长度 access/query/count helper 已收敛为转调 canonical API 的兼容层
-- dependency generic bridge 已支持 wrapper specialization 体内继续转调同模块 generic helper
-- 单文件 `ql build file.ql` / `ql run file.ql` / `ql test file.ql` 已接入同一套本地 generic free function direct-call specialization
-- `std.test` 已提供 length-generic 数组断言 helpers，并用 downstream smoke 覆盖不同长度实例
-- `ql project init --stdlib` 已能生成能直接跑 `check/build/run/test` 的项目模板
+- 包：`std.core`、`std.option`、`std.result`、`std.array`、`std.test`。
+- generic carrier：`Option[T]`、`Result[T, E]`。
+- `std.array` 有 canonical length-generic access/query/count/aggregate helpers。
+- 数组长度泛型参数可作为 `Int` 值读取。
+- dependency generic bridge 支持 wrapper specialization 内继续直调同模块 generic helper。
+- 单文件和 project 入口共用本地 generic free function direct-call specialization。
+- `std.test` 已有普通断言和 length-generic 数组断言。
+- `ql project init --stdlib` 已生成可 `check/run/test` 的模板。
 
-concrete `IntOption` / `BoolOption`、`IntResult` / `BoolResult`、3/4/5 fixed-arity helper 只是兼容面，不再是主方向。
+## 下一步顺序
 
-## Next
+1. 修语言和后端能力，减少 stdlib 为绕路而写的固定 arity API。
+2. 把剩余数组 helper 迁移到 canonical length-generic API。
+3. 为每个 public stdlib API 补 package-local 测试和 downstream consumer smoke。
+4. 扩 method/value generic import 和非 direct-call generic 值前，先补清楚 monomorphization contract。
 
-1. 继续把 generic public API 的执行面补完整，优先修真正影响下游 smoke 的缺口。
-2. 补齐能安全构造 `[T; N]` 的语言/后端能力后，再把 `std.array` 剩余 `reverse` / `repeat` 迁移到 canonical length-generic API。
-3. 继续把项目模板和 downstream smoke 保持在同一套真实 contract 上。
-4. 继续把 method/value generic import、非 direct-call generic 值和完整 monomorphization 留在明确的后续阶段。
+## 规则
 
-## Rules
+- 不新增 `foo3/foo4/foo5` API，除非它只是兼容层并立即解锁真实 smoke。
+- 不把测试 helper 当作标准库 API。
+- 不把 variadic 写进 stdlib 文档，直到语言语法和后端都落地。
+- 实现未通过 downstream `ql check/build/run/test` 前，不宣称可用。
 
-- 不再为新的 `foo3/foo4/foo5` helper 扩面，除非它能立即解锁 downstream smoke。
-- 不把 generic stdlib API 写成“支持中”直到它能通过 downstream `ql check/build/run/test`。
-- 如果 stdlib 暴露编译器/后端缺口，优先修编译器/后端，而不是继续降低库设计。
-- 每个 stdlib 变更都要带 package-local 测试和至少一个 downstream consumer 测试。
-- variadic syntax 是单独的语言设计门，不要在 stdlib 文档里把它伪装成已完成能力。
-
-## Verification
+## 验证
 
 ```powershell
 cargo run -q -p ql-cli -- project targets stdlib
 cargo run -q -p ql-cli -- check --sync-interfaces stdlib
 cargo run -q -p ql-cli -- test stdlib
 ```
-
-## Migration direction
-
-- generic APIs 逐步成为主路径
-- concrete APIs 只保留兼容面
-- collection APIs 代替重复参数复制
-- variadic 设计等单独 gate 再进入实现
