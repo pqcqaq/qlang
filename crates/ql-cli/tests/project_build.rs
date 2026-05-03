@@ -1609,6 +1609,10 @@ pub fn count[T, N](values: [T; N], needle: T) -> Int {
     }
     return total
 }
+
+pub fn mirror[T, N](values: [T; N]) -> [T; N] {
+    return values
+}
 "#,
     );
     let app_manifest = temp.write(
@@ -1629,6 +1633,7 @@ use dep.last as last
 use dep.at_or as at_or
 use dep.contains as contains
 use dep.count as count
+use dep.mirror as mirror
 
 fn bool_score(value: Bool) -> Int {
     if value {
@@ -1637,13 +1642,18 @@ fn bool_score(value: Bool) -> Int {
     return 0
 }
 
+fn hidden_value() -> Int {
+    return 8
+}
+
 fn main() -> Int {
     let number: Int = first([7, 8, 9])
     let flag: Bool = last([false, true, true, false])
     let picked: Int = at_or([3, 4, 5, 6], 2, 0)
     let present = contains(["red", "blue", "green"], "blue")
     let matches = count([1, 2, 1, 1, 3], 1)
-    return number + bool_score(flag) + picked + bool_score(present) + matches
+    let mirrored: [Int; 3] = mirror([1, hidden_value(), at_or([8, 9, 10], 1, 0)])
+    return number + bool_score(flag) + picked + bool_score(present) + matches + mirrored[1]
 }
 "#,
     );

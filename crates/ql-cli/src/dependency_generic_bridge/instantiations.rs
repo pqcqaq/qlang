@@ -718,15 +718,14 @@ fn infer_dependency_generic_function_substitutions(
         if !type_expr_mentions_generic(param_ty, &generic_names) {
             continue;
         }
-        if let Some(arg_ty) = infer_dependency_generic_arg_type(arg, bindings) {
-            if !collect_generic_type_substitutions(
-                param_ty,
-                &arg_ty,
-                &generic_names,
-                &mut substitutions,
-            ) {
-                return None;
-            }
+        if !collect_generic_type_substitutions_from_arg_expr(
+            param_ty,
+            arg,
+            &generic_names,
+            bindings,
+            &mut substitutions,
+        ) {
+            return None;
         }
     }
     if let (Some(return_ty), Some(expected_ty)) = (function.return_type.as_ref(), expected_ty)
@@ -743,6 +742,12 @@ fn infer_dependency_generic_function_substitutions(
         }
     }
     Some(substitutions)
+}
+
+fn call_arg_expr(arg: &CallArg) -> &Expr {
+    match arg {
+        CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => expr,
+    }
 }
 
 fn ordered_dependency_generic_call_args<'f, 'a>(
@@ -1035,14 +1040,75 @@ fn bind_generic_rendered_substitution(
     }
 }
 
-fn infer_dependency_generic_arg_type(
+fn collect_generic_type_substitutions_from_arg_expr(
+    param_ty: &TypeExpr,
     arg: &CallArg,
+    generic_names: &BTreeSet<&str>,
     bindings: &ValueTypeBindings,
-) -> Option<InferredType> {
-    let expr = match arg {
-        CallArg::Positional(expr) | CallArg::Named { value: expr, .. } => expr,
-    };
-    infer_dependency_generic_expr_type(expr, bindings)
+    substitutions: &mut TypeSubstitutions,
+) -> bool {
+    collect_generic_type_substitutions_from_expr(
+        param_ty,
+        call_arg_expr(arg),
+        generic_names,
+        bindings,
+        substitutions,
+    )
+}
+
+fn collect_generic_type_substitutions_from_expr(
+    param_ty: &TypeExpr,
+    expr: &Expr,
+    generic_names: &BTreeSet<&str>,
+    bindings: &ValueTypeBindings,
+    substitutions: &mut TypeSubstitutions,
+) -> bool {
+    if let Some(generic_name) = generic_param_name_for_type_expr(param_ty, generic_names) {
+        return infer_dependency_generic_expr_type(expr, bindings).is_none_or(|arg_ty| {
+            bind_generic_type_substitution(generic_name, &arg_ty, substitutions)
+        });
+    }
+
+    match (&param_ty.kind, &expr.kind) {
+        (
+            TypeExprKind::Array {
+                element: param_element,
+                len: param_len,
+            },
+            ExprKind::Array(items),
+        ) => {
+            bind_generic_len_substitution(
+                param_len,
+                &items.len().to_string(),
+                generic_names,
+                substitutions,
+            ) && items.iter().all(|item| {
+                collect_generic_type_substitutions_from_expr(
+                    param_element,
+                    item,
+                    generic_names,
+                    bindings,
+                    substitutions,
+                )
+            })
+        }
+        (TypeExprKind::Tuple(param_items), ExprKind::Tuple(items))
+            if param_items.len() == items.len() =>
+        {
+            param_items.iter().zip(items).all(|(param_item, item)| {
+                collect_generic_type_substitutions_from_expr(
+                    param_item,
+                    item,
+                    generic_names,
+                    bindings,
+                    substitutions,
+                )
+            })
+        }
+        _ => infer_dependency_generic_expr_type(expr, bindings).is_none_or(|arg_ty| {
+            collect_generic_type_substitutions(param_ty, &arg_ty, generic_names, substitutions)
+        }),
+    }
 }
 
 fn infer_dependency_generic_expr_type(
@@ -1624,6 +1690,47 @@ fn run() -> Int {
             item.get("T").map(String::as_str) == Some("Bool")
                 && item.get("N").map(String::as_str) == Some("4")
         }));
+    }
+
+    #[test]
+    fn infers_array_substitution_from_partially_typed_array_literal_items() {
+        let dependency = parse_module(
+            r#"
+package dep
+
+pub fn reverse[T, N](values: [T; N]) -> [T; N] {
+    return values
+}
+"#,
+        );
+        let root = parse_module(
+            r#"
+use dep.reverse as reverse
+
+fn hidden_value() -> Int {
+    return 2
+}
+
+fn run() -> Int {
+    let values: [Int; 3] = reverse([1, hidden_value(), 3])
+    return values[0]
+}
+"#,
+        );
+
+        let substitutions = collect_public_function_instantiations(
+            &root,
+            &["dep".to_owned()],
+            function(&dependency, "reverse"),
+        );
+
+        assert_eq!(substitutions.len(), 1);
+        let substitutions = substitutions
+            .iter()
+            .next()
+            .expect("one array literal substitution should be inferred");
+        assert_eq!(substitutions.get("T").map(String::as_str), Some("Int"));
+        assert_eq!(substitutions.get("N").map(String::as_str), Some("3"));
     }
 
     #[test]

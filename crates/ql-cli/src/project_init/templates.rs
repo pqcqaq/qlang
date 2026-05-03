@@ -27,8 +27,7 @@ use std.result.unwrap_result_or as result_unwrap_result_or
 
 pub fn run() -> Int {
     let result_value: Result[Int, Int] = result_ok(option_unwrap_or(option_some(42), 0))
-    let transform_values: [Int; 3] = [1, first_array([2, 3, 4]), at_array_or([3, 4, 5], 1, 0)]
-    let transformed_total = sum3_int_array(reverse3_array(transform_values))
+    let transformed_total = sum3_int_array(reverse3_array([1, first_array([2, 3, 4]), at_array_or([3, 4, 5], 1, 0)]))
     let query_values: [Int; 3] = reverse3_array([1, 2, 3])
     let contains_bonus = if contains_array(query_values, 1) { 1 } else { 0 }
     return clamp_int(result_unwrap_result_or(result_value, 0) + transformed_total + sum3_int_array(repeat3_array(1)) + count_array([1, 2, 1], 1) + contains_bonus, 0, 100)
@@ -48,8 +47,7 @@ use std.result.unwrap_result_or_bool as result_unwrap_or_bool
 
 fn main() -> Int {
     let repeated_false: [Bool; 3] = repeat3_array(false)
-    let enabled: Bool = unwrap_or_bool(some_bool(true), false)
-    let repeated_enabled: [Bool; 3] = repeat3_array(enabled)
+    let repeated_enabled: [Bool; 3] = repeat3_array(unwrap_or_bool(some_bool(true), false))
     return 1 - bool_to_int(result_unwrap_or_bool(result_ok_bool(all3_bool_array(repeated_enabled) && contains_array(repeated_false, false)), false))
 }
 "#
