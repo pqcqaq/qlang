@@ -6352,6 +6352,15 @@ fn render_local_generic_function_specializations(source: &str) -> RenderedDepend
     }
 }
 
+fn local_generic_source_override(source: &str) -> Option<String> {
+    let local_generic_items = render_local_generic_function_specializations(source);
+    dependency_bridge_source_override(
+        source,
+        &local_generic_items.declarations,
+        &local_generic_items.source_rewrites,
+    )
+}
+
 fn build_project_source_target(
     workspace_members: &[WorkspaceBuildTargets],
     command_label: &str,
@@ -10255,6 +10264,17 @@ fn build_single_source_target_with_inputs_result(
     source_override: Option<&str>,
     additional_link_inputs: &[PathBuf],
 ) -> Result<BuildArtifact, BuildError> {
+    let local_source_override = if source_override.is_none() {
+        let source = fs::read_to_string(path).map_err(|error| BuildError::Io {
+            path: path.to_path_buf(),
+            error,
+        })?;
+        local_generic_source_override(&source)
+    } else {
+        None
+    };
+    let source_override = source_override.or(local_source_override.as_deref());
+
     match source_override {
         Some(source) => {
             build_source_with_link_inputs(path, source, options, additional_link_inputs)

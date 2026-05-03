@@ -27,12 +27,13 @@
 - `ql check`、`ql fmt`、`ql mir`、`ql ownership`、`ql runtime`、`ql build`、`ql run`、`ql test`、`ql project`、`ql ffi` 已实现。
 - `ql project init/add/remove/status/dependencies/dependents/targets/graph/lock/emit-interface` 已能支撑 workspace 维护。
 - `ql build` / `ql run` / `ql test` / `ql check` 已支持 project-aware 入口，`--json`、`--list`、`--package`、`--target` 等常用工作流已经落地。
+- 单文件 `ql build file.ql` 已复用本地 generic free function direct-call specialization，可覆盖简单同文件泛型函数调用。
 - `ql project init --stdlib` 可以直接生成依赖 `std.core` / `std.option` / `std.result` / `std.array` / `std.test` 的项目脚手架。
 
 ### 依赖桥接与 stdlib
 
 - 当前跨包执行仍是保守切片：bridgeable `const/static`、受限顶层 free function、`extern "c"`、部分 type/value bridge、受限 receiver method。
-- public generic free function 已支持 direct-call 多实例 specialization，前提是类型参数能从字面量、简单表达式、tuple / fixed-array literal、projection、显式 typed value、carrier value、单字段 enum variant constructor 或显式结果上下文推断。
+- public/local generic free function 已支持 direct-call 多实例 specialization，前提是类型参数能从字面量、简单表达式、tuple / fixed-array literal、projection、显式 typed value、carrier value、单字段 enum variant constructor 或显式结果上下文推断。
 - 数组长度泛型参数可在函数体内作为 `Int` 值读取，例如 `fn len[T, N](values: [T; N]) -> Int { return N }`。
 - dependency generic specialization 会递归处理同依赖模块内的 generic helper 直调，允许兼容 wrapper 转调 canonical generic API。
 - `std.option.Option[T]`、`std.result.Result[T, E]`、`std.array` 的 canonical length-generic helpers（含 `len_array`）、`std.test` 的普通断言和 length-generic 数组断言 helpers 已进入真实 smoke；数组固定长度 helper 只保留为兼容层。

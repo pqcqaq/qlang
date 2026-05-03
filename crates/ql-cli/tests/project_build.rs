@@ -101,6 +101,59 @@ fn build_single_file_supports_json_output() {
 }
 
 #[test]
+fn build_single_file_json_supports_local_generic_function_instantiation() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-file-local-generic");
+    let source_path = temp.write(
+        "sample.ql",
+        r#"
+fn first[T, N](values: [T; N]) -> T {
+    return values[0]
+}
+
+fn len[T, N](values: [T; N]) -> Int {
+    return N
+}
+
+fn main() -> Int {
+    return first([10, 20, 30]) + len([1, 2, 3, 4])
+}
+"#,
+    );
+    let artifact_path = temp.path().join("target/ql/debug/sample.ll");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&source_path).arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` single file local generic function",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-file-local-generic",
+        "single-file local generic function json build",
+        &output,
+    )
+    .expect("single-file `ql build --json` should specialize local generic functions");
+    expect_empty_stderr(
+        "project-build-file-local-generic",
+        "single-file local generic function json build",
+        &stderr,
+    )
+    .expect("single-file local generic function json build should not print stderr");
+
+    let json = parse_json_output("project-build-file-local-generic", &stdout);
+    assert_eq!(json["status"], "ok");
+    expect_file_exists(
+        "project-build-file-local-generic",
+        &artifact_path,
+        "single-file local generic function build artifact",
+        "single-file local generic function json build",
+    )
+    .expect("single-file local generic function build should write the artifact");
+}
+
+#[test]
 fn build_single_file_supports_local_receiver_methods() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-file-local-receiver-method");

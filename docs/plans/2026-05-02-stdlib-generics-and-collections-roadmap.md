@@ -10,6 +10,7 @@
 - 数组长度泛型参数已能在函数体内作为 `Int` 值读取，`std.array.len_array[T, N]` 已进入 smoke 和 downstream consumer 回归
 - `std.array` 固定长度 access/query/count helper 已收敛为转调 canonical API 的兼容层
 - dependency generic bridge 已支持 wrapper specialization 体内继续转调同模块 generic helper
+- 单文件 `ql build file.ql` 已接入同一套本地 generic free function direct-call specialization
 - `std.test` 已提供 length-generic 数组断言 helpers，并用 downstream smoke 覆盖不同长度实例
 - `ql project init --stdlib` 已能生成能直接跑 `check/build/run/test` 的项目模板
 
@@ -20,7 +21,7 @@ concrete `IntOption` / `BoolOption`、`IntResult` / `BoolResult`、3/4/5 fixed-a
 1. 继续把 generic public API 的执行面补完整，优先修真正影响下游 smoke 的缺口。
 2. 补齐能安全构造 `[T; N]` 的语言/后端能力后，再把 `std.array` 剩余 `reverse` / `repeat` 迁移到 canonical length-generic API。
 3. 继续把项目模板和 downstream smoke 保持在同一套真实 contract 上。
-4. 继续把 method/value generic import、完整 monomorphization 留在明确的后续阶段。
+4. 继续把 method/value generic import、非 direct-call generic 值和完整 monomorphization 留在明确的后续阶段。
 
 ## Rules
 
