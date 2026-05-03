@@ -55,61 +55,58 @@ pub fn first5_array[T](values: [T; 5]) -> T {
 }
 
 pub fn last3_array[T](values: [T; 3]) -> T {
-    return values[2]
+    var last = values[0]
+    for value in values {
+        last = value
+    }
+    return last
 }
 
 pub fn last4_array[T](values: [T; 4]) -> T {
-    return values[3]
+    var last = values[0]
+    for value in values {
+        last = value
+    }
+    return last
 }
 
 pub fn last5_array[T](values: [T; 5]) -> T {
-    return values[4]
+    var last = values[0]
+    for value in values {
+        last = value
+    }
+    return last
 }
 
 pub fn at3_array_or[T](values: [T; 3], index: Int, fallback: T) -> T {
-    if index == 0 {
-        return values[0]
-    }
-    if index == 1 {
-        return values[1]
-    }
-    if index == 2 {
-        return values[2]
+    var current_index = 0
+    for value in values {
+        if current_index == index {
+            return value
+        };
+        current_index = current_index + 1
     }
     return fallback
 }
 
 pub fn at4_array_or[T](values: [T; 4], index: Int, fallback: T) -> T {
-    if index == 0 {
-        return values[0]
-    }
-    if index == 1 {
-        return values[1]
-    }
-    if index == 2 {
-        return values[2]
-    }
-    if index == 3 {
-        return values[3]
+    var current_index = 0
+    for value in values {
+        if current_index == index {
+            return value
+        };
+        current_index = current_index + 1
     }
     return fallback
 }
 
 pub fn at5_array_or[T](values: [T; 5], index: Int, fallback: T) -> T {
-    if index == 0 {
-        return values[0]
-    }
-    if index == 1 {
-        return values[1]
-    }
-    if index == 2 {
-        return values[2]
-    }
-    if index == 3 {
-        return values[3]
-    }
-    if index == 4 {
-        return values[4]
+    var current_index = 0
+    for value in values {
+        if current_index == index {
+            return value
+        };
+        current_index = current_index + 1
     }
     return fallback
 }
@@ -139,87 +136,60 @@ pub fn repeat5_array[T](value: T) -> [T; 5] {
 }
 
 pub fn contains3_array[T](values: [T; 3], needle: T) -> Bool {
-    return values[0] == needle || values[1] == needle || values[2] == needle
+    for value in values {
+        if value == needle {
+            return true
+        }
+    }
+    return false
 }
 
 pub fn contains4_array[T](values: [T; 4], needle: T) -> Bool {
-    return values[0] == needle || values[1] == needle || values[2] == needle || values[3] == needle
+    for value in values {
+        if value == needle {
+            return true
+        }
+    }
+    return false
 }
 
 pub fn contains5_array[T](values: [T; 5], needle: T) -> Bool {
-    return values[0] == needle || values[1] == needle || values[2] == needle || values[3] == needle || values[4] == needle
+    for value in values {
+        if value == needle {
+            return true
+        }
+    }
+    return false
 }
 
 pub fn count3_array[T](values: [T; 3], needle: T) -> Int {
-    let first = if values[0] == needle {
-        1
-    } else {
-        0
+    var count = 0
+    for value in values {
+        if value == needle {
+            count = count + 1
+        }
     }
-    let second = if values[1] == needle {
-        1
-    } else {
-        0
-    }
-    let third = if values[2] == needle {
-        1
-    } else {
-        0
-    }
-    return first + second + third
+    return count
 }
 
 pub fn count4_array[T](values: [T; 4], needle: T) -> Int {
-    let first = if values[0] == needle {
-        1
-    } else {
-        0
+    var count = 0
+    for value in values {
+        if value == needle {
+            count = count + 1
+        }
     }
-    let second = if values[1] == needle {
-        1
-    } else {
-        0
-    }
-    let third = if values[2] == needle {
-        1
-    } else {
-        0
-    }
-    let fourth = if values[3] == needle {
-        1
-    } else {
-        0
-    }
-    return first + second + third + fourth
+    return count
 }
 
 pub fn count5_array[T](values: [T; 5], needle: T) -> Int {
-    let first = if values[0] == needle {
-        1
-    } else {
-        0
+    var count = 0
+    for value in values {
+        if value == needle {
+            count = count + 1
+        }
     }
-    let second = if values[1] == needle {
-        1
-    } else {
-        0
-    }
-    let third = if values[2] == needle {
-        1
-    } else {
-        0
-    }
-    let fourth = if values[3] == needle {
-        1
-    } else {
-        0
-    }
-    let fifth = if values[4] == needle {
-        1
-    } else {
-        0
-    }
-    return first + second + third + fourth + fifth
+    return count
 }
 
 pub fn sum_int_array[N](values: [Int; N]) -> Int {

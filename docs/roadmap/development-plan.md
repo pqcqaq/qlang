@@ -29,7 +29,7 @@
 
 ## 现在做什么
 
-- 继续把 generic `Option[T]` / `Result[T, E]`、canonical `std.array` helpers 和 downstream smoke 收紧到稳定可用。
+- 继续把 generic `Option[T]` / `Result[T, E]`、canonical `std.array` helpers 和 downstream smoke 收紧到稳定可用；固定长度数组 helper 只保留薄兼容层。
 - 继续补真实项目常见的 direct local dependency value/type/member 路径。
 - 继续把 `qlsp` 对真实 workspace 的基础导航和编辑器能力补齐。
 - 继续把文档压缩成“当前事实”，不再把历史推导写回入口页。
