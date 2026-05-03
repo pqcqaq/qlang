@@ -17,8 +17,11 @@ pub struct RenderedPublicFunctionSpecializations {
 }
 
 pub fn supports_public_function_specialization(function: &FunctionDecl) -> bool {
-    function.visibility == Visibility::Public
-        && function.abi.is_none()
+    function.visibility == Visibility::Public && supports_local_function_specialization(function)
+}
+
+pub fn supports_local_function_specialization(function: &FunctionDecl) -> bool {
+    function.abi.is_none()
         && !function.is_async
         && !function.is_unsafe
         && !function.generics.is_empty()
@@ -34,6 +37,7 @@ pub fn render_public_function_specializations(
     function: &FunctionDecl,
     contents: &str,
     root_module: &Module,
+    dependency_module: &Module,
 ) -> Option<RenderedPublicFunctionSpecializations> {
     if !supports_public_function_specialization(function) || function.body.is_none() {
         return None;
@@ -42,11 +46,45 @@ pub fn render_public_function_specializations(
         root_module,
         module_import_path,
         function,
+        &instantiations::collect_imported_function_type_bindings(
+            root_module,
+            module_import_path,
+            dependency_module,
+        ),
     );
+    render_function_specializations(module_import_path, function, contents, call_instantiations)
+}
+
+pub fn render_local_function_specializations(
+    function: &FunctionDecl,
+    contents: &str,
+    root_module: &Module,
+) -> Option<RenderedPublicFunctionSpecializations> {
+    if !supports_local_function_specialization(function) || function.body.is_none() {
+        return None;
+    }
+    let module_import_path = root_module
+        .package
+        .as_ref()
+        .map(|package| package.path.segments.as_slice())
+        .unwrap_or(&[]);
+    let call_instantiations = instantiations::collect_local_function_call_instantiations(
+        root_module,
+        function,
+        &instantiations::collect_local_function_type_bindings(root_module),
+    );
+    render_function_specializations(module_import_path, function, contents, call_instantiations)
+}
+
+fn render_function_specializations(
+    module_import_path: &[String],
+    function: &FunctionDecl,
+    contents: &str,
+    call_instantiations: Vec<instantiations::PublicFunctionCallInstantiation>,
+) -> Option<RenderedPublicFunctionSpecializations> {
     if call_instantiations.is_empty() {
         return None;
     }
-
     let mut concrete_instantiations = BTreeSet::new();
     for instantiation in &call_instantiations {
         if function

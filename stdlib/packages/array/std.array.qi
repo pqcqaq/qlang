@@ -56,6 +56,20 @@ pub fn count4_array[T](values: [T; 4], needle: T) -> Int
 
 pub fn count5_array[T](values: [T; 5], needle: T) -> Int
 
+pub fn sum_int_array[N](values: [Int; N]) -> Int
+
+pub fn product_int_array[N](values: [Int; N]) -> Int
+
+pub fn max_int_array[N](values: [Int; N]) -> Int
+
+pub fn min_int_array[N](values: [Int; N]) -> Int
+
+pub fn all_bool_array[N](values: [Bool; N]) -> Bool
+
+pub fn any_bool_array[N](values: [Bool; N]) -> Bool
+
+pub fn none_bool_array[N](values: [Bool; N]) -> Bool
+
 pub fn sum3_int_array(values: [Int; 3]) -> Int
 
 pub fn sum4_int_array(values: [Int; 4]) -> Int

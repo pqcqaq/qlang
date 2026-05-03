@@ -1702,6 +1702,70 @@ fn main() -> Int {
 }
 
 #[test]
+fn build_package_path_json_supports_local_generic_array_length_wrapper_function() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-json-local-generic-wrapper");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create app source tree for local generic wrapper");
+
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "app/src/lib.ql",
+        r#"
+pub fn sum_values[N](values: [Int; N]) -> Int {
+    var total = 0
+    for value in values {
+        total = total + value
+    }
+    return total
+}
+
+pub fn sum3_values(values: [Int; 3]) -> Int {
+    return sum_values(values)
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["build"])
+        .arg(&project_root)
+        .args(["--lib", "--json"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --lib --json` local generic wrapper function",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-package-json-local-generic-wrapper",
+        "package build json local generic wrapper function",
+        &output,
+    )
+    .expect("package-path `ql build --lib --json` should specialize local generic wrappers");
+    expect_empty_stderr(
+        "project-build-package-json-local-generic-wrapper",
+        "package build json local generic wrapper function",
+        &stderr,
+    )
+    .expect("local generic wrapper json build should not print stderr");
+
+    let json = parse_json_output("project-build-package-json-local-generic-wrapper", &stdout);
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "ok");
+}
+
+#[test]
 fn build_package_path_json_supports_multiple_dependency_generic_function_instantiations() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-package-json-multiple-generic-instantiations");

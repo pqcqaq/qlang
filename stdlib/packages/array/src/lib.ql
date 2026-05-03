@@ -222,118 +222,149 @@ pub fn count5_array[T](values: [T; 5], needle: T) -> Int {
     return first + second + third + fourth + fifth
 }
 
+pub fn sum_int_array[N](values: [Int; N]) -> Int {
+    var total = 0
+    for value in values {
+        total = total + value
+    }
+    return total
+}
+
+pub fn product_int_array[N](values: [Int; N]) -> Int {
+    var total = 1
+    for value in values {
+        total = total * value
+    }
+    return total
+}
+
+pub fn max_int_array[N](values: [Int; N]) -> Int {
+    var selected = values[0]
+    for value in values {
+        if value > selected {
+            selected = value
+        }
+    }
+    return selected
+}
+
+pub fn min_int_array[N](values: [Int; N]) -> Int {
+    var selected = values[0]
+    for value in values {
+        if value < selected {
+            selected = value
+        }
+    }
+    return selected
+}
+
+pub fn all_bool_array[N](values: [Bool; N]) -> Bool {
+    for value in values {
+        if !value {
+            return false
+        }
+    }
+    return true
+}
+
+pub fn any_bool_array[N](values: [Bool; N]) -> Bool {
+    for value in values {
+        if value {
+            return true
+        }
+    }
+    return false
+}
+
+pub fn none_bool_array[N](values: [Bool; N]) -> Bool {
+    for value in values {
+        if value {
+            return false
+        }
+    }
+    return true
+}
+
 pub fn sum3_int_array(values: [Int; 3]) -> Int {
-    return values[0] + values[1] + values[2]
+    return sum_int_array(values)
 }
 
 pub fn sum4_int_array(values: [Int; 4]) -> Int {
-    return values[0] + values[1] + values[2] + values[3]
+    return sum_int_array(values)
 }
 
 pub fn sum5_int_array(values: [Int; 5]) -> Int {
-    return values[0] + values[1] + values[2] + values[3] + values[4]
+    return sum_int_array(values)
 }
 
 pub fn product3_int_array(values: [Int; 3]) -> Int {
-    return values[0] * values[1] * values[2]
+    return product_int_array(values)
 }
 
 pub fn product4_int_array(values: [Int; 4]) -> Int {
-    return values[0] * values[1] * values[2] * values[3]
+    return product_int_array(values)
 }
 
 pub fn product5_int_array(values: [Int; 5]) -> Int {
-    return values[0] * values[1] * values[2] * values[3] * values[4]
+    return product_int_array(values)
 }
 
 pub fn max3_int_array(values: [Int; 3]) -> Int {
-    let first = if values[0] > values[1] {
-        values[0]
-    } else {
-        values[1]
-    }
-    if first > values[2] {
-        return first
-    }
-    return values[2]
+    return max_int_array(values)
 }
 
 pub fn max4_int_array(values: [Int; 4]) -> Int {
-    let first = max3_int_array([values[0], values[1], values[2]])
-    if first > values[3] {
-        return first
-    }
-    return values[3]
+    return max_int_array(values)
 }
 
 pub fn max5_int_array(values: [Int; 5]) -> Int {
-    let first = max4_int_array([values[0], values[1], values[2], values[3]])
-    if first > values[4] {
-        return first
-    }
-    return values[4]
+    return max_int_array(values)
 }
 
 pub fn min3_int_array(values: [Int; 3]) -> Int {
-    let first = if values[0] < values[1] {
-        values[0]
-    } else {
-        values[1]
-    }
-    if first < values[2] {
-        return first
-    }
-    return values[2]
+    return min_int_array(values)
 }
 
 pub fn min4_int_array(values: [Int; 4]) -> Int {
-    let first = min3_int_array([values[0], values[1], values[2]])
-    if first < values[3] {
-        return first
-    }
-    return values[3]
+    return min_int_array(values)
 }
 
 pub fn min5_int_array(values: [Int; 5]) -> Int {
-    let first = min4_int_array([values[0], values[1], values[2], values[3]])
-    if first < values[4] {
-        return first
-    }
-    return values[4]
+    return min_int_array(values)
 }
 
 pub fn all3_bool_array(values: [Bool; 3]) -> Bool {
-    return values[0] && values[1] && values[2]
+    return all_bool_array(values)
 }
 
 pub fn all4_bool_array(values: [Bool; 4]) -> Bool {
-    return all3_bool_array([values[0], values[1], values[2]]) && values[3]
+    return all_bool_array(values)
 }
 
 pub fn all5_bool_array(values: [Bool; 5]) -> Bool {
-    return all4_bool_array([values[0], values[1], values[2], values[3]]) && values[4]
+    return all_bool_array(values)
 }
 
 pub fn any3_bool_array(values: [Bool; 3]) -> Bool {
-    return values[0] || values[1] || values[2]
+    return any_bool_array(values)
 }
 
 pub fn any4_bool_array(values: [Bool; 4]) -> Bool {
-    return any3_bool_array([values[0], values[1], values[2]]) || values[3]
+    return any_bool_array(values)
 }
 
 pub fn any5_bool_array(values: [Bool; 5]) -> Bool {
-    return any4_bool_array([values[0], values[1], values[2], values[3]]) || values[4]
+    return any_bool_array(values)
 }
 
 pub fn none3_bool_array(values: [Bool; 3]) -> Bool {
-    return !any3_bool_array(values)
+    return none_bool_array(values)
 }
 
 pub fn none4_bool_array(values: [Bool; 4]) -> Bool {
-    return !any4_bool_array(values)
+    return none_bool_array(values)
 }
 
 pub fn none5_bool_array(values: [Bool; 5]) -> Bool {
-    return !any5_bool_array(values)
+    return none_bool_array(values)
 }

@@ -8,6 +8,7 @@ use ql_span::Span;
 
 pub(super) type TypeSubstitutions = BTreeMap<String, String>;
 type ValueTypeBindings = BTreeMap<String, InferredType>;
+pub(super) type FunctionTypeBindings = BTreeMap<String, FunctionDecl>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct PublicFunctionCallInstantiation {
@@ -155,16 +156,23 @@ fn collect_public_function_instantiations(
     module_import_path: &[String],
     function: &FunctionDecl,
 ) -> BTreeSet<TypeSubstitutions> {
-    collect_public_function_call_instantiations(root_module, module_import_path, function)
-        .into_iter()
-        .map(|instantiation| instantiation.substitutions)
-        .collect()
+    let function_bindings = FunctionTypeBindings::new();
+    collect_public_function_call_instantiations(
+        root_module,
+        module_import_path,
+        function,
+        &function_bindings,
+    )
+    .into_iter()
+    .map(|instantiation| instantiation.substitutions)
+    .collect()
 }
 
 pub(super) fn collect_public_function_call_instantiations(
     root_module: &Module,
     module_import_path: &[String],
     function: &FunctionDecl,
+    function_bindings: &FunctionTypeBindings,
 ) -> Vec<PublicFunctionCallInstantiation> {
     let local_names =
         dependency_imported_local_names(root_module, module_import_path, function.name.as_str());
@@ -180,10 +188,75 @@ pub(super) fn collect_public_function_call_instantiations(
             &local_names,
             function,
             &root_bindings,
+            function_bindings,
             &mut instantiations,
         );
     }
     instantiations
+}
+
+pub(super) fn collect_local_function_call_instantiations(
+    root_module: &Module,
+    function: &FunctionDecl,
+    function_bindings: &FunctionTypeBindings,
+) -> Vec<PublicFunctionCallInstantiation> {
+    let local_names = BTreeSet::from([function.name.clone()]);
+    let root_bindings = collect_root_value_type_bindings(root_module);
+    let mut instantiations = Vec::new();
+    for item in &root_module.items {
+        let ItemKind::Function(root_function) = &item.kind else {
+            collect_dependency_generic_function_instantiations_from_item(
+                item,
+                &local_names,
+                function,
+                &root_bindings,
+                function_bindings,
+                &mut instantiations,
+            );
+            continue;
+        };
+        if root_function.generics.is_empty() {
+            collect_dependency_generic_function_instantiations_from_item(
+                item,
+                &local_names,
+                function,
+                &root_bindings,
+                function_bindings,
+                &mut instantiations,
+            );
+        }
+    }
+    instantiations
+}
+
+pub(super) fn collect_imported_function_type_bindings(
+    root_module: &Module,
+    module_import_path: &[String],
+    dependency_module: &Module,
+) -> FunctionTypeBindings {
+    let mut bindings = FunctionTypeBindings::new();
+    for item in &dependency_module.items {
+        let ItemKind::Function(function) = &item.kind else {
+            continue;
+        };
+        for local_name in
+            dependency_imported_local_names(root_module, module_import_path, function.name.as_str())
+        {
+            bindings.insert(local_name, function.clone());
+        }
+    }
+    bindings
+}
+
+pub(super) fn collect_local_function_type_bindings(root_module: &Module) -> FunctionTypeBindings {
+    let mut bindings = FunctionTypeBindings::new();
+    for item in &root_module.items {
+        let ItemKind::Function(function) = &item.kind else {
+            continue;
+        };
+        bindings.insert(function.name.clone(), function.clone());
+    }
+    bindings
 }
 
 fn collect_root_value_type_bindings(root_module: &Module) -> ValueTypeBindings {
@@ -241,6 +314,7 @@ fn collect_dependency_generic_function_instantiations_from_item(
     local_names: &BTreeSet<String>,
     dependency_function: &FunctionDecl,
     root_bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
     instantiations: &mut Vec<PublicFunctionCallInstantiation>,
 ) {
     match &item.kind {
@@ -253,6 +327,7 @@ fn collect_dependency_generic_function_instantiations_from_item(
                     local_names,
                     dependency_function,
                     &mut bindings,
+                    function_bindings,
                     instantiations,
                     root_function.return_type.as_ref(),
                     root_function.return_type.as_ref(),
@@ -267,6 +342,7 @@ fn collect_dependency_generic_function_instantiations_from_item(
                 local_names,
                 dependency_function,
                 root_bindings,
+                function_bindings,
                 instantiations,
             );
         }
@@ -280,6 +356,7 @@ fn collect_dependency_generic_function_instantiations_from_item(
                         local_names,
                         dependency_function,
                         root_bindings,
+                        function_bindings,
                         instantiations,
                     );
                 }
@@ -295,6 +372,7 @@ fn collect_dependency_generic_function_instantiations_from_item(
                         local_names,
                         dependency_function,
                         &mut bindings,
+                        function_bindings,
                         instantiations,
                         method.return_type.as_ref(),
                         method.return_type.as_ref(),
@@ -312,6 +390,7 @@ fn collect_dependency_generic_function_instantiations_from_item(
                         local_names,
                         dependency_function,
                         &mut bindings,
+                        function_bindings,
                         instantiations,
                         method.return_type.as_ref(),
                         method.return_type.as_ref(),
@@ -329,6 +408,7 @@ fn collect_dependency_generic_function_instantiations_from_item(
                         local_names,
                         dependency_function,
                         &mut bindings,
+                        function_bindings,
                         instantiations,
                         method.return_type.as_ref(),
                         method.return_type.as_ref(),
@@ -345,6 +425,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
     local_names: &BTreeSet<String>,
     function: &FunctionDecl,
     bindings: &mut ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
     instantiations: &mut Vec<PublicFunctionCallInstantiation>,
     return_expected_ty: Option<&TypeExpr>,
     tail_expected_ty: Option<&TypeExpr>,
@@ -361,9 +442,10 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     local_names,
                     function,
                     bindings,
+                    function_bindings,
                     instantiations,
                 );
-                record_let_type_bindings(pattern, ty.as_ref(), value, bindings);
+                record_let_type_bindings(pattern, ty.as_ref(), value, bindings, function_bindings);
             }
             ql_ast::StmtKind::Return(Some(value)) => {
                 collect_dependency_generic_function_instantiations_from_expr(
@@ -373,6 +455,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     local_names,
                     function,
                     bindings,
+                    function_bindings,
                     instantiations,
                 );
             }
@@ -384,6 +467,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     local_names,
                     function,
                     bindings,
+                    function_bindings,
                     instantiations,
                 );
             }
@@ -395,6 +479,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     local_names,
                     function,
                     bindings,
+                    function_bindings,
                     instantiations,
                 );
                 let mut body_bindings = bindings.clone();
@@ -403,6 +488,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     local_names,
                     function,
                     &mut body_bindings,
+                    function_bindings,
                     instantiations,
                     return_expected_ty,
                     None,
@@ -415,6 +501,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     local_names,
                     function,
                     &mut body_bindings,
+                    function_bindings,
                     instantiations,
                     return_expected_ty,
                     None,
@@ -428,6 +515,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     local_names,
                     function,
                     bindings,
+                    function_bindings,
                     instantiations,
                 );
                 let mut body_bindings = bindings.clone();
@@ -436,6 +524,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     local_names,
                     function,
                     &mut body_bindings,
+                    function_bindings,
                     instantiations,
                     return_expected_ty,
                     None,
@@ -454,6 +543,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
             local_names,
             function,
             bindings,
+            function_bindings,
             instantiations,
         );
     }
@@ -466,6 +556,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
     local_names: &BTreeSet<String>,
     function: &FunctionDecl,
     bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
     instantiations: &mut Vec<PublicFunctionCallInstantiation>,
 ) {
     match &expr.kind {
@@ -477,6 +568,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                     args,
                     expected_ty,
                     bindings,
+                    function_bindings,
                 )
             {
                 instantiations.push(PublicFunctionCallInstantiation {
@@ -491,6 +583,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 local_names,
                 function,
                 bindings,
+                function_bindings,
                 instantiations,
             );
             for arg in args {
@@ -503,6 +596,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                             local_names,
                             function,
                             bindings,
+                            function_bindings,
                             instantiations,
                         );
                     }
@@ -518,6 +612,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                     local_names,
                     function,
                     bindings,
+                    function_bindings,
                     instantiations,
                 );
             }
@@ -532,6 +627,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                         local_names,
                         function,
                         bindings,
+                        function_bindings,
                         instantiations,
                     );
                 }
@@ -545,6 +641,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 local_names,
                 function,
                 bindings,
+                function_bindings,
                 instantiations,
             );
             collect_dependency_generic_function_instantiations_from_expr(
@@ -554,6 +651,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 local_names,
                 function,
                 bindings,
+                function_bindings,
                 instantiations,
             );
         }
@@ -565,6 +663,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 local_names,
                 function,
                 bindings,
+                function_bindings,
                 instantiations,
             );
         }
@@ -576,6 +675,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 local_names,
                 function,
                 bindings,
+                function_bindings,
                 instantiations,
             );
         }
@@ -587,6 +687,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 local_names,
                 function,
                 bindings,
+                function_bindings,
                 instantiations,
             );
             for item in items {
@@ -597,6 +698,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                     local_names,
                     function,
                     bindings,
+                    function_bindings,
                     instantiations,
                 );
             }
@@ -608,6 +710,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 local_names,
                 function,
                 &mut block_bindings,
+                function_bindings,
                 instantiations,
                 return_expected_ty,
                 expected_ty,
@@ -625,6 +728,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 local_names,
                 function,
                 bindings,
+                function_bindings,
                 instantiations,
             );
             let mut then_bindings = bindings.clone();
@@ -633,6 +737,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 local_names,
                 function,
                 &mut then_bindings,
+                function_bindings,
                 instantiations,
                 return_expected_ty,
                 expected_ty,
@@ -645,6 +750,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                     local_names,
                     function,
                     bindings,
+                    function_bindings,
                     instantiations,
                 );
             }
@@ -657,6 +763,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 local_names,
                 function,
                 bindings,
+                function_bindings,
                 instantiations,
             );
             for arm in arms {
@@ -668,6 +775,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                         local_names,
                         function,
                         bindings,
+                        function_bindings,
                         instantiations,
                     );
                 }
@@ -678,6 +786,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                     local_names,
                     function,
                     bindings,
+                    function_bindings,
                     instantiations,
                 );
             }
@@ -690,6 +799,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 local_names,
                 function,
                 bindings,
+                function_bindings,
                 instantiations,
             );
         }
@@ -706,6 +816,7 @@ fn infer_dependency_generic_function_substitutions(
     args: &[CallArg],
     expected_ty: Option<&TypeExpr>,
     bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
 ) -> Option<TypeSubstitutions> {
     let ordered_args = ordered_dependency_generic_call_args(function, args)?;
     let generic_names = function
@@ -723,6 +834,7 @@ fn infer_dependency_generic_function_substitutions(
             arg,
             &generic_names,
             bindings,
+            function_bindings,
             &mut substitutions,
         ) {
             return None;
@@ -825,13 +937,14 @@ fn record_let_type_bindings(
     ty: Option<&TypeExpr>,
     value: &Expr,
     bindings: &mut ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
 ) {
     if let Some(ty) = ty {
         record_pattern_type_bindings(pattern, ty, bindings);
         return;
     }
     if let PatternKind::Name(name) = &pattern.kind
-        && let Some(ty) = infer_dependency_generic_expr_type(value, bindings)
+        && let Some(ty) = infer_dependency_generic_expr_type(value, bindings, function_bindings)
     {
         bindings.insert(name.clone(), ty);
     }
@@ -1045,6 +1158,7 @@ fn collect_generic_type_substitutions_from_arg_expr(
     arg: &CallArg,
     generic_names: &BTreeSet<&str>,
     bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
     substitutions: &mut TypeSubstitutions,
 ) -> bool {
     collect_generic_type_substitutions_from_expr(
@@ -1052,6 +1166,7 @@ fn collect_generic_type_substitutions_from_arg_expr(
         call_arg_expr(arg),
         generic_names,
         bindings,
+        function_bindings,
         substitutions,
     )
 }
@@ -1061,12 +1176,13 @@ fn collect_generic_type_substitutions_from_expr(
     expr: &Expr,
     generic_names: &BTreeSet<&str>,
     bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
     substitutions: &mut TypeSubstitutions,
 ) -> bool {
     if let Some(generic_name) = generic_param_name_for_type_expr(param_ty, generic_names) {
-        return infer_dependency_generic_expr_type(expr, bindings).is_none_or(|arg_ty| {
-            bind_generic_type_substitution(generic_name, &arg_ty, substitutions)
-        });
+        return infer_dependency_generic_expr_type(expr, bindings, function_bindings).is_none_or(
+            |arg_ty| bind_generic_type_substitution(generic_name, &arg_ty, substitutions),
+        );
     }
 
     match (&param_ty.kind, &expr.kind) {
@@ -1088,6 +1204,7 @@ fn collect_generic_type_substitutions_from_expr(
                     item,
                     generic_names,
                     bindings,
+                    function_bindings,
                     substitutions,
                 )
             })
@@ -1101,19 +1218,23 @@ fn collect_generic_type_substitutions_from_expr(
                     item,
                     generic_names,
                     bindings,
+                    function_bindings,
                     substitutions,
                 )
             })
         }
-        _ => infer_dependency_generic_expr_type(expr, bindings).is_none_or(|arg_ty| {
-            collect_generic_type_substitutions(param_ty, &arg_ty, generic_names, substitutions)
-        }),
+        _ => infer_dependency_generic_expr_type(expr, bindings, function_bindings).is_none_or(
+            |arg_ty| {
+                collect_generic_type_substitutions(param_ty, &arg_ty, generic_names, substitutions)
+            },
+        ),
     }
 }
 
 fn infer_dependency_generic_expr_type(
     expr: &Expr,
     bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
 ) -> Option<InferredType> {
     match &expr.kind {
         ExprKind::Integer(_) => Some(InferredType::primitive("Int")),
@@ -1122,7 +1243,7 @@ fn infer_dependency_generic_expr_type(
         ExprKind::Tuple(items) => {
             let items = items
                 .iter()
-                .map(|item| infer_dependency_generic_expr_type(item, bindings))
+                .map(|item| infer_dependency_generic_expr_type(item, bindings, function_bindings))
                 .collect::<Option<Vec<_>>>()?;
             Some(InferredType {
                 rendered: render_inferred_tuple_type(&items),
@@ -1131,9 +1252,10 @@ fn infer_dependency_generic_expr_type(
         }
         ExprKind::Array(items) => {
             let (first, rest) = items.split_first()?;
-            let element = infer_dependency_generic_expr_type(first, bindings)?;
+            let element = infer_dependency_generic_expr_type(first, bindings, function_bindings)?;
             for item in rest {
-                let item_ty = infer_dependency_generic_expr_type(item, bindings)?;
+                let item_ty =
+                    infer_dependency_generic_expr_type(item, bindings, function_bindings)?;
                 if item_ty != element {
                     return None;
                 }
@@ -1148,22 +1270,29 @@ fn infer_dependency_generic_expr_type(
         }
         ExprKind::Name(name) => bindings.get(name).cloned(),
         ExprKind::Block(block) | ExprKind::Unsafe(block) => {
-            infer_dependency_generic_block_type(block, bindings)
+            infer_dependency_generic_block_type(block, bindings, function_bindings)
         }
         ExprKind::If {
             then_branch,
             else_branch,
             ..
         } => {
-            let then_ty = infer_dependency_generic_block_type(then_branch, bindings)?;
-            let else_ty = infer_dependency_generic_expr_type(else_branch.as_deref()?, bindings)?;
+            let then_ty =
+                infer_dependency_generic_block_type(then_branch, bindings, function_bindings)?;
+            let else_ty = infer_dependency_generic_expr_type(
+                else_branch.as_deref()?,
+                bindings,
+                function_bindings,
+            )?;
             (then_ty == else_ty).then_some(then_ty)
         }
         ExprKind::Match { arms, .. } => {
             let (first, rest) = arms.split_first()?;
-            let first_ty = infer_dependency_generic_expr_type(&first.body, bindings)?;
+            let first_ty =
+                infer_dependency_generic_expr_type(&first.body, bindings, function_bindings)?;
             for arm in rest {
-                let arm_ty = infer_dependency_generic_expr_type(&arm.body, bindings)?;
+                let arm_ty =
+                    infer_dependency_generic_expr_type(&arm.body, bindings, function_bindings)?;
                 if arm_ty != first_ty {
                     return None;
                 }
@@ -1171,27 +1300,162 @@ fn infer_dependency_generic_expr_type(
             Some(first_ty)
         }
         ExprKind::Call { callee, args } => {
-            infer_single_field_generic_variant_call_type(callee, args, bindings)
+            infer_single_field_generic_variant_call_type(callee, args, bindings, function_bindings)
+                .or_else(|| {
+                    infer_function_call_return_type(callee, args, bindings, function_bindings)
+                })
         }
         ExprKind::Bracket { target, items } => {
-            infer_dependency_generic_projection_type(target, items, bindings)
+            infer_dependency_generic_projection_type(target, items, bindings, function_bindings)
         }
         ExprKind::Binary { left, op, right } => {
-            let left = infer_dependency_generic_expr_type(left, bindings)?;
-            let right = infer_dependency_generic_expr_type(right, bindings)?;
+            let left = infer_dependency_generic_expr_type(left, bindings, function_bindings)?;
+            let right = infer_dependency_generic_expr_type(right, bindings, function_bindings)?;
             infer_dependency_generic_binary_expr_type(*op, &left, &right)
         }
         ExprKind::Unary { op, expr } => {
-            let expr = infer_dependency_generic_expr_type(expr, bindings)?;
+            let expr = infer_dependency_generic_expr_type(expr, bindings, function_bindings)?;
             infer_dependency_generic_unary_expr_type(*op, &expr)
         }
         _ => None,
     }
 }
 
+fn infer_function_call_return_type(
+    callee: &Expr,
+    args: &[CallArg],
+    bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
+) -> Option<InferredType> {
+    let ExprKind::Name(name) = &callee.kind else {
+        return None;
+    };
+    let function = function_bindings.get(name)?;
+    let return_ty = function.return_type.as_ref()?;
+    let substitutions = infer_dependency_generic_function_substitutions(
+        function,
+        args,
+        None,
+        bindings,
+        function_bindings,
+    )?;
+    inferred_type_from_type_expr_with_substitutions(return_ty, &substitutions)
+}
+
+fn inferred_type_from_type_expr_with_substitutions(
+    ty: &TypeExpr,
+    substitutions: &TypeSubstitutions,
+) -> Option<InferredType> {
+    match &ty.kind {
+        TypeExprKind::Named { path, args } => {
+            if args.is_empty()
+                && let [name] = path.segments.as_slice()
+                && let Some(substitution) = substitutions.get(name)
+            {
+                return Some(inferred_type_from_rendered_substitution(substitution));
+            }
+
+            let args = args
+                .iter()
+                .map(|arg| inferred_type_from_type_expr_with_substitutions(arg, substitutions))
+                .collect::<Option<Vec<_>>>()?;
+            let mut rendered = path.segments.join(".");
+            if !args.is_empty() {
+                rendered.push('[');
+                rendered.push_str(
+                    &args
+                        .iter()
+                        .map(|arg| arg.rendered.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+                rendered.push(']');
+            }
+            Some(InferredType {
+                rendered,
+                kind: InferredTypeKind::Named {
+                    path: path.segments.clone(),
+                    args,
+                },
+            })
+        }
+        TypeExprKind::Tuple(items) => {
+            let items = items
+                .iter()
+                .map(|item| inferred_type_from_type_expr_with_substitutions(item, substitutions))
+                .collect::<Option<Vec<_>>>()?;
+            Some(InferredType {
+                rendered: render_inferred_tuple_type(&items),
+                kind: InferredTypeKind::Tuple(items),
+            })
+        }
+        TypeExprKind::Array { element, len } => {
+            let element = inferred_type_from_type_expr_with_substitutions(element, substitutions)?;
+            let len = substitutions
+                .get(len)
+                .cloned()
+                .unwrap_or_else(|| len.clone());
+            Some(InferredType {
+                rendered: format!("[{}; {len}]", element.rendered),
+                kind: InferredTypeKind::Array {
+                    element: Box::new(element),
+                    len,
+                },
+            })
+        }
+        TypeExprKind::Pointer { is_const, inner } => {
+            let inner = inferred_type_from_type_expr_with_substitutions(inner, substitutions)?;
+            let qualifier = if *is_const { "const " } else { "" };
+            Some(InferredType {
+                rendered: format!("*{}{}", qualifier, inner.rendered),
+                kind: InferredTypeKind::Pointer {
+                    is_const: *is_const,
+                    inner: Box::new(inner),
+                },
+            })
+        }
+        TypeExprKind::Callable { params, ret } => {
+            let params = params
+                .iter()
+                .map(|param| inferred_type_from_type_expr_with_substitutions(param, substitutions))
+                .collect::<Option<Vec<_>>>()?;
+            let ret = inferred_type_from_type_expr_with_substitutions(ret, substitutions)?;
+            Some(InferredType {
+                rendered: format!(
+                    "({}) -> {}",
+                    params
+                        .iter()
+                        .map(|param| param.rendered.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    ret.rendered
+                ),
+                kind: InferredTypeKind::Callable {
+                    params,
+                    ret: Box::new(ret),
+                },
+            })
+        }
+    }
+}
+
+fn inferred_type_from_rendered_substitution(rendered: &str) -> InferredType {
+    match rendered {
+        "Int" | "Bool" | "String" => InferredType::primitive(rendered),
+        _ => InferredType {
+            rendered: rendered.to_owned(),
+            kind: InferredTypeKind::Named {
+                path: rendered.split('.').map(str::to_owned).collect(),
+                args: Vec::new(),
+            },
+        },
+    }
+}
+
 fn infer_dependency_generic_block_type(
     block: &ql_ast::Block,
     bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
 ) -> Option<InferredType> {
     let mut block_bindings = bindings.clone();
     for statement in &block.statements {
@@ -1199,24 +1463,31 @@ fn infer_dependency_generic_block_type(
             pattern, ty, value, ..
         } = &statement.kind
         {
-            record_let_type_bindings(pattern, ty.as_ref(), value, &mut block_bindings);
+            record_let_type_bindings(
+                pattern,
+                ty.as_ref(),
+                value,
+                &mut block_bindings,
+                function_bindings,
+            );
         }
     }
-    infer_dependency_generic_expr_type(block.tail.as_deref()?, &block_bindings)
+    infer_dependency_generic_expr_type(block.tail.as_deref()?, &block_bindings, function_bindings)
 }
 
 fn infer_dependency_generic_projection_type(
     target: &Expr,
     items: &[Expr],
     bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
 ) -> Option<InferredType> {
     let [index] = items else {
         return None;
     };
-    let target_ty = infer_dependency_generic_expr_type(target, bindings)?;
+    let target_ty = infer_dependency_generic_expr_type(target, bindings, function_bindings)?;
     match target_ty.kind {
         InferredTypeKind::Array { element, .. } => {
-            let index_ty = infer_dependency_generic_expr_type(index, bindings)?;
+            let index_ty = infer_dependency_generic_expr_type(index, bindings, function_bindings)?;
             is_inferred_numeric_type(&index_ty).then_some(*element)
         }
         InferredTypeKind::Tuple(items) => {
@@ -1346,6 +1617,7 @@ fn infer_single_field_generic_variant_call_type(
     callee: &Expr,
     args: &[CallArg],
     bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
 ) -> Option<InferredType> {
     let ExprKind::Member { object, .. } = &callee.kind else {
         return None;
@@ -1356,7 +1628,7 @@ fn infer_single_field_generic_variant_call_type(
     let [CallArg::Positional(value)] = args else {
         return None;
     };
-    let arg_ty = infer_dependency_generic_expr_type(value, bindings)?;
+    let arg_ty = infer_dependency_generic_expr_type(value, bindings, function_bindings)?;
     Some(InferredType {
         rendered: format!("{type_name}[{}]", arg_ty.rendered),
         kind: InferredTypeKind::Named {

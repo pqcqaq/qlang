@@ -6321,6 +6321,33 @@ struct RenderedDependencyBridgeItems {
     source_rewrites: Vec<dependency_generic_bridge::SourceRewrite>,
 }
 
+fn render_local_generic_function_specializations(source: &str) -> RenderedDependencyBridgeItems {
+    let module = match parse_source(source) {
+        Ok(module) => module,
+        Err(_) => return RenderedDependencyBridgeItems::default(),
+    };
+
+    let mut declarations = Vec::new();
+    let mut source_rewrites = Vec::new();
+    for item in &module.items {
+        let ItemKind::Function(function) = &item.kind else {
+            continue;
+        };
+        let Some(rendered) = dependency_generic_bridge::render_local_function_specializations(
+            function, source, &module,
+        ) else {
+            continue;
+        };
+        declarations.push(rendered.declarations);
+        source_rewrites.extend(rendered.call_rewrites);
+    }
+
+    RenderedDependencyBridgeItems {
+        declarations: declarations.join("\n\n"),
+        source_rewrites,
+    }
+}
+
 fn build_project_source_target(
     workspace_members: &[WorkspaceBuildTargets],
     command_label: &str,
@@ -6490,6 +6517,7 @@ fn prepare_project_target_build_quiet(
     })?;
     let dependency_bridge_items =
         render_direct_dependency_bridge_items_quiet(manifest_path, &source)?;
+    let local_generic_items = render_local_generic_function_specializations(&source);
     let public_function_exports = if include_public_function_exports {
         render_public_dependency_function_export_wrappers_quiet(manifest_path, &source)?
     } else {
@@ -6497,14 +6525,14 @@ fn prepare_project_target_build_quiet(
     };
     let bridge_code = join_dependency_bridge_sections(
         &dependency_bridge_items.declarations,
-        &public_function_exports,
+        &local_generic_items.declarations,
     );
+    let bridge_code = join_dependency_bridge_sections(&bridge_code, &public_function_exports);
+    let mut source_rewrites = dependency_bridge_items.source_rewrites;
+    source_rewrites.extend(local_generic_items.source_rewrites);
 
-    let source_override = dependency_bridge_source_override(
-        &source,
-        &bridge_code,
-        &dependency_bridge_items.source_rewrites,
-    );
+    let source_override =
+        dependency_bridge_source_override(&source, &bridge_code, &source_rewrites);
 
     Ok(PreparedProjectTargetBuild {
         source_override,
@@ -6581,6 +6609,7 @@ fn prepare_project_target_build(
         Ok(items) => items,
         Err(code) => return Err(code),
     };
+    let local_generic_items = render_local_generic_function_specializations(&source);
     let public_function_exports = match if include_public_function_exports {
         render_public_dependency_function_export_wrappers(
             command_label,
@@ -6596,14 +6625,14 @@ fn prepare_project_target_build(
     };
     let bridge_code = join_dependency_bridge_sections(
         &dependency_bridge_items.declarations,
-        &public_function_exports,
+        &local_generic_items.declarations,
     );
+    let bridge_code = join_dependency_bridge_sections(&bridge_code, &public_function_exports);
+    let mut source_rewrites = dependency_bridge_items.source_rewrites;
+    source_rewrites.extend(local_generic_items.source_rewrites);
 
-    let source_override = dependency_bridge_source_override(
-        &source,
-        &bridge_code,
-        &dependency_bridge_items.source_rewrites,
-    );
+    let source_override =
+        dependency_bridge_source_override(&source, &bridge_code, &source_rewrites);
 
     Ok(PreparedProjectTargetBuild {
         source_override,
@@ -6659,12 +6688,16 @@ fn prepare_project_test_target_build(
         Ok(items) => items,
         Err(code) => return Err(code),
     };
+    let local_generic_items = render_local_generic_function_specializations(&source);
     let bridge_code = join_dependency_bridge_sections(
         &dependency_bridge_items.declarations,
         &package_bridge_items.declarations,
     );
+    let bridge_code =
+        join_dependency_bridge_sections(&bridge_code, &local_generic_items.declarations);
     let mut source_rewrites = dependency_bridge_items.source_rewrites;
     source_rewrites.extend(package_bridge_items.source_rewrites);
+    source_rewrites.extend(local_generic_items.source_rewrites);
 
     let source_override =
         dependency_bridge_source_override(&source, &bridge_code, &source_rewrites);
@@ -9156,6 +9189,7 @@ fn collect_dependency_module_public_function_forwarders(
                 function,
                 contents,
                 root_module,
+                module,
             ) else {
                 return Err(DependencyPublicFunctionForwarderError::UnsupportedGeneric {
                     symbol: function.name.clone(),

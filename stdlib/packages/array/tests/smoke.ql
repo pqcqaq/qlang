@@ -1,6 +1,7 @@
 use std.array.all3_bool_array as all3_bool_array
 use std.array.all4_bool_array as all4_bool_array
 use std.array.all5_bool_array as all5_bool_array
+use std.array.all_bool_array as all_bool_array
 use std.array.at_array_or as at_array_or
 use std.array.at3_array_or as at3_array_or
 use std.array.at4_array_or as at4_array_or
@@ -8,6 +9,7 @@ use std.array.at5_array_or as at5_array_or
 use std.array.any3_bool_array as any3_bool_array
 use std.array.any4_bool_array as any4_bool_array
 use std.array.any5_bool_array as any5_bool_array
+use std.array.any_bool_array as any_bool_array
 use std.array.contains_array as contains_array
 use std.array.contains3_array as contains3_array
 use std.array.contains4_array as contains4_array
@@ -27,15 +29,19 @@ use std.array.last5_array as last5_array
 use std.array.max3_int_array as max3_int_array
 use std.array.max4_int_array as max4_int_array
 use std.array.max5_int_array as max5_int_array
+use std.array.max_int_array as max_int_array
 use std.array.min3_int_array as min3_int_array
 use std.array.min4_int_array as min4_int_array
 use std.array.min5_int_array as min5_int_array
+use std.array.min_int_array as min_int_array
 use std.array.none3_bool_array as none3_bool_array
 use std.array.none4_bool_array as none4_bool_array
 use std.array.none5_bool_array as none5_bool_array
+use std.array.none_bool_array as none_bool_array
 use std.array.product3_int_array as product3_int_array
 use std.array.product4_int_array as product4_int_array
 use std.array.product5_int_array as product5_int_array
+use std.array.product_int_array as product_int_array
 use std.array.repeat3_array as repeat3_array
 use std.array.repeat4_array as repeat4_array
 use std.array.repeat5_array as repeat5_array
@@ -45,6 +51,7 @@ use std.array.reverse5_array as reverse5_array
 use std.array.sum3_int_array as sum3_int_array
 use std.array.sum4_int_array as sum4_int_array
 use std.array.sum5_int_array as sum5_int_array
+use std.array.sum_int_array as sum_int_array
 
 fn check_int(actual: Int, expected: Int) -> Int {
     if actual == expected {
@@ -87,9 +94,13 @@ fn main() -> Int {
     let canonical_count_status = sum6(check_int(count_array([2, 3, 2], 2), 2), check_int(count_array([2, 3, 2, 2], 2), 3), check_int(count_array([true, false, true, false, true], true), 3), check_int(count_array([1, 2, 3, 4, 5], 9), 0), check_int(count_array(["same", "other", "same"], "same"), 2), 0)
     let generic_contains_status = sum6(check_bool(contains3_array([2, 3, 4], 3), true), check_bool(contains4_array([2, 3, 4, 5], 9), false), check_bool(contains5_array([true, false, true, false, true], false), true), check_bool(contains3_array(["red", "blue", "green"], "blue"), true), check_bool(contains4_array(["a", "b", "c", "d"], "z"), false), 0)
     let generic_count_status = sum6(check_int(count3_array([2, 3, 2], 2), 2), check_int(count4_array([2, 3, 2, 2], 2), 3), check_int(count5_array([true, false, true, false, true], true), 3), check_int(count5_array([1, 2, 3, 4, 5], 9), 0), check_int(count3_array(["same", "other", "same"], "same"), 2), 0)
-    let numeric_status = sum6(check_int(sum3_int_array([2, 3, 4]), 9), check_int(sum4_int_array([2, 3, 4, 5]), 14), check_int(sum5_int_array([2, 3, 4, 5, 6]), 20), check_int(product3_int_array([2, 3, 4]), 24), check_int(product4_int_array([2, 3, 4, 5]), 120), check_int(product5_int_array([2, 3, 4, 5, 6]), 720))
-    let extrema_status = sum6(check_int(max3_int_array([3, 9, 5]), 9), check_int(max4_int_array([3, 9, 5, 7]), 9), check_int(max5_int_array([3, 9, 5, 7, 11]), 11), check_int(min3_int_array([3, 9, 5]), 3), check_int(min4_int_array([3, 9, 5, 7]), 3), check_int(min5_int_array([3, 9, 5, 7, 1]), 1))
-    let bool_all_status = sum6(check_bool(all3_bool_array([true, true, true]), true), check_bool(all4_bool_array([true, true, true, false]), false), check_bool(all5_bool_array([true, true, true, true, true]), true), check_bool(any3_bool_array([false, false, true]), true), check_bool(any4_bool_array([false, false, false, false]), false), check_bool(any5_bool_array([false, false, false, false, true]), true))
-    let bool_none_status = sum6(check_bool(none3_bool_array([false, false, false]), true), check_bool(none4_bool_array([false, false, true, false]), false), check_bool(none5_bool_array([false, false, false, false, false]), true), 0, 0, 0)
-    return generic_int_status + generic_bool_status + compatibility_status + canonical_at_int_status + canonical_at_bool_status + generic_at_int_status + generic_at_bool_status + generic_reverse_int_status + generic_repeat_status + canonical_contains_status + canonical_count_status + generic_contains_status + generic_count_status + numeric_status + extrema_status + bool_all_status + bool_none_status
+    let numeric_status = sum6(check_int(sum_int_array([2, 3, 4]), 9), check_int(sum_int_array([2, 3, 4, 5]), 14), check_int(sum_int_array([2, 3, 4, 5, 6]), 20), check_int(product_int_array([2, 3, 4]), 24), check_int(product_int_array([2, 3, 4, 5]), 120), check_int(product_int_array([2, 3, 4, 5, 6]), 720))
+    let numeric_compatibility_status = sum6(check_int(sum3_int_array([2, 3, 4]), 9), check_int(sum4_int_array([2, 3, 4, 5]), 14), check_int(sum5_int_array([2, 3, 4, 5, 6]), 20), check_int(product3_int_array([2, 3, 4]), 24), check_int(product4_int_array([2, 3, 4, 5]), 120), check_int(product5_int_array([2, 3, 4, 5, 6]), 720))
+    let extrema_status = sum6(check_int(max_int_array([3, 9, 5]), 9), check_int(max_int_array([3, 9, 5, 7]), 9), check_int(max_int_array([3, 9, 5, 7, 11]), 11), check_int(min_int_array([3, 9, 5]), 3), check_int(min_int_array([3, 9, 5, 7]), 3), check_int(min_int_array([3, 9, 5, 7, 1]), 1))
+    let extrema_compatibility_status = sum6(check_int(max3_int_array([3, 9, 5]), 9), check_int(max4_int_array([3, 9, 5, 7]), 9), check_int(max5_int_array([3, 9, 5, 7, 11]), 11), check_int(min3_int_array([3, 9, 5]), 3), check_int(min4_int_array([3, 9, 5, 7]), 3), check_int(min5_int_array([3, 9, 5, 7, 1]), 1))
+    let bool_all_status = sum6(check_bool(all_bool_array([true, true, true]), true), check_bool(all_bool_array([true, true, true, false]), false), check_bool(all_bool_array([true, true, true, true, true]), true), check_bool(any_bool_array([false, false, true]), true), check_bool(any_bool_array([false, false, false, false]), false), check_bool(any_bool_array([false, false, false, false, true]), true))
+    let bool_all_compatibility_status = sum6(check_bool(all3_bool_array([true, true, true]), true), check_bool(all4_bool_array([true, true, true, false]), false), check_bool(all5_bool_array([true, true, true, true, true]), true), check_bool(any3_bool_array([false, false, true]), true), check_bool(any4_bool_array([false, false, false, false]), false), check_bool(any5_bool_array([false, false, false, false, true]), true))
+    let bool_none_status = sum6(check_bool(none_bool_array([false, false, false]), true), check_bool(none_bool_array([false, false, true, false]), false), check_bool(none_bool_array([false, false, false, false, false]), true), 0, 0, 0)
+    let bool_none_compatibility_status = sum6(check_bool(none3_bool_array([false, false, false]), true), check_bool(none4_bool_array([false, false, true, false]), false), check_bool(none5_bool_array([false, false, false, false, false]), true), 0, 0, 0)
+    return generic_int_status + generic_bool_status + compatibility_status + canonical_at_int_status + canonical_at_bool_status + generic_at_int_status + generic_at_bool_status + generic_reverse_int_status + generic_repeat_status + canonical_contains_status + canonical_count_status + generic_contains_status + generic_count_status + numeric_status + numeric_compatibility_status + extrema_status + extrema_compatibility_status + bool_all_status + bool_all_compatibility_status + bool_none_status + bool_none_compatibility_status
 }
