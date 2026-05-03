@@ -126,6 +126,30 @@ pub struct DocumentSymbolTarget {
     pub span: Span,
 }
 
+/// One callable declaration that can anchor same-file call hierarchy requests.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallHierarchyItem {
+    pub kind: SymbolKind,
+    pub name: String,
+    pub detail: String,
+    pub span: Span,
+    pub selection_span: Span,
+}
+
+/// One caller entry for a same-file call hierarchy request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IncomingCall {
+    pub from: CallHierarchyItem,
+    pub from_spans: Vec<Span>,
+}
+
+/// One callee entry for a same-file call hierarchy request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OutgoingCall {
+    pub to: CallHierarchyItem,
+    pub from_spans: Vec<Span>,
+}
+
 /// Async operator forms represented in same-file semantic queries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AsyncOperatorKind {
@@ -212,6 +236,8 @@ pub struct HoverInfo {
 pub(crate) struct QueryIndex {
     occurrences: Vec<IndexedSymbol>,
     type_definitions: Vec<TypeDefinitionOccurrence>,
+    call_hierarchy_items: Vec<CallHierarchyItem>,
+    call_hierarchy_sites: Vec<CallHierarchySite>,
     field_shorthand_occurrences: HashMap<FieldTarget, Vec<FieldShorthandOccurrence>>,
     binding_shorthand_occurrences: HashMap<SymbolKey, Vec<BindingShorthandOccurrence>>,
     struct_field_completion_items_by_root: HashMap<String, Vec<CompletionItem>>,
@@ -327,6 +353,84 @@ impl QueryIndex {
             })
             .collect::<Vec<_>>();
         Some(references)
+    }
+
+    pub(crate) fn call_hierarchy_item_at(&self, offset: usize) -> Option<CallHierarchyItem> {
+        let target = self.occurrence_at(offset)?;
+        if !matches!(target.hover.kind, SymbolKind::Function | SymbolKind::Method)
+            || target.hover.definition_span != Some(target.span)
+        {
+            return None;
+        }
+        let selection_span = target.hover.definition_span?;
+        self.call_hierarchy_items
+            .iter()
+            .find(|item| item.selection_span == selection_span)
+            .cloned()
+    }
+
+    pub(crate) fn incoming_calls_at(&self, offset: usize) -> Option<Vec<IncomingCall>> {
+        let item = self.call_hierarchy_item_at(offset)?;
+        let mut calls = Vec::<IncomingCall>::new();
+        for site in self
+            .call_hierarchy_sites
+            .iter()
+            .filter(|site| site.callee_selection_span == item.selection_span)
+        {
+            let Some(caller) = self
+                .call_hierarchy_items
+                .iter()
+                .find(|candidate| candidate.selection_span == site.caller_selection_span)
+                .cloned()
+            else {
+                continue;
+            };
+            if let Some(existing) = calls
+                .iter_mut()
+                .find(|call| call.from.selection_span == caller.selection_span)
+            {
+                existing.from_spans.push(site.call_span);
+            } else {
+                calls.push(IncomingCall {
+                    from: caller,
+                    from_spans: vec![site.call_span],
+                });
+            }
+        }
+        sort_incoming_calls(&mut calls);
+        Some(calls)
+    }
+
+    pub(crate) fn outgoing_calls_at(&self, offset: usize) -> Option<Vec<OutgoingCall>> {
+        let item = self.call_hierarchy_item_at(offset)?;
+        let mut calls = Vec::<OutgoingCall>::new();
+        for site in self
+            .call_hierarchy_sites
+            .iter()
+            .filter(|site| site.caller_selection_span == item.selection_span)
+        {
+            let Some(callee) = self
+                .call_hierarchy_items
+                .iter()
+                .find(|candidate| candidate.selection_span == site.callee_selection_span)
+                .cloned()
+            else {
+                continue;
+            };
+            if let Some(existing) = calls
+                .iter_mut()
+                .find(|call| call.to.selection_span == callee.selection_span)
+            {
+                existing.from_spans.push(site.call_span);
+            } else {
+                calls.push(OutgoingCall {
+                    to: callee,
+                    from_spans: vec![site.call_span],
+                });
+            }
+        }
+        sort_outgoing_calls(&mut calls);
+        Some(calls)
     }
 
     pub(crate) fn prepare_rename_at(&self, offset: usize) -> Option<RenameTarget> {
@@ -536,6 +640,13 @@ struct TypeDefinitionOccurrence {
     import_binding: Option<ImportBinding>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CallHierarchySite {
+    caller_selection_span: Span,
+    callee_selection_span: Span,
+    call_span: Span,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FieldShorthandOccurrence {
     span: Span,
@@ -613,6 +724,8 @@ struct QueryIndexBuilder<'a> {
     typeck: &'a TypeckResult,
     occurrences: Vec<IndexedSymbol>,
     type_definitions: Vec<TypeDefinitionOccurrence>,
+    call_hierarchy_items: Vec<CallHierarchyItem>,
+    call_hierarchy_sites: Vec<CallHierarchySite>,
     item_defs: HashMap<ItemId, SymbolData>,
     function_defs: HashMap<FunctionRef, SymbolData>,
     variant_defs: HashMap<VariantTarget, SymbolData>,
@@ -654,6 +767,8 @@ impl<'a> QueryIndexBuilder<'a> {
             typeck,
             occurrences: Vec::new(),
             type_definitions: Vec::new(),
+            call_hierarchy_items: Vec::new(),
+            call_hierarchy_sites: Vec::new(),
             item_defs: HashMap::new(),
             function_defs: HashMap::new(),
             variant_defs: HashMap::new(),
@@ -686,6 +801,21 @@ impl<'a> QueryIndexBuilder<'a> {
                 && left.target == right.target
                 && left.import_binding == right.import_binding
         });
+        self.call_hierarchy_items
+            .sort_by_key(|item| (item.selection_span.start, item.selection_span.end));
+        self.call_hierarchy_items.dedup_by(|left, right| {
+            left.selection_span == right.selection_span && left.kind == right.kind
+        });
+        self.call_hierarchy_sites.sort_by_key(|site| {
+            (
+                site.caller_selection_span.start,
+                site.callee_selection_span.start,
+                site.call_span.start,
+                site.call_span.end,
+            )
+        });
+        self.call_hierarchy_sites
+            .dedup_by(|left, right| left == right);
         self.completion_sites.sort_by_key(|site| {
             (
                 site.span.len(),
@@ -729,6 +859,8 @@ impl<'a> QueryIndexBuilder<'a> {
         QueryIndex {
             occurrences: self.occurrences,
             type_definitions: self.type_definitions,
+            call_hierarchy_items: self.call_hierarchy_items,
+            call_hierarchy_sites: self.call_hierarchy_sites,
             field_shorthand_occurrences: self.field_shorthand_occurrences,
             binding_shorthand_occurrences: self.binding_shorthand_occurrences,
             struct_field_completion_items_by_root: self.struct_field_completion_items_by_root,
@@ -1200,7 +1332,8 @@ impl<'a> QueryIndexBuilder<'a> {
                     None,
                 );
                 self.function_defs
-                    .insert(FunctionRef::Item(item_id), symbol);
+                    .insert(FunctionRef::Item(item_id), symbol.clone());
+                self.index_function_call_hierarchy(function, &symbol);
 
                 if let Some(scope) = self.resolution.item_scope(item_id) {
                     self.index_function_bindings(function, scope, None);
@@ -1847,6 +1980,18 @@ impl<'a> QueryIndexBuilder<'a> {
         }
     }
 
+    fn index_function_call_hierarchy(&mut self, function: &Function, symbol: &SymbolData) {
+        if matches!(symbol.kind, SymbolKind::Function | SymbolKind::Method) {
+            self.call_hierarchy_items.push(CallHierarchyItem {
+                kind: symbol.kind,
+                name: symbol.name.clone(),
+                detail: symbol.detail.clone(),
+                span: function.span,
+                selection_span: function.name_span,
+            });
+        }
+    }
+
     fn index_block_local_definitions(&mut self, block_id: BlockId) {
         let block = self.module.block(block_id);
         for &stmt_id in &block.statements {
@@ -2160,6 +2305,7 @@ impl<'a> QueryIndexBuilder<'a> {
             }
             ExprKind::Closure { body, .. } => self.index_expr_use(*body),
             ExprKind::Call { callee, args } => {
+                self.index_call_hierarchy_site(expr_id, *callee);
                 self.index_expr_use(*callee);
                 for arg in args {
                     match arg {
@@ -2307,8 +2453,9 @@ impl<'a> QueryIndexBuilder<'a> {
         };
         self.push_occurrence(function.name_span, &symbol);
         if let Some(function_ref) = function_ref {
-            self.function_defs.insert(function_ref, symbol);
+            self.function_defs.insert(function_ref, symbol.clone());
         }
+        self.index_function_call_hierarchy(function, &symbol);
     }
 
     fn define_variant(&mut self, target: VariantTarget, enum_name: &str, variant: &EnumVariant) {
@@ -2349,7 +2496,60 @@ impl<'a> QueryIndexBuilder<'a> {
             definition_span: Some(function.name_span),
         };
         self.push_occurrence(function.name_span, &symbol);
-        self.method_defs.insert(target, symbol);
+        self.method_defs.insert(target, symbol.clone());
+        self.index_function_call_hierarchy(function, &symbol);
+    }
+
+    fn index_call_hierarchy_site(&mut self, call_expr_id: ExprId, callee_expr_id: ExprId) {
+        let Some(caller_selection_span) = self.enclosing_function_selection_span(call_expr_id)
+        else {
+            return;
+        };
+        let Some(callee) = self.symbol_for_call_callee(callee_expr_id) else {
+            return;
+        };
+        if !matches!(callee.kind, SymbolKind::Function | SymbolKind::Method) {
+            return;
+        }
+        let Some(callee_selection_span) = callee.definition_span else {
+            return;
+        };
+
+        self.call_hierarchy_sites.push(CallHierarchySite {
+            caller_selection_span,
+            callee_selection_span,
+            call_span: self.module.expr(callee_expr_id).span,
+        });
+    }
+
+    fn symbol_for_call_callee(&self, callee_expr_id: ExprId) -> Option<SymbolData> {
+        let callee = self.module.expr(callee_expr_id);
+        if let ExprKind::Name(_) = callee.kind
+            && let Some(resolution) = self.resolution.expr_resolution(callee_expr_id)
+        {
+            return self.symbol_for_value_resolution(
+                resolution,
+                self.resolution.expr_scope(callee_expr_id),
+            );
+        }
+        if let ExprKind::Member { .. } = callee.kind
+            && let Some(MemberTarget::Method(target)) = self.typeck.member_target(callee_expr_id)
+        {
+            return self.method_defs.get(&target).cloned();
+        }
+        None
+    }
+
+    fn enclosing_function_selection_span(&self, expr_id: ExprId) -> Option<Span> {
+        let expr = self.module.expr(expr_id);
+        self.call_hierarchy_items
+            .iter()
+            .find(|item| {
+                item.span.start <= expr.span.start
+                    && item.span.end >= expr.span.end
+                    && item.selection_span != expr.span
+            })
+            .map(|item| item.selection_span)
     }
 
     fn define_param(
@@ -3152,6 +3352,32 @@ const fn completion_namespace_rank(namespace: CompletionNamespace) -> usize {
         CompletionNamespace::Value => 0,
         CompletionNamespace::Type => 1,
     }
+}
+
+fn sort_incoming_calls(calls: &mut [IncomingCall]) {
+    for call in calls.iter_mut() {
+        call.from_spans.sort_by_key(|span| (span.start, span.end));
+    }
+    calls.sort_by_key(|call| {
+        (
+            call.from.selection_span.start,
+            call.from.selection_span.end,
+            call.from.name.clone(),
+        )
+    });
+}
+
+fn sort_outgoing_calls(calls: &mut [OutgoingCall]) {
+    for call in calls.iter_mut() {
+        call.from_spans.sort_by_key(|span| (span.start, span.end));
+    }
+    calls.sort_by_key(|call| {
+        (
+            call.to.selection_span.start,
+            call.to.selection_span.end,
+            call.to.name.clone(),
+        )
+    });
 }
 
 fn render_function_signature(module: &Module, function: &Function) -> String {

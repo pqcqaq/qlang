@@ -4,8 +4,9 @@ use common::request::initialize_service;
 use ql_lsp::Backend;
 use tower_lsp::LspService;
 use tower_lsp::lsp_types::{
-    CodeActionKind, CodeActionProviderCapability, FoldingRangeProviderCapability, OneOf,
-    SelectionRangeProviderCapability, SemanticTokensFullOptions, SemanticTokensServerCapabilities,
+    CallHierarchyServerCapability, CodeActionKind, CodeActionProviderCapability,
+    FoldingRangeProviderCapability, OneOf, SelectionRangeProviderCapability,
+    SemanticTokensFullOptions, SemanticTokensServerCapabilities,
 };
 
 #[tokio::test(flavor = "current_thread")]
@@ -86,6 +87,10 @@ async fn initialize_declares_rich_editor_capabilities() {
     assert!(matches!(
         capabilities.inlay_hint_provider,
         Some(OneOf::Left(true))
+    ));
+    assert!(matches!(
+        capabilities.call_hierarchy_provider,
+        Some(CallHierarchyServerCapability::Simple(true))
     ));
     assert!(matches!(
         capabilities.semantic_tokens_provider,

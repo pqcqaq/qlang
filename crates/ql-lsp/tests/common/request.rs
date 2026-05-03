@@ -16,6 +16,8 @@ use tower_lsp::lsp_types::request::{
     GotoImplementationResponse, GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
 };
 use tower_lsp::lsp_types::{
+    CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
+    CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeLens, CodeLensParams,
     CompletionItem as LspCompletionItem, CompletionParams, CompletionResponse, Diagnostic,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
@@ -714,6 +716,58 @@ pub async fn selection_range_via_request(
     )
     .await;
     serde_json::from_value(value).expect("textDocument/selectionRange result should deserialize")
+}
+
+pub async fn prepare_call_hierarchy_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+    position: Position,
+) -> Option<Vec<CallHierarchyItem>> {
+    let value = request_value(
+        service,
+        "textDocument/prepareCallHierarchy",
+        json!(CallHierarchyPrepareParams {
+            text_document_position_params: text_document_position(uri, position),
+            work_done_progress_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value)
+        .expect("textDocument/prepareCallHierarchy result should deserialize")
+}
+
+pub async fn incoming_calls_via_request(
+    service: &mut LspService<Backend>,
+    item: CallHierarchyItem,
+) -> Option<Vec<CallHierarchyIncomingCall>> {
+    let value = request_value(
+        service,
+        "callHierarchy/incomingCalls",
+        json!(CallHierarchyIncomingCallsParams {
+            item,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("callHierarchy/incomingCalls result should deserialize")
+}
+
+pub async fn outgoing_calls_via_request(
+    service: &mut LspService<Backend>,
+    item: CallHierarchyItem,
+) -> Option<Vec<CallHierarchyOutgoingCall>> {
+    let value = request_value(
+        service,
+        "callHierarchy/outgoingCalls",
+        json!(CallHierarchyOutgoingCallsParams {
+            item,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("callHierarchy/outgoingCalls result should deserialize")
 }
 
 pub async fn workspace_symbol_via_request(

@@ -40,7 +40,7 @@
 
 ### LSP 与 VSCode
 
-- same-file 语义已接通：hover、definition、declaration、typeDefinition、references、documentHighlight、completion、semantic tokens、formatting、codeAction、codeLens、rename。
+- same-file 语义已接通：hover、definition、declaration、typeDefinition、references、documentHighlight、completion、semantic tokens、formatting、codeAction、codeLens、callHierarchy、rename。
 - `workspace/symbol`、`implementation`、open-doc 优先的 dependency 导航、基础 workspace rename 已覆盖当前支持切片。
 - `textDocument/formatting`、`rangeFormatting`、`onTypeFormatting` 已可直接复用 `ql fmt`。
 

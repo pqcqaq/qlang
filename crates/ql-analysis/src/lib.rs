@@ -27,9 +27,10 @@ use ql_span::Span;
 use ql_typeck::{Ty, TypeckResult, analyze_module as analyze_types};
 use query::QueryIndex;
 pub use query::{
-    AsyncContextInfo, AsyncOperatorKind, CompletionItem, DefinitionTarget, DocumentSymbolTarget,
-    HoverInfo, LoopControlContextInfo, LoopControlKind, ReferenceTarget, RenameEdit, RenameError,
-    RenameResult, RenameTarget, SemanticTokenOccurrence, SymbolKind,
+    AsyncContextInfo, AsyncOperatorKind, CallHierarchyItem, CompletionItem, DefinitionTarget,
+    DocumentSymbolTarget, HoverInfo, IncomingCall, LoopControlContextInfo, LoopControlKind,
+    OutgoingCall, ReferenceTarget, RenameEdit, RenameError, RenameResult, RenameTarget,
+    SemanticTokenOccurrence, SymbolKind,
 };
 pub use runtime::RuntimeRequirement;
 
@@ -3664,6 +3665,18 @@ impl Analysis {
     /// Return every indexed occurrence for the symbol covering `offset` within the current file.
     pub fn references_at(&self, offset: usize) -> Option<Vec<ReferenceTarget>> {
         self.index.references_at(offset)
+    }
+
+    pub fn call_hierarchy_item_at(&self, offset: usize) -> Option<CallHierarchyItem> {
+        self.index.call_hierarchy_item_at(offset)
+    }
+
+    pub fn incoming_calls_at(&self, offset: usize) -> Option<Vec<IncomingCall>> {
+        self.index.incoming_calls_at(offset)
+    }
+
+    pub fn outgoing_calls_at(&self, offset: usize) -> Option<Vec<OutgoingCall>> {
+        self.index.outgoing_calls_at(offset)
     }
 
     /// Return rename metadata when the symbol under `offset` is safe for same-file renaming.

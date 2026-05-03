@@ -135,6 +135,94 @@ fn id[T](param: T) -> T {
 }
 
 #[test]
+fn call_hierarchy_queries_follow_same_file_functions_and_methods() {
+    let source = r#"
+fn leaf(value: Int) -> Int {
+    return value
+}
+
+fn caller(value: Int) -> Int {
+    return leaf(value)
+}
+
+struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    fn get(self) -> Int {
+        return self.value
+    }
+
+    fn bump(self) -> Int {
+        return self.get()
+    }
+}
+"#;
+
+    let analysis = analyzed(source);
+    let leaf = analysis
+        .call_hierarchy_item_at(nth_offset(source, "leaf", 1))
+        .expect("function definition should prepare call hierarchy");
+    assert_eq!(leaf.kind, SymbolKind::Function);
+    assert_eq!(leaf.name, "leaf");
+    assert_eq!(leaf.selection_span, nth_span(source, "leaf", 1));
+
+    let incoming = analysis
+        .incoming_calls_at(nth_offset(source, "leaf", 1))
+        .expect("leaf should have incoming calls");
+    assert_eq!(incoming.len(), 1);
+    assert_eq!(incoming[0].from.name, "caller");
+    assert_eq!(incoming[0].from_spans, vec![nth_span(source, "leaf", 2)]);
+
+    let outgoing = analysis
+        .outgoing_calls_at(nth_offset(source, "caller", 1))
+        .expect("caller should have outgoing calls");
+    assert_eq!(outgoing.len(), 1);
+    assert_eq!(outgoing[0].to.name, "leaf");
+    assert_eq!(outgoing[0].from_spans, vec![nth_span(source, "leaf", 2)]);
+
+    let method_incoming = analysis
+        .incoming_calls_at(nth_offset(source, "get", 1))
+        .expect("method should have incoming calls");
+    assert_eq!(method_incoming.len(), 1);
+    assert_eq!(method_incoming[0].from.name, "bump");
+    assert_eq!(
+        method_incoming[0].from_spans,
+        vec![nth_span(source, "self.get", 1)]
+    );
+}
+
+#[test]
+fn call_hierarchy_prepare_stays_on_callable_definitions() {
+    let source = r#"
+fn leaf(value: Int) -> Int {
+    return value
+}
+
+fn caller(value: Int) -> Int {
+    return leaf(value)
+}
+"#;
+
+    let analysis = analyzed(source);
+
+    assert!(
+        analysis
+            .call_hierarchy_item_at(nth_offset(source, "leaf", 1))
+            .is_some()
+    );
+    assert_eq!(
+        analysis.call_hierarchy_item_at(nth_offset(source, "leaf", 2)),
+        None
+    );
+    assert_eq!(
+        analysis.call_hierarchy_item_at(nth_offset(source, "value", 1)),
+        None
+    );
+}
+
+#[test]
 fn lexical_semantic_symbol_queries_follow_same_file_identity() {
     let source = r#"
 fn id[T](param: T) -> T {

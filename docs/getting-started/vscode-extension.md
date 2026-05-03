@@ -17,6 +17,7 @@
 - keyword hover
 - definition / declaration / typeDefinition
 - implementation
+- callHierarchy（当前覆盖同文件 function / method 直接调用）
 - references
 - documentHighlight
 - completion
@@ -39,7 +40,7 @@
 - formatting 复用 `ql fmt`，支持 parseable source 的整文档格式化、能安全落在请求范围内的逐行 range formatting，以及只作用于触发行的 on-type formatting；无法安全拆成局部行 edit 的格式化差异会保守返回空 edit。
 - `source.organizeImports` 当前只对连续顶层 `use ...` block 做排序和去重；不会重写分组 import、删除未使用 import 或跨文件推断。
 - `codeLens` 当前只覆盖可解析的当前文档；它基于现有 `references` / `implementation` 查询给 document symbols 生成 references / implementations 入口，不是完整 workspace-wide lens service。
-- `signatureHelp`、`inlayHint`、`foldingRange`、`selectionRange` 已有可用基础实现，但不是 TypeScript 那种完整 workspace service。
+- `signatureHelp`、`inlayHint`、`foldingRange`、`selectionRange`、`callHierarchy` 已有可用基础实现，但不是 TypeScript 那种完整 workspace service。
 - rename 只开放 same-file 和一部分 source-backed dependency / workspace root 保守路径。
 - 插件不自带 `qlsp` 二进制；没有 Marketplace 发布流。
 

@@ -24,14 +24,16 @@ use tower_lsp::lsp_types::request::{
     GotoImplementationResponse, GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
 };
 use tower_lsp::lsp_types::{
-    CodeAction, CodeActionKind, CodeActionOptions, CodeActionOrCommand, CodeActionParams,
-    CodeActionProviderCapability, CodeLens, CodeLensOptions, CodeLensParams, Command,
-    CompletionItem as LspCompletionItem, CompletionOptions, CompletionParams, CompletionResponse,
-    DeclarationCapability, Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
-    DocumentHighlight, DocumentHighlightParams, DocumentOnTypeFormattingOptions,
-    DocumentOnTypeFormattingParams, DocumentRangeFormattingParams, DocumentSymbol,
-    DocumentSymbolParams, DocumentSymbolResponse, FoldingRange, FoldingRangeParams,
+    CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
+    CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
+    CallHierarchyServerCapability, CodeAction, CodeActionKind, CodeActionOptions,
+    CodeActionOrCommand, CodeActionParams, CodeActionProviderCapability, CodeLens, CodeLensOptions,
+    CodeLensParams, Command, CompletionItem as LspCompletionItem, CompletionOptions,
+    CompletionParams, CompletionResponse, DeclarationCapability, Diagnostic, DiagnosticSeverity,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DocumentFormattingParams, DocumentHighlight, DocumentHighlightParams,
+    DocumentOnTypeFormattingOptions, DocumentOnTypeFormattingParams, DocumentRangeFormattingParams,
+    DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, FoldingRange, FoldingRangeParams,
     FoldingRangeProviderCapability, GotoDefinitionParams, GotoDefinitionResponse, Hover,
     HoverParams, HoverProviderCapability, ImplementationProviderCapability, InitializeParams,
     InitializeResult, InitializedParams, InlayHint, InlayHintParams, Location, MessageType,
@@ -48,21 +50,22 @@ use tower_lsp::lsp_types::{
 use tower_lsp::{Client, LanguageServer};
 
 use crate::bridge::{
-    completion_for_analysis, completion_for_dependency_imports,
-    completion_for_dependency_member_fields, completion_for_dependency_methods,
-    completion_for_dependency_struct_fields, completion_for_dependency_variants,
-    completion_for_package_analysis, completion_response, declaration_for_dependency_imports,
-    declaration_for_dependency_methods, declaration_for_dependency_struct_fields,
-    declaration_for_dependency_values, declaration_for_dependency_variants,
-    declaration_for_package_analysis, definition_for_dependency_imports,
-    definition_for_dependency_methods, definition_for_dependency_struct_fields,
-    definition_for_dependency_values, definition_for_dependency_variants,
-    definition_for_package_analysis, diagnostics_to_lsp, document_symbol_kind,
-    document_symbols_for_analysis, hover_for_dependency_imports, hover_for_dependency_methods,
-    hover_for_dependency_struct_fields, hover_for_dependency_values, hover_for_dependency_variants,
-    hover_for_package_analysis, implementation_for_analysis, position_to_offset,
-    prepare_rename_for_analysis, prepare_rename_for_dependency_imports, references_for_analysis,
-    references_for_dependency_imports, references_for_dependency_methods,
+    call_hierarchy_incoming_for_analysis, call_hierarchy_outgoing_for_analysis,
+    call_hierarchy_prepare_for_analysis, completion_for_analysis,
+    completion_for_dependency_imports, completion_for_dependency_member_fields,
+    completion_for_dependency_methods, completion_for_dependency_struct_fields,
+    completion_for_dependency_variants, completion_for_package_analysis, completion_response,
+    declaration_for_dependency_imports, declaration_for_dependency_methods,
+    declaration_for_dependency_struct_fields, declaration_for_dependency_values,
+    declaration_for_dependency_variants, declaration_for_package_analysis,
+    definition_for_dependency_imports, definition_for_dependency_methods,
+    definition_for_dependency_struct_fields, definition_for_dependency_values,
+    definition_for_dependency_variants, definition_for_package_analysis, diagnostics_to_lsp,
+    document_symbol_kind, document_symbols_for_analysis, hover_for_dependency_imports,
+    hover_for_dependency_methods, hover_for_dependency_struct_fields, hover_for_dependency_values,
+    hover_for_dependency_variants, hover_for_package_analysis, implementation_for_analysis,
+    position_to_offset, prepare_rename_for_analysis, prepare_rename_for_dependency_imports,
+    references_for_analysis, references_for_dependency_imports, references_for_dependency_methods,
     references_for_dependency_struct_fields, references_for_dependency_values,
     references_for_dependency_variants, references_for_package_analysis, rename_for_analysis,
     rename_for_dependency_imports, semantic_tokens_for_analysis,
@@ -9315,6 +9318,7 @@ impl LanguageServer for Backend {
                 document_highlight_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
+                call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
                 code_lens_provider: Some(CodeLensOptions {
                     resolve_provider: Some(true),
                 }),
@@ -9838,6 +9842,57 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         Ok(document_highlights_for_analysis_at(
+            &uri, &source, &analysis, position,
+        ))
+    }
+
+    async fn prepare_call_hierarchy(
+        &self,
+        params: CallHierarchyPrepareParams,
+    ) -> Result<Option<Vec<CallHierarchyItem>>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
+        Ok(call_hierarchy_prepare_for_analysis(
+            &uri, &source, &analysis, position,
+        ))
+    }
+
+    async fn incoming_calls(
+        &self,
+        params: CallHierarchyIncomingCallsParams,
+    ) -> Result<Option<Vec<CallHierarchyIncomingCall>>> {
+        let uri = params.item.uri;
+        let position = params.item.selection_range.start;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
+        Ok(call_hierarchy_incoming_for_analysis(
+            &uri, &source, &analysis, position,
+        ))
+    }
+
+    async fn outgoing_calls(
+        &self,
+        params: CallHierarchyOutgoingCallsParams,
+    ) -> Result<Option<Vec<CallHierarchyOutgoingCall>>> {
+        let uri = params.item.uri;
+        let position = params.item.selection_range.start;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
+        Ok(call_hierarchy_outgoing_for_analysis(
             &uri, &source, &analysis, position,
         ))
     }

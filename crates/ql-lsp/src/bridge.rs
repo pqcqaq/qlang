@@ -4,8 +4,9 @@ use std::{
 };
 
 use ql_analysis::{
-    Analysis, AsyncOperatorKind, DocumentSymbolTarget, HoverInfo, LoopControlKind, PackageAnalysis,
-    RenameError, SymbolKind,
+    Analysis, AsyncOperatorKind, CallHierarchyItem as AnalysisCallHierarchyItem,
+    DocumentSymbolTarget, HoverInfo, IncomingCall as AnalysisIncomingCall, LoopControlKind,
+    OutgoingCall as AnalysisOutgoingCall, PackageAnalysis, RenameError, SymbolKind,
 };
 use ql_diagnostics::{
     Diagnostic as CompilerDiagnostic, DiagnosticSeverity as CompilerSeverity, Label,
@@ -17,6 +18,7 @@ use tower_lsp::lsp_types::request::{
     GotoDeclarationResponse, GotoImplementationResponse, GotoTypeDefinitionResponse,
 };
 use tower_lsp::lsp_types::{
+    CallHierarchyIncomingCall, CallHierarchyItem, CallHierarchyOutgoingCall,
     CompletionItem as LspCompletionItem, CompletionItemKind, CompletionResponse,
     CompletionTextEdit, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
     DocumentSymbol, DocumentSymbolResponse, Documentation, GotoDefinitionResponse, Hover,
@@ -846,6 +848,49 @@ pub fn references_for_dependency_imports(
     Some(locations)
 }
 
+pub fn call_hierarchy_prepare_for_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    position: Position,
+) -> Option<Vec<CallHierarchyItem>> {
+    let offset = position_to_offset(source, position)?;
+    let item = analysis.call_hierarchy_item_at(offset)?;
+    Some(vec![call_hierarchy_item(uri, source, item)])
+}
+
+pub fn call_hierarchy_incoming_for_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    position: Position,
+) -> Option<Vec<CallHierarchyIncomingCall>> {
+    let offset = position_to_offset(source, position)?;
+    let calls = analysis.incoming_calls_at(offset)?;
+    Some(
+        calls
+            .into_iter()
+            .map(|call| incoming_call(uri, source, call))
+            .collect(),
+    )
+}
+
+pub fn call_hierarchy_outgoing_for_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    position: Position,
+) -> Option<Vec<CallHierarchyOutgoingCall>> {
+    let offset = position_to_offset(source, position)?;
+    let calls = analysis.outgoing_calls_at(offset)?;
+    Some(
+        calls
+            .into_iter()
+            .map(|call| outgoing_call(uri, source, call))
+            .collect(),
+    )
+}
+
 pub fn references_for_dependency_variants(
     uri: &Url,
     source: &str,
@@ -1465,6 +1510,45 @@ fn definition_to_declaration(response: GotoDefinitionResponse) -> GotoDeclaratio
         GotoDefinitionResponse::Scalar(location) => GotoDeclarationResponse::Scalar(location),
         GotoDefinitionResponse::Array(locations) => GotoDeclarationResponse::Array(locations),
         GotoDefinitionResponse::Link(links) => GotoDeclarationResponse::Link(links),
+    }
+}
+
+fn call_hierarchy_item(
+    uri: &Url,
+    source: &str,
+    item: AnalysisCallHierarchyItem,
+) -> CallHierarchyItem {
+    CallHierarchyItem {
+        name: item.name,
+        kind: document_symbol_kind(item.kind),
+        tags: None,
+        detail: Some(item.detail),
+        uri: uri.clone(),
+        range: span_to_range(source, item.span),
+        selection_range: span_to_range(source, item.selection_span),
+        data: None,
+    }
+}
+
+fn incoming_call(uri: &Url, source: &str, call: AnalysisIncomingCall) -> CallHierarchyIncomingCall {
+    CallHierarchyIncomingCall {
+        from: call_hierarchy_item(uri, source, call.from),
+        from_ranges: call
+            .from_spans
+            .into_iter()
+            .map(|span| span_to_range(source, span))
+            .collect(),
+    }
+}
+
+fn outgoing_call(uri: &Url, source: &str, call: AnalysisOutgoingCall) -> CallHierarchyOutgoingCall {
+    CallHierarchyOutgoingCall {
+        to: call_hierarchy_item(uri, source, call.to),
+        from_ranges: call
+            .from_spans
+            .into_iter()
+            .map(|span| span_to_range(source, span))
+            .collect(),
     }
 }
 
