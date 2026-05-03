@@ -42,6 +42,10 @@ pub fn count_array[T, N](values: [T; N], needle: T) -> Int {
     return count
 }
 
+pub fn len_array[T, N](values: [T; N]) -> Int {
+    return N
+}
+
 pub fn first3_array[T](values: [T; 3]) -> T {
     return first_array(values)
 }

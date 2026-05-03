@@ -23,6 +23,47 @@ fn main() -> Int {
 }
 
 #[test]
+fn accepts_array_length_generic_as_int_expression() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn len_array[T, N](values: [T; N]) -> Int {
+    return N
+}
+
+fn main() -> Int {
+    return len_array([1, 2, 3])
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected array length generic value expression to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_discarded_if_statement_branch_values_without_unifying_types() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main(flag: Bool) -> String {
+    if flag {
+        1
+    } else {
+        "ignored"
+    }
+    return "ok"
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected discarded if statement branch values to type-check independently, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_undeclared_generic_fixed_array_length_in_function_signatures() {
     let diagnostics = diagnostic_messages(
         r#"

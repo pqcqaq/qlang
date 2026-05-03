@@ -258,6 +258,7 @@ pub enum BuiltinType {
 pub enum ValueResolution {
     Local(LocalId),
     Param(ParamBinding),
+    ArrayLengthGeneric(GenericBinding),
     SelfValue,
     Function(FunctionRef),
     Item(ItemId),

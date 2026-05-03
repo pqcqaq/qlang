@@ -26,6 +26,7 @@ use std.array.last_array as last_array
 use std.array.last3_array as last3_array
 use std.array.last4_array as last4_array
 use std.array.last5_array as last5_array
+use std.array.len_array as len_array
 use std.array.max3_int_array as max3_int_array
 use std.array.max4_int_array as max4_int_array
 use std.array.max5_int_array as max5_int_array
@@ -79,6 +80,7 @@ fn main() -> Int {
     let canonical_at_bool_status = sum6(check_bool(at_array_or([true, false, true], 1, true), false), check_bool(at_array_or([false, true, true, false], 3, true), false), check_bool(at_array_or([true, false, true, false, true], 4, false), true), check_bool(at_array_or([true, false, true], 5, false), false), check_bool(at_array_or([false, true, true, false], 0, true), false), check_bool(at_array_or([true, false, true, false, true], 2, false), true))
     let generic_at_int_status = sum6(check_int(at3_array_or([2, 3, 4], 1, 99), 3), check_int(at4_array_or([2, 3, 4, 5], 3, 99), 5), check_int(at5_array_or([2, 3, 4, 5, 6], 4, 99), 6), check_int(at3_array_or([2, 3, 4], 5, 99), 99), check_int(at4_array_or([2, 3, 4, 5], 0, 99), 2), check_int(at5_array_or([2, 3, 4, 5, 6], 2, 99), 4))
     let generic_at_bool_status = sum6(check_bool(at3_array_or([true, false, true], 1, true), false), check_bool(at4_array_or([false, true, true, false], 3, true), false), check_bool(at5_array_or([true, false, true, false, true], 4, false), true), check_bool(at3_array_or([true, false, true], 5, false), false), check_bool(at4_array_or([false, true, true, false], 0, true), false), check_bool(at5_array_or([true, false, true, false, true], 2, false), true))
+    let generic_len_status = sum6(check_int(len_array([2, 3, 4]), 3), check_int(len_array([2, 3, 4, 5]), 4), check_int(len_array([true, false, true, false, true]), 5), check_int(len_array(["red", "blue", "green"]), 3), 0, 0)
     let reversed3_int: [Int; 3] = reverse3_array([2, 3, 4])
     let reversed4_int: [Int; 4] = reverse4_array([2, 3, 4, 5])
     let reversed5_int: [Int; 5] = reverse5_array([2, 3, 4, 5, 6])
@@ -103,5 +105,5 @@ fn main() -> Int {
     let bool_all_compatibility_status = sum6(check_bool(all3_bool_array([true, true, true]), true), check_bool(all4_bool_array([true, true, true, false]), false), check_bool(all5_bool_array([true, true, true, true, true]), true), check_bool(any3_bool_array([false, false, true]), true), check_bool(any4_bool_array([false, false, false, false]), false), check_bool(any5_bool_array([false, false, false, false, true]), true))
     let bool_none_status = sum6(check_bool(none_bool_array([false, false, false]), true), check_bool(none_bool_array([false, false, true, false]), false), check_bool(none_bool_array([false, false, false, false, false]), true), 0, 0, 0)
     let bool_none_compatibility_status = sum6(check_bool(none3_bool_array([false, false, false]), true), check_bool(none4_bool_array([false, false, true, false]), false), check_bool(none5_bool_array([false, false, false, false, false]), true), 0, 0, 0)
-    return generic_int_status + generic_bool_status + compatibility_status + canonical_at_int_status + canonical_at_bool_status + generic_at_int_status + generic_at_bool_status + generic_reverse_int_status + generic_repeat_status + canonical_contains_status + canonical_count_status + generic_contains_status + generic_count_status + compatibility_string_status + numeric_status + numeric_compatibility_status + extrema_status + extrema_compatibility_status + bool_all_status + bool_all_compatibility_status + bool_none_status + bool_none_compatibility_status
+    return generic_int_status + generic_bool_status + compatibility_status + canonical_at_int_status + canonical_at_bool_status + generic_at_int_status + generic_at_bool_status + generic_len_status + generic_reverse_int_status + generic_repeat_status + canonical_contains_status + canonical_count_status + generic_contains_status + generic_count_status + compatibility_string_status + numeric_status + numeric_compatibility_status + extrema_status + extrema_compatibility_status + bool_all_status + bool_all_compatibility_status + bool_none_status + bool_none_compatibility_status
 }

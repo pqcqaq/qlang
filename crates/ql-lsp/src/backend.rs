@@ -5255,6 +5255,7 @@ fn trait_method_call_receiver_type_id(
             ql_hir::Param::Receiver(_) => None,
         },
         ql_resolve::ValueResolution::SelfValue
+        | ql_resolve::ValueResolution::ArrayLengthGeneric(_)
         | ql_resolve::ValueResolution::Function(_)
         | ql_resolve::ValueResolution::Item(_)
         | ql_resolve::ValueResolution::Import(_) => None,

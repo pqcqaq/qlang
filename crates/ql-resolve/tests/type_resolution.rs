@@ -1,6 +1,6 @@
 mod support;
 
-use ql_hir::{ExprKind, Param, StmtKind, TypeKind};
+use ql_hir::{ArrayLen, ExprKind, Param, StmtKind, TypeKind};
 use ql_resolve::{BuiltinType, TypeResolution};
 
 use support::{find_function, find_item_id, path, resolved};
@@ -100,8 +100,8 @@ fn render(flags: [Bool; 0b100]) -> [String; 0x1] {
         panic!("return type should lower to array type");
     };
 
-    assert_eq!(*param_len, 4);
-    assert_eq!(*return_len, 1);
+    assert_eq!(*param_len, ArrayLen::Known(4));
+    assert_eq!(*return_len, ArrayLen::Known(1));
     assert_eq!(
         resolution.type_resolution(*param_element),
         Some(&TypeResolution::Builtin(BuiltinType::Bool))

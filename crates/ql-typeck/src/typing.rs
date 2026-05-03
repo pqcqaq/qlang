@@ -459,115 +459,7 @@ impl<'a> Checker<'a> {
     fn check_block(&mut self, block_id: BlockId) -> Ty {
         let block = self.module.block(block_id);
         for &stmt_id in &block.statements {
-            let stmt = self.module.stmt(stmt_id);
-            match &stmt.kind {
-                StmtKind::Let {
-                    mutable,
-                    pattern,
-                    ty,
-                    value,
-                } => {
-                    let declared_ty =
-                        ty.map(|ty_id| lower_type(self.module, self.resolution, ty_id));
-                    let value_ty = self.check_expr(*value, declared_ty.as_ref());
-                    if let Some(expected) = declared_ty.as_ref() {
-                        self.report_type_mismatch_stmt(
-                            stmt_id,
-                            expected,
-                            &value_ty,
-                            "local binding value",
-                        );
-                        self.bind_pattern(*pattern, expected);
-                    } else {
-                        self.bind_pattern(*pattern, &value_ty);
-                    }
-                    if !*mutable
-                        && let PatternKind::Binding(local_id) = &self.module.pattern(*pattern).kind
-                    {
-                        self.immutable_local_values.insert(*local_id, *value);
-                    }
-                    if *mutable {
-                        self.record_mutable_pattern_bindings(*pattern);
-                    }
-                }
-                StmtKind::Return(expr) => {
-                    let expected_return = self.current_return.clone();
-                    let actual = expr
-                        .map(|expr_id| self.check_expr(expr_id, expected_return.as_ref()))
-                        .unwrap_or_else(void_ty);
-                    if let Some(expected) = &expected_return {
-                        self.report_type_mismatch_stmt(stmt_id, expected, &actual, "return value");
-                    }
-                }
-                StmtKind::Defer(expr) => {
-                    self.check_expr(*expr, None);
-                }
-                StmtKind::Break => {
-                    if self.loop_depth == 0 {
-                        self.diagnostics.push(
-                            Diagnostic::error(
-                                "`break` is only allowed inside loop bodies".to_string(),
-                            )
-                            .with_label(
-                                Label::new(self.module.stmt(stmt_id).span)
-                                    .with_message("`break` used here"),
-                            ),
-                        );
-                    }
-                }
-                StmtKind::Continue => {
-                    if self.loop_depth == 0 {
-                        self.diagnostics.push(
-                            Diagnostic::error(
-                                "`continue` is only allowed inside loop bodies".to_string(),
-                            )
-                            .with_label(
-                                Label::new(self.module.stmt(stmt_id).span)
-                                    .with_message("`continue` used here"),
-                            ),
-                        );
-                    }
-                }
-                StmtKind::While { condition, body } => {
-                    self.check_bool_condition(*condition, "while condition");
-                    self.loop_depth += 1;
-                    self.check_block(*body);
-                    self.loop_depth -= 1;
-                }
-                StmtKind::Loop { body } => {
-                    self.loop_depth += 1;
-                    self.check_block(*body);
-                    self.loop_depth -= 1;
-                }
-                StmtKind::For {
-                    is_await,
-                    pattern,
-                    iterable,
-                    body,
-                    ..
-                } => {
-                    if *is_await && !self.in_async_function {
-                        self.diagnostics.push(
-                            Diagnostic::error(
-                                "`for await` is only allowed inside `async fn`".to_string(),
-                            )
-                            .with_label(
-                                Label::new(self.module.stmt(stmt_id).span)
-                                    .with_message("`for await` used here"),
-                            ),
-                        );
-                    }
-                    let iterable_ty = self.check_expr(*iterable, None);
-                    let item_ty = self.iterable_item_ty(&iterable_ty, *is_await);
-                    self.bind_pattern(*pattern, &item_ty);
-                    self.loop_depth += 1;
-                    self.check_block(*body);
-                    self.loop_depth -= 1;
-                }
-                StmtKind::Expr { expr, .. } => {
-                    self.check_expr(*expr, None);
-                }
-            }
+            self.check_stmt(stmt_id);
         }
 
         let expected_return = self.current_return.clone();
@@ -575,6 +467,149 @@ impl<'a> Checker<'a> {
             .tail
             .map(|expr_id| self.check_expr(expr_id, expected_return.as_ref()))
             .unwrap_or_else(void_ty)
+    }
+
+    fn check_stmt(&mut self, stmt_id: StmtId) {
+        let stmt = self.module.stmt(stmt_id);
+        match &stmt.kind {
+            StmtKind::Let {
+                mutable,
+                pattern,
+                ty,
+                value,
+            } => {
+                let declared_ty = ty.map(|ty_id| lower_type(self.module, self.resolution, ty_id));
+                let value_ty = self.check_expr(*value, declared_ty.as_ref());
+                if let Some(expected) = declared_ty.as_ref() {
+                    self.report_type_mismatch_stmt(
+                        stmt_id,
+                        expected,
+                        &value_ty,
+                        "local binding value",
+                    );
+                    self.bind_pattern(*pattern, expected);
+                } else {
+                    self.bind_pattern(*pattern, &value_ty);
+                }
+                if !*mutable
+                    && let PatternKind::Binding(local_id) = &self.module.pattern(*pattern).kind
+                {
+                    self.immutable_local_values.insert(*local_id, *value);
+                }
+                if *mutable {
+                    self.record_mutable_pattern_bindings(*pattern);
+                }
+            }
+            StmtKind::Return(expr) => {
+                let expected_return = self.current_return.clone();
+                let actual = expr
+                    .map(|expr_id| self.check_expr(expr_id, expected_return.as_ref()))
+                    .unwrap_or_else(void_ty);
+                if let Some(expected) = &expected_return {
+                    self.report_type_mismatch_stmt(stmt_id, expected, &actual, "return value");
+                }
+            }
+            StmtKind::Defer(expr) => {
+                self.check_expr(*expr, None);
+            }
+            StmtKind::Break => {
+                if self.loop_depth == 0 {
+                    self.diagnostics.push(
+                        Diagnostic::error("`break` is only allowed inside loop bodies".to_string())
+                            .with_label(
+                                Label::new(self.module.stmt(stmt_id).span)
+                                    .with_message("`break` used here"),
+                            ),
+                    );
+                }
+            }
+            StmtKind::Continue => {
+                if self.loop_depth == 0 {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "`continue` is only allowed inside loop bodies".to_string(),
+                        )
+                        .with_label(
+                            Label::new(self.module.stmt(stmt_id).span)
+                                .with_message("`continue` used here"),
+                        ),
+                    );
+                }
+            }
+            StmtKind::While { condition, body } => {
+                self.check_bool_condition(*condition, "while condition");
+                self.loop_depth += 1;
+                self.check_block(*body);
+                self.loop_depth -= 1;
+            }
+            StmtKind::Loop { body } => {
+                self.loop_depth += 1;
+                self.check_block(*body);
+                self.loop_depth -= 1;
+            }
+            StmtKind::For {
+                is_await,
+                pattern,
+                iterable,
+                body,
+                ..
+            } => {
+                if *is_await && !self.in_async_function {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "`for await` is only allowed inside `async fn`".to_string(),
+                        )
+                        .with_label(
+                            Label::new(self.module.stmt(stmt_id).span)
+                                .with_message("`for await` used here"),
+                        ),
+                    );
+                }
+                let iterable_ty = self.check_expr(*iterable, None);
+                let item_ty = self.iterable_item_ty(&iterable_ty, *is_await);
+                self.bind_pattern(*pattern, &item_ty);
+                self.loop_depth += 1;
+                self.check_block(*body);
+                self.loop_depth -= 1;
+            }
+            StmtKind::Expr { expr, .. } => {
+                self.check_expr_statement(*expr);
+            }
+        }
+    }
+
+    fn check_expr_statement(&mut self, expr_id: ExprId) {
+        match &self.module.expr(expr_id).kind {
+            ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
+                self.check_block_statement(*block_id);
+                self.expr_types.insert(expr_id, void_ty());
+            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.check_bool_condition(*condition, "if condition");
+                self.check_block_statement(*then_branch);
+                if let Some(else_expr) = else_branch {
+                    self.check_expr_statement(*else_expr);
+                }
+                self.expr_types.insert(expr_id, void_ty());
+            }
+            _ => {
+                self.check_expr(expr_id, None);
+            }
+        }
+    }
+
+    fn check_block_statement(&mut self, block_id: BlockId) {
+        let block = self.module.block(block_id);
+        for &stmt_id in &block.statements {
+            self.check_stmt(stmt_id);
+        }
+        if let Some(tail) = block.tail {
+            self.check_expr_statement(tail);
+        }
     }
 
     fn check_expr(&mut self, expr_id: ExprId, expected: Option<&Ty>) -> Ty {
@@ -749,6 +784,9 @@ impl<'a> Checker<'a> {
                 .get(binding)
                 .cloned()
                 .unwrap_or(Ty::Unknown),
+            Some(ValueResolution::ArrayLengthGeneric(_)) => {
+                Ty::Builtin(ql_resolve::BuiltinType::Int)
+            }
             Some(ValueResolution::SelfValue) => self.self_type.clone().unwrap_or(Ty::Unknown),
             Some(ValueResolution::Function(function_ref)) => {
                 Ty::from_function_ref(self.module, self.resolution, *function_ref)
@@ -2175,6 +2213,7 @@ impl<'a> Checker<'a> {
                 }
                 ValueResolution::Local(_)
                 | ValueResolution::Param(_)
+                | ValueResolution::ArrayLengthGeneric(_)
                 | ValueResolution::SelfValue => {}
             }
         }
@@ -2750,6 +2789,12 @@ impl<'a> Checker<'a> {
                     );
                     AssignmentTargetPolicy::EnforceValueType
                 }
+                Some(ValueResolution::ArrayLengthGeneric(_)) => {
+                    unsupported_target(
+                        self,
+                        format!("cannot assign to array length generic `{name}`"),
+                    )
+                }
                 Some(ValueResolution::SelfValue) if self.self_is_mutable => {
                     AssignmentTargetPolicy::EnforceValueType
                 }
@@ -3195,6 +3240,7 @@ impl<'a> Checker<'a> {
             }
             ValueResolution::Local(_)
             | ValueResolution::Param(_)
+            | ValueResolution::ArrayLengthGeneric(_)
             | ValueResolution::SelfValue
             | ValueResolution::Function(_) => None,
         }
@@ -3216,6 +3262,7 @@ impl<'a> Checker<'a> {
             }
             ValueResolution::Local(_)
             | ValueResolution::Param(_)
+            | ValueResolution::ArrayLengthGeneric(_)
             | ValueResolution::SelfValue
             | ValueResolution::Function(_) => None,
         }
@@ -3335,6 +3382,7 @@ impl<'a> Checker<'a> {
             }
             ValueResolution::Local(_)
             | ValueResolution::Param(_)
+            | ValueResolution::ArrayLengthGeneric(_)
             | ValueResolution::SelfValue
             | ValueResolution::Function(_) => None,
         }

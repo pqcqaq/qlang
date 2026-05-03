@@ -1610,6 +1610,10 @@ pub fn count[T, N](values: [T; N], needle: T) -> Int {
     return total
 }
 
+pub fn len[T, N](values: [T; N]) -> Int {
+    return N
+}
+
 pub fn mirror[T, N](values: [T; N]) -> [T; N] {
     return values
 }
@@ -1633,6 +1637,7 @@ use dep.last as last
 use dep.at_or as at_or
 use dep.contains as contains
 use dep.count as count
+use dep.len as len
 use dep.mirror as mirror
 
 fn bool_score(value: Bool) -> Int {
@@ -1652,8 +1657,9 @@ fn main() -> Int {
     let picked: Int = at_or([3, 4, 5, 6], 2, 0)
     let present = contains(["red", "blue", "green"], "blue")
     let matches = count([1, 2, 1, 1, 3], 1)
+    let length = len([10, 20, 30, 40])
     let mirrored: [Int; 3] = mirror([1, hidden_value(), at_or([8, 9, 10], 1, 0)])
-    return number + bool_score(flag) + picked + bool_score(present) + matches + mirrored[1]
+    return number + bool_score(flag) + picked + bool_score(present) + matches + length + mirrored[1]
 }
 "#,
     );

@@ -31,6 +31,31 @@ fn identity(value: Int) -> Int {
 }
 
 #[test]
+fn resolves_array_length_generics_as_function_body_values() {
+    let (module, resolution) = resolved(
+        r#"
+fn len_array[T, N](values: [T; N]) -> Int {
+    N
+}
+"#,
+    );
+
+    let function = find_function(&module, "len_array");
+    let body = module.block(function.body.expect("function should have body"));
+    let tail = body
+        .tail
+        .expect("function body should have tail expression");
+
+    assert!(
+        matches!(
+            resolution.expr_resolution(tail),
+            Some(ValueResolution::ArrayLengthGeneric(binding)) if binding.index == 1
+        ),
+        "tail expression should resolve to the second generic array length binding"
+    );
+}
+
+#[test]
 fn local_bindings_shadow_outer_scopes() {
     let (module, resolution) = resolved(
         r#"

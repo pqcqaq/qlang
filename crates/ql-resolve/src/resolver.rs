@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ql_ast::Path;
 use ql_diagnostics::{Diagnostic, Label, UNRESOLVED_TYPE_CODE, UNRESOLVED_VALUE_CODE};
 use ql_hir::{
-    BlockId, CallArg, EnumVariant, ExprId, ExprKind, Field, Function, FunctionRef, GenericParam,
-    Global, ItemId, ItemKind, MatchArm, Module, Param, PatternId, PatternKind, StmtKind,
-    StructLiteralField, TypeId, TypeKind, VariantFields, WherePredicate,
+    ArrayLen, BlockId, CallArg, EnumVariant, ExprId, ExprKind, Field, Function, FunctionRef,
+    GenericParam, Global, ItemId, ItemKind, MatchArm, Module, Param, PatternId, PatternKind,
+    StmtKind, StructLiteralField, TypeId, TypeKind, VariantFields, WherePredicate,
 };
 
 use crate::{
@@ -260,6 +260,7 @@ impl<'module> Resolver<'module> {
             self.resolution.async_function_scopes.insert(scope);
         }
         self.bind_generics(scope, &function.generics);
+        self.bind_array_length_generic_values(scope, function);
         self.bind_params(scope, &function.params);
 
         for param in &function.params {
@@ -294,6 +295,78 @@ impl<'module> Resolver<'module> {
                 generic.name.clone(),
                 TypeResolution::Generic(GenericBinding { scope, index }),
             );
+        }
+    }
+
+    fn bind_array_length_generic_values(&mut self, scope: ScopeId, function: &Function) {
+        let generic_indices = function
+            .generics
+            .iter()
+            .enumerate()
+            .map(|(index, generic)| (generic.name.as_str(), index))
+            .collect::<HashMap<_, _>>();
+        if generic_indices.is_empty() {
+            return;
+        }
+
+        let mut length_names = HashSet::new();
+        for param in &function.params {
+            if let Param::Regular(param) = param {
+                self.collect_array_length_generics(param.ty, &generic_indices, &mut length_names);
+            }
+        }
+        if let Some(return_type) = function.return_type {
+            self.collect_array_length_generics(return_type, &generic_indices, &mut length_names);
+        }
+        for predicate in &function.where_clause {
+            self.collect_array_length_generics(
+                predicate.target,
+                &generic_indices,
+                &mut length_names,
+            );
+        }
+
+        for name in length_names {
+            let Some(index) = generic_indices.get(name.as_str()).copied() else {
+                continue;
+            };
+            self.bind_value(
+                scope,
+                name,
+                ValueResolution::ArrayLengthGeneric(GenericBinding { scope, index }),
+            );
+        }
+    }
+
+    fn collect_array_length_generics(
+        &self,
+        ty: TypeId,
+        generic_indices: &HashMap<&str, usize>,
+        output: &mut HashSet<String>,
+    ) {
+        match &self.module.ty(ty).kind {
+            TypeKind::Pointer { inner, .. } => {
+                self.collect_array_length_generics(*inner, generic_indices, output);
+            }
+            TypeKind::Array { element, len } => {
+                if let ArrayLen::Generic(name) = len
+                    && generic_indices.contains_key(name.as_str())
+                {
+                    output.insert(name.clone());
+                }
+                self.collect_array_length_generics(*element, generic_indices, output);
+            }
+            TypeKind::Named { args, .. } | TypeKind::Tuple(args) => {
+                for arg in args {
+                    self.collect_array_length_generics(*arg, generic_indices, output);
+                }
+            }
+            TypeKind::Callable { params, ret } => {
+                for param in params {
+                    self.collect_array_length_generics(*param, generic_indices, output);
+                }
+                self.collect_array_length_generics(*ret, generic_indices, output);
+            }
         }
     }
 

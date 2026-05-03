@@ -2440,6 +2440,7 @@ impl<'a> QueryIndexBuilder<'a> {
         match resolution {
             ValueResolution::Local(local_id) => self.local_defs.get(local_id).cloned(),
             ValueResolution::Param(binding) => self.param_defs.get(binding).cloned(),
+            ValueResolution::ArrayLengthGeneric(binding) => self.generic_defs.get(binding).cloned(),
             ValueResolution::SelfValue => self.lookup_self(scope),
             ValueResolution::Function(function_ref) => {
                 self.function_defs.get(function_ref).cloned()

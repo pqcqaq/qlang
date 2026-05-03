@@ -14,6 +14,8 @@ pub fn contains_array[T, N](values: [T; N], needle: T) -> Bool
 
 pub fn count_array[T, N](values: [T; N], needle: T) -> Int
 
+pub fn len_array[T, N](values: [T; N]) -> Int
+
 pub fn first3_array[T](values: [T; 3]) -> T
 
 pub fn first4_array[T](values: [T; 4]) -> T

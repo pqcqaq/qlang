@@ -20,6 +20,7 @@
 - 主链路 `lexer -> parser -> HIR -> resolve -> typeck -> MIR -> LLVM` 已可用。
 - 现有 LLVM 输出覆盖 `llvm-ir`、`asm`、`obj`、`exe`、`dylib`、`staticlib`。
 - 已有最小 async/runtime 子集，但仍不是完整 runtime。
+- `if` 作为表达式使用时要求分支类型合流；作为语句使用时只检查分支内部语义，不统一被丢弃的 tail 值。
 
 ### CLI 与项目工作流
 
@@ -32,8 +33,9 @@
 
 - 当前跨包执行仍是保守切片：bridgeable `const/static`、受限顶层 free function、`extern "c"`、部分 type/value bridge、受限 receiver method。
 - public generic free function 已支持 direct-call 多实例 specialization，前提是类型参数能从字面量、简单表达式、tuple / fixed-array literal、projection、显式 typed value、carrier value、单字段 enum variant constructor 或显式结果上下文推断。
+- 数组长度泛型参数可在函数体内作为 `Int` 值读取，例如 `fn len[T, N](values: [T; N]) -> Int { return N }`。
 - dependency generic specialization 会递归处理同依赖模块内的 generic helper 直调，允许兼容 wrapper 转调 canonical generic API。
-- `std.option.Option[T]`、`std.result.Result[T, E]`、`std.array` 的 canonical length-generic helpers、`std.test` 的普通断言和 length-generic 数组断言 helpers 已进入真实 smoke；数组固定长度 helper 只保留为兼容层。
+- `std.option.Option[T]`、`std.result.Result[T, E]`、`std.array` 的 canonical length-generic helpers（含 `len_array`）、`std.test` 的普通断言和 length-generic 数组断言 helpers 已进入真实 smoke；数组固定长度 helper 只保留为兼容层。
 
 ### LSP 与 VSCode
 

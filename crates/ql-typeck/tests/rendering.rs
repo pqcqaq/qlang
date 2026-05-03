@@ -376,7 +376,7 @@ fn main(point: Point) -> Int {
 #[test]
 fn rendered_unsupported_const_path_pattern_diagnostics_anchor_to_the_pattern() {
     let source = r#"
-const LIMIT: Int = 1
+const LIMIT: [Int; 2] = [1, 2]
 
 fn main(value: Int) -> Int {
     match value {

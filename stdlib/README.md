@@ -15,7 +15,7 @@
 推荐优先使用：
 
 - `std.option.Option[T]` 和 `std.result.Result[T, E]`
-- `std.array` 的 canonical length-generic helpers
+- `std.array` 的 canonical length-generic helpers，例如 `first_array`、`last_array`、`at_array_or`、`contains_array`、`count_array`、`len_array`
 - `std.test` 的普通断言和 length-generic 数组断言 helpers
 
 保留的 concrete API 和固定参数 helper 只是兼容面，不是继续扩张方向。
@@ -38,6 +38,7 @@ Qlang 源码里按 package path 导入：
 
 ```ql
 use std.array.first_array as first_array
+use std.array.len_array as len_array
 use std.array.sum_int_array as sum_int_array
 use std.option.none_option as none_option
 use std.option.some as option_some

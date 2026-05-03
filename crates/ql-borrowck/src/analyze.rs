@@ -5,8 +5,8 @@ use ql_diagnostics::{Diagnostic, Label};
 use ql_hir::{self as hir, Function, ItemKind, Param};
 use ql_mir::{
     BasicBlockId, BodyOwner, CallArgument, CleanupId, CleanupKind, ClosureId, Constant,
-    LocalId as MirLocalId, LocalOrigin, MirBody, MirModule, Operand, Place, ProjectionElem,
-    Rvalue, StatementKind, TerminatorKind,
+    LocalId as MirLocalId, LocalOrigin, MirBody, MirModule, Operand, Place, ProjectionElem, Rvalue,
+    StatementKind, TerminatorKind,
 };
 use ql_resolve::{ResolutionMap, ValueResolution};
 use ql_typeck::{MemberTarget, MethodTarget, Ty, TypeckResult, lower_type};
@@ -1211,6 +1211,7 @@ impl<'a> BodyAnalyzer<'a> {
             ValueResolution::Local(local) => self.binding_locals.get(local).copied(),
             ValueResolution::Param(binding) => self.param_locals.get(&binding.index).copied(),
             ValueResolution::SelfValue => self.receiver_local,
+            ValueResolution::ArrayLengthGeneric(_) => None,
             ValueResolution::Function(_) => None,
             ValueResolution::Item(_) | ValueResolution::Import(_) => None,
         }
@@ -1532,6 +1533,7 @@ impl<'a> BodyAnalyzer<'a> {
             hir::ExprKind::Name(_) => match self.resolution.expr_resolution(expr_id)? {
                 ValueResolution::Local(_)
                 | ValueResolution::Param(_)
+                | ValueResolution::ArrayLengthGeneric(_)
                 | ValueResolution::SelfValue => {
                     let local = self.direct_local_for_expr(expr_id)?;
                     let LocalOrigin::Binding(hir_local) = &self.body.local(local).origin else {
@@ -4727,7 +4729,10 @@ fn call_signature_params(
                     return Some(params);
                 }
             }
-            ValueResolution::Local(_) | ValueResolution::Param(_) | ValueResolution::SelfValue => {}
+            ValueResolution::Local(_)
+            | ValueResolution::Param(_)
+            | ValueResolution::ArrayLengthGeneric(_)
+            | ValueResolution::SelfValue => {}
         }
     }
 

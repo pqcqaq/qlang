@@ -15901,6 +15901,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     }
                     Some(ValueResolution::Local(_))
                     | Some(ValueResolution::Param(_))
+                    | Some(ValueResolution::ArrayLengthGeneric(_))
                     | Some(ValueResolution::SelfValue)
                     | Some(ValueResolution::Function(_))
                     | None => {
@@ -18971,6 +18972,7 @@ fn supported_guard_scalar_expr(
             }
             Some(ValueResolution::Local(_))
             | Some(ValueResolution::Param(_))
+            | Some(ValueResolution::ArrayLengthGeneric(_))
             | Some(ValueResolution::SelfValue)
             | Some(ValueResolution::Function(_))
             | None => guard_expr_ty(
@@ -19529,7 +19531,10 @@ fn guard_expr_item_root_ty(
                 _ => const_or_static_item_type(module, resolution, item_id),
             }
         }
-        ValueResolution::Local(_) | ValueResolution::Param(_) | ValueResolution::SelfValue => None,
+        ValueResolution::Local(_)
+        | ValueResolution::Param(_)
+        | ValueResolution::ArrayLengthGeneric(_)
+        | ValueResolution::SelfValue => None,
     }
 }
 
@@ -19562,9 +19567,10 @@ fn guard_expr_place_root(
             let ty = local_types.get(&local)?.clone();
             Some((local, ty))
         }
-        ValueResolution::Item(_) | ValueResolution::Import(_) | ValueResolution::Function(_) => {
-            None
-        }
+        ValueResolution::Item(_)
+        | ValueResolution::Import(_)
+        | ValueResolution::Function(_)
+        | ValueResolution::ArrayLengthGeneric(_) => None,
     }
 }
 
@@ -19638,6 +19644,7 @@ fn guard_expr_index_operand_with_ty(
             }
             Some(ValueResolution::Local(_))
             | Some(ValueResolution::Param(_))
+            | Some(ValueResolution::ArrayLengthGeneric(_))
             | Some(ValueResolution::SelfValue)
             | Some(ValueResolution::Function(_))
             | None => guard_expr_place_with_ty(
@@ -22268,7 +22275,10 @@ fn guard_direct_callee_function(
             matches!(&module.item(item_id).kind, ItemKind::Function(_))
                 .then_some(FunctionRef::Item(item_id))
         }
-        ValueResolution::Local(_) | ValueResolution::Param(_) | ValueResolution::SelfValue => None,
+        ValueResolution::Local(_)
+        | ValueResolution::Param(_)
+        | ValueResolution::ArrayLengthGeneric(_)
+        | ValueResolution::SelfValue => None,
     }
 }
 
