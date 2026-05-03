@@ -47,6 +47,18 @@ impl Printable for Status {
     assert_eq!(trait_items[0].name, "Printable");
     assert_eq!(trait_items[0].kind, SymbolKind::INTERFACE);
 
+    let trait_use_position = offset_to_position(source, nth_offset(source, "Printable", 2));
+    let trait_use_items =
+        prepare_type_hierarchy_via_request(&mut service, uri.clone(), trait_use_position)
+            .await
+            .expect("prepareTypeHierarchy should return trait from impl reference");
+    assert_eq!(trait_use_items.len(), 1);
+    assert_eq!(trait_use_items[0].name, "Printable");
+    assert_eq!(
+        trait_use_items[0].selection_range,
+        trait_items[0].selection_range
+    );
+
     let subtypes = subtypes_via_request(&mut service, trait_items[0].clone())
         .await
         .expect("subtypes should return implementing types");
@@ -60,6 +72,19 @@ impl Printable for Status {
     let user_items = prepare_type_hierarchy_via_request(&mut service, uri, user_position)
         .await
         .expect("prepareTypeHierarchy should return struct");
+    let user_use_position = offset_to_position(source, nth_offset(source, "User", 2));
+    let user_use_items = prepare_type_hierarchy_via_request(
+        &mut service,
+        trait_items[0].uri.clone(),
+        user_use_position,
+    )
+    .await
+    .expect("prepareTypeHierarchy should return struct from impl target reference");
+    assert_eq!(user_use_items[0].name, "User");
+    assert_eq!(
+        user_use_items[0].selection_range,
+        user_items[0].selection_range
+    );
     let supertypes = supertypes_via_request(&mut service, user_items[0].clone())
         .await
         .expect("supertypes should return implemented traits");

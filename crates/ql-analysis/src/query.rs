@@ -368,9 +368,7 @@ impl QueryIndex {
 
     pub(crate) fn call_hierarchy_item_at(&self, offset: usize) -> Option<CallHierarchyItem> {
         let target = self.occurrence_at(offset)?;
-        if !matches!(target.hover.kind, SymbolKind::Function | SymbolKind::Method)
-            || target.hover.definition_span != Some(target.span)
-        {
+        if !matches!(target.hover.kind, SymbolKind::Function | SymbolKind::Method) {
             return None;
         }
         let selection_span = target.hover.definition_span?;
@@ -385,8 +383,7 @@ impl QueryIndex {
         if !matches!(
             target.hover.kind,
             SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Trait | SymbolKind::TypeAlias
-        ) || target.hover.definition_span != Some(target.span)
-        {
+        ) {
             return None;
         }
         let selection_span = target.hover.definition_span?;

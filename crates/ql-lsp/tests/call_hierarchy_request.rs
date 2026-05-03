@@ -34,6 +34,15 @@ fn caller_twice(value: Int) -> Int {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].name, "leaf");
 
+    let leaf_call_position = offset_to_position(source, nth_offset(source, "leaf", 2));
+    let call_site_items =
+        prepare_call_hierarchy_via_request(&mut service, uri.clone(), leaf_call_position)
+            .await
+            .expect("prepareCallHierarchy should return leaf from call site");
+    assert_eq!(call_site_items.len(), 1);
+    assert_eq!(call_site_items[0].name, "leaf");
+    assert_eq!(call_site_items[0].selection_range, items[0].selection_range);
+
     let incoming = incoming_calls_via_request(&mut service, items[0].clone())
         .await
         .expect("incomingCalls should return callers");
@@ -84,6 +93,17 @@ impl Counter {
         .await
         .expect("prepareCallHierarchy should return method");
     assert_eq!(get_items[0].name, "get");
+
+    let get_call_position = offset_to_position(source, nth_offset(source, "get", 2));
+    let get_call_items =
+        prepare_call_hierarchy_via_request(&mut service, uri.clone(), get_call_position)
+            .await
+            .expect("prepareCallHierarchy should return method from call site");
+    assert_eq!(get_call_items[0].name, "get");
+    assert_eq!(
+        get_call_items[0].selection_range,
+        get_items[0].selection_range
+    );
 
     let incoming = incoming_calls_via_request(&mut service, get_items[0].clone())
         .await

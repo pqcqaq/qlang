@@ -17,8 +17,8 @@
 - keyword hover
 - definition / declaration / typeDefinition
 - implementation
-- callHierarchy（当前覆盖同文件 function / method 直接调用）
-- typeHierarchy（当前覆盖同文件 trait / struct / enum / type alias 的直接层级）
+- callHierarchy（当前覆盖同文件 function / method 直接调用；prepare 可从定义点或已解析调用点启动）
+- typeHierarchy（当前覆盖同文件 trait / struct / enum / type alias 的直接层级；prepare 可从定义点或已解析类型引用启动）
 - references
 - documentHighlight
 - completion

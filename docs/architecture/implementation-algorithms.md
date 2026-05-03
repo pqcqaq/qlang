@@ -328,6 +328,7 @@
 - pattern path root
 - struct literal root
 - import alias 的 source-backed hover / definition / references / rename / semantic-token 信息，以及 builtin type 的 hover / references / semantic-token 信息（builtin 仍无 source-backed definition / rename）
+- call/type hierarchy prepare 复用 occurrence 的 definition span，因此可从定义点或已解析引用点启动；incoming/outgoing/super/sub 关系仍只来自 same-file query surface
 
 当前 rename 算法也直接建立在这套 occurrence 分组之上：
 

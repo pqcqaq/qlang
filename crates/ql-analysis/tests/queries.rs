@@ -194,7 +194,7 @@ impl Counter {
 }
 
 #[test]
-fn call_hierarchy_prepare_stays_on_callable_definitions() {
+fn call_hierarchy_prepare_uses_callable_references() {
     let source = r#"
 fn leaf(value: Int) -> Int {
     return value
@@ -212,10 +212,11 @@ fn caller(value: Int) -> Int {
             .call_hierarchy_item_at(nth_offset(source, "leaf", 1))
             .is_some()
     );
-    assert_eq!(
-        analysis.call_hierarchy_item_at(nth_offset(source, "leaf", 2)),
-        None
-    );
+    let reference_item = analysis
+        .call_hierarchy_item_at(nth_offset(source, "leaf", 2))
+        .expect("function reference should prepare call hierarchy");
+    assert_eq!(reference_item.name, "leaf");
+    assert_eq!(reference_item.selection_span, nth_span(source, "leaf", 1));
     assert_eq!(
         analysis.call_hierarchy_item_at(nth_offset(source, "value", 1)),
         None
@@ -259,6 +260,14 @@ impl Printable for Status {
         .expect("trait definition should prepare type hierarchy");
     assert_eq!(trait_item.kind, SymbolKind::Trait);
     assert_eq!(trait_item.selection_span, nth_span(source, "Printable", 1));
+    let trait_reference_item = analysis
+        .type_hierarchy_item_at(nth_offset(source, "Printable", 2))
+        .expect("trait reference should prepare type hierarchy");
+    assert_eq!(trait_reference_item.name, "Printable");
+    assert_eq!(
+        trait_reference_item.selection_span,
+        nth_span(source, "Printable", 1)
+    );
 
     let trait_subtypes = analysis
         .subtypes_at(nth_offset(source, "Printable", 1))
