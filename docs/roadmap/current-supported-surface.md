@@ -27,7 +27,7 @@
 - `ql check`、`ql fmt`、`ql mir`、`ql ownership`、`ql runtime`、`ql build`、`ql run`、`ql test`、`ql project`、`ql ffi` 已实现。
 - `ql project init/add/remove/status/dependencies/dependents/targets/graph/lock/emit-interface` 已能支撑 workspace 维护。
 - `ql build` / `ql run` / `ql test` / `ql check` 已支持 project-aware 入口，`--json`、`--list`、`--package`、`--target` 等常用工作流已经落地。
-- 单文件 `ql build file.ql` / `ql run file.ql` 已复用本地 generic free function direct-call specialization，可覆盖简单同文件泛型函数调用。
+- 单文件 `ql build file.ql` / `ql run file.ql` / `ql test file.ql` 已复用本地 generic free function direct-call specialization，可覆盖简单同文件泛型函数调用。
 - `ql project init --stdlib` 可以直接生成依赖 `std.core` / `std.option` / `std.result` / `std.array` / `std.test` 的项目脚手架。
 
 ### 依赖桥接与 stdlib
