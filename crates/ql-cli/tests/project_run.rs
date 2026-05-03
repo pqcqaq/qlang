@@ -124,6 +124,59 @@ fn run_single_file_supports_json_output() {
 }
 
 #[test]
+fn run_single_file_executes_local_generic_function_instantiation() {
+    if !toolchain_available("`ql run` single-file local generic function test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-file-local-generic");
+    let source_path = temp.write(
+        "demo.ql",
+        r#"
+fn first[T, N](values: [T; N]) -> T {
+    return values[0]
+}
+
+fn len[T, N](values: [T; N]) -> Int {
+    return N
+}
+
+fn main() -> Int {
+    return first([10, 20, 30]) + len([1, 2, 3, 4])
+}
+"#,
+    );
+    let output_path = executable_output_path(&temp.path().join("target/ql/debug"), "demo");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&source_path);
+    let output = run_command_capture(&mut command, "`ql run` single-file local generic function");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-file-local-generic",
+        "single-file local generic function run",
+        &output,
+        14,
+    )
+    .expect("single-file `ql run` should execute local generic function instantiations");
+    expect_silent_output(
+        "project-run-file-local-generic",
+        "single-file local generic function run",
+        &stdout,
+        &stderr,
+    )
+    .expect("single-file local generic function run should leave stdout/stderr to the program");
+    expect_file_exists(
+        "project-run-file-local-generic",
+        &output_path,
+        "single-file local generic function executable",
+        "single-file local generic function run",
+    )
+    .expect("single-file local generic function run should leave the built executable");
+}
+
+#[test]
 fn run_single_file_supports_local_receiver_methods() {
     if !toolchain_available("`ql run` local receiver method test") {
         return;

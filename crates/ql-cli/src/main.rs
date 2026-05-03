@@ -16,8 +16,8 @@ use ql_ast::{
 use ql_diagnostics::{Diagnostic, render_diagnostics};
 use ql_driver::{
     BuildArtifact, BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile,
-    CHeaderError, CHeaderOptions, CHeaderSurface, ToolchainError, build_file,
-    build_file_with_link_inputs, build_source_with_link_inputs, default_output_path, emit_c_header,
+    CHeaderError, CHeaderOptions, CHeaderSurface, ToolchainError, build_source_with_link_inputs,
+    default_output_path, emit_c_header,
 };
 use ql_fmt::format_source;
 use ql_parser::parse_source;
@@ -10264,23 +10264,29 @@ fn build_single_source_target_with_inputs_result(
     source_override: Option<&str>,
     additional_link_inputs: &[PathBuf],
 ) -> Result<BuildArtifact, BuildError> {
-    let local_source_override = if source_override.is_none() {
-        let source = fs::read_to_string(path).map_err(|error| BuildError::Io {
-            path: path.to_path_buf(),
-            error,
-        })?;
-        local_generic_source_override(&source)
-    } else {
-        None
-    };
-    let source_override = source_override.or(local_source_override.as_deref());
-
     match source_override {
         Some(source) => {
             build_source_with_link_inputs(path, source, options, additional_link_inputs)
         }
-        None if additional_link_inputs.is_empty() => build_file(path, options),
-        None => build_file_with_link_inputs(path, options, additional_link_inputs),
+        None => {
+            if !path.is_file() {
+                return Err(BuildError::InvalidInput(format!(
+                    "`{}` is not a file",
+                    path.display()
+                )));
+            }
+            let source = fs::read_to_string(path).map_err(|error| BuildError::Io {
+                path: path.to_path_buf(),
+                error,
+            })?;
+            let local_source_override = local_generic_source_override(&source);
+            build_source_with_link_inputs(
+                path,
+                local_source_override.as_deref().unwrap_or(&source),
+                options,
+                additional_link_inputs,
+            )
+        }
     }
 }
 
