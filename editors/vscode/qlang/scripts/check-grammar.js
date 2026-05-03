@@ -5,11 +5,15 @@ const assert = require("node:assert/strict");
 const grammarPath = path.join(__dirname, "..", "syntaxes", "qlang.tmLanguage.json");
 const grammar = JSON.parse(fs.readFileSync(grammarPath, "utf8"));
 
-const patterns = Object.values(grammar.repository)
-  .flatMap((entry) => entry.patterns ?? [])
+const patterns = grammar.patterns
+  .flatMap((entry) => {
+    const include = entry.include?.replace(/^#/, "");
+    return grammar.repository[include]?.patterns ?? [];
+  })
   .filter((pattern) => typeof pattern.match === "string")
   .map((pattern) => ({
     name: pattern.name,
+    captures: pattern.captures,
     regex: new RegExp(pattern.match),
   }));
 
@@ -27,6 +31,7 @@ const cases = [
 ];
 
 const nonKeywords = ["import"];
+const nonBuiltins = ["Option", "Result"];
 
 for (const [keyword, expectedScope] of cases) {
   const match = patterns.find((pattern) => pattern.regex.test(keyword));
@@ -45,5 +50,21 @@ for (const word of nonKeywords) {
     `${word} should not be tokenized as a qlang lexer keyword`
   );
 }
+
+for (const word of nonBuiltins) {
+  const match = patterns.find((pattern) => pattern.regex.test(word));
+  assert.notEqual(
+    match?.name,
+    "support.type.builtin.qlang",
+    `${word} is a stdlib type and should not be tokenized as a builtin`
+  );
+}
+
+const opaqueDeclaration = patterns.find((pattern) => pattern.regex.test("opaque type UserId"));
+assert.equal(
+  opaqueDeclaration?.captures?.["3"]?.name,
+  "entity.name.type.qlang",
+  "opaque type declarations should capture the declared type name, not the `type` keyword"
+);
 
 console.log(`checked ${cases.length} qlang grammar keyword scopes`);

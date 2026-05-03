@@ -24,10 +24,11 @@
 
 ## 当前工作项
 
-- 收紧 `stdlib` generic carrier、length-generic array helpers 和 `std.test` downstream smoke。
-- 补 direct local dependency 的 value/type/member 执行路径。
-- 扩展 `qlsp` 的 workspace navigation、diagnostics、code action 和 hierarchy 能力。
-- 整理大文件和补丁式兼容层，拆分前先锁定回归。
+- 抽 `ql-cli` project pipeline，统一 `check/build/run/test/project build` 的 request context、target selection、dependency/interface prep 和 reporting。
+- 收紧 `ql test`，把 tests 变成普通 package target/import consumer，并补 `build/run/test` dependency parity 回归。
+- 建立 LSP workspace index，让 diagnostics、references、rename、symbols 和 semantic tokens 走同一份分析缓存。
+- 收紧 `stdlib` generic carrier、length-generic array helpers 和 `std.test` downstream smoke，逐步隐藏固定 arity/concrete 兼容层。
+- 把 `project init --stdlib` 模板迁向 versioned stdlib example，避免 CLI 直接绑定 stdlib 内部 API。
 - 保持 README、roadmap、stdlib、VSCode 文档与实现同步。
 
 ## 明确后置

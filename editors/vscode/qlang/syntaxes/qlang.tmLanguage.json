@@ -10,13 +10,13 @@
       "include": "#strings"
     },
     {
-      "include": "#keywords"
-    },
-    {
       "include": "#function-declarations"
     },
     {
       "include": "#type-declarations"
+    },
+    {
+      "include": "#keywords"
     },
     {
       "include": "#builtins"
@@ -119,7 +119,21 @@
     "type-declarations": {
       "patterns": [
         {
-          "match": "\\b(struct|enum|trait|type|opaque)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "match": "\\b(opaque)\\s+(type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.qlang"
+            },
+            "2": {
+              "name": "storage.type.qlang"
+            },
+            "3": {
+              "name": "entity.name.type.qlang"
+            }
+          }
+        },
+        {
+          "match": "\\b(struct|enum|trait|type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": {
               "name": "storage.type.qlang"
@@ -135,7 +149,7 @@
       "patterns": [
         {
           "name": "support.type.builtin.qlang",
-          "match": "\\b(Void|Bool|String|Char|Byte|Int|Float|U8|U16|U32|U64|USize|I8|I16|I32|I64|ISize|Task|Option|Result)\\b"
+          "match": "\\b(Void|Bool|String|Char|Byte|Int|Float|U8|U16|U32|U64|USize|I8|I16|I32|I64|ISize|Task)\\b"
         },
         {
           "name": "storage.type.self.qlang",

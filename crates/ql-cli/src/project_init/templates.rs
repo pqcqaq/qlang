@@ -54,7 +54,31 @@ fn main() -> Int {
 }
 
 pub(super) fn stdlib_package_test_source() -> &'static str {
-    super::super::stdlib_package_test_source()
+    r#"use std.array.contains_array as contains_array
+use std.array.len_array as len_array
+use std.array.sum_int_array as sum_int_array
+use std.core.clamp_int as clamp_int
+use std.option.Option as Option
+use std.option.some as option_some
+use std.option.unwrap_or as option_unwrap_or
+use std.result.Result as Result
+use std.result.ok as result_ok
+use std.result.unwrap_result_or as result_unwrap_result_or
+use std.test.expect_bool_eq as expect_bool_eq
+use std.test.expect_int_eq as expect_int_eq
+use std.test.expect_status_ok as expect_status_ok
+
+fn main() -> Int {
+    let numbers: [Int; 3] = [1, 2, 3]
+    let option_value: Option[Int] = option_some(sum_int_array(numbers))
+    let result_value: Result[Int, Int] = result_ok(option_unwrap_or(option_value, 0))
+    let total = clamp_int(result_unwrap_result_or(result_value, 0), 0, 10)
+    let total_check = expect_int_eq(total, 6)
+    let length_check = expect_int_eq(len_array(numbers), 3)
+    let contains_check = expect_bool_eq(contains_array(numbers, 2), true)
+    return expect_status_ok(total_check + length_check + contains_check)
+}
+"#
 }
 
 #[cfg(test)]
@@ -96,23 +120,19 @@ mod tests {
         assert!(main.contains("use std.array.all_bool_array"));
         assert!(main.contains("use std.array.contains_array"));
         assert!(main.contains("use std.array.repeat3_array"));
-        assert!(smoke.contains("use std.test.expect_status_ok"));
-        assert!(smoke.contains("use std.option.none_option as option_none"));
-        assert!(smoke.contains("let generic_none_int: Option[Int] = option_none()"));
-        assert!(smoke.contains("use std.test.expect_generic_int_option_some"));
-        assert!(smoke.contains("use std.test.expect_generic_int_result_ok"));
-        assert!(smoke.contains("use std.test.expect_generic_int_result_to_option_some"));
-        assert!(smoke.contains("use std.test.expect_generic_int_option_ok_or"));
-        assert!(smoke.contains("use std.test.expect_int_array_at3"));
-        assert!(smoke.contains("use std.test.expect_bool_array_at5"));
-        assert!(smoke.contains("use std.test.expect_int_array_contains3"));
-        assert!(smoke.contains("use std.test.expect_bool_array_count5"));
-        assert!(smoke.contains("use std.test.expect_int_array_reverse3"));
-        assert!(smoke.contains("use std.test.expect_bool_array_repeat5"));
-        assert!(smoke.contains("use std.test.expect_int_array_first3"));
-        assert!(smoke.contains("use std.test.expect_bool_array_last5"));
-        assert!(smoke.contains("use std.test.expect_int_array_max5"));
         assert!(smoke.contains("use std.option.Option as Option"));
         assert!(smoke.contains("use std.result.Result as Result"));
+        assert!(smoke.contains("use std.array.len_array as len_array"));
+        assert!(smoke.contains("use std.array.sum_int_array as sum_int_array"));
+        assert!(smoke.contains("use std.test.expect_int_eq as expect_int_eq"));
+        assert!(smoke.contains("use std.test.expect_bool_eq as expect_bool_eq"));
+        assert!(smoke.contains("use std.test.expect_status_ok as expect_status_ok"));
+        assert!(smoke.contains("let numbers: [Int; 3] = [1, 2, 3]"));
+        assert!(
+            smoke.contains("let option_value: Option[Int] = option_some(sum_int_array(numbers))")
+        );
+        assert!(smoke.contains(
+            "let result_value: Result[Int, Int] = result_ok(option_unwrap_or(option_value, 0))"
+        ));
     }
 }
