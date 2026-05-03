@@ -623,8 +623,13 @@ impl Parser {
         if self.eat(TokenKind::LBracket) {
             let element = self.parse_type()?;
             self.expect(TokenKind::Semi, "expected `;` after array element type")?;
-            let len = self.expect(TokenKind::Int, "expected array length after `;`")?;
-            if ql_ast::parse_usize_literal(&len.text).is_none() {
+            let len = if self.at(TokenKind::Int) || self.at(TokenKind::Ident) {
+                self.bump()
+            } else {
+                self.error_here("expected array length literal or generic length after `;`");
+                return Err(());
+            };
+            if len.kind == TokenKind::Int && ql_ast::parse_usize_literal(&len.text).is_none() {
                 self.errors.push(ParseError {
                     message: "array length literal must fit in `usize`".into(),
                     span: len.span,

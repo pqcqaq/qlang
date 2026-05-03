@@ -301,6 +301,10 @@ pub fn identity[T](value: T) -> T {
     return value
 }
 
+pub fn first_array[T, N](values: [T; N]) -> T {
+    return values[0]
+}
+
 pub extern "c" {
     fn puts(ptr: *const U8) -> I32
 }
@@ -389,6 +393,8 @@ extend Buffer[Int] {
 pub fn sum(left: Int, right: Int) -> Int
 
 pub fn identity[T](value: T) -> T
+
+pub fn first_array[T, N](values: [T; N]) -> T
 
 pub extern \"c\" {
     fn puts(ptr: *const U8) -> I32

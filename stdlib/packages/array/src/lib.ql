@@ -1,5 +1,47 @@
 package std.array
 
+pub fn first_array[T, N](values: [T; N]) -> T {
+    return values[0]
+}
+
+pub fn last_array[T, N](values: [T; N]) -> T {
+    var last = values[0]
+    for value in values {
+        last = value
+    }
+    return last
+}
+
+pub fn at_array_or[T, N](values: [T; N], index: Int, fallback: T) -> T {
+    var current_index = 0
+    for value in values {
+        if current_index == index {
+            return value
+        };
+        current_index = current_index + 1
+    }
+    return fallback
+}
+
+pub fn contains_array[T, N](values: [T; N], needle: T) -> Bool {
+    for value in values {
+        if value == needle {
+            return true
+        }
+    }
+    return false
+}
+
+pub fn count_array[T, N](values: [T; N], needle: T) -> Int {
+    var count = 0
+    for value in values {
+        if value == needle {
+            count = count + 1
+        }
+    }
+    return count
+}
+
 pub fn first3_array[T](values: [T; 3]) -> T {
     return values[0]
 }

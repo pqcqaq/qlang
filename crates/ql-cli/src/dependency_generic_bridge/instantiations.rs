@@ -876,7 +876,10 @@ fn type_expr_mentions_generic(ty: &TypeExpr, generic_names: &BTreeSet<&str>) -> 
     }
     match &ty.kind {
         TypeExprKind::Pointer { inner, .. } => type_expr_mentions_generic(inner, generic_names),
-        TypeExprKind::Array { element, .. } => type_expr_mentions_generic(element, generic_names),
+        TypeExprKind::Array { element, len } => {
+            generic_names.contains(len.as_str())
+                || type_expr_mentions_generic(element, generic_names)
+        }
         TypeExprKind::Named { args, .. } | TypeExprKind::Tuple(args) => args
             .iter()
             .any(|arg| type_expr_mentions_generic(arg, generic_names)),
@@ -939,7 +942,7 @@ fn collect_generic_type_substitutions(
                 len: arg_len,
             },
         ) => {
-            param_len == arg_len
+            bind_generic_len_substitution(param_len, arg_len, generic_names, substitutions)
                 && collect_generic_type_substitutions(
                     param_element,
                     arg_element,
@@ -998,15 +1001,35 @@ fn collect_generic_type_substitutions(
     }
 }
 
+fn bind_generic_len_substitution(
+    param_len: &str,
+    arg_len: &str,
+    generic_names: &BTreeSet<&str>,
+    substitutions: &mut TypeSubstitutions,
+) -> bool {
+    if generic_names.contains(param_len) {
+        return bind_generic_rendered_substitution(param_len, arg_len, substitutions);
+    }
+    param_len == arg_len
+}
+
 fn bind_generic_type_substitution(
     generic_name: &str,
     arg_ty: &InferredType,
     substitutions: &mut TypeSubstitutions,
 ) -> bool {
+    bind_generic_rendered_substitution(generic_name, &arg_ty.rendered, substitutions)
+}
+
+fn bind_generic_rendered_substitution(
+    generic_name: &str,
+    rendered: &str,
+    substitutions: &mut TypeSubstitutions,
+) -> bool {
     match substitutions.get(generic_name) {
-        Some(existing) => existing == &arg_ty.rendered,
+        Some(existing) => existing == rendered,
         None => {
-            substitutions.insert(generic_name.to_owned(), arg_ty.rendered.clone());
+            substitutions.insert(generic_name.to_owned(), rendered.to_owned());
             true
         }
     }
@@ -1558,6 +1581,49 @@ fn run() -> Int {
                 .iter()
                 .any(|item| { item.get("T").map(String::as_str) == Some("Bool") })
         );
+    }
+
+    #[test]
+    fn infers_substitutions_from_generic_array_length_parameters() {
+        let dependency = parse_module(
+            r#"
+package dep
+
+pub fn first[T, N](values: [T; N]) -> T {
+    return values[0]
+}
+"#,
+        );
+        let root = parse_module(
+            r#"
+use dep.first as first
+
+fn run() -> Int {
+    let value: Int = first([1, 2 + 3, 4])
+    let flag: Bool = first([true, false, true, false])
+    if flag {
+        return value
+    }
+    return 0
+}
+"#,
+        );
+
+        let substitutions = collect_public_function_instantiations(
+            &root,
+            &["dep".to_owned()],
+            function(&dependency, "first"),
+        );
+
+        assert_eq!(substitutions.len(), 2);
+        assert!(substitutions.iter().any(|item| {
+            item.get("T").map(String::as_str) == Some("Int")
+                && item.get("N").map(String::as_str) == Some("3")
+        }));
+        assert!(substitutions.iter().any(|item| {
+            item.get("T").map(String::as_str) == Some("Bool")
+                && item.get("N").map(String::as_str) == Some("4")
+        }));
     }
 
     #[test]

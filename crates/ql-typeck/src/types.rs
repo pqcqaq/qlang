@@ -1,7 +1,8 @@
 use std::{collections::BTreeMap, fmt};
 
 use ql_hir::{
-    Function, FunctionRef, GenericParam, ItemId, ItemKind, Module, Param, TypeId, TypeKind,
+    ArrayLen, Function, FunctionRef, GenericParam, ItemId, ItemKind, Module, Param, TypeId,
+    TypeKind,
 };
 use ql_resolve::{BuiltinType, ImportBinding, ResolutionMap, TypeResolution};
 
@@ -12,7 +13,7 @@ pub enum Ty {
     Generic(String),
     Array {
         element: Box<Ty>,
-        len: usize,
+        len: TyArrayLen,
     },
     Item {
         item_id: ItemId,
@@ -37,6 +38,37 @@ pub enum Ty {
         params: Vec<Ty>,
         ret: Box<Ty>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TyArrayLen {
+    Known(usize),
+    Generic(String),
+}
+
+impl TyArrayLen {
+    pub fn compatible_with(&self, actual: &Self) -> bool {
+        matches!(
+            (self, actual),
+            (Self::Generic(_), _) | (_, Self::Generic(_))
+        ) || self == actual
+    }
+
+    pub fn as_known(&self) -> Option<usize> {
+        match self {
+            Self::Known(len) => Some(*len),
+            Self::Generic(_) => None,
+        }
+    }
+}
+
+impl fmt::Display for TyArrayLen {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Known(len) => write!(f, "{len}"),
+            Self::Generic(name) => f.write_str(name),
+        }
+    }
 }
 
 impl Ty {
@@ -91,7 +123,7 @@ impl Ty {
                     element: right_element,
                     len: right_len,
                 },
-            ) => left_len == right_len && left_element.compatible_with(right_element),
+            ) => left_len.compatible_with(right_len) && left_element.compatible_with(right_element),
             (
                 Ty::Item {
                     item_id: left_item,
@@ -263,7 +295,10 @@ pub fn lower_type(module: &Module, resolution: &ResolutionMap, type_id: TypeId) 
         },
         TypeKind::Array { element, len } => Ty::Array {
             element: Box::new(lower_type(module, resolution, *element)),
-            len: *len,
+            len: match len {
+                ArrayLen::Known(len) => TyArrayLen::Known(*len),
+                ArrayLen::Generic(name) => TyArrayLen::Generic(name.clone()),
+            },
         },
         TypeKind::Named { path, args } => {
             let args: Vec<_> = args

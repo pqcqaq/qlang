@@ -2,9 +2,9 @@ use ql_ast as ast;
 use ql_span::Span;
 
 use crate::{
-    Block, CallArg, Enum, EnumVariant, Expr, ExprKind, Extend, ExternBlock, Field, Function,
-    GenericParam, Global, Impl, Item, ItemId, ItemKind, Local, MatchArm, Module, Param, Pattern,
-    PatternField, PatternKind, ReceiverParam, RegularParam, Stmt, StmtKind, Struct,
+    ArrayLen, Block, CallArg, Enum, EnumVariant, Expr, ExprKind, Extend, ExternBlock, Field,
+    Function, GenericParam, Global, Impl, Item, ItemId, ItemKind, Local, MatchArm, Module, Param,
+    Pattern, PatternField, PatternKind, ReceiverParam, RegularParam, Stmt, StmtKind, Struct,
     StructLiteralField, Trait, Type, TypeAlias, TypeId, TypeKind, VariantFields, WherePredicate,
 };
 
@@ -293,7 +293,8 @@ impl Lowerer {
             ast::TypeExprKind::Array { element, len } => TypeKind::Array {
                 element: self.lower_type_expr(element),
                 len: ast::parse_usize_literal(len)
-                    .expect("parser should validate array length literals"),
+                    .map(ArrayLen::Known)
+                    .unwrap_or_else(|| ArrayLen::Generic(len.clone())),
             },
             ast::TypeExprKind::Named { path, args } => TypeKind::Named {
                 path: path.clone(),

@@ -1,6 +1,8 @@
 mod ids;
 mod lower;
 
+use std::fmt;
+
 use ql_ast::{BinaryOp, PackageDecl, Path, ReceiverKind, UnaryOp, UseDecl, Visibility};
 use ql_span::Span;
 
@@ -328,10 +330,25 @@ pub struct Type {
     pub kind: TypeKind,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ArrayLen {
+    Known(usize),
+    Generic(String),
+}
+
+impl fmt::Display for ArrayLen {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Known(len) => write!(f, "{len}"),
+            Self::Generic(name) => f.write_str(name),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum TypeKind {
     Pointer { is_const: bool, inner: TypeId },
-    Array { element: TypeId, len: usize },
+    Array { element: TypeId, len: ArrayLen },
     Named { path: Path, args: Vec<TypeId> },
     Tuple(Vec<TypeId>),
     Callable { params: Vec<TypeId>, ret: TypeId },

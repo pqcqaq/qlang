@@ -11,8 +11,8 @@ use ql_span::Span;
 
 use crate::checker::{FieldTarget, MemberTarget, MethodTarget};
 use crate::types::{
-    Ty, generic_type_substitutions, item_display_name, local_item_for_import_binding, lower_type,
-    substitute_generic_ty, void_ty,
+    Ty, TyArrayLen, generic_type_substitutions, item_display_name, local_item_for_import_binding,
+    lower_type, substitute_generic_ty, void_ty,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -180,7 +180,7 @@ impl<'a> Checker<'a> {
                     len: actual_len,
                 },
             ) => {
-                expected_len == actual_len
+                expected_len.compatible_with(actual_len)
                     && self.value_compatible_inner(expected_element, actual_element, depth + 1)
             }
             (
@@ -795,15 +795,17 @@ impl<'a> Checker<'a> {
         expected: Option<&Ty>,
     ) -> Ty {
         let expected_array = match expected {
-            Some(Ty::Array { element, len }) => Some((element.as_ref(), *len)),
+            Some(Ty::Array { element, len }) => Some((element.as_ref().clone(), len.clone())),
             _ => None,
         };
         let mut element_ty = expected_array
+            .as_ref()
             .map(|(element, _)| element.clone())
             .unwrap_or(Ty::Unknown);
 
         for &item in items {
             let item_expected = expected_array
+                .as_ref()
                 .map(|(element, _)| element)
                 .or_else(|| (!element_ty.is_unknown()).then_some(&element_ty));
             let item_ty = self.check_expr(item, item_expected);
@@ -818,6 +820,7 @@ impl<'a> Checker<'a> {
             }
 
             let expected_element = expected_array
+                .as_ref()
                 .map(|(element, _)| element)
                 .unwrap_or(&element_ty);
             if !self.value_compatible(expected_element, &item_ty) {
@@ -825,7 +828,8 @@ impl<'a> Checker<'a> {
             }
         }
 
-        if let Some((_, expected_len)) = expected_array
+        if let Some((_, expected_len)) = expected_array.as_ref()
+            && let Some(expected_len) = expected_len.as_known()
             && items.len() != expected_len
         {
             self.diagnostics.push(
@@ -842,7 +846,7 @@ impl<'a> Checker<'a> {
 
         Ty::Array {
             element: Box::new(element_ty),
-            len: items.len(),
+            len: TyArrayLen::Known(items.len()),
         }
     }
 
@@ -2969,7 +2973,9 @@ impl<'a> Checker<'a> {
             }
             PatternKind::Array(items) => {
                 if let Ty::Array { element, len } = expected {
-                    if *len != items.len() {
+                    if let Some(len) = len.as_known()
+                        && len != items.len()
+                    {
                         self.diagnostics.push(
                             Diagnostic::error(format!(
                                 "array pattern expects {} item(s), found {}",

@@ -3,6 +3,45 @@ mod support;
 use support::diagnostic_messages;
 
 #[test]
+fn accepts_generic_fixed_array_length_in_function_signatures() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn first[T, N](values: [T; N]) -> T {
+    return values[0]
+}
+
+fn main() -> Int {
+    return first([1, 2, 3])
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_undeclared_generic_fixed_array_length_in_function_signatures() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn first[T](values: [T; N]) -> T {
+    return values[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"array length generic `N` must be declared in the function generic parameter list"
+                .to_string()
+        ),
+        "expected undeclared generic array length diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_direct_closures_for_callable_parameters() {
     let diagnostics = diagnostic_messages(
         r#"

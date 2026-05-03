@@ -1548,6 +1548,150 @@ fn main() -> Int {
 }
 
 #[test]
+fn build_package_path_json_supports_dependency_generic_array_length_function() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-json-generic-array-length-function");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src"))
+        .expect("create dep source tree for generic array length function");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create app source tree for generic array length function");
+
+    temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        r#"
+pub fn first[T, N](values: [T; N]) -> T {
+    return values[0]
+}
+
+pub fn last[T, N](values: [T; N]) -> T {
+    var selected = values[0]
+    for value in values {
+        selected = value
+    }
+    return selected
+}
+
+pub fn at_or[T, N](values: [T; N], index: Int, fallback: T) -> T {
+    var current_index = 0
+    for value in values {
+        if current_index == index {
+            return value
+        };
+        current_index = current_index + 1
+    }
+    return fallback
+}
+
+pub fn contains[T, N](values: [T; N], needle: T) -> Bool {
+    for value in values {
+        if value == needle {
+            return true
+        }
+    }
+    return false
+}
+
+pub fn count[T, N](values: [T; N], needle: T) -> Int {
+    var total = 0
+    for value in values {
+        if value == needle {
+            total = total + 1
+        }
+    }
+    return total
+}
+"#,
+    );
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "app/src/main.ql",
+        r#"
+use dep.first as first
+use dep.last as last
+use dep.at_or as at_or
+use dep.contains as contains
+use dep.count as count
+
+fn bool_score(value: Bool) -> Int {
+    if value {
+        return 4
+    }
+    return 0
+}
+
+fn main() -> Int {
+    let number: Int = first([7, 8, 9])
+    let flag: Bool = last([false, true, true, false])
+    let picked: Int = at_or([3, 4, 5, 6], 2, 0)
+    let present = contains(["red", "blue", "green"], "blue")
+    let matches = count([1, 2, 1, 1, 3], 1)
+    return number + bool_score(flag) + picked + bool_score(present) + matches
+}
+"#,
+    );
+
+    let app_output = project_root.join("target/ql/debug/main.ll");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` dependency generic array length function",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-package-json-generic-array-length-function",
+        "package build json dependency generic array length function",
+        &output,
+    )
+    .expect(
+        "package-path `ql build --json` should support dependency generic array length functions",
+    );
+    expect_empty_stderr(
+        "project-build-package-json-generic-array-length-function",
+        "package build json dependency generic array length function",
+        &stderr,
+    )
+    .expect("generic array length function json build should not print stderr");
+
+    let json = parse_json_output(
+        "project-build-package-json-generic-array-length-function",
+        &stdout,
+    );
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "ok");
+    expect_file_exists(
+        "project-build-package-json-generic-array-length-function",
+        &app_output,
+        "selected package artifact",
+        "package build json dependency generic array length function",
+    )
+    .expect("generic array length function build should emit the selected artifact");
+}
+
+#[test]
 fn build_package_path_json_supports_multiple_dependency_generic_function_instantiations() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-package-json-multiple-generic-instantiations");

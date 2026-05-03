@@ -14,7 +14,7 @@ use ql_mir::{
 use ql_resolve::{BuiltinType, ImportBinding, ResolutionMap, TypeResolution, ValueResolution};
 use ql_runtime::{RuntimeHook, RuntimeHookSignature};
 use ql_span::Span;
-use ql_typeck::{Ty, TypeckResult, lower_type};
+use ql_typeck::{Ty, TyArrayLen, TypeckResult, lower_type};
 
 pub use error::CodegenError;
 
@@ -299,7 +299,7 @@ fn cleanup_for_iterable_shape(ty: &Ty) -> Option<(SupportedForLoopIterableKind, 
         Ty::Array { element, len } if !is_void_ty(element.as_ref()) => Some((
             SupportedForLoopIterableKind::Array,
             element.as_ref().clone(),
-            *len,
+            known_array_len(len)?,
         )),
         Ty::Tuple(items)
             if !items.is_empty()
@@ -316,6 +316,10 @@ fn cleanup_for_iterable_shape(ty: &Ty) -> Option<(SupportedForLoopIterableKind, 
         }
         _ => None,
     }
+}
+
+fn known_array_len(len: &TyArrayLen) -> Option<usize> {
+    len.as_known()
 }
 
 #[derive(Clone, Debug)]
@@ -3966,12 +3970,14 @@ impl<'a> ModuleEmitter<'a> {
                     let Some((iterable_root, iterable_kind, element_ty, iterable_len)) =
                         (match (iterable, iterable_ty) {
                             (Operand::Place(iterable_place), Some(Ty::Array { element, len })) => {
-                                Some((
-                                    SupportedForLoopIterableRoot::Place(iterable_place.clone()),
-                                    SupportedForLoopIterableKind::Array,
-                                    element.as_ref().clone(),
-                                    len,
-                                ))
+                                known_array_len(&len).map(|len| {
+                                    (
+                                        SupportedForLoopIterableRoot::Place(iterable_place.clone()),
+                                        SupportedForLoopIterableKind::Array,
+                                        element.as_ref().clone(),
+                                        len,
+                                    )
+                                })
                             }
                             (Operand::Place(iterable_place), Some(Ty::Tuple(items)))
                                 if !items.is_empty()
@@ -3998,12 +4004,14 @@ impl<'a> ModuleEmitter<'a> {
                             )
                             .is_some() =>
                             {
-                                Some((
-                                    SupportedForLoopIterableRoot::Item(*item),
-                                    SupportedForLoopIterableKind::Array,
-                                    element.as_ref().clone(),
-                                    len,
-                                ))
+                                known_array_len(&len).map(|len| {
+                                    (
+                                        SupportedForLoopIterableRoot::Item(*item),
+                                        SupportedForLoopIterableKind::Array,
+                                        element.as_ref().clone(),
+                                        len,
+                                    )
+                                })
                             }
                             (
                                 Operand::Constant(Constant::Item { item, .. }),
@@ -4038,13 +4046,14 @@ impl<'a> ModuleEmitter<'a> {
                                         self.input.resolution,
                                         item_id,
                                     )
-                                    .map(|_| {
-                                        (
+                                    .and_then(|_| {
+                                        let len = known_array_len(&len)?;
+                                        Some((
                                             SupportedForLoopIterableRoot::Item(item_id),
                                             SupportedForLoopIterableKind::Array,
                                             element.as_ref().clone(),
                                             len,
-                                        )
+                                        ))
                                     })
                                 },
                             ),
@@ -4810,7 +4819,7 @@ impl<'a> ModuleEmitter<'a> {
                 let Ty::Array { element, len } = scrutinee_ty else {
                     return false;
                 };
-                items.len() == *len
+                known_array_len(len).is_some_and(|len| items.len() == len)
                     && items
                         .iter()
                         .all(|item| self.supports_match_catch_all_pattern(*item, element))
@@ -5329,7 +5338,7 @@ impl<'a> ModuleEmitter<'a> {
                     return false;
                 };
                 return expected_ty.compatible_with(actual_ty)
-                    && *len == items.len()
+                    && known_array_len(len).is_some_and(|len| len == items.len())
                     && items.iter().all(|item| {
                         self.supports_cleanup_value_expr(*item, element.as_ref(), body, local_types)
                     });
@@ -6450,11 +6459,12 @@ impl<'a> ModuleEmitter<'a> {
         span: Span,
     ) -> Option<Ty> {
         let expected_array = match expected_ty {
-            Some(Ty::Array { element, len }) => Some((element.as_ref().clone(), *len)),
+            Some(Ty::Array { element, len }) => Some((element.as_ref().clone(), len.clone())),
             _ => None,
         };
         if let Some((_, expected_len)) = expected_array.as_ref()
-            && items.len() != *expected_len
+            && let Some(expected_len) = known_array_len(expected_len)
+            && items.len() != expected_len
         {
             ctx.diagnostics.push(unsupported(
                 span,
@@ -6521,7 +6531,7 @@ impl<'a> ModuleEmitter<'a> {
 
         Some(Ty::Array {
             element: Box::new(element_ty),
-            len: items.len(),
+            len: TyArrayLen::Known(items.len()),
         })
     }
 
@@ -7848,6 +7858,14 @@ impl<'a> ModuleEmitter<'a> {
         match ty {
             Ty::Array { element, len } => {
                 let element_llvm_ty = self.lower_llvm_type(element, span, context)?;
+                let Some(len) = known_array_len(len) else {
+                    return Err(unsupported(
+                        span,
+                        format!(
+                            "LLVM IR backend foundation requires concrete array length for {context} `{ty}`"
+                        ),
+                    ));
+                };
                 Ok(format!("[{len} x {element_llvm_ty}]"))
             }
             Ty::Builtin(BuiltinType::String) => Ok(llvm_string_aggregate_ty().to_owned()),
@@ -7897,8 +7915,16 @@ impl<'a> ModuleEmitter<'a> {
         match ty {
             Ty::Array { element, len } => {
                 let element = self.loadable_abi_layout(element, span, context)?;
+                let Some(len) = known_array_len(len) else {
+                    return Err(unsupported(
+                        span,
+                        format!(
+                            "LLVM IR backend foundation requires concrete array length for {context} `{ty}`"
+                        ),
+                    ));
+                };
                 Ok(LoadableAbiLayout {
-                    size: element.size * (*len as u64),
+                    size: element.size * (len as u64),
                     align: element.align,
                 })
             }
@@ -9258,9 +9284,12 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                         "supported cleanup lowering at {span:?} should only destructure fixed-array cleanup values with fixed-array patterns"
                     );
                 };
+                let len = known_array_len(len).expect(
+                    "supported cleanup lowering should only destructure concrete fixed-array values",
+                );
                 assert_eq!(
                     items.len(),
-                    *len,
+                    len,
                     "supported cleanup lowering at {span:?} should only destructure fixed-array cleanup values with matching arity"
                 );
                 let item_llvm_ty = self
@@ -9375,9 +9404,12 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                         "supported bind-pattern lowering at {span:?} should only destructure fixed-array values with fixed-array patterns"
                     );
                 };
+                let len = known_array_len(len).expect(
+                    "supported bind-pattern lowering should only destructure concrete fixed-array values",
+                );
                 assert_eq!(
                     items.len(),
-                    *len,
+                    len,
                     "supported bind-pattern lowering at {span:?} should only destructure fixed-array values with matching arity"
                 );
                 let item_llvm_ty = self
@@ -12280,14 +12312,17 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
     ) -> LoweredValue {
         let array_ty = match expected_ty {
             Ty::Array { element, len } => {
+                let known_len = known_array_len(len).expect(
+                    "supported cleanup lowering should only render concrete fixed-array literals",
+                );
                 assert_eq!(
-                    *len,
+                    known_len,
                     items.len(),
                     "supported cleanup lowering at {span:?} should preserve cleanup array literal length"
                 );
                 Ty::Array {
                     element: element.clone(),
-                    len: *len,
+                    len: len.clone(),
                 }
             }
             other => panic!(
@@ -14261,7 +14296,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             );
             Ty::Array {
                 element: Box::new(element_ty),
-                len: rendered_items.len(),
+                len: TyArrayLen::Known(rendered_items.len()),
             }
         };
         let llvm_ty = self
@@ -15271,14 +15306,17 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
     ) -> LoweredValue {
         let array_ty = match expected_ty {
             Some(Ty::Array { element, len }) => {
+                let known_len = known_array_len(len).expect(
+                    "prepared const array lowering should only render concrete fixed-array literals",
+                );
                 assert_eq!(
-                    *len,
+                    known_len,
                     items.len(),
                     "prepared const array lowering at {span:?} should preserve array length"
                 );
                 Ty::Array {
                     element: element.clone(),
-                    len: *len,
+                    len: len.clone(),
                 }
             }
             Some(other) => panic!(
@@ -16117,8 +16155,11 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                         "prepared bool guard lowering at {span:?} should preserve array literal types"
                     );
                 };
+                let known_len = known_array_len(len).expect(
+                    "prepared bool guard lowering should only render concrete fixed-array literals",
+                );
                 assert_eq!(
-                    *len,
+                    known_len,
                     items.len(),
                     "prepared bool guard lowering at {span:?} should preserve array literal length"
                 );
@@ -22781,6 +22822,14 @@ fn lower_llvm_type(ty: &Ty, span: Span, context: &str) -> Result<String, Diagnos
     match ty {
         Ty::Array { element, len } => {
             let element_llvm_ty = lower_llvm_type(element, span, context)?;
+            let Some(len) = known_array_len(len) else {
+                return Err(unsupported(
+                    span,
+                    format!(
+                        "LLVM IR backend foundation requires concrete array length for {context} `{ty}`"
+                    ),
+                ));
+            };
             Ok(format!("[{len} x {element_llvm_ty}]"))
         }
         Ty::Builtin(BuiltinType::String) => Ok(llvm_string_aggregate_ty().to_owned()),
@@ -22845,8 +22894,16 @@ fn loadable_abi_layout(
     match ty {
         Ty::Array { element, len } => {
             let element = loadable_abi_layout(element, span, context)?;
+            let Some(len) = known_array_len(len) else {
+                return Err(unsupported(
+                    span,
+                    format!(
+                        "LLVM IR backend foundation requires concrete array length for {context} `{ty}`"
+                    ),
+                ));
+            };
             Ok(LoadableAbiLayout {
-                size: element.size * (*len as u64),
+                size: element.size * (len as u64),
                 align: element.align,
             })
         }

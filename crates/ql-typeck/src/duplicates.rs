@@ -1,10 +1,10 @@
-use std::collections::{HashMap, hash_map::Entry};
+use std::collections::{HashMap, HashSet, hash_map::Entry};
 
 use ql_diagnostics::{Diagnostic, Label};
 use ql_hir::{
-    BlockId, CallArg, EnumVariant, ExprId, ExprKind, Field, Function, GenericParam, ItemKind,
-    LocalId, Module, Param, PatternField, PatternId, PatternKind, StmtKind, StructLiteralField,
-    VariantFields,
+    ArrayLen, BlockId, CallArg, EnumVariant, ExprId, ExprKind, Field, Function, GenericParam,
+    ItemKind, LocalId, Module, Param, PatternField, PatternId, PatternKind, StmtKind,
+    StructLiteralField, TypeId, TypeKind, VariantFields,
 };
 use ql_span::Span;
 
@@ -152,10 +152,65 @@ impl Checker {
 
     fn check_function(&mut self, module: &Module, function: &Function) {
         self.check_generics(&function.generics);
+        self.check_signature_generic_array_lengths(module, function);
         self.check_params(&function.params);
 
         if let Some(body) = function.body {
             self.check_block(module, body);
+        }
+    }
+
+    fn check_signature_generic_array_lengths(&mut self, module: &Module, function: &Function) {
+        let generic_names = function
+            .generics
+            .iter()
+            .map(|generic| generic.name.as_str())
+            .collect::<HashSet<_>>();
+        for param in &function.params {
+            if let Param::Regular(param) = param {
+                self.check_type_generic_array_lengths(module, param.ty, &generic_names);
+            }
+        }
+        if let Some(return_type) = function.return_type {
+            self.check_type_generic_array_lengths(module, return_type, &generic_names);
+        }
+    }
+
+    fn check_type_generic_array_lengths(
+        &mut self,
+        module: &Module,
+        type_id: TypeId,
+        generic_names: &HashSet<&str>,
+    ) {
+        let ty = module.ty(type_id);
+        match &ty.kind {
+            TypeKind::Pointer { inner, .. } => {
+                self.check_type_generic_array_lengths(module, *inner, generic_names);
+            }
+            TypeKind::Array { element, len } => {
+                if let ArrayLen::Generic(name) = len
+                    && !generic_names.contains(name.as_str())
+                {
+                    self.diagnostics.push(
+                        Diagnostic::error(format!(
+                            "array length generic `{name}` must be declared in the function generic parameter list"
+                        ))
+                        .with_label(Label::new(ty.span).with_message("array type here")),
+                    );
+                }
+                self.check_type_generic_array_lengths(module, *element, generic_names);
+            }
+            TypeKind::Named { args, .. } | TypeKind::Tuple(args) => {
+                for &arg in args {
+                    self.check_type_generic_array_lengths(module, arg, generic_names);
+                }
+            }
+            TypeKind::Callable { params, ret } => {
+                for &param in params {
+                    self.check_type_generic_array_lengths(module, param, generic_names);
+                }
+                self.check_type_generic_array_lengths(module, *ret, generic_names);
+            }
         }
     }
 

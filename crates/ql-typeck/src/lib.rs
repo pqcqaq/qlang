@@ -6,4 +6,4 @@ mod typing;
 pub use checker::{
     FieldTarget, MemberTarget, MethodTarget, TypeckResult, analyze_module, check_module,
 };
-pub use types::{Ty, lower_type};
+pub use types::{Ty, TyArrayLen, lower_type};

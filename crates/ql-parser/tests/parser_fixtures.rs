@@ -433,6 +433,34 @@ fn parses_array_types_in_function_signatures() {
 }
 
 #[test]
+fn parses_generic_array_length_types_in_function_signatures() {
+    let source = "fn first[T, N](values: [T; N]) -> T { return values[0] }";
+    let module = parse_source(source).expect("generic array length types should parse");
+    let function = match &module.items[0].kind {
+        ItemKind::Function(function) => function,
+        other => panic!("expected function item, got {other:?}"),
+    };
+
+    assert_eq!(function.generics.len(), 2);
+    assert_eq!(function.generics[0].name, "T");
+    assert_eq!(function.generics[1].name, "N");
+    assert!(matches!(
+        function.params.first(),
+        Some(Param::Regular { ty, .. })
+            if matches!(
+                &ty.kind,
+                TypeExprKind::Array { element, len }
+                    if len == "N"
+                        && matches!(
+                            &element.kind,
+                            TypeExprKind::Named { path, args }
+                                if path.segments.as_slice() == ["T"] && args.is_empty()
+                        )
+            )
+    ));
+}
+
+#[test]
 fn attaches_spans_to_nested_nodes() {
     let source = "fn main() { let value = 1 }";
     let module = parse_source(source).expect("span fixture should parse");
