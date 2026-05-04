@@ -15,8 +15,6 @@ pub(super) fn stdlib_package_source() -> &'static str {
 use std.array.contains_array as contains_array
 use std.array.count_array as count_array
 use std.array.first_array as first_array
-use std.array.repeat3_array as repeat3_array
-use std.array.reverse3_array as reverse3_array
 use std.array.sum_int_array as sum_int_array
 use std.core.clamp_int as clamp_int
 use std.option.some as option_some
@@ -27,10 +25,10 @@ use std.result.unwrap_result_or as result_unwrap_result_or
 
 pub fn run() -> Int {
     let result_value: Result[Int, Int] = result_ok(option_unwrap_or(option_some(42), 0))
-    let transformed_total = sum_int_array(reverse3_array([1, first_array([2, 3, 4]), at_array_or([3, 4, 5], 1, 0)]))
-    let query_values: [Int; 3] = reverse3_array([1, 2, 3])
+    let transformed_total = sum_int_array([1, first_array([2, 3, 4]), at_array_or([3, 4, 5], 1, 0)])
+    let query_values: [Int; 3] = [3, 2, 1]
     let contains_bonus = if contains_array(query_values, 1) { 1 } else { 0 }
-    return clamp_int(result_unwrap_result_or(result_value, 0) + transformed_total + sum_int_array(repeat3_array(1)) + count_array([1, 2, 1], 1) + contains_bonus, 0, 100)
+    return clamp_int(result_unwrap_result_or(result_value, 0) + transformed_total + sum_int_array([1, 1, 1]) + count_array([1, 2, 1], 1) + contains_bonus, 0, 100)
 }
 "#
 }
@@ -38,17 +36,20 @@ pub fn run() -> Int {
 pub(super) fn stdlib_package_main_source() -> &'static str {
     r#"use std.array.all_bool_array as all_bool_array
 use std.array.contains_array as contains_array
-use std.array.repeat3_array as repeat3_array
 use std.core.bool_to_int as bool_to_int
-use std.option.some_bool as some_bool
-use std.option.unwrap_or_bool as unwrap_or_bool
-use std.result.ok_bool as result_ok_bool
-use std.result.unwrap_result_or_bool as result_unwrap_or_bool
+use std.option.Option as Option
+use std.option.some as option_some
+use std.option.unwrap_or as option_unwrap_or
+use std.result.Result as Result
+use std.result.ok as result_ok
+use std.result.unwrap_result_or as result_unwrap_result_or
 
 fn main() -> Int {
-    let repeated_false: [Bool; 3] = repeat3_array(false)
-    let repeated_enabled: [Bool; 3] = repeat3_array(unwrap_or_bool(some_bool(true), false))
-    return 1 - bool_to_int(result_unwrap_or_bool(result_ok_bool(all_bool_array(repeated_enabled) && contains_array(repeated_false, false)), false))
+    let repeated_false: [Bool; 3] = [false, false, false]
+    let enabled: Option[Bool] = option_some(true)
+    let repeated_enabled: [Bool; 3] = [option_unwrap_or(enabled, false), true, true]
+    let result_value: Result[Bool, Int] = result_ok(all_bool_array(repeated_enabled) && contains_array(repeated_false, false))
+    return 1 - bool_to_int(result_unwrap_result_or(result_value, false))
 }
 "#
 }
@@ -113,13 +114,16 @@ mod tests {
         assert!(lib.contains("use std.array.contains_array"));
         assert!(lib.contains("use std.array.count_array"));
         assert!(lib.contains("use std.array.first_array"));
-        assert!(lib.contains("use std.array.repeat3_array"));
-        assert!(lib.contains("use std.array.reverse3_array"));
         assert!(lib.contains("use std.array.sum_int_array"));
         assert!(main.contains("use std.core.bool_to_int"));
+        assert!(main.contains("use std.option.Option as Option"));
+        assert!(main.contains("use std.result.Result as Result"));
         assert!(main.contains("use std.array.all_bool_array"));
         assert!(main.contains("use std.array.contains_array"));
-        assert!(main.contains("use std.array.repeat3_array"));
+        assert!(!main.contains("some_bool"));
+        assert!(!main.contains("ok_bool"));
+        assert!(!lib.contains("repeat3_array"));
+        assert!(!lib.contains("reverse3_array"));
         assert!(smoke.contains("use std.option.Option as Option"));
         assert!(smoke.contains("use std.result.Result as Result"));
         assert!(smoke.contains("use std.array.len_array as len_array"));

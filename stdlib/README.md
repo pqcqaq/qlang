@@ -48,6 +48,8 @@ cargo run -q -p ql-cli -- project init D:\Projects\my-qlang-app --stdlib D:\Proj
 cargo run -q -p ql-cli -- project init D:\Projects\my-qlang-workspace --workspace --name app --stdlib D:\Projects\language_q\stdlib
 ```
 
+生成的 starter 使用推荐的 generic `Option[T]`、`Result[T, E]` 和 length-generic array helpers；固定 arity / concrete helper 只作为兼容层保留。
+
 ## 验证
 
 ```powershell
