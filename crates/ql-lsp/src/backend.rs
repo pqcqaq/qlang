@@ -73,9 +73,9 @@ use crate::bridge::{
     references_for_dependency_variants, references_for_package_analysis, rename_for_analysis,
     rename_for_dependency_imports, semantic_tokens_for_analysis,
     semantic_tokens_for_analysis_range, semantic_tokens_legend,
-    semantic_tokens_result_from_occurrences_with_lexical,
-    semantic_tokens_result_from_occurrences_with_lexical_range, span_to_range, symbol_information,
-    type_definition_for_analysis, type_definition_for_dependency_imports,
+    semantic_tokens_result_from_package_occurrences_with_lexical,
+    semantic_tokens_result_from_package_occurrences_with_lexical_range, span_to_range,
+    symbol_information, type_definition_for_analysis, type_definition_for_dependency_imports,
     type_definition_for_dependency_method_types, type_definition_for_dependency_struct_field_types,
     type_definition_for_dependency_values, type_definition_for_dependency_variants,
     type_definition_for_package_analysis, type_hierarchy_prepare_for_analysis,
@@ -3018,7 +3018,7 @@ fn semantic_tokens_for_workspace_package_analysis_with_open_docs(
     let tokens = workspace_package_semantic_token_occurrences_with_open_docs(
         uri, source, analysis, package, open_docs,
     );
-    semantic_tokens_result_from_occurrences_with_lexical(source, tokens)
+    semantic_tokens_result_from_package_occurrences_with_lexical(source, tokens, package)
 }
 
 fn semantic_tokens_for_workspace_package_analysis_range_with_open_docs(
@@ -3032,7 +3032,9 @@ fn semantic_tokens_for_workspace_package_analysis_range_with_open_docs(
     let tokens = workspace_package_semantic_token_occurrences_with_open_docs(
         uri, source, analysis, package, open_docs,
     );
-    semantic_tokens_result_from_occurrences_with_lexical_range(source, tokens, range)
+    semantic_tokens_result_from_package_occurrences_with_lexical_range(
+        source, tokens, package, range,
+    )
 }
 
 fn workspace_package_semantic_token_occurrences_with_open_docs(
@@ -3101,7 +3103,7 @@ fn semantic_tokens_for_workspace_dependency_fallback_with_open_docs(
     let tokens = workspace_dependency_fallback_semantic_token_occurrences_with_open_docs(
         uri, source, package, open_docs,
     );
-    semantic_tokens_result_from_occurrences_with_lexical(source, tokens)
+    semantic_tokens_result_from_package_occurrences_with_lexical(source, tokens, package)
 }
 
 fn semantic_tokens_for_workspace_dependency_fallback_range_with_open_docs(
@@ -3114,7 +3116,9 @@ fn semantic_tokens_for_workspace_dependency_fallback_range_with_open_docs(
     let tokens = workspace_dependency_fallback_semantic_token_occurrences_with_open_docs(
         uri, source, package, open_docs,
     );
-    semantic_tokens_result_from_occurrences_with_lexical_range(source, tokens, range)
+    semantic_tokens_result_from_package_occurrences_with_lexical_range(
+        source, tokens, package, range,
+    )
 }
 
 fn workspace_dependency_fallback_semantic_token_occurrences_with_open_docs(

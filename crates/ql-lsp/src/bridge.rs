@@ -1848,12 +1848,45 @@ pub fn semantic_tokens_result_from_occurrences_with_lexical(
     semantic_tokens_result_for_occurrences(source, tokens, None, true, &HashSet::new())
 }
 
+pub fn semantic_tokens_result_from_package_occurrences_with_lexical(
+    source: &str,
+    tokens: Vec<ql_analysis::SemanticTokenOccurrence>,
+    package: &PackageAnalysis,
+) -> SemanticTokensResult {
+    let deprecated_dependency_import_tokens =
+        deprecated_dependency_import_semantic_token_keys(package, source);
+    semantic_tokens_result_for_occurrences(
+        source,
+        tokens,
+        None,
+        true,
+        &deprecated_dependency_import_tokens,
+    )
+}
+
 pub fn semantic_tokens_result_from_occurrences_with_lexical_range(
     source: &str,
     tokens: Vec<ql_analysis::SemanticTokenOccurrence>,
     range: Range,
 ) -> SemanticTokensResult {
     semantic_tokens_result_for_occurrences(source, tokens, Some(range), true, &HashSet::new())
+}
+
+pub fn semantic_tokens_result_from_package_occurrences_with_lexical_range(
+    source: &str,
+    tokens: Vec<ql_analysis::SemanticTokenOccurrence>,
+    package: &PackageAnalysis,
+    range: Range,
+) -> SemanticTokensResult {
+    let deprecated_dependency_import_tokens =
+        deprecated_dependency_import_semantic_token_keys(package, source);
+    semantic_tokens_result_for_occurrences(
+        source,
+        tokens,
+        Some(range),
+        true,
+        &deprecated_dependency_import_tokens,
+    )
 }
 
 fn semantic_tokens_result_for_occurrences(

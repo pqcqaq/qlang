@@ -8,7 +8,8 @@ use common::request::{
 use ql_lsp::Backend;
 use tower_lsp::LspService;
 use tower_lsp::lsp_types::{
-    Range, SemanticToken, SemanticTokenType, SemanticTokensRangeResult, SemanticTokensResult, Url,
+    Range, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokensRangeResult,
+    SemanticTokensResult, Url,
 };
 
 fn decode(tokens: &[SemanticToken]) -> Vec<(u32, u32, u32, u32)> {
@@ -23,6 +24,28 @@ fn decode(tokens: &[SemanticToken]) -> Vec<(u32, u32, u32, u32)> {
             start = token.delta_start;
         }
         decoded.push((line, start, token.length, token.token_type));
+    }
+    decoded
+}
+
+fn decode_with_modifiers(tokens: &[SemanticToken]) -> Vec<(u32, u32, u32, u32, u32)> {
+    let mut line = 0u32;
+    let mut start = 0u32;
+    let mut decoded = Vec::new();
+    for token in tokens {
+        line += token.delta_line;
+        if token.delta_line == 0 {
+            start += token.delta_start;
+        } else {
+            start = token.delta_start;
+        }
+        decoded.push((
+            line,
+            start,
+            token.length,
+            token.token_type,
+            token.token_modifiers_bitset,
+        ));
     }
     decoded
 }
@@ -236,4 +259,123 @@ pub struct Config {
         decode(&range_tokens.data).contains(&cfg_entry),
         "range tokens should use the same open-doc workspace classification as full tokens"
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn semantic_tokens_request_marks_stdlib_compat_imports_deprecated() {
+    let temp = TempDir::new("ql-lsp-stdlib-compat-semantic-token-request");
+    let app_source = r#"
+package demo.app
+
+use std.option.IntOption as MaybeInt
+use std.option.Option as GenericOption
+use std.array.sum3_int_array as sum_three
+use std.array.sum_int_array as sum_any
+
+pub fn main() -> Int {
+    return 0
+}
+"#;
+    let app_path = temp.write("workspace/app/src/main.ql", app_source);
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../option", "../array"]
+"#,
+    );
+    temp.write(
+        "workspace/option/qlang.toml",
+        r#"
+[package]
+name = "std.option"
+"#,
+    );
+    temp.write(
+        "workspace/option/std.option.qi",
+        r#"
+// qlang interface v1
+// package: std.option
+
+// source: src/lib.ql
+package std.option
+
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+pub enum IntOption {
+    Some(Int),
+    None,
+}
+"#,
+    );
+    temp.write(
+        "workspace/array/qlang.toml",
+        r#"
+[package]
+name = "std.array"
+"#,
+    );
+    temp.write(
+        "workspace/array/std.array.qi",
+        r#"
+// qlang interface v1
+// package: std.array
+
+// source: src/lib.ql
+package std.array
+
+pub fn sum_int_array[N](values: [Int; N]) -> Int
+pub fn sum3_int_array(values: [Int; 3]) -> Int
+"#,
+    );
+
+    let workspace_root_uri = Url::from_file_path(temp.path().join("workspace"))
+        .expect("workspace root path should convert to URI");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service_with_workspace_roots(&mut service, vec![workspace_root_uri]).await;
+    did_open_via_request(&mut service, app_uri.clone(), app_source.to_owned()).await;
+
+    let SemanticTokensResult::Tokens(tokens) =
+        semantic_tokens_full_via_request(&mut service, app_uri)
+            .await
+            .expect("semanticTokens/full should return tokens")
+    else {
+        panic!("semanticTokens/full should return full token data")
+    };
+    let decoded = decode_with_modifiers(&tokens.data);
+    let legend = ql_lsp::bridge::semantic_tokens_legend();
+    let deprecated_bit = 1u32
+        << legend
+            .token_modifiers
+            .iter()
+            .position(|modifier| *modifier == SemanticTokenModifier::DEPRECATED)
+            .expect("deprecated token modifier should exist");
+
+    for (needle, expected_deprecated) in [
+        ("MaybeInt", true),
+        ("GenericOption", false),
+        ("sum_three", true),
+        ("sum_any", false),
+    ] {
+        let position = offset_to_position(app_source, nth_offset(app_source, needle, 1));
+        let entry = decoded
+            .iter()
+            .find(|(line, start, length, _, _)| {
+                *line == position.line
+                    && *start == position.character
+                    && *length == needle.len() as u32
+            })
+            .unwrap_or_else(|| panic!("semantic token for `{needle}` should exist"));
+        assert_eq!(
+            entry.4 & deprecated_bit != 0,
+            expected_deprecated,
+            "`{needle}` deprecated modifier mismatch; decoded={decoded:#?}",
+        );
+    }
 }
