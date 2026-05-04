@@ -1,6 +1,6 @@
 # 当前支持基线
 
-> 最后同步：2026-05-03
+> 最后同步：2026-05-04
 
 这页记录当前可依赖能力。更细节的行为以代码和回归测试为准。
 
@@ -35,12 +35,13 @@
 - 数组长度泛型参数可在函数体内作为 `Int` 值读取。
 - dependency generic specialization 能递归处理同依赖模块内的 generic helper 直调。
 - `Option[T]`、`Result[T, E]`、`std.array` length-generic helpers、`std.test` assertions 已有真实 smoke。
-- 固定长度数组 helper 只保留兼容层，不再作为主方向扩张。
+- 固定长度数组 helper 和 concrete carrier 只保留兼容层，不再作为主方向扩张。
 
 ### LSP 和 VSCode
 
 - same-file：hover、definition、declaration、typeDefinition、references、documentHighlight、completion、semantic tokens、formatting、codeAction、codeLens、callHierarchy、typeHierarchy、rename。
 - workspace：`workspace/symbol`、`implementation`、open-doc dependency navigation、保守 workspace rename。
+- stdlib 兼容 API 会在补全和依赖 import hover 中提示 deprecated，并排在推荐 generic / length-generic API 后面。
 - formatting：document/range/on-type formatting 复用 `ql fmt`。
 - VSCode 插件是 thin client，不自带 `qlsp`。
 

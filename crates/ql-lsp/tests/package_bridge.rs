@@ -907,6 +907,126 @@ pub fn main() -> Int {
 #[allow(deprecated)]
 fn package_bridge_marks_stdlib_compat_import_completions_deprecated() {
     let temp = TempDir::new("ql-lsp-stdlib-compat-completion");
+    let source = r#"
+package demo.app
+
+use std.option.
+use std.result.
+use std.array.
+
+pub fn main() -> Int {
+    return 0
+}
+"#;
+    let (_app_root, package) = write_stdlib_compat_workspace(&temp, source);
+
+    let Some(CompletionResponse::Array(option_items)) = completion_for_dependency_imports(
+        source,
+        &package,
+        offset_to_position(
+            source,
+            nth_offset(source, "std.option.", 1) + "std.option.".len(),
+        ),
+    ) else {
+        panic!("std.option completion should exist")
+    };
+    assert_stdlib_recommended_completion(completion_item(&option_items, "Option"));
+    assert_stdlib_recommended_completion(completion_item(&option_items, "some"));
+    assert_stdlib_compat_completion(completion_item(&option_items, "IntOption"));
+    assert_stdlib_compat_completion(completion_item(&option_items, "some_int"));
+
+    let Some(CompletionResponse::Array(result_items)) = completion_for_dependency_imports(
+        source,
+        &package,
+        offset_to_position(
+            source,
+            nth_offset(source, "std.result.", 1) + "std.result.".len(),
+        ),
+    ) else {
+        panic!("std.result completion should exist")
+    };
+    assert_stdlib_recommended_completion(completion_item(&result_items, "Result"));
+    assert_stdlib_recommended_completion(completion_item(&result_items, "ok"));
+    assert_stdlib_compat_completion(completion_item(&result_items, "IntResult"));
+    assert_stdlib_compat_completion(completion_item(&result_items, "ok_int"));
+
+    let Some(CompletionResponse::Array(array_items)) = completion_for_dependency_imports(
+        source,
+        &package,
+        offset_to_position(
+            source,
+            nth_offset(source, "std.array.", 1) + "std.array.".len(),
+        ),
+    ) else {
+        panic!("std.array completion should exist")
+    };
+    assert_stdlib_recommended_completion(completion_item(&array_items, "sum_int_array"));
+    assert_stdlib_compat_completion(completion_item(&array_items, "sum3_int_array"));
+    assert_stdlib_compat_completion(completion_item(&array_items, "repeat3_array"));
+}
+
+#[test]
+fn package_bridge_marks_stdlib_compat_import_hovers_deprecated() {
+    let temp = TempDir::new("ql-lsp-stdlib-compat-hover");
+    let source = r#"
+package demo.app
+
+use std.option.IntOption as MaybeInt
+use std.option.Option as GenericOption
+use std.array.sum3_int_array as sum_three
+
+pub fn main() -> Int {
+    return 0
+}
+"#;
+    let (_app_root, package) = write_stdlib_compat_workspace(&temp, source);
+
+    let compat_hover = hover_for_dependency_imports(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "MaybeInt", 1)),
+    )
+    .expect("compat stdlib import hover should exist");
+    let HoverContents::Markup(compat_markup) = compat_hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(compat_markup.value.contains("**enum** `IntOption`"));
+    assert!(compat_markup.value.contains("Compatibility API"));
+    assert!(compat_markup.value.contains("Option[T]"));
+
+    let recommended_hover = hover_for_dependency_imports(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "GenericOption", 1)),
+    )
+    .expect("recommended stdlib import hover should exist");
+    let HoverContents::Markup(recommended_markup) = recommended_hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(recommended_markup.value.contains("**enum** `Option`"));
+    assert!(!recommended_markup.value.contains("Compatibility API"));
+
+    let array_hover = hover_for_dependency_imports(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "sum_three", 1)),
+    )
+    .expect("compat array import hover should exist");
+    let HoverContents::Markup(array_markup) = array_hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(array_markup.value.contains("**function** `sum3_int_array`"));
+    assert!(
+        array_markup
+            .value
+            .contains("length-generic `std.array` helpers")
+    );
+}
+
+fn write_stdlib_compat_workspace(
+    temp: &TempDir,
+    source: &str,
+) -> (PathBuf, ql_analysis::PackageAnalysis) {
     let app_root = temp.path().join("workspace").join("app");
 
     temp.write(
@@ -996,65 +1116,10 @@ name = "app"
 packages = ["../option", "../result", "../array"]
 "#,
     );
-    let source = r#"
-package demo.app
-
-use std.option.
-use std.result.
-use std.array.
-
-pub fn main() -> Int {
-    return 0
-}
-"#;
     temp.write("workspace/app/src/lib.ql", source);
-
     let package = analyze_package_dependencies(&app_root)
         .expect("dependency-only package analysis should succeed");
-
-    let Some(CompletionResponse::Array(option_items)) = completion_for_dependency_imports(
-        source,
-        &package,
-        offset_to_position(
-            source,
-            nth_offset(source, "std.option.", 1) + "std.option.".len(),
-        ),
-    ) else {
-        panic!("std.option completion should exist")
-    };
-    assert_stdlib_recommended_completion(completion_item(&option_items, "Option"));
-    assert_stdlib_recommended_completion(completion_item(&option_items, "some"));
-    assert_stdlib_compat_completion(completion_item(&option_items, "IntOption"));
-    assert_stdlib_compat_completion(completion_item(&option_items, "some_int"));
-
-    let Some(CompletionResponse::Array(result_items)) = completion_for_dependency_imports(
-        source,
-        &package,
-        offset_to_position(
-            source,
-            nth_offset(source, "std.result.", 1) + "std.result.".len(),
-        ),
-    ) else {
-        panic!("std.result completion should exist")
-    };
-    assert_stdlib_recommended_completion(completion_item(&result_items, "Result"));
-    assert_stdlib_recommended_completion(completion_item(&result_items, "ok"));
-    assert_stdlib_compat_completion(completion_item(&result_items, "IntResult"));
-    assert_stdlib_compat_completion(completion_item(&result_items, "ok_int"));
-
-    let Some(CompletionResponse::Array(array_items)) = completion_for_dependency_imports(
-        source,
-        &package,
-        offset_to_position(
-            source,
-            nth_offset(source, "std.array.", 1) + "std.array.".len(),
-        ),
-    ) else {
-        panic!("std.array completion should exist")
-    };
-    assert_stdlib_recommended_completion(completion_item(&array_items, "sum_int_array"));
-    assert_stdlib_compat_completion(completion_item(&array_items, "sum3_int_array"));
-    assert_stdlib_compat_completion(completion_item(&array_items, "repeat3_array"));
+    (app_root, package)
 }
 
 #[allow(deprecated)]

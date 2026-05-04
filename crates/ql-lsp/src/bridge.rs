@@ -5,9 +5,9 @@ use std::{
 
 use ql_analysis::{
     Analysis, AsyncOperatorKind, CallHierarchyItem as AnalysisCallHierarchyItem,
-    DocumentSymbolTarget, HoverInfo, IncomingCall as AnalysisIncomingCall, LoopControlKind,
-    OutgoingCall as AnalysisOutgoingCall, PackageAnalysis, RenameError, SymbolKind,
-    TypeHierarchyItem as AnalysisTypeHierarchyItem,
+    DependencyHoverInfo, DocumentSymbolTarget, HoverInfo, IncomingCall as AnalysisIncomingCall,
+    LoopControlKind, OutgoingCall as AnalysisOutgoingCall, PackageAnalysis, RenameError,
+    SymbolKind, TypeHierarchyItem as AnalysisTypeHierarchyItem,
 };
 use ql_diagnostics::{
     Diagnostic as CompilerDiagnostic, DiagnosticSeverity as CompilerSeverity, Label,
@@ -108,39 +108,11 @@ pub fn hover_for_package_analysis(
 ) -> Option<Hover> {
     let offset = position_to_offset(source, position)?;
     if let Some(info) = package.dependency_method_hover_at(analysis, offset) {
-        let hover = HoverInfo {
-            span: info.span,
-            kind: info.kind,
-            name: info.name,
-            detail: info.detail,
-            ty: None,
-            definition_span: None,
-        };
-        return Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: render_hover_markdown(&hover),
-            }),
-            range: Some(span_to_range(source, hover.span)),
-        });
+        return Some(dependency_hover(source, info, true));
     }
 
     if let Some(info) = package.dependency_struct_field_hover_at(analysis, offset) {
-        let hover = HoverInfo {
-            span: info.span,
-            kind: info.kind,
-            name: info.name,
-            detail: info.detail,
-            ty: None,
-            definition_span: None,
-        };
-        return Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: render_hover_markdown(&hover),
-            }),
-            range: Some(span_to_range(source, hover.span)),
-        });
+        return Some(dependency_hover(source, info, true));
     }
 
     if let Some(hover) = hover_for_dependency_struct_fields(source, package, position) {
@@ -152,39 +124,11 @@ pub fn hover_for_package_analysis(
     }
 
     if let Some(info) = package.dependency_variant_hover_at(analysis, source, offset) {
-        let hover = HoverInfo {
-            span: info.span,
-            kind: info.kind,
-            name: info.name,
-            detail: info.detail,
-            ty: None,
-            definition_span: None,
-        };
-        return Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: render_hover_markdown(&hover),
-            }),
-            range: Some(span_to_range(source, hover.span)),
-        });
+        return Some(dependency_hover(source, info, true));
     }
 
     if let Some(info) = package.dependency_hover_at(analysis, offset) {
-        let hover = HoverInfo {
-            span: info.span,
-            kind: info.kind,
-            name: info.name,
-            detail: info.detail,
-            ty: None,
-            definition_span: None,
-        };
-        return Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: render_hover_markdown(&hover),
-            }),
-            range: Some(span_to_range(source, hover.span)),
-        });
+        return Some(dependency_hover(source, info, true));
     }
 
     hover_for_analysis(source, analysis, position)
@@ -197,21 +141,7 @@ pub fn hover_for_dependency_variants(
 ) -> Option<Hover> {
     let offset = position_to_offset(source, position)?;
     let info = package.dependency_variant_hover_in_source_at(source, offset)?;
-    let hover = HoverInfo {
-        span: info.span,
-        kind: info.kind,
-        name: info.name,
-        detail: info.detail,
-        ty: None,
-        definition_span: None,
-    };
-    Some(Hover {
-        contents: HoverContents::Markup(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value: render_hover_markdown(&hover),
-        }),
-        range: Some(span_to_range(source, hover.span)),
-    })
+    Some(dependency_hover(source, info, true))
 }
 
 pub fn hover_for_dependency_struct_fields(
@@ -221,21 +151,7 @@ pub fn hover_for_dependency_struct_fields(
 ) -> Option<Hover> {
     let offset = position_to_offset(source, position)?;
     let info = package.dependency_struct_field_hover_in_source_at(source, offset)?;
-    let hover = HoverInfo {
-        span: info.span,
-        kind: info.kind,
-        name: info.name,
-        detail: info.detail,
-        ty: None,
-        definition_span: None,
-    };
-    Some(Hover {
-        contents: HoverContents::Markup(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value: render_hover_markdown(&hover),
-        }),
-        range: Some(span_to_range(source, hover.span)),
-    })
+    Some(dependency_hover(source, info, true))
 }
 
 pub fn hover_for_dependency_methods(
@@ -245,21 +161,7 @@ pub fn hover_for_dependency_methods(
 ) -> Option<Hover> {
     let offset = position_to_offset(source, position)?;
     let info = package.dependency_method_hover_in_source_at(source, offset)?;
-    let hover = HoverInfo {
-        span: info.span,
-        kind: info.kind,
-        name: info.name,
-        detail: info.detail,
-        ty: None,
-        definition_span: None,
-    };
-    Some(Hover {
-        contents: HoverContents::Markup(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value: render_hover_markdown(&hover),
-        }),
-        range: Some(span_to_range(source, hover.span)),
-    })
+    Some(dependency_hover(source, info, true))
 }
 
 pub fn hover_for_dependency_imports(
@@ -269,21 +171,7 @@ pub fn hover_for_dependency_imports(
 ) -> Option<Hover> {
     let offset = position_to_offset(source, position)?;
     let info = package.dependency_hover_in_source_at(source, offset)?;
-    let hover = HoverInfo {
-        span: info.span,
-        kind: info.kind,
-        name: info.name,
-        detail: info.detail,
-        ty: None,
-        definition_span: None,
-    };
-    Some(Hover {
-        contents: HoverContents::Markup(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value: render_hover_markdown(&hover),
-        }),
-        range: Some(span_to_range(source, hover.span)),
-    })
+    Some(dependency_hover(source, info, true))
 }
 
 pub fn hover_for_dependency_values(
@@ -293,6 +181,11 @@ pub fn hover_for_dependency_values(
 ) -> Option<Hover> {
     let offset = position_to_offset(source, position)?;
     let info = package.dependency_value_hover_in_source_at(source, offset)?;
+    Some(dependency_hover(source, info, false))
+}
+
+fn dependency_hover(source: &str, info: DependencyHoverInfo, include_range: bool) -> Hover {
+    let note = stdlib_compat_note(Some(info.package_name.as_str()), &info.name);
     let hover = HoverInfo {
         span: info.span,
         kind: info.kind,
@@ -301,13 +194,13 @@ pub fn hover_for_dependency_values(
         ty: None,
         definition_span: None,
     };
-    Some(Hover {
+    Hover {
+        range: include_range.then(|| span_to_range(source, hover.span)),
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
-            value: render_hover_markdown(&hover),
+            value: render_hover_markdown_with_note(&hover, note),
         }),
-        range: None,
-    })
+    }
 }
 
 pub fn async_context_for_analysis(
@@ -1154,7 +1047,7 @@ pub(crate) fn completion_response(
         .into_iter()
         .filter(|item| completion_matches_prefix(&item.label, &item.insert_text, &prefix))
         .map(|item| {
-            let compatibility = stdlib_compat_completion(&item);
+            let compatibility = stdlib_compat_note(item.source_package.as_deref(), &item.label);
             LspCompletionItem {
                 label: item.label.clone(),
                 kind: Some(completion_item_kind(item.kind)),
@@ -1220,23 +1113,23 @@ fn completion_documentation_from_parts_with_note(
     })
 }
 
-fn stdlib_compat_completion(item: &ql_analysis::CompletionItem) -> Option<&'static str> {
-    let package = item.source_package.as_deref()?;
+fn stdlib_compat_note(package: Option<&str>, label: &str) -> Option<&'static str> {
+    let package = package?;
     match package {
-        "std.option" if is_std_option_compat_completion(&item.label) => Some(
+        "std.option" if is_std_option_compat_symbol(label) => Some(
             "Compatibility API. Prefer generic `Option[T]` helpers such as `some`, `none_option`, `unwrap_or`, `is_some`, `is_none`, and `or_option`.",
         ),
-        "std.result" if is_std_result_compat_completion(&item.label) => Some(
+        "std.result" if is_std_result_compat_symbol(label) => Some(
             "Compatibility API. Prefer generic `Result[T, E]` helpers such as `ok`, `err`, `unwrap_result_or`, `or_result`, `error_or`, `ok_or`, `to_option`, and `error_to_option`.",
         ),
-        "std.array" if is_std_array_fixed_arity_completion(&item.label) => Some(
+        "std.array" if is_std_array_fixed_arity_symbol(label) => Some(
             "Compatibility API. Prefer length-generic `std.array` helpers such as `first_array`, `last_array`, `at_array_or`, `contains_array`, `count_array`, `len_array`, `sum_int_array`, `product_int_array`, `max_int_array`, `min_int_array`, `all_bool_array`, `any_bool_array`, and `none_bool_array`.",
         ),
         _ => None,
     }
 }
 
-fn is_std_option_compat_completion(label: &str) -> bool {
+fn is_std_option_compat_symbol(label: &str) -> bool {
     matches!(
         label,
         "IntOption"
@@ -1260,7 +1153,7 @@ fn is_std_option_compat_completion(label: &str) -> bool {
     )
 }
 
-fn is_std_result_compat_completion(label: &str) -> bool {
+fn is_std_result_compat_symbol(label: &str) -> bool {
     matches!(
         label,
         "IntResult"
@@ -1288,7 +1181,7 @@ fn is_std_result_compat_completion(label: &str) -> bool {
     )
 }
 
-fn is_std_array_fixed_arity_completion(label: &str) -> bool {
+fn is_std_array_fixed_arity_symbol(label: &str) -> bool {
     let Some(stem) = label.strip_suffix("_array") else {
         return false;
     };
@@ -1636,6 +1529,10 @@ fn severity(severity: CompilerSeverity) -> DiagnosticSeverity {
 }
 
 fn render_hover_markdown(info: &HoverInfo) -> String {
+    render_hover_markdown_with_note(info, None)
+}
+
+fn render_hover_markdown_with_note(info: &HoverInfo, note: Option<&str>) -> String {
     let mut text = format!(
         "**{}** `{}`\n\n```ql\n{}\n```",
         symbol_kind_name(info.kind),
@@ -1645,6 +1542,11 @@ fn render_hover_markdown(info: &HoverInfo) -> String {
 
     if let Some(ty) = &info.ty {
         text.push_str(&format!("\n\nType: `{}`", ty));
+    }
+
+    if let Some(note) = note {
+        text.push_str("\n\n");
+        text.push_str(note);
     }
 
     text
