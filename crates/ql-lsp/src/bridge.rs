@@ -20,7 +20,7 @@ use tower_lsp::lsp_types::request::{
 };
 use tower_lsp::lsp_types::{
     CallHierarchyIncomingCall, CallHierarchyItem, CallHierarchyOutgoingCall,
-    CompletionItem as LspCompletionItem, CompletionItemKind, CompletionResponse,
+    CompletionItem as LspCompletionItem, CompletionItemKind, CompletionItemTag, CompletionResponse,
     CompletionTextEdit, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
     DocumentSymbol, DocumentSymbolResponse, Documentation, GotoDefinitionResponse, Hover,
     HoverContents, Location, MarkupContent, MarkupKind, NumberOrString, Position,
@@ -1153,17 +1153,23 @@ pub(crate) fn completion_response(
     let items = items
         .into_iter()
         .filter(|item| completion_matches_prefix(&item.label, &item.insert_text, &prefix))
-        .map(|item| LspCompletionItem {
-            label: item.label.clone(),
-            kind: Some(completion_item_kind(item.kind)),
-            detail: Some(item.detail.clone()),
-            documentation: completion_documentation(&item),
-            data: completion_item_data(&item),
-            text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(
-                span_to_range(source, replace_span),
-                item.insert_text,
-            ))),
-            ..Default::default()
+        .map(|item| {
+            let compatibility = stdlib_compat_completion(&item);
+            LspCompletionItem {
+                label: item.label.clone(),
+                kind: Some(completion_item_kind(item.kind)),
+                detail: Some(item.detail.clone()),
+                documentation: completion_documentation(&item, compatibility),
+                data: completion_item_data(&item),
+                sort_text: compatibility.map(|_| format!("zz_{}", item.label)),
+                tags: compatibility.map(|_| vec![CompletionItemTag::DEPRECATED]),
+                deprecated: compatibility.map(|_| true),
+                text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(
+                    span_to_range(source, replace_span),
+                    item.insert_text,
+                ))),
+                ..Default::default()
+            }
         })
         .collect::<Vec<_>>();
     if items.is_empty() {
@@ -1173,13 +1179,24 @@ pub(crate) fn completion_response(
     Some(CompletionResponse::Array(items))
 }
 
-fn completion_documentation(item: &ql_analysis::CompletionItem) -> Option<Documentation> {
-    completion_documentation_from_parts(&item.detail, item.ty.as_deref())
+fn completion_documentation(
+    item: &ql_analysis::CompletionItem,
+    compatibility: Option<&'static str>,
+) -> Option<Documentation> {
+    completion_documentation_from_parts_with_note(&item.detail, item.ty.as_deref(), compatibility)
 }
 
 pub(crate) fn completion_documentation_from_parts(
     detail: &str,
     ty: Option<&str>,
+) -> Option<Documentation> {
+    completion_documentation_from_parts_with_note(detail, ty, None)
+}
+
+fn completion_documentation_from_parts_with_note(
+    detail: &str,
+    ty: Option<&str>,
+    note: Option<&str>,
 ) -> Option<Documentation> {
     let mut sections = Vec::new();
 
@@ -1191,11 +1208,95 @@ pub(crate) fn completion_documentation_from_parts(
         sections.push(format!("Type: `{ty}`"));
     }
 
+    if let Some(note) = note {
+        sections.push(note.to_owned());
+    }
+
     (!sections.is_empty()).then(|| {
         Documentation::MarkupContent(MarkupContent {
             kind: MarkupKind::Markdown,
             value: sections.join("\n\n"),
         })
+    })
+}
+
+fn stdlib_compat_completion(item: &ql_analysis::CompletionItem) -> Option<&'static str> {
+    let package = item.source_package.as_deref()?;
+    match package {
+        "std.option" if is_std_option_compat_completion(&item.label) => Some(
+            "Compatibility API. Prefer generic `Option[T]` helpers such as `some`, `none_option`, `unwrap_or`, `is_some`, `is_none`, and `or_option`.",
+        ),
+        "std.result" if is_std_result_compat_completion(&item.label) => Some(
+            "Compatibility API. Prefer generic `Result[T, E]` helpers such as `ok`, `err`, `unwrap_result_or`, `or_result`, `error_or`, `ok_or`, `to_option`, and `error_to_option`.",
+        ),
+        "std.array" if is_std_array_fixed_arity_completion(&item.label) => Some(
+            "Compatibility API. Prefer length-generic `std.array` helpers such as `first_array`, `last_array`, `at_array_or`, `contains_array`, `count_array`, `len_array`, `sum_int_array`, `product_int_array`, `max_int_array`, `min_int_array`, `all_bool_array`, `any_bool_array`, and `none_bool_array`.",
+        ),
+        _ => None,
+    }
+}
+
+fn is_std_option_compat_completion(label: &str) -> bool {
+    matches!(
+        label,
+        "IntOption"
+            | "BoolOption"
+            | "some_int"
+            | "none_int"
+            | "is_some_int"
+            | "is_none_int"
+            | "unwrap_or_int"
+            | "or_int"
+            | "or_option_int"
+            | "value_or_zero_int"
+            | "some_bool"
+            | "none_bool"
+            | "is_some_bool"
+            | "is_none_bool"
+            | "unwrap_or_bool"
+            | "or_option_bool"
+            | "value_or_false_bool"
+            | "value_or_true_bool"
+    )
+}
+
+fn is_std_result_compat_completion(label: &str) -> bool {
+    matches!(
+        label,
+        "IntResult"
+            | "BoolResult"
+            | "ok_int"
+            | "err_int"
+            | "is_ok_int"
+            | "is_err_int"
+            | "unwrap_result_or_int"
+            | "or_result_int"
+            | "error_or_zero_int"
+            | "error_to_option_int"
+            | "ok_bool"
+            | "err_bool"
+            | "is_ok_bool"
+            | "is_err_bool"
+            | "unwrap_result_or_bool"
+            | "or_result_bool"
+            | "error_or_zero_bool"
+            | "error_to_option_bool"
+            | "ok_or_int"
+            | "ok_or_bool"
+            | "to_option_int"
+            | "to_option_bool"
+    )
+}
+
+fn is_std_array_fixed_arity_completion(label: &str) -> bool {
+    let Some(stem) = label.strip_suffix("_array") else {
+        return false;
+    };
+
+    ["3", "4", "5"].iter().any(|arity| {
+        stem.ends_with(arity)
+            || stem.ends_with(&format!("{arity}_int"))
+            || stem.ends_with(&format!("{arity}_bool"))
     })
 }
 

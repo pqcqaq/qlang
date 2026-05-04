@@ -108,6 +108,7 @@ pub struct CompletionItem {
     pub kind: SymbolKind,
     pub detail: String,
     pub ty: Option<String>,
+    pub source_package: Option<String>,
 }
 
 /// One source-backed semantic-token occurrence for editor coloring.
@@ -3676,6 +3677,7 @@ fn completion_item_from_symbol(symbol: &SymbolData) -> CompletionItem {
         kind: symbol.kind,
         detail: symbol.detail.clone(),
         ty: symbol.ty.clone(),
+        source_package: None,
     }
 }
 

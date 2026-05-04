@@ -25,8 +25,9 @@ use ql_lsp::bridge::{
 use ql_span::Span;
 use tower_lsp::lsp_types::request::{GotoDeclarationResponse, GotoTypeDefinitionResponse};
 use tower_lsp::lsp_types::{
-    CompletionItemKind, CompletionResponse, CompletionTextEdit, GotoDefinitionResponse,
-    HoverContents, Location, Position, SemanticTokenType, SemanticTokensResult, TextEdit, Url,
+    CompletionItem as LspCompletionItem, CompletionItemKind, CompletionItemTag, CompletionResponse,
+    CompletionTextEdit, Documentation, GotoDefinitionResponse, HoverContents, Location, Position,
+    SemanticTokenType, SemanticTokensResult, TextEdit, Url,
 };
 
 struct TempDir {
@@ -85,6 +86,24 @@ fn offset_to_position(source: &str, offset: usize) -> Position {
     let line = prefix.bytes().filter(|byte| *byte == b'\n').count() as u32;
     let line_start = prefix.rfind('\n').map(|index| index + 1).unwrap_or(0);
     Position::new(line, (prefix[line_start..].chars().count()) as u32)
+}
+
+fn completion_item<'a>(items: &'a [LspCompletionItem], label: &str) -> &'a LspCompletionItem {
+    items
+        .iter()
+        .find(|item| item.label == label)
+        .unwrap_or_else(|| panic!("completion item `{label}` should exist"))
+}
+
+fn completion_documentation_value(item: &LspCompletionItem) -> &str {
+    match item
+        .documentation
+        .as_ref()
+        .expect("completion item should have documentation")
+    {
+        Documentation::String(value) => value,
+        Documentation::MarkupContent(markup) => markup.value.as_str(),
+    }
 }
 
 fn decode_semantic_tokens(
@@ -881,6 +900,182 @@ pub fn main() -> Int {
             ),
             "Buffer".to_owned(),
         ))),
+    );
+}
+
+#[test]
+#[allow(deprecated)]
+fn package_bridge_marks_stdlib_compat_import_completions_deprecated() {
+    let temp = TempDir::new("ql-lsp-stdlib-compat-completion");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/option/qlang.toml",
+        r#"
+[package]
+name = "std.option"
+"#,
+    );
+    temp.write(
+        "workspace/option/std.option.qi",
+        r#"
+// qlang interface v1
+// package: std.option
+
+// source: src/lib.ql
+package std.option
+
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+pub enum IntOption {
+    Some(Int),
+    None,
+}
+pub fn some[T](value: T) -> Option[T]
+pub fn some_int(value: Int) -> IntOption
+"#,
+    );
+    temp.write(
+        "workspace/result/qlang.toml",
+        r#"
+[package]
+name = "std.result"
+"#,
+    );
+    temp.write(
+        "workspace/result/std.result.qi",
+        r#"
+// qlang interface v1
+// package: std.result
+
+// source: src/lib.ql
+package std.result
+
+pub enum Result[T, E] {
+    Ok(T),
+    Err(E),
+}
+pub enum IntResult {
+    Ok(Int),
+    Err(Int),
+}
+pub fn ok[T, E](value: T) -> Result[T, E]
+pub fn ok_int(value: Int) -> IntResult
+"#,
+    );
+    temp.write(
+        "workspace/array/qlang.toml",
+        r#"
+[package]
+name = "std.array"
+"#,
+    );
+    temp.write(
+        "workspace/array/std.array.qi",
+        r#"
+// qlang interface v1
+// package: std.array
+
+// source: src/lib.ql
+package std.array
+
+pub fn sum_int_array[N](values: [Int; N]) -> Int
+pub fn sum3_int_array(values: [Int; 3]) -> Int
+pub fn repeat3_array[T](value: T) -> [T; 3]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../option", "../result", "../array"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use std.option.
+use std.result.
+use std.array.
+
+pub fn main() -> Int {
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let Some(CompletionResponse::Array(option_items)) = completion_for_dependency_imports(
+        source,
+        &package,
+        offset_to_position(
+            source,
+            nth_offset(source, "std.option.", 1) + "std.option.".len(),
+        ),
+    ) else {
+        panic!("std.option completion should exist")
+    };
+    assert_stdlib_recommended_completion(completion_item(&option_items, "Option"));
+    assert_stdlib_recommended_completion(completion_item(&option_items, "some"));
+    assert_stdlib_compat_completion(completion_item(&option_items, "IntOption"));
+    assert_stdlib_compat_completion(completion_item(&option_items, "some_int"));
+
+    let Some(CompletionResponse::Array(result_items)) = completion_for_dependency_imports(
+        source,
+        &package,
+        offset_to_position(
+            source,
+            nth_offset(source, "std.result.", 1) + "std.result.".len(),
+        ),
+    ) else {
+        panic!("std.result completion should exist")
+    };
+    assert_stdlib_recommended_completion(completion_item(&result_items, "Result"));
+    assert_stdlib_recommended_completion(completion_item(&result_items, "ok"));
+    assert_stdlib_compat_completion(completion_item(&result_items, "IntResult"));
+    assert_stdlib_compat_completion(completion_item(&result_items, "ok_int"));
+
+    let Some(CompletionResponse::Array(array_items)) = completion_for_dependency_imports(
+        source,
+        &package,
+        offset_to_position(
+            source,
+            nth_offset(source, "std.array.", 1) + "std.array.".len(),
+        ),
+    ) else {
+        panic!("std.array completion should exist")
+    };
+    assert_stdlib_recommended_completion(completion_item(&array_items, "sum_int_array"));
+    assert_stdlib_compat_completion(completion_item(&array_items, "sum3_int_array"));
+    assert_stdlib_compat_completion(completion_item(&array_items, "repeat3_array"));
+}
+
+#[allow(deprecated)]
+fn assert_stdlib_recommended_completion(item: &LspCompletionItem) {
+    assert_eq!(item.tags, None);
+    assert_eq!(item.deprecated, None);
+    assert_eq!(item.sort_text, None);
+}
+
+#[allow(deprecated)]
+fn assert_stdlib_compat_completion(item: &LspCompletionItem) {
+    assert_eq!(item.tags, Some(vec![CompletionItemTag::DEPRECATED]));
+    assert_eq!(item.deprecated, Some(true));
+    assert!(
+        item.sort_text
+            .as_deref()
+            .is_some_and(|text| text.starts_with("zz_"))
+    );
+    assert!(
+        completion_documentation_value(item).contains("Compatibility API"),
+        "compatibility completion should document the preferred API"
     );
 }
 
@@ -3067,10 +3262,7 @@ packages = ["../dep"]
     };
     assert_eq!(load_method_items.len(), 1);
     assert_eq!(load_method_items[0].label, "get");
-    assert_eq!(
-        load_method_items[0].kind,
-        Some(CompletionItemKind::METHOD)
-    );
+    assert_eq!(load_method_items[0].kind, Some(CompletionItemKind::METHOD));
     assert_eq!(
         load_method_items[0].detail.as_deref(),
         Some("fn get(self) -> Int")
@@ -3106,10 +3298,7 @@ packages = ["../dep"]
     };
     assert_eq!(maybe_method_items.len(), 1);
     assert_eq!(maybe_method_items[0].label, "get");
-    assert_eq!(
-        maybe_method_items[0].kind,
-        Some(CompletionItemKind::METHOD)
-    );
+    assert_eq!(maybe_method_items[0].kind, Some(CompletionItemKind::METHOD));
     assert_eq!(
         maybe_method_items[0].detail.as_deref(),
         Some("fn get(self) -> Int")

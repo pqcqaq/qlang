@@ -25,15 +25,13 @@ use ql_project::{
 use ql_resolve::{ImportBinding, ResolutionMap, TypeResolution, resolve_module};
 use ql_span::Span;
 use ql_typeck::{Ty, TypeckResult, analyze_module as analyze_types};
-use query::{
-    QueryIndex, render_generics, render_struct_detail, render_type_alias_detail,
-};
 pub use query::{
     AsyncContextInfo, AsyncOperatorKind, CallHierarchyItem, CompletionItem, DefinitionTarget,
     DocumentSymbolTarget, HoverInfo, IncomingCall, LoopControlContextInfo, LoopControlKind,
     OutgoingCall, ReferenceTarget, RenameEdit, RenameError, RenameResult, RenameTarget,
     SemanticTokenOccurrence, SymbolKind, TypeHierarchyItem,
 };
+use query::{QueryIndex, render_generics, render_struct_detail, render_type_alias_detail};
 pub use runtime::RuntimeRequirement;
 
 /// Parsed-and-lowered semantic analysis snapshot shared by CLI and future LSP work.
@@ -493,6 +491,7 @@ impl DependencyInterface {
                 kind: SymbolKind::Variant,
                 detail: dependency_variant_detail(&enum_decl.name, variant),
                 ty: Some(enum_decl.name.clone()),
+                source_package: None,
             })
             .collect::<Vec<_>>();
         items.sort_by(|left, right| {
@@ -913,6 +912,7 @@ impl PackageAnalysis {
                 kind: SymbolKind::Field,
                 detail: field.detail.clone(),
                 ty: Some(field.ty.clone()),
+                source_package: None,
             })
             .collect::<Vec<_>>();
         (!items.is_empty()).then_some(items)
@@ -936,6 +936,7 @@ impl PackageAnalysis {
                 kind: SymbolKind::Field,
                 detail: field.detail.clone(),
                 ty: Some(field.ty.clone()),
+                source_package: None,
             })
             .collect::<Vec<_>>();
         (!items.is_empty()).then_some(items)
@@ -956,6 +957,7 @@ impl PackageAnalysis {
                 kind: SymbolKind::Field,
                 detail: field.detail.clone(),
                 ty: Some(field.ty.clone()),
+                source_package: None,
             })
             .collect::<Vec<_>>();
         if items.is_empty() {
@@ -990,6 +992,7 @@ impl PackageAnalysis {
                 kind: SymbolKind::Field,
                 detail: field.detail.clone(),
                 ty: Some(field.ty.clone()),
+                source_package: None,
             })
             .collect::<Vec<_>>();
         if items.is_empty() {
@@ -1018,6 +1021,7 @@ impl PackageAnalysis {
                 kind: SymbolKind::Method,
                 detail: method.detail.clone(),
                 ty: method.return_type.clone(),
+                source_package: None,
             })
             .collect::<Vec<_>>();
         if items.is_empty() {
@@ -1052,6 +1056,7 @@ impl PackageAnalysis {
                 kind: SymbolKind::Method,
                 detail: method.detail.clone(),
                 ty: method.return_type.clone(),
+                source_package: None,
             })
             .collect::<Vec<_>>();
         if items.is_empty() {
@@ -1399,6 +1404,7 @@ impl PackageAnalysis {
                 kind: SymbolKind::Method,
                 detail: method.detail.clone(),
                 ty: method.return_type.clone(),
+                source_package: None,
             })
             .collect::<Vec<_>>();
         if items.is_empty() {
@@ -1441,6 +1447,7 @@ impl PackageAnalysis {
                 kind: SymbolKind::Field,
                 detail: field.detail.clone(),
                 ty: Some(field.ty.clone()),
+                source_package: None,
             })
             .collect::<Vec<_>>();
         if items.is_empty() {
@@ -4288,6 +4295,7 @@ fn enum_variant_completions_in_module_source(
             kind: SymbolKind::Variant,
             detail: dependency_variant_detail(&enum_decl.name, variant),
             ty: Some(enum_decl.name.clone()),
+            source_package: None,
         })
         .collect::<Vec<_>>();
     items.sort_by(|left, right| {
@@ -5086,6 +5094,7 @@ fn dependency_completion_items(
                     kind: SymbolKind::Import,
                     detail: format!("package {}", segments.join(".")),
                     ty: None,
+                    source_package: None,
                 });
             }
             DependencyImportPathMatch::Exact => {
@@ -5105,6 +5114,7 @@ fn dependency_completion_items(
                             kind: symbol.kind,
                             detail: symbol.detail.clone(),
                             ty: None,
+                            source_package: Some(symbol.package_name.clone()),
                         }),
                 );
             }
@@ -5386,6 +5396,7 @@ fn dependency_struct_field_completion_items(
             kind: SymbolKind::Field,
             detail: dependency_struct_field_detail(field),
             ty: Some(render_dependency_type_expr(&field.ty)),
+            source_package: None,
         })
         .collect::<Vec<_>>();
     if items.is_empty() {
