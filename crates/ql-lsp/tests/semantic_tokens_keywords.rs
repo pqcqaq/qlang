@@ -5,6 +5,7 @@ use common::request::{
     initialized_service_with_open_documents, nth_offset, offset_to_position,
     semantic_tokens_full_via_request, semantic_tokens_range_via_request,
 };
+use common::stdlib_compat::write_stdlib_compat_workspace;
 use ql_lsp::Backend;
 use tower_lsp::LspService;
 use tower_lsp::lsp_types::{
@@ -85,67 +86,6 @@ fn assert_stdlib_compat_import_deprecated_modifiers(
             "`{needle}` deprecated modifier mismatch; decoded={decoded:#?}",
         );
     }
-}
-
-fn write_stdlib_compat_semantic_token_workspace(temp: &TempDir, source: &str) -> Url {
-    let app_path = temp.write("workspace/app/src/main.ql", source);
-    temp.write(
-        "workspace/app/qlang.toml",
-        r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../option", "../array"]
-"#,
-    );
-    temp.write(
-        "workspace/option/qlang.toml",
-        r#"
-[package]
-name = "std.option"
-"#,
-    );
-    temp.write(
-        "workspace/option/std.option.qi",
-        r#"
-// qlang interface v1
-// package: std.option
-
-// source: src/lib.ql
-package std.option
-
-pub enum Option[T] {
-    Some(T),
-    None,
-}
-pub enum IntOption {
-    Some(Int),
-    None,
-}
-"#,
-    );
-    temp.write(
-        "workspace/array/qlang.toml",
-        r#"
-[package]
-name = "std.array"
-"#,
-    );
-    temp.write(
-        "workspace/array/std.array.qi",
-        r#"
-// qlang interface v1
-// package: std.array
-
-// source: src/lib.ql
-package std.array
-
-pub fn sum_int_array[N](values: [Int; N]) -> Int
-pub fn sum3_int_array(values: [Int; 3]) -> Int
-"#,
-    );
-    Url::from_file_path(app_path).expect("app path should convert to URI")
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -374,7 +314,7 @@ pub fn main() -> Int {
     return 0
 }
 "#;
-    let app_uri = write_stdlib_compat_semantic_token_workspace(&temp, app_source);
+    let app_uri = write_stdlib_compat_workspace(&temp, app_source);
 
     let workspace_root_uri = Url::from_file_path(temp.path().join("workspace"))
         .expect("workspace root path should convert to URI");
@@ -410,7 +350,7 @@ pub fn main() -> Int {
     return 0
 }
 "#;
-    let app_uri = write_stdlib_compat_semantic_token_workspace(&temp, app_source);
+    let app_uri = write_stdlib_compat_workspace(&temp, app_source);
 
     let workspace_root_uri = Url::from_file_path(temp.path().join("workspace"))
         .expect("workspace root path should convert to URI");
@@ -450,7 +390,7 @@ pub fn main() -> Int {
     return 0 +
 }
 "#;
-    let app_uri = write_stdlib_compat_semantic_token_workspace(&temp, app_source);
+    let app_uri = write_stdlib_compat_workspace(&temp, app_source);
 
     let workspace_root_uri = Url::from_file_path(temp.path().join("workspace"))
         .expect("workspace root path should convert to URI");
