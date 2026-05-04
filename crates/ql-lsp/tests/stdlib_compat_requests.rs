@@ -4,61 +4,13 @@ use common::request::{
     TempDir, completion_via_request, did_open_via_request, hover_via_request,
     initialize_service_with_workspace_roots, nth_offset, offset_to_position,
 };
-use common::stdlib_compat::write_stdlib_compat_workspace;
+use common::stdlib_compat::{
+    assert_compat_completion, assert_recommended_completion, completion_item, completion_items,
+    write_stdlib_compat_workspace,
+};
 use ql_lsp::Backend;
 use tower_lsp::LspService;
-use tower_lsp::lsp_types::{
-    CompletionItem as LspCompletionItem, CompletionItemTag, CompletionResponse, Documentation,
-    HoverContents, Url,
-};
-
-fn completion_items(completion: CompletionResponse) -> Vec<LspCompletionItem> {
-    match completion {
-        CompletionResponse::Array(items) => items,
-        CompletionResponse::List(list) => list.items,
-    }
-}
-
-fn completion_item<'a>(items: &'a [LspCompletionItem], label: &str) -> &'a LspCompletionItem {
-    items
-        .iter()
-        .find(|item| item.label == label)
-        .unwrap_or_else(|| panic!("completion item `{label}` should exist"))
-}
-
-fn documentation_value(item: &LspCompletionItem) -> &str {
-    match item
-        .documentation
-        .as_ref()
-        .expect("completion item should include documentation")
-    {
-        Documentation::String(value) => value,
-        Documentation::MarkupContent(markup) => markup.value.as_str(),
-    }
-}
-
-#[allow(deprecated)]
-fn assert_recommended_completion(item: &LspCompletionItem) {
-    assert_eq!(item.tags, None);
-    assert_eq!(item.deprecated, None);
-    assert_eq!(item.sort_text, None);
-}
-
-#[allow(deprecated)]
-fn assert_compat_completion(item: &LspCompletionItem) {
-    assert_eq!(item.tags, Some(vec![CompletionItemTag::DEPRECATED]));
-    assert_eq!(item.deprecated, Some(true));
-    assert!(
-        item.sort_text
-            .as_deref()
-            .is_some_and(|text| text.starts_with("zz_")),
-        "compatibility completion should sort after recommended APIs: {item:#?}",
-    );
-    assert!(
-        documentation_value(item).contains("Compatibility API"),
-        "compatibility completion should document the migration path: {item:#?}",
-    );
-}
+use tower_lsp::lsp_types::{HoverContents, Url};
 
 async fn open_stdlib_compat_workspace(
     temp: &TempDir,
