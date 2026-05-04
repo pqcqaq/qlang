@@ -126,6 +126,14 @@ pub struct DependencyResolvedTarget {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DependencyImportSemanticTarget {
+    pub span: Span,
+    pub package_name: String,
+    pub kind: SymbolKind,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DependencyEnumCompletionTarget {
     pub package_name: String,
     pub manifest_path: PathBuf,
@@ -1959,6 +1967,18 @@ impl PackageAnalysis {
             collect_dependency_import_root_semantic_tokens_in_module(self, &module, source);
         sort_and_dedup_semantic_tokens(&mut tokens);
         tokens
+    }
+
+    pub fn dependency_import_semantic_targets_in_source(
+        &self,
+        source: &str,
+    ) -> Vec<DependencyImportSemanticTarget> {
+        let mut targets = match parse_source(source) {
+            Ok(module) => collect_dependency_import_semantic_targets_in_module(self, &module),
+            Err(_) => collect_dependency_import_semantic_targets_in_broken_source(self, source),
+        };
+        sort_and_dedup_dependency_import_semantic_targets(&mut targets);
+        targets
     }
 
     /// Return dependency-backed semantic-token occurrences that remain available even when
@@ -5535,6 +5555,65 @@ fn collect_dependency_import_root_semantic_tokens_in_broken_source(
                 })
         })
         .collect()
+}
+
+fn collect_dependency_import_semantic_targets_in_module(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+) -> Vec<DependencyImportSemanticTarget> {
+    let mut targets = Vec::new();
+    for use_decl in &module.uses {
+        let bindings = dependency_import_bindings_for_use_decl(use_decl);
+        for binding in bindings {
+            let Some((dependency, symbol)) = package.resolve_dependency_import_binding(&binding)
+            else {
+                continue;
+            };
+            targets.push(DependencyImportSemanticTarget {
+                span: binding.definition_span,
+                package_name: dependency.artifact.package_name.clone(),
+                kind: symbol.kind,
+                name: symbol.name.clone(),
+            });
+        }
+    }
+    targets
+}
+
+fn collect_dependency_import_semantic_targets_in_broken_source(
+    package: &PackageAnalysis,
+    source: &str,
+) -> Vec<DependencyImportSemanticTarget> {
+    let (tokens, _) = lex(source);
+    dependency_resolved_import_targets_in_tokens(package, &tokens)
+        .into_values()
+        .map(|(binding, target)| DependencyImportSemanticTarget {
+            span: binding.definition_span,
+            package_name: target.package_name,
+            kind: target.kind,
+            name: target.name,
+        })
+        .collect()
+}
+
+fn sort_and_dedup_dependency_import_semantic_targets(
+    targets: &mut Vec<DependencyImportSemanticTarget>,
+) {
+    targets.sort_by_key(|target| {
+        (
+            target.span.start,
+            target.span.end,
+            semantic_token_kind_sort_rank(target.kind),
+            target.package_name.clone(),
+            target.name.clone(),
+        )
+    });
+    targets.dedup_by(|left, right| {
+        left.span == right.span
+            && left.package_name == right.package_name
+            && left.kind == right.kind
+            && left.name == right.name
+    });
 }
 
 fn collect_dependency_semantic_tokens_in_broken_source(
@@ -13382,6 +13461,17 @@ fn dependency_import_bindings_for_local_name(
         } else {
             Vec::new()
         }
+    }
+}
+
+fn dependency_import_bindings_for_use_decl(use_decl: &ql_ast::UseDecl) -> Vec<ImportBinding> {
+    if let Some(group) = &use_decl.group {
+        group
+            .iter()
+            .map(|item| ImportBinding::grouped(&use_decl.prefix, item))
+            .collect()
+    } else {
+        vec![ImportBinding::direct(use_decl)]
     }
 }
 

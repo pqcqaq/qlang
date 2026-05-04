@@ -17,7 +17,7 @@
 - `std.array` 的 length-generic helpers，例如 `first_array`、`last_array`、`at_array_or`、`contains_array`、`count_array`、`len_array`
 - `std.test` 的普通断言和数组断言 helpers
 
-固定长度数组 helper 和 concrete carrier 只保留兼容，不再扩张；LSP 会把这些兼容 API 标记为 deprecated 并排在推荐 API 后面。
+固定长度数组 helper 和 concrete carrier 只保留兼容，不再扩张；LSP 会在补全、hover 和 semantic tokens 中把这些兼容 API 标记为 deprecated。
 
 ## 本地依赖
 

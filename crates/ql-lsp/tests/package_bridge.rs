@@ -27,7 +27,7 @@ use tower_lsp::lsp_types::request::{GotoDeclarationResponse, GotoTypeDefinitionR
 use tower_lsp::lsp_types::{
     CompletionItem as LspCompletionItem, CompletionItemKind, CompletionItemTag, CompletionResponse,
     CompletionTextEdit, Documentation, GotoDefinitionResponse, HoverContents, Location, Position,
-    SemanticTokenType, SemanticTokensResult, TextEdit, Url,
+    SemanticTokenModifier, SemanticTokenType, SemanticTokensResult, TextEdit, Url,
 };
 
 struct TempDir {
@@ -121,6 +121,32 @@ fn decode_semantic_tokens(
             start = token.delta_start;
         }
         decoded.push((line, start, token.length, token.token_type));
+    }
+
+    decoded
+}
+
+fn decode_semantic_tokens_with_modifiers(
+    tokens: &[tower_lsp::lsp_types::SemanticToken],
+) -> Vec<(u32, u32, u32, u32, u32)> {
+    let mut line = 0u32;
+    let mut start = 0u32;
+    let mut decoded = Vec::new();
+
+    for token in tokens {
+        line += token.delta_line;
+        if token.delta_line == 0 {
+            start += token.delta_start;
+        } else {
+            start = token.delta_start;
+        }
+        decoded.push((
+            line,
+            start,
+            token.length,
+            token.token_type,
+            token.token_modifiers_bitset,
+        ));
     }
 
     decoded
@@ -1021,6 +1047,61 @@ pub fn main() -> Int {
             .value
             .contains("length-generic `std.array` helpers")
     );
+}
+
+#[test]
+fn package_bridge_marks_stdlib_compat_import_semantic_tokens_deprecated() {
+    let temp = TempDir::new("ql-lsp-stdlib-compat-semantic-tokens");
+    let source = r#"
+package demo.app
+
+use std.option.IntOption as MaybeInt
+use std.option.Option as GenericOption
+use std.array.sum3_int_array as sum_three
+use std.array.sum_int_array as sum_any
+
+pub fn main() -> Int {
+    return 0
+}
+"#;
+    let (_app_root, package) = write_stdlib_compat_workspace(&temp, source);
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let SemanticTokensResult::Tokens(tokens) =
+        semantic_tokens_for_package_analysis(source, &analysis, &package)
+    else {
+        panic!("expected full semantic tokens");
+    };
+    let decoded = decode_semantic_tokens_with_modifiers(&tokens.data);
+    let legend = semantic_tokens_legend();
+    let deprecated_bit = 1u32
+        << legend
+            .token_modifiers
+            .iter()
+            .position(|modifier| *modifier == SemanticTokenModifier::DEPRECATED)
+            .expect("deprecated token modifier should exist");
+
+    for (needle, expected_deprecated) in [
+        ("MaybeInt", true),
+        ("GenericOption", false),
+        ("sum_three", true),
+        ("sum_any", false),
+    ] {
+        let range = span_to_range(source, nth_span(source, needle, 1));
+        let token = decoded
+            .iter()
+            .find(|(line, start, length, _, _)| {
+                *line == range.start.line
+                    && *start == range.start.character
+                    && *length == range.end.character - range.start.character
+            })
+            .unwrap_or_else(|| panic!("semantic token for `{needle}` should exist"));
+        assert_eq!(
+            token.4 & deprecated_bit != 0,
+            expected_deprecated,
+            "`{needle}` deprecated modifier mismatch; decoded={decoded:#?}",
+        );
+    }
 }
 
 fn write_stdlib_compat_workspace(

@@ -41,7 +41,7 @@
 
 - same-file：hover、definition、declaration、typeDefinition、references、documentHighlight、completion、semantic tokens、formatting、codeAction、codeLens、callHierarchy、typeHierarchy、rename。
 - workspace：`workspace/symbol`、`implementation`、open-doc dependency navigation、保守 workspace rename。
-- stdlib 兼容 API 会在补全和依赖 import hover 中提示 deprecated，并排在推荐 generic / length-generic API 后面。
+- stdlib 兼容 API 会在补全、依赖 import hover 和 semantic tokens 中提示 deprecated，并排在推荐 generic / length-generic API 后面。
 - formatting：document/range/on-type formatting 复用 `ql fmt`。
 - VSCode 插件是 thin client，不自带 `qlsp`。
 

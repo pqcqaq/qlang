@@ -17,7 +17,7 @@ use ql_resolve::{
 use ql_span::Span;
 use ql_typeck::{FieldTarget, MemberTarget, MethodTarget, TypeckResult};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SymbolKind {
     Function,
     Const,

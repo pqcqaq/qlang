@@ -1231,12 +1231,19 @@ pub fn semantic_tokens_legend() -> SemanticTokensLegend {
             SemanticTokenModifier::READONLY,
             SemanticTokenModifier::ASYNC,
             SemanticTokenModifier::new("unsafe"),
+            SemanticTokenModifier::DEPRECATED,
         ],
     }
 }
 
 pub fn semantic_tokens_for_analysis(source: &str, analysis: &Analysis) -> SemanticTokensResult {
-    semantic_tokens_result_for_occurrences(source, analysis.semantic_tokens(), None, true)
+    semantic_tokens_result_for_occurrences(
+        source,
+        analysis.semantic_tokens(),
+        None,
+        true,
+        &HashSet::new(),
+    )
 }
 
 pub fn semantic_tokens_for_analysis_range(
@@ -1244,7 +1251,13 @@ pub fn semantic_tokens_for_analysis_range(
     analysis: &Analysis,
     range: Range,
 ) -> SemanticTokensResult {
-    semantic_tokens_result_for_occurrences(source, analysis.semantic_tokens(), Some(range), true)
+    semantic_tokens_result_for_occurrences(
+        source,
+        analysis.semantic_tokens(),
+        Some(range),
+        true,
+        &HashSet::new(),
+    )
 }
 
 pub fn semantic_tokens_for_package_analysis(
@@ -1273,7 +1286,15 @@ pub fn semantic_tokens_for_package_analysis(
         )
     });
     tokens.dedup_by(|left, right| left.span == right.span && left.kind == right.kind);
-    semantic_tokens_result_for_occurrences(source, tokens, None, true)
+    let deprecated_dependency_import_tokens =
+        deprecated_dependency_import_semantic_token_keys(package, source);
+    semantic_tokens_result_for_occurrences(
+        source,
+        tokens,
+        None,
+        true,
+        &deprecated_dependency_import_tokens,
+    )
 }
 
 pub fn semantic_tokens_for_package_analysis_range(
@@ -1303,18 +1324,29 @@ pub fn semantic_tokens_for_package_analysis_range(
         )
     });
     tokens.dedup_by(|left, right| left.span == right.span && left.kind == right.kind);
-    semantic_tokens_result_for_occurrences(source, tokens, Some(range), true)
+    let deprecated_dependency_import_tokens =
+        deprecated_dependency_import_semantic_token_keys(package, source);
+    semantic_tokens_result_for_occurrences(
+        source,
+        tokens,
+        Some(range),
+        true,
+        &deprecated_dependency_import_tokens,
+    )
 }
 
 pub fn semantic_tokens_for_dependency_fallback(
     source: &str,
     package: &PackageAnalysis,
 ) -> SemanticTokensResult {
+    let deprecated_dependency_import_tokens =
+        deprecated_dependency_import_semantic_token_keys(package, source);
     semantic_tokens_result_for_occurrences(
         source,
         package.dependency_fallback_semantic_tokens_in_source(source),
         None,
         true,
+        &deprecated_dependency_import_tokens,
     )
 }
 
@@ -1323,11 +1355,14 @@ pub fn semantic_tokens_for_dependency_fallback_range(
     package: &PackageAnalysis,
     range: Range,
 ) -> SemanticTokensResult {
+    let deprecated_dependency_import_tokens =
+        deprecated_dependency_import_semantic_token_keys(package, source);
     semantic_tokens_result_for_occurrences(
         source,
         package.dependency_fallback_semantic_tokens_in_source(source),
         Some(range),
         true,
+        &deprecated_dependency_import_tokens,
     )
 }
 
@@ -1751,6 +1786,18 @@ struct LspSemanticTokenOccurrence {
     token_modifiers_bitset: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct SemanticTokenKey {
+    span: Span,
+    kind: SymbolKind,
+}
+
+impl SemanticTokenKey {
+    const fn new(span: Span, kind: SymbolKind) -> Self {
+        Self { span, kind }
+    }
+}
+
 fn semantic_tokens_result(
     source: &str,
     tokens: Vec<LspSemanticTokenOccurrence>,
@@ -1791,14 +1838,14 @@ pub fn semantic_tokens_result_from_occurrences(
     source: &str,
     tokens: Vec<ql_analysis::SemanticTokenOccurrence>,
 ) -> SemanticTokensResult {
-    semantic_tokens_result_for_occurrences(source, tokens, None, false)
+    semantic_tokens_result_for_occurrences(source, tokens, None, false, &HashSet::new())
 }
 
 pub fn semantic_tokens_result_from_occurrences_with_lexical(
     source: &str,
     tokens: Vec<ql_analysis::SemanticTokenOccurrence>,
 ) -> SemanticTokensResult {
-    semantic_tokens_result_for_occurrences(source, tokens, None, true)
+    semantic_tokens_result_for_occurrences(source, tokens, None, true, &HashSet::new())
 }
 
 pub fn semantic_tokens_result_from_occurrences_with_lexical_range(
@@ -1806,7 +1853,7 @@ pub fn semantic_tokens_result_from_occurrences_with_lexical_range(
     tokens: Vec<ql_analysis::SemanticTokenOccurrence>,
     range: Range,
 ) -> SemanticTokensResult {
-    semantic_tokens_result_for_occurrences(source, tokens, Some(range), true)
+    semantic_tokens_result_for_occurrences(source, tokens, Some(range), true, &HashSet::new())
 }
 
 fn semantic_tokens_result_for_occurrences(
@@ -1814,6 +1861,7 @@ fn semantic_tokens_result_for_occurrences(
     tokens: Vec<ql_analysis::SemanticTokenOccurrence>,
     range: Option<Range>,
     include_lexical_tokens: bool,
+    deprecated_dependency_import_tokens: &HashSet<SemanticTokenKey>,
 ) -> SemanticTokensResult {
     let filter = range.and_then(|range| {
         Some((
@@ -1826,7 +1874,11 @@ fn semantic_tokens_result_for_occurrences(
         .map(|token| LspSemanticTokenOccurrence {
             span: token.span,
             token_type: semantic_token_kind_index(token.kind),
-            token_modifiers_bitset: semantic_token_modifier_bitset(token.kind),
+            token_modifiers_bitset: semantic_token_modifier_bitset(
+                token.kind,
+                deprecated_dependency_import_tokens
+                    .contains(&SemanticTokenKey::new(token.span, token.kind)),
+            ),
         })
         .collect::<Vec<_>>();
     let symbol_spans = symbol_tokens
@@ -1933,11 +1985,29 @@ fn lexical_semantic_token_type(kind: TokenKind) -> Option<u32> {
     })
 }
 
-fn semantic_token_modifier_bitset(kind: SymbolKind) -> u32 {
-    match kind {
+fn semantic_token_modifier_bitset(kind: SymbolKind, is_deprecated: bool) -> u32 {
+    let mut bitset = match kind {
         SymbolKind::Const | SymbolKind::Static => 1 << 2,
         _ => 0,
+    };
+    if is_deprecated {
+        bitset |= 1 << 5;
     }
+    bitset
+}
+
+fn deprecated_dependency_import_semantic_token_keys(
+    package: &PackageAnalysis,
+    source: &str,
+) -> HashSet<SemanticTokenKey> {
+    package
+        .dependency_import_semantic_targets_in_source(source)
+        .into_iter()
+        .filter(|target| {
+            stdlib_compat_note(Some(target.package_name.as_str()), &target.name).is_some()
+        })
+        .map(|target| SemanticTokenKey::new(target.span, target.kind))
+        .collect()
 }
 
 fn lexical_semantic_token_modifiers(kind: TokenKind) -> u32 {
