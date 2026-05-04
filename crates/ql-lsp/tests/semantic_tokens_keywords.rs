@@ -50,6 +50,104 @@ fn decode_with_modifiers(tokens: &[SemanticToken]) -> Vec<(u32, u32, u32, u32, u
     decoded
 }
 
+fn deprecated_modifier_bit() -> u32 {
+    let legend = ql_lsp::bridge::semantic_tokens_legend();
+    1u32 << legend
+        .token_modifiers
+        .iter()
+        .position(|modifier| *modifier == SemanticTokenModifier::DEPRECATED)
+        .expect("deprecated token modifier should exist")
+}
+
+fn assert_stdlib_compat_import_deprecated_modifiers(
+    source: &str,
+    decoded: &[(u32, u32, u32, u32, u32)],
+) {
+    let deprecated_bit = deprecated_modifier_bit();
+    for (needle, expected_deprecated) in [
+        ("MaybeInt", true),
+        ("GenericOption", false),
+        ("sum_three", true),
+        ("sum_any", false),
+    ] {
+        let position = offset_to_position(source, nth_offset(source, needle, 1));
+        let entry = decoded
+            .iter()
+            .find(|(line, start, length, _, _)| {
+                *line == position.line
+                    && *start == position.character
+                    && *length == needle.len() as u32
+            })
+            .unwrap_or_else(|| panic!("semantic token for `{needle}` should exist"));
+        assert_eq!(
+            entry.4 & deprecated_bit != 0,
+            expected_deprecated,
+            "`{needle}` deprecated modifier mismatch; decoded={decoded:#?}",
+        );
+    }
+}
+
+fn write_stdlib_compat_semantic_token_workspace(temp: &TempDir, source: &str) -> Url {
+    let app_path = temp.write("workspace/app/src/main.ql", source);
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../option", "../array"]
+"#,
+    );
+    temp.write(
+        "workspace/option/qlang.toml",
+        r#"
+[package]
+name = "std.option"
+"#,
+    );
+    temp.write(
+        "workspace/option/std.option.qi",
+        r#"
+// qlang interface v1
+// package: std.option
+
+// source: src/lib.ql
+package std.option
+
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+pub enum IntOption {
+    Some(Int),
+    None,
+}
+"#,
+    );
+    temp.write(
+        "workspace/array/qlang.toml",
+        r#"
+[package]
+name = "std.array"
+"#,
+    );
+    temp.write(
+        "workspace/array/std.array.qi",
+        r#"
+// qlang interface v1
+// package: std.array
+
+// source: src/lib.ql
+package std.array
+
+pub fn sum_int_array[N](values: [Int; N]) -> Int
+pub fn sum3_int_array(values: [Int; 3]) -> Int
+"#,
+    );
+    Url::from_file_path(app_path).expect("app path should convert to URI")
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn semantic_tokens_include_lexical_keyword_literal_and_operator_tokens() {
     let temp = TempDir::new("ql-lsp-lexical-semantic-tokens");
@@ -276,67 +374,10 @@ pub fn main() -> Int {
     return 0
 }
 "#;
-    let app_path = temp.write("workspace/app/src/main.ql", app_source);
-    temp.write(
-        "workspace/app/qlang.toml",
-        r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../option", "../array"]
-"#,
-    );
-    temp.write(
-        "workspace/option/qlang.toml",
-        r#"
-[package]
-name = "std.option"
-"#,
-    );
-    temp.write(
-        "workspace/option/std.option.qi",
-        r#"
-// qlang interface v1
-// package: std.option
-
-// source: src/lib.ql
-package std.option
-
-pub enum Option[T] {
-    Some(T),
-    None,
-}
-pub enum IntOption {
-    Some(Int),
-    None,
-}
-"#,
-    );
-    temp.write(
-        "workspace/array/qlang.toml",
-        r#"
-[package]
-name = "std.array"
-"#,
-    );
-    temp.write(
-        "workspace/array/std.array.qi",
-        r#"
-// qlang interface v1
-// package: std.array
-
-// source: src/lib.ql
-package std.array
-
-pub fn sum_int_array[N](values: [Int; N]) -> Int
-pub fn sum3_int_array(values: [Int; 3]) -> Int
-"#,
-    );
+    let app_uri = write_stdlib_compat_semantic_token_workspace(&temp, app_source);
 
     let workspace_root_uri = Url::from_file_path(temp.path().join("workspace"))
         .expect("workspace root path should convert to URI");
-    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
     let (mut service, _) = LspService::new(Backend::new);
     initialize_service_with_workspace_roots(&mut service, vec![workspace_root_uri]).await;
     did_open_via_request(&mut service, app_uri.clone(), app_source.to_owned()).await;
@@ -348,34 +389,84 @@ pub fn sum3_int_array(values: [Int; 3]) -> Int
     else {
         panic!("semanticTokens/full should return full token data")
     };
-    let decoded = decode_with_modifiers(&tokens.data);
-    let legend = ql_lsp::bridge::semantic_tokens_legend();
-    let deprecated_bit = 1u32
-        << legend
-            .token_modifiers
-            .iter()
-            .position(|modifier| *modifier == SemanticTokenModifier::DEPRECATED)
-            .expect("deprecated token modifier should exist");
+    assert_stdlib_compat_import_deprecated_modifiers(
+        app_source,
+        &decode_with_modifiers(&tokens.data),
+    );
+}
 
-    for (needle, expected_deprecated) in [
-        ("MaybeInt", true),
-        ("GenericOption", false),
-        ("sum_three", true),
-        ("sum_any", false),
-    ] {
-        let position = offset_to_position(app_source, nth_offset(app_source, needle, 1));
-        let entry = decoded
-            .iter()
-            .find(|(line, start, length, _, _)| {
-                *line == position.line
-                    && *start == position.character
-                    && *length == needle.len() as u32
-            })
-            .unwrap_or_else(|| panic!("semantic token for `{needle}` should exist"));
-        assert_eq!(
-            entry.4 & deprecated_bit != 0,
-            expected_deprecated,
-            "`{needle}` deprecated modifier mismatch; decoded={decoded:#?}",
-        );
-    }
+#[tokio::test(flavor = "current_thread")]
+async fn semantic_tokens_range_request_marks_stdlib_compat_imports_deprecated() {
+    let temp = TempDir::new("ql-lsp-stdlib-compat-semantic-token-range-request");
+    let app_source = r#"
+package demo.app
+
+use std.option.IntOption as MaybeInt
+use std.option.Option as GenericOption
+use std.array.sum3_int_array as sum_three
+use std.array.sum_int_array as sum_any
+
+pub fn main() -> Int {
+    return 0
+}
+"#;
+    let app_uri = write_stdlib_compat_semantic_token_workspace(&temp, app_source);
+
+    let workspace_root_uri = Url::from_file_path(temp.path().join("workspace"))
+        .expect("workspace root path should convert to URI");
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service_with_workspace_roots(&mut service, vec![workspace_root_uri]).await;
+    did_open_via_request(&mut service, app_uri.clone(), app_source.to_owned()).await;
+
+    let range = Range::new(
+        offset_to_position(app_source, nth_offset(app_source, "use std.option", 1)),
+        offset_to_position(app_source, nth_offset(app_source, "pub fn main", 1)),
+    );
+    let SemanticTokensRangeResult::Tokens(tokens) =
+        semantic_tokens_range_via_request(&mut service, app_uri, range)
+            .await
+            .expect("semanticTokens/range should return tokens")
+    else {
+        panic!("semanticTokens/range should return token data")
+    };
+    assert_stdlib_compat_import_deprecated_modifiers(
+        app_source,
+        &decode_with_modifiers(&tokens.data),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn semantic_tokens_fallback_request_marks_stdlib_compat_imports_deprecated() {
+    let temp = TempDir::new("ql-lsp-stdlib-compat-semantic-token-fallback-request");
+    let app_source = r#"
+package demo.app
+
+use std.option.IntOption as MaybeInt
+use std.option.Option as GenericOption
+use std.array.sum3_int_array as sum_three
+use std.array.sum_int_array as sum_any
+
+pub fn main() -> Int {
+    return 0 +
+}
+"#;
+    let app_uri = write_stdlib_compat_semantic_token_workspace(&temp, app_source);
+
+    let workspace_root_uri = Url::from_file_path(temp.path().join("workspace"))
+        .expect("workspace root path should convert to URI");
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service_with_workspace_roots(&mut service, vec![workspace_root_uri]).await;
+    did_open_via_request(&mut service, app_uri.clone(), app_source.to_owned()).await;
+
+    let SemanticTokensResult::Tokens(tokens) =
+        semantic_tokens_full_via_request(&mut service, app_uri)
+            .await
+            .expect("semanticTokens/full fallback should return tokens")
+    else {
+        panic!("semanticTokens/full fallback should return full token data")
+    };
+    assert_stdlib_compat_import_deprecated_modifiers(
+        app_source,
+        &decode_with_modifiers(&tokens.data),
+    );
 }
