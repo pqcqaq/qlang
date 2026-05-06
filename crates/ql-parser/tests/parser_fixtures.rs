@@ -461,6 +461,30 @@ fn parses_generic_array_length_types_in_function_signatures() {
 }
 
 #[test]
+fn parses_repeat_array_literals() {
+    let source = "fn fill[T, N](value: T) -> [T; N] { return [value; N] }";
+    let module = parse_source(source).expect("repeat array literals should parse");
+    let function = match &module.items[0].kind {
+        ItemKind::Function(function) => function,
+        other => panic!("expected function item, got {other:?}"),
+    };
+    let body = function.body.as_ref().expect("function should have a body");
+    let return_stmt = body
+        .statements
+        .first()
+        .expect("function body should contain a return");
+    let ql_ast::StmtKind::Return(Some(expr)) = &return_stmt.kind else {
+        panic!("expected return statement, got {return_stmt:?}");
+    };
+
+    assert!(matches!(
+        &expr.kind,
+        ExprKind::RepeatArray { value, len, .. }
+            if len == "N" && matches!(&value.kind, ExprKind::Name(name) if name == "value")
+    ));
+}
+
+#[test]
 fn attaches_spans_to_nested_nodes() {
     let source = "fn main() { let value = 1 }";
     let module = parse_source(source).expect("span fixture should parse");

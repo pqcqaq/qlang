@@ -18,6 +18,8 @@ pub fn len_array[T, N](values: [T; N]) -> Int
 
 pub fn reverse_array[T, N](values: [T; N]) -> [T; N]
 
+pub fn repeat_array[T, N](value: T) -> [T; N]
+
 pub fn sum_int_array[N](values: [Int; N]) -> Int
 
 pub fn product_int_array[N](values: [Int; N]) -> Int

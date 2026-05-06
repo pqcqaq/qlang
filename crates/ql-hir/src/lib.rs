@@ -452,6 +452,11 @@ pub enum ExprKind {
     NoneLiteral,
     Tuple(Vec<ExprId>),
     Array(Vec<ExprId>),
+    RepeatArray {
+        value: ExprId,
+        len: ArrayLen,
+        len_span: Span,
+    },
     Block(BlockId),
     Unsafe(BlockId),
     If {

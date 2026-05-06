@@ -483,7 +483,35 @@ impl Parser {
                 let mut items = Vec::new();
                 while !self.at(TokenKind::RBracket) && !self.at(TokenKind::Eof) {
                     items.push(self.parse_expr()?);
-                    if !self.eat(TokenKind::Comma) {
+                    if items.len() == 1 && self.eat(TokenKind::Semi) {
+                        let len = if self.at(TokenKind::Int) || self.at(TokenKind::Ident) {
+                            self.bump()
+                        } else {
+                            self.error_here(
+                                "expected array length literal or generic length after `;`",
+                            );
+                            return Err(());
+                        };
+                        if len.kind == TokenKind::Int
+                            && ql_ast::parse_usize_literal(&len.text).is_none()
+                        {
+                            self.errors.push(crate::ParseError {
+                                message: "array length literal must fit in `usize`".into(),
+                                span: len.span,
+                            });
+                            return Err(());
+                        }
+                        self.expect(TokenKind::RBracket, "expected `]` after array literal")?;
+                        let value = items.pop().expect("repeat array value was just parsed");
+                        return Ok(Expr::new(
+                            self.span_from(start),
+                            ExprKind::RepeatArray {
+                                value: Box::new(value),
+                                len: len.text,
+                                len_span: len.span,
+                            },
+                        ));
+                    } else if !self.eat(TokenKind::Comma) {
                         break;
                     }
                 }

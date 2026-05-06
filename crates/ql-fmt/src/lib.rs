@@ -614,6 +614,13 @@ fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
             }
             out.push(']');
         }
+        ExprKind::RepeatArray { value, len, .. } => {
+            out.push('[');
+            format_expr(value, indent, out);
+            out.push_str("; ");
+            out.push_str(len);
+            out.push(']');
+        }
         ExprKind::Block(block) => format_block(block, indent, out),
         ExprKind::Unsafe(block) => {
             out.push_str("unsafe ");

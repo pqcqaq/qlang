@@ -842,6 +842,9 @@ impl<'a> ModuleEmitter<'a> {
                     self.collect_string_literals_in_expr(item, literals, next_index);
                 }
             }
+            hir::ExprKind::RepeatArray { value, .. } => {
+                self.collect_string_literals_in_expr(*value, literals, next_index);
+            }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
                 self.collect_string_literals_in_block(*block_id, literals, next_index);
             }
@@ -1082,6 +1085,9 @@ impl<'a> ModuleEmitter<'a> {
                     self.collect_operand_function_values(item, queue);
                 }
             }
+            Rvalue::RepeatArray { value, .. } => {
+                self.collect_operand_function_values(value, queue);
+            }
             Rvalue::Call { callee, args } => {
                 if let Some(function) = self.resolve_direct_callee_function(callee) {
                     queue.push_back(function);
@@ -1257,6 +1263,9 @@ impl<'a> ModuleEmitter<'a> {
                 for item in items {
                     self.collect_guard_expr_callees_with_const_items(*item, queue, visited_items);
                 }
+            }
+            hir::ExprKind::RepeatArray { value, .. } => {
+                self.collect_guard_expr_callees_with_const_items(*value, queue, visited_items);
             }
             hir::ExprKind::StructLiteral { fields, .. } => {
                 for field in fields {
@@ -2141,6 +2150,15 @@ impl<'a> ModuleEmitter<'a> {
                     );
                 }
             }
+            Rvalue::RepeatArray { value, .. } => {
+                self.validate_direct_local_capturing_closure_operand(
+                    value,
+                    false,
+                    supported,
+                    closure_spans,
+                    diagnostics,
+                );
+            }
             Rvalue::AggregateTupleStruct { items, .. } => {
                 for item in items {
                     self.validate_direct_local_capturing_closure_operand(
@@ -2883,6 +2901,17 @@ impl<'a> ModuleEmitter<'a> {
                     );
                 }
             }
+            Rvalue::RepeatArray { value, .. } => {
+                self.validate_ordinary_control_flow_capturing_closure_operand(
+                    block_id,
+                    value,
+                    false,
+                    ordinary_calls,
+                    conflicting_temps,
+                    closure_spans,
+                    diagnostics,
+                );
+            }
             Rvalue::AggregateTupleStruct { items, .. } => {
                 for item in items {
                     self.validate_ordinary_control_flow_capturing_closure_operand(
@@ -3084,6 +3113,9 @@ impl<'a> ModuleEmitter<'a> {
                     self.collect_const_closure_targets_in_operand(item, queue, seen);
                 }
             }
+            Rvalue::RepeatArray { value, .. } => {
+                self.collect_const_closure_targets_in_operand(value, queue, seen);
+            }
             Rvalue::Call { callee, args } => {
                 self.collect_const_closure_targets_in_operand(callee, queue, seen);
                 for arg in args {
@@ -3191,6 +3223,9 @@ impl<'a> ModuleEmitter<'a> {
                 for &item in items {
                     self.collect_const_closure_targets_in_expr(item, queue, seen, visited_items);
                 }
+            }
+            hir::ExprKind::RepeatArray { value, .. } => {
+                self.collect_const_closure_targets_in_expr(*value, queue, seen, visited_items);
             }
             hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
                 self.collect_const_closure_targets_in_block(*block, queue, seen, visited_items)
@@ -4345,6 +4380,11 @@ impl<'a> ModuleEmitter<'a> {
             Rvalue::Array(items) => {
                 self.seed_expected_temp_from_array_items(body, items, expected_ty, local_types);
             }
+            Rvalue::RepeatArray { value, .. } => {
+                if let Ty::Array { element, .. } = expected_ty {
+                    self.seed_expected_temp_from_operand(body, value, element, local_types);
+                }
+            }
             Rvalue::AggregateTupleStruct { .. } => {}
             Rvalue::AggregateStruct { fields, .. } => {
                 self.seed_expected_temp_from_struct_fields(body, fields, expected_ty, local_types);
@@ -5343,6 +5383,22 @@ impl<'a> ModuleEmitter<'a> {
                         self.supports_cleanup_value_expr(*item, element.as_ref(), body, local_types)
                     });
             }
+            hir::ExprKind::RepeatArray { value, .. } => {
+                let Some(actual_ty) = self.input.typeck.expr_ty(expr_id) else {
+                    return false;
+                };
+                let Ty::Array { element, len } = actual_ty else {
+                    return false;
+                };
+                return expected_ty.compatible_with(actual_ty)
+                    && known_array_len(len).is_some()
+                    && self.supports_cleanup_value_expr(
+                        *value,
+                        element.as_ref(),
+                        body,
+                        local_types,
+                    );
+            }
             hir::ExprKind::StructLiteral { fields, .. } => {
                 let Some(actual_ty) = self.input.typeck.expr_ty(expr_id) else {
                     return false;
@@ -6221,6 +6277,9 @@ impl<'a> ModuleEmitter<'a> {
                 Some(Ty::Tuple(item_types))
             }
             Rvalue::Array(items) => self.infer_array_rvalue_type(items, expected_ty, ctx, span),
+            Rvalue::RepeatArray { value, len } => {
+                self.infer_repeat_array_rvalue_type(value, len, expected_ty, ctx, span)
+            }
             Rvalue::AggregateTupleStruct { path, items } => {
                 self.infer_tuple_struct_rvalue_type(path, items, expected_ty, ctx, span)
             }
@@ -6532,6 +6591,63 @@ impl<'a> ModuleEmitter<'a> {
         Some(Ty::Array {
             element: Box::new(element_ty),
             len: TyArrayLen::Known(items.len()),
+        })
+    }
+
+    fn infer_repeat_array_rvalue_type(
+        &self,
+        value: &Operand,
+        len: &hir::ArrayLen,
+        expected_ty: Option<&Ty>,
+        ctx: &mut TypeInferenceContext<'_>,
+        span: Span,
+    ) -> Option<Ty> {
+        let expected_array = match expected_ty {
+            Some(Ty::Array { element, len }) => Some((element.as_ref().clone(), len.clone())),
+            _ => None,
+        };
+        let repeat_len = match len {
+            hir::ArrayLen::Known(len) => TyArrayLen::Known(*len),
+            hir::ArrayLen::Generic(name) => TyArrayLen::Generic(name.clone()),
+        };
+        if let Some((_, expected_len)) = expected_array.as_ref()
+            && !expected_len.compatible_with(&repeat_len)
+        {
+            ctx.diagnostics.push(unsupported(
+                span,
+                "LLVM IR backend foundation encountered a repeat-array literal whose length no longer matches the expected array type",
+            ));
+            return None;
+        }
+
+        let value_ty = self.infer_operand_type(
+            ctx.body,
+            value,
+            ctx.local_types,
+            ctx.async_task_handles,
+            ctx.diagnostics,
+            span,
+        )?;
+        let element_ty = expected_array
+            .as_ref()
+            .map(|(element, _)| element.clone())
+            .unwrap_or_else(|| value_ty.clone());
+        if !backend_value_compatible(
+            self.input.hir,
+            self.input.resolution,
+            &element_ty,
+            &value_ty,
+        ) {
+            ctx.diagnostics.push(unsupported(
+                span,
+                "LLVM IR backend foundation currently requires repeat-array values to match the expected element type",
+            ));
+            return None;
+        }
+
+        Some(Ty::Array {
+            element: Box::new(element_ty),
+            len: repeat_len,
         })
     }
 
@@ -12367,6 +12483,71 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
+    fn render_cleanup_repeat_array_expr(
+        &mut self,
+        output: &mut String,
+        value: hir::ExprId,
+        len: &hir::ArrayLen,
+        expected_ty: &Ty,
+        span: Span,
+    ) -> LoweredValue {
+        let array_ty = match expected_ty {
+            Ty::Array { element, len } => Ty::Array {
+                element: element.clone(),
+                len: len.clone(),
+            },
+            other => panic!(
+                "supported cleanup lowering at {span:?} should only render repeat-array literals with array expected types, found `{other}`"
+            ),
+        };
+        let Ty::Array {
+            element,
+            len: expected_len,
+        } = &array_ty
+        else {
+            unreachable!();
+        };
+        let repeat_len = match len {
+            hir::ArrayLen::Known(len) => *len,
+            hir::ArrayLen::Generic(_) => known_array_len(expected_len)
+                .expect("supported cleanup repeat-array lowering should use concrete lengths"),
+        };
+        assert!(
+            known_array_len(expected_len).is_some_and(|expected| expected == repeat_len),
+            "supported cleanup repeat-array lowering at {span:?} should preserve array length"
+        );
+        let rendered = self.render_cleanup_value_expr(output, value, element.as_ref(), span);
+        let llvm_ty = self
+            .emitter
+            .lower_llvm_type(&array_ty, span, "cleanup repeat-array value")
+            .expect("supported cleanup lowering should lower cleanup repeat-array values");
+
+        if repeat_len == 0 {
+            return LoweredValue {
+                ty: array_ty,
+                llvm_ty,
+                repr: "zeroinitializer".to_owned(),
+            };
+        }
+
+        let mut aggregate = "undef".to_owned();
+        for index in 0..repeat_len {
+            let next = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {next} = insertvalue {llvm_ty} {aggregate}, {} {}, {}",
+                rendered.llvm_ty, rendered.repr, index
+            );
+            aggregate = next;
+        }
+
+        LoweredValue {
+            ty: array_ty,
+            llvm_ty,
+            repr: aggregate,
+        }
+    }
+
     fn render_cleanup_struct_expr(
         &mut self,
         output: &mut String,
@@ -12460,6 +12641,19 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             hir::ExprKind::Array(items) => {
                 let array_ty = self.emitter.input.typeck.expr_ty(expr_id)?.clone();
                 let rendered = self.render_cleanup_array_expr(output, items, &array_ty, span);
+                let slot = self.fresh_temp();
+                let _ = writeln!(output, "  {slot} = alloca {}", rendered.llvm_ty);
+                let _ = writeln!(
+                    output,
+                    "  store {} {}, ptr {slot}",
+                    rendered.llvm_ty, rendered.repr
+                );
+                Some((slot, rendered.ty))
+            }
+            hir::ExprKind::RepeatArray { value, len, .. } => {
+                let array_ty = self.emitter.input.typeck.expr_ty(expr_id)?.clone();
+                let rendered =
+                    self.render_cleanup_repeat_array_expr(output, *value, len, &array_ty, span);
                 let slot = self.fresh_temp();
                 let _ = writeln!(output, "  {slot} = alloca {}", rendered.llvm_ty);
                 let _ = writeln!(
@@ -12745,6 +12939,15 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 assert!(
                     expected_ty.compatible_with(&rendered.ty),
                     "supported cleanup lowering at {span:?} should only render compatible cleanup array values"
+                );
+                rendered
+            }
+            hir::ExprKind::RepeatArray { value, len, .. } => {
+                let rendered =
+                    self.render_cleanup_repeat_array_expr(output, *value, len, expected_ty, span);
+                assert!(
+                    expected_ty.compatible_with(&rendered.ty),
+                    "supported cleanup lowering at {span:?} should only render compatible cleanup repeat-array values"
                 );
                 rendered
             }
@@ -14175,6 +14378,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             },
             Rvalue::Tuple(items) => self.render_tuple_rvalue(output, items, expected_ty, span),
             Rvalue::Array(items) => self.render_array_rvalue(output, items, expected_ty, span),
+            Rvalue::RepeatArray { value, len } => {
+                self.render_repeat_array_rvalue(output, value, len, expected_ty, span)
+            }
             Rvalue::AggregateTupleStruct { path, items } => {
                 self.render_tuple_struct_rvalue(output, path, items, expected_ty, span)
             }
@@ -14319,6 +14525,72 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 output,
                 "  {next} = insertvalue {llvm_ty} {aggregate}, {} {}, {}",
                 item.llvm_ty, item.repr, index
+            );
+            aggregate = next;
+        }
+
+        Some(LoweredValue {
+            ty,
+            llvm_ty,
+            repr: aggregate,
+        })
+    }
+
+    fn render_repeat_array_rvalue(
+        &mut self,
+        output: &mut String,
+        value: &Operand,
+        len: &hir::ArrayLen,
+        expected_ty: Option<&Ty>,
+        span: Span,
+    ) -> Option<LoweredValue> {
+        let repeat_len = match len {
+            hir::ArrayLen::Known(len) => *len,
+            hir::ArrayLen::Generic(_) => known_array_len(match expected_ty {
+                Some(Ty::Array { len, .. }) => len,
+                _ => return None,
+            })
+            .expect("prepared repeat-array values should have concrete expected lengths"),
+        };
+        let rendered = self.render_operand(output, value, span);
+        let element_ty = match expected_ty {
+            Some(Ty::Array { element, .. }) => element.as_ref().clone(),
+            _ => rendered.ty.clone(),
+        };
+        assert!(
+            backend_value_compatible(
+                self.emitter.input.hir,
+                self.emitter.input.resolution,
+                &element_ty,
+                &rendered.ty,
+            ),
+            "prepared repeat-array at {span:?} should preserve compatible element type"
+        );
+
+        let ty = Ty::Array {
+            element: Box::new(element_ty),
+            len: TyArrayLen::Known(repeat_len),
+        };
+        let llvm_ty = self
+            .emitter
+            .lower_llvm_type(&ty, span, "repeat-array value")
+            .expect("prepared repeat-array values should already have supported LLVM types");
+
+        if repeat_len == 0 {
+            return Some(LoweredValue {
+                ty,
+                llvm_ty,
+                repr: "zeroinitializer".to_owned(),
+            });
+        }
+
+        let mut aggregate = "undef".to_owned();
+        for index in 0..repeat_len {
+            let next = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {next} = insertvalue {llvm_ty} {aggregate}, {} {}, {}",
+                rendered.llvm_ty, rendered.repr, index
             );
             aggregate = next;
         }
@@ -15228,6 +15500,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             hir::ExprKind::Array(items) => {
                 self.render_const_array_expr(output, items, expected_ty, expr.span)
             }
+            hir::ExprKind::RepeatArray { value, len, .. } => {
+                self.render_const_repeat_array_expr(output, *value, len, expected_ty, expr.span)
+            }
             hir::ExprKind::StructLiteral { fields, .. } => {
                 self.render_const_struct_expr(output, fields, expected_ty, expr.span)
             }
@@ -15353,6 +15628,76 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 output,
                 "  {next} = insertvalue {llvm_ty} {aggregate}, {} {}, {}",
                 item.llvm_ty, item.repr, index
+            );
+            aggregate = next;
+        }
+
+        LoweredValue {
+            ty: array_ty,
+            llvm_ty,
+            repr: aggregate,
+        }
+    }
+
+    fn render_const_repeat_array_expr(
+        &mut self,
+        output: &mut String,
+        value: hir::ExprId,
+        len: &hir::ArrayLen,
+        expected_ty: Option<&Ty>,
+        span: Span,
+    ) -> LoweredValue {
+        let array_ty = match expected_ty {
+            Some(Ty::Array { element, len }) => Ty::Array {
+                element: element.clone(),
+                len: len.clone(),
+            },
+            Some(other) => panic!(
+                "prepared const repeat-array lowering at {span:?} should have array expected type, found `{other}`"
+            ),
+            None => {
+                panic!(
+                    "prepared const repeat-array lowering at {span:?} should have an expected type"
+                )
+            }
+        };
+        let Ty::Array {
+            element,
+            len: expected_len,
+        } = &array_ty
+        else {
+            unreachable!();
+        };
+        let repeat_len = match len {
+            hir::ArrayLen::Known(len) => *len,
+            hir::ArrayLen::Generic(_) => known_array_len(expected_len)
+                .expect("prepared const repeat-array lowering should use concrete lengths"),
+        };
+        assert!(
+            known_array_len(expected_len).is_some_and(|expected| expected == repeat_len),
+            "prepared const repeat-array lowering at {span:?} should preserve array length"
+        );
+        let rendered = self.render_const_expr(output, value, Some(element.as_ref()), span);
+        let llvm_ty = self
+            .emitter
+            .lower_llvm_type(&array_ty, span, "repeat-array value")
+            .expect("prepared const repeat-array values should already have supported LLVM types");
+
+        if repeat_len == 0 {
+            return LoweredValue {
+                ty: array_ty,
+                llvm_ty,
+                repr: "zeroinitializer".to_owned(),
+            };
+        }
+
+        let mut aggregate = "undef".to_owned();
+        for index in 0..repeat_len {
+            let next = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {next} = insertvalue {llvm_ty} {aggregate}, {} {}, {}",
+                rendered.llvm_ty, rendered.repr, index
             );
             aggregate = next;
         }
@@ -21781,6 +22126,17 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                 cleanup_aliases,
             )
         }),
+        hir::ExprKind::RepeatArray { value, .. } => {
+            cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                module,
+                resolution,
+                body,
+                supported,
+                *value,
+                binding_locals,
+                cleanup_aliases,
+            )
+        }
         hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
             cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_call(
                 module,

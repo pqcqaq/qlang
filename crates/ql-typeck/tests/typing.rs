@@ -43,6 +43,68 @@ fn main() -> Int {
 }
 
 #[test]
+fn accepts_repeat_array_literals_with_known_and_generic_lengths() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn repeat_known(value: Int) -> [Int; 3] {
+    return [value; 3]
+}
+
+fn repeat_generic[T, N](value: T, source: [T; N]) -> [T; N] {
+    return [value; N]
+}
+
+fn main() -> Int {
+    let known: [Int; 3] = repeat_known(4)
+    let generic: [Bool; 2] = repeat_generic(false, [true, false])
+    if generic[0] {
+        return known[0]
+    }
+    return known[2]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected repeat array literals to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_repeat_array_literal_length_mismatch() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> [Int; 2] {
+    return [1; 3]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"array repeat length mismatch: expected `2`, found `3`".to_string()),
+        "expected repeat array length mismatch diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_repeat_array_literal_non_length_generic() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn repeat_bad[T, N](value: T) -> [T; 3] {
+    return [value; N]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"array repeat length `N` must be an array length generic".to_string()),
+        "expected non-length generic diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_discarded_if_statement_branch_values_without_unifying_types() {
     let diagnostics = diagnostic_messages(
         r#"

@@ -476,6 +476,17 @@ impl Lowerer {
             ast::ExprKind::Array(items) => {
                 ExprKind::Array(items.iter().map(|item| self.lower_expr(item)).collect())
             }
+            ast::ExprKind::RepeatArray {
+                value,
+                len,
+                len_span,
+            } => ExprKind::RepeatArray {
+                value: self.lower_expr(value),
+                len: ast::parse_usize_literal(len)
+                    .map(ArrayLen::Known)
+                    .unwrap_or_else(|| ArrayLen::Generic(len.clone())),
+                len_span: *len_span,
+            },
             ast::ExprKind::Block(block) => ExprKind::Block(self.lower_block(block)),
             ast::ExprKind::Unsafe(block) => ExprKind::Unsafe(self.lower_block(block)),
             ast::ExprKind::If {

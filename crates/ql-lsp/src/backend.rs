@@ -5353,6 +5353,17 @@ fn trait_method_call_implementation_query_in_expr(
                 )
             })
         }
+        ql_hir::ExprKind::RepeatArray { value, .. } => {
+            trait_method_call_implementation_query_in_expr(
+                current_path,
+                source,
+                analysis,
+                package,
+                function,
+                *value,
+                offset,
+            )
+        }
         ql_hir::ExprKind::Block(block) | ql_hir::ExprKind::Unsafe(block) => {
             trait_method_call_implementation_query_in_block(
                 current_path,

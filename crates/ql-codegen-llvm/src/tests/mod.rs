@@ -6,7 +6,7 @@ use ql_runtime::{
 
 use ql_resolve::BuiltinType;
 use ql_span::Span;
-use ql_typeck::Ty;
+use ql_typeck::{Ty, TyArrayLen};
 
 use super::{
     AsyncTaskResultLayout, CodegenInput, CodegenMode, build_async_task_result_layout, emit_module,

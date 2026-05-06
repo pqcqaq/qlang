@@ -264,6 +264,9 @@ fn render_rvalue(hir: &hir::Module, body: &crate::MirBody, value: &Rvalue) -> St
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        Rvalue::RepeatArray { value, len } => {
+            format!("[{}; {}]", render_operand(body, value), len)
+        }
         Rvalue::AggregateTupleStruct { path, items } => {
             if items.is_empty() {
                 render_path(path)
@@ -407,6 +410,9 @@ fn render_expr(hir: &hir::Module, expr_id: ExprId) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        hir::ExprKind::RepeatArray { value, len, .. } => {
+            format!("[{}; {}]", render_expr(hir, *value), len)
+        }
         hir::ExprKind::Block(_) => "{ ... }".to_owned(),
         hir::ExprKind::Unsafe(_) => "unsafe { ... }".to_owned(),
         hir::ExprKind::If { .. } => "if ...".to_owned(),

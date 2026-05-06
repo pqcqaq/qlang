@@ -408,6 +408,9 @@ impl Checker {
                     self.check_expr(module, item);
                 }
             }
+            ExprKind::RepeatArray { value, .. } => {
+                self.check_expr(module, *value);
+            }
             ExprKind::Block(block) | ExprKind::Unsafe(block) => self.check_block(module, *block),
             ExprKind::If {
                 condition,

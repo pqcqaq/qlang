@@ -647,6 +647,9 @@ impl<'a> BodyAnalyzer<'a> {
                     self.read_operand(states, refinements, item, span, reporter.as_deref_mut());
                 }
             }
+            Rvalue::RepeatArray { value, .. } => {
+                self.read_operand(states, refinements, value, span, reporter);
+            }
             Rvalue::Call { callee, args } => {
                 let mut reporter = reporter;
                 let pending_consume = self.classify_move_receiver_operand(
@@ -863,14 +866,11 @@ impl<'a> BodyAnalyzer<'a> {
                     return None;
                 }
 
+                let receiver_ty = self.local_ty(place.base)?;
+                let reason = self.unique_move_receiver_reason(&receiver_ty, &function.name)?;
                 self.check_moved_use(states, place.base, &[], UseSite::normal(span), reporter);
 
-                Some((
-                    place.base,
-                    MoveReason::MoveSelfMethod {
-                        method_name: function.name.clone(),
-                    },
-                ))
+                Some((place.base, reason))
             }
             Operand::Constant(_) => None,
         }
@@ -2197,6 +2197,7 @@ impl<'a> BodyAnalyzer<'a> {
         let expr_id = self.normalized_immutable_source_expr(expr_id, visiting)?;
         match &self.hir.expr(expr_id).kind {
             hir::ExprKind::Array(items) | hir::ExprKind::Tuple(items) => items.get(index).copied(),
+            hir::ExprKind::RepeatArray { value, .. } => Some(*value),
             _ => None,
         }
     }
@@ -2647,6 +2648,7 @@ impl<'a> BodyAnalyzer<'a> {
                 .iter()
                 .flat_map(|item| self.closure_ids_in_operand(states, item))
                 .collect(),
+            Rvalue::RepeatArray { value, .. } => self.closure_ids_in_operand(states, value),
             Rvalue::Call { callee, args } => {
                 let callee_ids = self.closure_ids_in_operand(states, callee);
                 self.record_closure_escapes(
@@ -2985,6 +2987,14 @@ impl<'a> BodyAnalyzer<'a> {
             hir::ExprKind::Tuple(items) | hir::ExprKind::Array(items) => {
                 self.eval_cleanup_exprs(states, items, refinements, exclusions, reporter, use_site)
             }
+            hir::ExprKind::RepeatArray { value, .. } => self.eval_cleanup_expr(
+                states,
+                *value,
+                refinements,
+                exclusions,
+                reporter,
+                use_site.with_span(self.hir.expr(*value).span),
+            ),
             hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
                 self.eval_cleanup_block(states, *block, refinements, exclusions, reporter, use_site)
             }
@@ -4479,6 +4489,9 @@ fn collect_immutable_binding_values_in_expr(
                 collect_immutable_binding_values_in_expr(hir, *item, values);
             }
         }
+        hir::ExprKind::RepeatArray { value, .. } => {
+            collect_immutable_binding_values_in_expr(hir, *value, values);
+        }
         hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
             collect_immutable_binding_values_in_block(hir, *block, values);
         }
@@ -4605,6 +4618,9 @@ fn collect_task_handle_call_plans_in_expr(
             for item in items {
                 collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *item, plans);
             }
+        }
+        hir::ExprKind::RepeatArray { value, .. } => {
+            collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *value, plans);
         }
         hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
             collect_task_handle_call_plans_in_block(hir, resolution, typeck, *block, plans);

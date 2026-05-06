@@ -584,6 +584,9 @@ impl<'module> Resolver<'module> {
                     self.resolve_expr(item, scope);
                 }
             }
+            ExprKind::RepeatArray { value, .. } => {
+                self.resolve_expr(*value, scope);
+            }
             ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
                 self.resolve_block(*block_id, scope);
             }

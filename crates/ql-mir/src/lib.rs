@@ -330,6 +330,10 @@ pub enum Rvalue {
     Use(Operand),
     Tuple(Vec<Operand>),
     Array(Vec<Operand>),
+    RepeatArray {
+        value: Operand,
+        len: ql_hir::ArrayLen,
+    },
     AggregateTupleStruct {
         path: Path,
         items: Vec<Operand>,

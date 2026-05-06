@@ -1080,6 +1080,9 @@ impl<'a> QueryIndexBuilder<'a> {
                     self.index_expr_async_contexts(item);
                 }
             }
+            ExprKind::RepeatArray { value, .. } => {
+                self.index_expr_async_contexts(*value);
+            }
             ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
                 self.index_block_async_contexts(*block_id);
             }
@@ -1217,6 +1220,9 @@ impl<'a> QueryIndexBuilder<'a> {
                 for &item in items {
                     self.index_expr_loop_control_contexts(item, loop_depth);
                 }
+            }
+            ExprKind::RepeatArray { value, .. } => {
+                self.index_expr_loop_control_contexts(*value, loop_depth);
             }
             ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
                 self.index_block_loop_control_contexts(*block_id, loop_depth);
@@ -1860,6 +1866,9 @@ impl<'a> QueryIndexBuilder<'a> {
                     self.index_expr_completion_sites(item);
                 }
             }
+            ExprKind::RepeatArray { value, .. } => {
+                self.index_expr_completion_sites(*value);
+            }
             ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
                 self.index_block_completion_sites(*block_id);
             }
@@ -2123,6 +2132,9 @@ impl<'a> QueryIndexBuilder<'a> {
                     self.index_expr_local_definitions(item);
                 }
             }
+            ExprKind::RepeatArray { value, .. } => {
+                self.index_expr_local_definitions(*value);
+            }
             ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
                 self.index_block_local_definitions(*block_id);
             }
@@ -2331,6 +2343,9 @@ impl<'a> QueryIndexBuilder<'a> {
                 for &item in items {
                     self.index_expr_use(item);
                 }
+            }
+            ExprKind::RepeatArray { value, .. } => {
+                self.index_expr_use(*value);
             }
             ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
                 self.index_block_use(*block_id)

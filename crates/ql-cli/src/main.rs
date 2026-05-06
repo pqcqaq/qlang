@@ -8914,6 +8914,12 @@ fn collect_dependency_public_global_expr_dependencies<'a>(
                 dependencies,
             )
         }),
+        ExprKind::RepeatArray { value, .. } => collect_dependency_public_global_expr_dependencies(
+            value,
+            global_candidates,
+            function_candidates,
+            dependencies,
+        ),
         ExprKind::StructLiteral { fields, .. } => fields.iter().all(|field| {
             field.value.as_ref().is_some_and(|value| {
                 collect_dependency_public_global_expr_dependencies(

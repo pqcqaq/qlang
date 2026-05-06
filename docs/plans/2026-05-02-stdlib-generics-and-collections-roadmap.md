@@ -6,8 +6,9 @@
 
 - 包：`std.core`、`std.option`、`std.result`、`std.array`、`std.test`。
 - generic carrier：`Option[T]`、`Result[T, E]`。
-- `std.array` 有 canonical length-generic access/query/count/aggregate helpers 和 `reverse_array[T, N]`。
+- `std.array` 有 canonical length-generic access/query/count/aggregate helpers、`reverse_array[T, N]` 和 `repeat_array[T, N]`。
 - 数组长度泛型参数可作为 `Int` 值读取。
+- 重复数组字面量 `[value; N]` 支持整数字面量长度和数组长度泛型。
 - dependency generic bridge 支持 wrapper specialization 内继续直调同模块 generic helper。
 - 单文件和 project 入口共用本地 generic free function direct-call specialization。
 - `std.test` 已有普通断言和 length-generic 数组断言。
@@ -15,10 +16,9 @@
 
 ## 下一步顺序
 
-1. 修语言和后端能力，减少 stdlib 为绕路而写的固定 arity API。
-2. 增加 `[value; N]` 或等价安全数组初始化能力，再实现 `repeat_array[T, N]`。
-3. 为每个 public stdlib API 补 package-local 测试和 downstream consumer smoke。
-4. 扩 method/value generic import 和非 direct-call generic 值前，先补清楚 monomorphization contract。
+1. 继续修语言和后端能力，减少 stdlib 为绕路而写的固定 arity API。
+2. 为每个 public stdlib API 补 package-local 测试和 downstream consumer smoke。
+3. 扩 method/value generic import 和非 direct-call generic 值前，先补清楚 monomorphization contract。
 
 ## 规则
 

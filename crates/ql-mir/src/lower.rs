@@ -310,6 +310,7 @@ fn fold_constant_source_expr(
         }
         | ExprKind::Tuple(_)
         | ExprKind::Array(_)
+        | ExprKind::RepeatArray { .. }
         | ExprKind::StructLiteral { .. } => Some(expr_id),
         ExprKind::Name(_) => match resolution.expr_resolution(expr_id) {
             Some(ValueResolution::Local(local_id)) => immutable_local_values
@@ -375,6 +376,7 @@ fn fold_constant_source_expr(
             )?;
             let value = match &module.expr(target).kind {
                 ExprKind::Tuple(items) | ExprKind::Array(items) => items.get(index).copied(),
+                ExprKind::RepeatArray { value, .. } => Some(*value),
                 _ => None,
             }?;
             fold_constant_source_expr(module, resolution, immutable_local_values, value, visited)
@@ -1286,6 +1288,18 @@ impl<'a> BodyBuilder<'a> {
                 let (current, items) = self.lower_operands(items, current, scope);
                 self.materialize_rvalue(current, scope, expr.span, Rvalue::Array(items))
             }
+            ExprKind::RepeatArray { value, len, .. } => {
+                let (current, value) = self.lower_expr_to_operand(*value, current, scope);
+                self.materialize_rvalue(
+                    current,
+                    scope,
+                    expr.span,
+                    Rvalue::RepeatArray {
+                        value,
+                        len: len.clone(),
+                    },
+                )
+            }
             ExprKind::Call { callee, args } => {
                 let (current, value) = self.lower_call_rvalue(*callee, args, current, scope);
                 self.materialize_rvalue(current, scope, expr.span, value)
@@ -1960,6 +1974,9 @@ impl<'a> BodyBuilder<'a> {
                 for item in items {
                     self.collect_expr_captures(*item, captures, seen);
                 }
+            }
+            ExprKind::RepeatArray { value, .. } => {
+                self.collect_expr_captures(*value, captures, seen);
             }
             ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
                 self.collect_block_captures(*block_id, captures, seen);

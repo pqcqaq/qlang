@@ -381,7 +381,7 @@ ql project init demo-package
 ql project init demo-package --stdlib path/to/language_q/stdlib
 ```
 
-这会在新 package 的 `[dependencies]` 中写入 quoted-key 形式的 `std.core` / `std.option` / `std.result` / `std.array` / `std.test` 本地依赖，并生成直接消费这些 package 的 `src/lib.ql`、`src/main.ql` 与 `tests/smoke.ql`。生成的 starter 使用 generic `std.option.Option[T]` / `std.option.some` / `std.option.unwrap_or`、generic `std.result.Result[T, E]` / `std.result.ok` / `std.result.unwrap_result_or`，以及 length-generic `std.array.first_array` / `std.array.at_array_or` / `std.array.contains_array` / `std.array.count_array` / `std.array.len_array` / `std.array.sum_int_array`。`std.array` 不再提供 `reverse3_array`、`repeat3_array` 这类固定长度 helper；workspace 初始化也支持同一个 `--stdlib <path>` 选项。LSP 仍会对 `std.option` / `std.result` 的 concrete carrier 兼容 API 提示 deprecated/guidance，新代码继续迁向 generic carrier 和 length-generic helpers。
+这会在新 package 的 `[dependencies]` 中写入 quoted-key 形式的 `std.core` / `std.option` / `std.result` / `std.array` / `std.test` 本地依赖，并生成直接消费这些 package 的 `src/lib.ql`、`src/main.ql` 与 `tests/smoke.ql`。生成的 starter 使用 generic `std.option.Option[T]` / `std.option.some` / `std.option.unwrap_or`、generic `std.result.Result[T, E]` / `std.result.ok` / `std.result.unwrap_result_or`，以及 length-generic `std.array.first_array` / `std.array.at_array_or` / `std.array.contains_array` / `std.array.count_array` / `std.array.len_array` / `std.array.sum_int_array`。`std.array` 不再提供 `reverse3_array`、`repeat3_array` 这类固定长度 helper；重复数组使用 `[value; N]` 或 `std.array.repeat_array[T, N]`。workspace 初始化也支持同一个 `--stdlib <path>` 选项。LSP 仍会对 `std.option` / `std.result` 的 concrete carrier 兼容 API 提示 deprecated/guidance，新代码继续迁向 generic carrier 和 length-generic helpers。
 
 初始化 workspace：
 

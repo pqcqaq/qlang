@@ -524,7 +524,7 @@ fn builds_async_task_result_layouts_for_void_scalar_string_task_handle_tuple_and
     let array_layout = build_async_task_result_layout(
         &Ty::Array {
             element: Box::new(Ty::Builtin(BuiltinType::Int)),
-            len: 3,
+            len: TyArrayLen::Known(3),
         },
         Span::new(0, 0),
     )
@@ -548,7 +548,7 @@ fn builds_async_task_result_layouts_for_zero_sized_arrays() {
     let array_layout = build_async_task_result_layout(
         &Ty::Array {
             element: Box::new(Ty::Builtin(BuiltinType::Int)),
-            len: 0,
+            len: TyArrayLen::Known(0),
         },
         Span::new(0, 0),
     )
@@ -605,6 +605,21 @@ return [1, 2, 3]
     assert!(rendered.contains("insertvalue [3 x i64] undef, i64 1, 0"));
     assert!(rendered.contains("i64 2, 1"));
     assert!(rendered.contains("i64 3, 2"));
+    assert!(rendered.contains("ret [3 x i64]"));
+}
+
+#[test]
+fn emits_repeat_array_value_lowering() {
+    let rendered = emit_library(
+        r#"
+fn values(seed: Int) -> [Int; 3] {
+return [seed + 1; 3]
+}
+"#,
+    );
+
+    assert!(rendered.contains("define [3 x i64] @ql_0_values(i64 %arg0)"));
+    assert!(rendered.matches("insertvalue [3 x i64]").count() >= 3);
     assert!(rendered.contains("ret [3 x i64]"));
 }
 

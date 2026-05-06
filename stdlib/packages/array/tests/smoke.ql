@@ -10,6 +10,7 @@ use std.array.max_int_array as max_int_array
 use std.array.min_int_array as min_int_array
 use std.array.none_bool_array as none_bool_array
 use std.array.product_int_array as product_int_array
+use std.array.repeat_array as repeat_array
 use std.array.reverse_array as reverse_array
 use std.array.sum_int_array as sum_int_array
 
@@ -48,7 +49,10 @@ fn len_reverse_status() -> Int {
     let reversed_int: [Int; 4] = reverse_array([2, 3, 4, 5])
     let reversed_bool: [Bool; 5] = reverse_array([true, false, true, false, false])
     let reverse_status = sum6(check_int(first_array(reversed_int), 5), check_int(last_array(reversed_int), 2), check_bool(first_array(reversed_bool), false), check_bool(last_array(reversed_bool), true), 0, 0)
-    return len_status + reverse_status
+    let repeated_int: [Int; 4] = repeat_array(7)
+    let repeated_bool: [Bool; 5] = repeat_array(false)
+    let repeat_status = sum6(check_int(first_array(repeated_int), 7), check_int(last_array(repeated_int), 7), check_int(count_array(repeated_int, 7), 4), check_bool(first_array(repeated_bool), false), check_bool(last_array(repeated_bool), false), check_int(count_array(repeated_bool, false), 5))
+    return len_status + reverse_status + repeat_status
 }
 
 fn contains_count_status() -> Int {

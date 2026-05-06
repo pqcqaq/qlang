@@ -7200,6 +7200,9 @@ fn local_struct_field_completion_site_in_expr(
         ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => items
             .iter()
             .find_map(|item| local_struct_field_completion_site_in_expr(item, offset)),
+        ql_ast::ExprKind::RepeatArray { value, .. } => {
+            local_struct_field_completion_site_in_expr(value, offset)
+        }
         ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
             local_struct_field_completion_site_in_block(block, offset)
         }
@@ -7461,6 +7464,9 @@ fn dependency_struct_field_completion_site_in_expr(
         ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => items
             .iter()
             .find_map(|item| dependency_struct_field_completion_site_in_expr(item, offset)),
+        ql_ast::ExprKind::RepeatArray { value, .. } => {
+            dependency_struct_field_completion_site_in_expr(value, offset)
+        }
         ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
             dependency_struct_field_completion_site_in_block(block, offset)
         }
@@ -8409,6 +8415,18 @@ fn dependency_member_completion_binding_in_expr(
                 )
             })
         }
+        ql_ast::ExprKind::RepeatArray { value, .. } => {
+            dependency_member_completion_binding_in_expr(
+                package,
+                module,
+                value,
+                source,
+                offset,
+                kind,
+                scopes,
+                iterable_scopes,
+            )
+        }
         ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
             dependency_member_completion_binding_in_block(
                 package,
@@ -8987,6 +9005,9 @@ fn dependency_question_wrapped_reference_in_expr(
         ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => items
             .iter()
             .any(|item| dependency_question_wrapped_reference_in_expr(item, offset, kind)),
+        ql_ast::ExprKind::RepeatArray { value, .. } => {
+            dependency_question_wrapped_reference_in_expr(value, offset, kind)
+        }
         ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
             dependency_question_wrapped_reference_in_block(block, offset, kind)
         }
@@ -9511,6 +9532,9 @@ fn dependency_type_import_occurrence_in_expr(
         ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => items
             .iter()
             .find_map(|item| dependency_type_import_occurrence_in_expr(item, offset)),
+        ql_ast::ExprKind::RepeatArray { value, .. } => {
+            dependency_type_import_occurrence_in_expr(value, offset)
+        }
         ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
             dependency_type_import_occurrence_in_block(block, offset)
         }
@@ -9632,6 +9656,9 @@ fn dependency_import_occurrence_in_expr(
         ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => items
             .iter()
             .find_map(|item| dependency_import_occurrence_in_expr(item, offset)),
+        ql_ast::ExprKind::RepeatArray { value, .. } => {
+            dependency_import_occurrence_in_expr(value, offset)
+        }
         ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
             dependency_import_occurrence_in_block(block, offset)
         }
@@ -10068,6 +10095,16 @@ fn collect_dependency_method_occurrences_in_expr(
                     occurrences,
                 );
             }
+        }
+        ql_ast::ExprKind::RepeatArray { value, .. } => {
+            collect_dependency_method_occurrences_in_expr(
+                package,
+                module,
+                value,
+                scopes,
+                iterable_scopes,
+                occurrences,
+            );
         }
         ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
             collect_dependency_method_occurrences_in_block(
@@ -10648,6 +10685,17 @@ fn collect_dependency_value_occurrences_in_expr(
                     occurrences,
                 );
             }
+        }
+        ql_ast::ExprKind::RepeatArray { value, .. } => {
+            collect_dependency_value_occurrences_in_expr(
+                package,
+                module,
+                value,
+                binding_scopes,
+                iterable_scopes,
+                value_scopes,
+                occurrences,
+            );
         }
         ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
             collect_dependency_value_occurrences_in_block(
@@ -11355,6 +11403,16 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                     occurrences,
                 );
             }
+        }
+        ql_ast::ExprKind::RepeatArray { value, .. } => {
+            collect_dependency_struct_field_occurrences_in_expr(
+                package,
+                module,
+                value,
+                scopes,
+                iterable_scopes,
+                occurrences,
+            );
         }
         ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
             collect_dependency_struct_field_occurrences_in_block(
@@ -12594,6 +12652,15 @@ fn dependency_struct_element_binding_for_iterable_expr(
         ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => {
             dependency_struct_common_binding_for_exprs(package, module, items, scopes)
         }
+        ql_ast::ExprKind::RepeatArray { value, .. } => {
+            dependency_struct_element_binding_for_iterable_expr(
+                package,
+                module,
+                value,
+                scopes,
+                iterable_scopes,
+            )
+        }
         ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
             dependency_struct_element_binding_for_block_expr(
                 package,
@@ -12671,6 +12738,9 @@ fn dependency_struct_binding_for_expr(
             .or_else(|| dependency_global_binding_for_local_name(package, module, name)),
         ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => {
             dependency_struct_common_binding_for_exprs(package, module, items, scopes)
+        }
+        ql_ast::ExprKind::RepeatArray { value, .. } => {
+            dependency_struct_binding_for_expr(package, module, value, scopes)
         }
         ql_ast::ExprKind::StructLiteral { path, .. } => {
             let [root_name] = path.segments.as_slice() else {
@@ -13706,6 +13776,9 @@ fn dependency_value_root_iterable_binding_in_expr(
                 dependency_value_root_iterable_binding_in_expr(package, module, expr, offset)
             })
         }
+        ql_ast::ExprKind::RepeatArray { value, .. } => {
+            dependency_value_root_iterable_binding_in_expr(package, module, value, offset)
+        }
         ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
             dependency_value_root_iterable_binding_in_block(package, module, block, offset)
         }
@@ -13889,6 +13962,9 @@ fn dependency_value_root_binding_in_expr(
         ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => items
             .iter()
             .find_map(|expr| dependency_value_root_binding_in_expr(package, module, expr, offset)),
+        ql_ast::ExprKind::RepeatArray { value, .. } => {
+            dependency_value_root_binding_in_expr(package, module, value, offset)
+        }
         ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
             dependency_value_root_binding_in_block(package, module, block, offset)
         }

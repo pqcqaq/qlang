@@ -4,7 +4,7 @@ use ql_ast::{BinaryOp, Path};
 use ql_diagnostics::{Diagnostic, Label};
 use ql_hir::{
     BlockId, CallArg, EnumVariant, ExprId, ExprKind, Function, ItemId, ItemKind, LocalId, MatchArm,
-    Module, Param, PatternId, PatternKind, StmtId, StmtKind, VariantFields,
+    Module, Param, PatternId, PatternKind, StmtId, StmtKind, TypeId, TypeKind, VariantFields,
 };
 use ql_resolve::{ParamBinding, ResolutionMap, TypeResolution, ValueResolution};
 use ql_span::Span;
@@ -118,6 +118,7 @@ struct Checker<'a> {
     param_types: HashMap<ParamBinding, Ty>,
     self_type: Option<Ty>,
     self_is_mutable: bool,
+    current_array_length_generics: HashSet<String>,
     current_return: Option<Ty>,
     in_async_function: bool,
     loop_depth: usize,
@@ -140,6 +141,7 @@ impl<'a> Checker<'a> {
             param_types: HashMap::new(),
             self_type: None,
             self_is_mutable: false,
+            current_array_length_generics: HashSet::new(),
             current_return: None,
             in_async_function: false,
             loop_depth: 0,
@@ -395,6 +397,7 @@ impl<'a> Checker<'a> {
         let old_return = self.current_return.clone();
         let old_in_async_function = self.in_async_function;
         let old_loop_depth = self.loop_depth;
+        let old_array_length_generics = std::mem::take(&mut self.current_array_length_generics);
         let old_param_types = std::mem::take(&mut self.param_types);
 
         self.self_type = self_type;
@@ -416,6 +419,7 @@ impl<'a> Checker<'a> {
         );
         self.in_async_function = function.is_async;
         self.loop_depth = 0;
+        self.current_array_length_generics = self.array_length_generics_for_function(function);
 
         if let Some(scope) = function_scope(function, self.resolution) {
             for (index, param) in function.params.iter().enumerate() {
@@ -453,7 +457,65 @@ impl<'a> Checker<'a> {
         self.current_return = old_return;
         self.in_async_function = old_in_async_function;
         self.loop_depth = old_loop_depth;
+        self.current_array_length_generics = old_array_length_generics;
         self.param_types = old_param_types;
+    }
+
+    fn array_length_generics_for_function(&self, function: &Function) -> HashSet<String> {
+        let generic_names = function
+            .generics
+            .iter()
+            .map(|generic| generic.name.as_str())
+            .collect::<HashSet<_>>();
+        if generic_names.is_empty() {
+            return HashSet::new();
+        }
+
+        let mut output = HashSet::new();
+        for param in &function.params {
+            if let Param::Regular(param) = param {
+                self.collect_array_length_generics(param.ty, &generic_names, &mut output);
+            }
+        }
+        if let Some(return_type) = function.return_type {
+            self.collect_array_length_generics(return_type, &generic_names, &mut output);
+        }
+        for predicate in &function.where_clause {
+            self.collect_array_length_generics(predicate.target, &generic_names, &mut output);
+        }
+        output
+    }
+
+    fn collect_array_length_generics(
+        &self,
+        ty: TypeId,
+        generic_names: &HashSet<&str>,
+        output: &mut HashSet<String>,
+    ) {
+        match &self.module.ty(ty).kind {
+            TypeKind::Pointer { inner, .. } => {
+                self.collect_array_length_generics(*inner, generic_names, output);
+            }
+            TypeKind::Array { element, len } => {
+                if let ql_hir::ArrayLen::Generic(name) = len
+                    && generic_names.contains(name.as_str())
+                {
+                    output.insert(name.clone());
+                }
+                self.collect_array_length_generics(*element, generic_names, output);
+            }
+            TypeKind::Named { args, .. } | TypeKind::Tuple(args) => {
+                for &arg in args {
+                    self.collect_array_length_generics(arg, generic_names, output);
+                }
+            }
+            TypeKind::Callable { params, ret } => {
+                for &param in params {
+                    self.collect_array_length_generics(param, generic_names, output);
+                }
+                self.collect_array_length_generics(*ret, generic_names, output);
+            }
+        }
     }
 
     fn check_block(&mut self, block_id: BlockId) -> Ty {
@@ -627,6 +689,11 @@ impl<'a> Checker<'a> {
                     .collect(),
             ),
             ExprKind::Array(items) => self.check_array_literal(expr_id, items, expected),
+            ExprKind::RepeatArray {
+                value,
+                len,
+                len_span,
+            } => self.check_repeat_array_literal(expr_id, *value, len, *len_span, expected),
             ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => self.check_block(*block_id),
             ExprKind::If {
                 condition,
@@ -886,6 +953,73 @@ impl<'a> Checker<'a> {
             element: Box::new(element_ty),
             len: TyArrayLen::Known(items.len()),
         }
+    }
+
+    fn check_repeat_array_literal(
+        &mut self,
+        expr_id: ExprId,
+        value: ExprId,
+        len: &ql_hir::ArrayLen,
+        len_span: Span,
+        expected: Option<&Ty>,
+    ) -> Ty {
+        let expected_array = match expected {
+            Some(Ty::Array { element, len }) => Some((element.as_ref().clone(), len.clone())),
+            _ => None,
+        };
+        let element_ty = expected_array
+            .as_ref()
+            .map(|(element, _)| element.clone())
+            .unwrap_or(Ty::Unknown);
+        let value_ty = self.check_expr(value, (!element_ty.is_unknown()).then_some(&element_ty));
+        if !element_ty.is_unknown()
+            && !value_ty.is_unknown()
+            && !self.value_compatible(&element_ty, &value_ty)
+        {
+            self.report_type_mismatch(value, &element_ty, &value_ty, "repeat array item");
+        }
+
+        let repeat_len = match len {
+            ql_hir::ArrayLen::Known(len) => TyArrayLen::Known(*len),
+            ql_hir::ArrayLen::Generic(name) => {
+                if !self.is_array_length_generic_in_scope(name, len_span) {
+                    self.diagnostics.push(
+                        Diagnostic::error(format!(
+                            "array repeat length `{name}` must be an array length generic"
+                        ))
+                        .with_label(Label::new(len_span).with_message("repeat length here")),
+                    );
+                }
+                TyArrayLen::Generic(name.clone())
+            }
+        };
+
+        if let Some((_, expected_len)) = expected_array.as_ref()
+            && !expected_len.compatible_with(&repeat_len)
+        {
+            self.diagnostics.push(
+                Diagnostic::error(format!(
+                    "array repeat length mismatch: expected `{expected_len}`, found `{repeat_len}`"
+                ))
+                .with_label(
+                    Label::new(self.module.expr(expr_id).span)
+                        .with_message("repeat array literal here"),
+                ),
+            );
+        }
+
+        Ty::Array {
+            element: Box::new(if element_ty.is_unknown() {
+                value_ty
+            } else {
+                element_ty
+            }),
+            len: repeat_len,
+        }
+    }
+
+    fn is_array_length_generic_in_scope(&self, name: &str, _span: Span) -> bool {
+        self.current_array_length_generics.contains(name)
     }
 
     fn check_bracket(&mut self, expr_id: ExprId, target: ExprId, items: &[ExprId]) -> Ty {
@@ -1250,6 +1384,7 @@ impl<'a> Checker<'a> {
                 }
                 flow
             }
+            ExprKind::RepeatArray { value, .. } => self.expr_flow(*value),
         }
     }
 
@@ -1517,6 +1652,7 @@ impl<'a> Checker<'a> {
             }
             | ExprKind::Tuple(_)
             | ExprKind::Array(_)
+            | ExprKind::RepeatArray { .. }
             | ExprKind::StructLiteral { .. } => Some(expr_id),
             ExprKind::Name(_) => match self.resolution.expr_resolution(expr_id) {
                 Some(ValueResolution::Local(local_id)) => self

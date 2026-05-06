@@ -56,6 +56,10 @@ pub fn reverse_array[T, N](values: [T; N]) -> [T; N] {
     return result
 }
 
+pub fn repeat_array[T, N](value: T) -> [T; N] {
+    return [value; N]
+}
+
 pub fn sum_int_array[N](values: [Int; N]) -> Int {
     var total = 0
     for value in values {

@@ -647,6 +647,18 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 );
             }
         }
+        ExprKind::RepeatArray { value, .. } => {
+            collect_dependency_generic_function_instantiations_from_expr(
+                value,
+                None,
+                return_expected_ty,
+                local_names,
+                function,
+                bindings,
+                function_bindings,
+                instantiations,
+            );
+        }
         ExprKind::StructLiteral { fields, .. } => {
             for field in fields {
                 if let Some(value) = &field.value {
@@ -1254,6 +1266,23 @@ fn collect_generic_type_substitutions_from_expr(
                 )
             })
         }
+        (
+            TypeExprKind::Array {
+                element: param_element,
+                len: param_len,
+            },
+            ExprKind::RepeatArray { value, len, .. },
+        ) => {
+            bind_generic_len_substitution(param_len, len, generic_names, substitutions)
+                && collect_generic_type_substitutions_from_expr(
+                    param_element,
+                    value,
+                    generic_names,
+                    bindings,
+                    function_bindings,
+                    substitutions,
+                )
+        }
         (TypeExprKind::Tuple(param_items), ExprKind::Tuple(items))
             if param_items.len() == items.len() =>
         {
@@ -1310,6 +1339,16 @@ fn infer_dependency_generic_expr_type(
                 kind: InferredTypeKind::Array {
                     element: Box::new(element),
                     len: items.len().to_string(),
+                },
+            })
+        }
+        ExprKind::RepeatArray { value, len, .. } => {
+            let element = infer_dependency_generic_expr_type(value, bindings, function_bindings)?;
+            Some(InferredType {
+                rendered: format!("[{}; {len}]", element.rendered),
+                kind: InferredTypeKind::Array {
+                    element: Box::new(element),
+                    len: len.clone(),
                 },
             })
         }
@@ -2007,6 +2046,43 @@ fn run() -> Int {
             item.get("T").map(String::as_str) == Some("Bool")
                 && item.get("N").map(String::as_str) == Some("4")
         }));
+    }
+
+    #[test]
+    fn infers_substitutions_from_repeat_array_literals() {
+        let dependency = parse_module(
+            r#"
+package dep
+
+pub fn mirror[T, N](values: [T; N]) -> [T; N] {
+    return values
+}
+"#,
+        );
+        let root = parse_module(
+            r#"
+use dep.mirror as mirror
+
+fn run() -> Int {
+    let values: [Int; 3] = mirror([7; 3])
+    return values[0]
+}
+"#,
+        );
+
+        let substitutions = collect_public_function_instantiations(
+            &root,
+            &["dep".to_owned()],
+            function(&dependency, "mirror"),
+        );
+
+        assert_eq!(substitutions.len(), 1);
+        let item = substitutions
+            .iter()
+            .next()
+            .expect("one repeat-array substitution should be inferred");
+        assert_eq!(item.get("T").map(String::as_str), Some("Int"));
+        assert_eq!(item.get("N").map(String::as_str), Some("3"));
     }
 
     #[test]

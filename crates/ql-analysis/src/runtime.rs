@@ -138,6 +138,9 @@ impl<'a> RuntimeRequirementCollector<'a> {
                     self.visit_expr(item);
                 }
             }
+            ExprKind::RepeatArray { value, .. } => {
+                self.visit_expr(*value);
+            }
             ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => self.visit_block(*block_id),
             ExprKind::If {
                 condition,
