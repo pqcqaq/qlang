@@ -289,52 +289,104 @@ pub fn is_outside_bounds_int(value: Int, first_bound: Int, second_bound: Int) ->
     return is_outside_range_int(value, min_int(first_bound, second_bound), max_int(first_bound, second_bound))
 }
 
+pub fn is_ascending_ints[N](values: [Int; N]) -> Bool {
+    var index = 0
+    var previous = 0
+    for value in values {
+        if index > 0 && value < previous {
+            return false
+        };
+        previous = value;
+        index = index + 1
+    }
+    return true
+}
+
 pub fn is_ascending_int(first: Int, second: Int, third: Int) -> Bool {
-    return first <= second && second <= third
+    return is_ascending_ints([first, second, third])
 }
 
 pub fn is_ascending4_int(first: Int, second: Int, third: Int, fourth: Int) -> Bool {
-    return is_ascending_int(first, second, third) && third <= fourth
+    return is_ascending_ints([first, second, third, fourth])
 }
 
 pub fn is_ascending5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Bool {
-    return is_ascending4_int(first, second, third, fourth) && fourth <= fifth
+    return is_ascending_ints([first, second, third, fourth, fifth])
+}
+
+pub fn is_strictly_ascending_ints[N](values: [Int; N]) -> Bool {
+    var index = 0
+    var previous = 0
+    for value in values {
+        if index > 0 && value <= previous {
+            return false
+        };
+        previous = value;
+        index = index + 1
+    }
+    return true
 }
 
 pub fn is_strictly_ascending_int(first: Int, second: Int, third: Int) -> Bool {
-    return first < second && second < third
+    return is_strictly_ascending_ints([first, second, third])
 }
 
 pub fn is_strictly_ascending4_int(first: Int, second: Int, third: Int, fourth: Int) -> Bool {
-    return is_strictly_ascending_int(first, second, third) && third < fourth
+    return is_strictly_ascending_ints([first, second, third, fourth])
 }
 
 pub fn is_strictly_ascending5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Bool {
-    return is_strictly_ascending4_int(first, second, third, fourth) && fourth < fifth
+    return is_strictly_ascending_ints([first, second, third, fourth, fifth])
+}
+
+pub fn is_descending_ints[N](values: [Int; N]) -> Bool {
+    var index = 0
+    var previous = 0
+    for value in values {
+        if index > 0 && value > previous {
+            return false
+        };
+        previous = value;
+        index = index + 1
+    }
+    return true
 }
 
 pub fn is_descending_int(first: Int, second: Int, third: Int) -> Bool {
-    return first >= second && second >= third
+    return is_descending_ints([first, second, third])
 }
 
 pub fn is_descending4_int(first: Int, second: Int, third: Int, fourth: Int) -> Bool {
-    return is_descending_int(first, second, third) && third >= fourth
+    return is_descending_ints([first, second, third, fourth])
 }
 
 pub fn is_descending5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Bool {
-    return is_descending4_int(first, second, third, fourth) && fourth >= fifth
+    return is_descending_ints([first, second, third, fourth, fifth])
+}
+
+pub fn is_strictly_descending_ints[N](values: [Int; N]) -> Bool {
+    var index = 0
+    var previous = 0
+    for value in values {
+        if index > 0 && value >= previous {
+            return false
+        };
+        previous = value;
+        index = index + 1
+    }
+    return true
 }
 
 pub fn is_strictly_descending_int(first: Int, second: Int, third: Int) -> Bool {
-    return first > second && second > third
+    return is_strictly_descending_ints([first, second, third])
 }
 
 pub fn is_strictly_descending4_int(first: Int, second: Int, third: Int, fourth: Int) -> Bool {
-    return is_strictly_descending_int(first, second, third) && third > fourth
+    return is_strictly_descending_ints([first, second, third, fourth])
 }
 
 pub fn is_strictly_descending5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Bool {
-    return is_strictly_descending4_int(first, second, third, fourth) && fourth > fifth
+    return is_strictly_descending_ints([first, second, third, fourth, fifth])
 }
 
 pub fn is_divisible_by_int(value: Int, divisor: Int) -> Bool {

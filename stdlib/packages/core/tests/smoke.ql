@@ -23,6 +23,7 @@ use std.core.in_bounds_int as in_bounds_int
 use std.core.is_descending_int as is_descending_int
 use std.core.is_descending4_int as is_descending4_int
 use std.core.is_descending5_int as is_descending5_int
+use std.core.is_descending_ints as is_descending_ints
 use std.core.is_factor_of_int as is_factor_of_int
 use std.core.is_not_within_int as is_not_within_int
 use std.core.is_outside_bounds_int as is_outside_bounds_int
@@ -30,10 +31,13 @@ use std.core.is_outside_range_int as is_outside_range_int
 use std.core.is_strictly_descending_int as is_strictly_descending_int
 use std.core.is_strictly_descending4_int as is_strictly_descending4_int
 use std.core.is_strictly_descending5_int as is_strictly_descending5_int
+use std.core.is_strictly_descending_ints as is_strictly_descending_ints
+use std.core.is_ascending_ints as is_ascending_ints
 use std.core.is_ascending4_int as is_ascending4_int
 use std.core.is_ascending5_int as is_ascending5_int
 use std.core.is_strictly_ascending4_int as is_strictly_ascending4_int
 use std.core.is_strictly_ascending5_int as is_strictly_ascending5_int
+use std.core.is_strictly_ascending_ints as is_strictly_ascending_ints
 use std.core.is_within_int as is_within_int
 use std.core.lower_bound_int as lower_bound_int
 use std.core.max3_int as max3_int
@@ -88,6 +92,8 @@ fn main() -> Int {
     let order_status = sum6(check_bool(is_not_within_int(12, 10, 1), true), check_bool(is_not_within_int(10, 10, 0), false), check_bool(is_descending_int(9, 9, 3), true), check_bool(is_descending_int(3, 9, 5), false), check_bool(is_strictly_descending_int(9, 5, 3), true), check_bool(is_strictly_descending_int(9, 9, 3), false))
     let order4_status = sum6(check_bool(is_ascending4_int(3, 5, 5, 9), true), check_bool(is_ascending5_int(3, 5, 5, 9, 10), true), check_bool(is_strictly_ascending4_int(3, 5, 7, 9), true), check_bool(is_strictly_ascending5_int(3, 5, 7, 9, 11), true), check_bool(is_strictly_ascending4_int(3, 5, 5, 9), false), check_bool(is_strictly_ascending5_int(3, 5, 7, 9, 9), false))
     let order5_status = sum6(check_bool(is_descending4_int(9, 7, 7, 3), true), check_bool(is_descending5_int(11, 9, 7, 7, 3), true), check_bool(is_strictly_descending4_int(9, 7, 5, 3), true), check_bool(is_strictly_descending5_int(11, 9, 7, 5, 3), true), check_bool(is_strictly_descending4_int(9, 7, 7, 3), false), check_bool(is_strictly_descending5_int(11, 9, 7, 7, 3), false))
+    let generic_order_status = sum6(check_bool(is_ascending_ints([3, 5, 5, 9, 10, 10]), true), check_bool(is_ascending_ints([3, 9, 5, 7, 8, 9]), false), check_bool(is_strictly_ascending_ints([3, 5, 7, 9, 11, 13]), true), check_bool(is_strictly_ascending_ints([3, 5, 5, 9, 11, 13]), false), check_bool(is_descending_ints([13, 11, 11, 7, 5, 3]), true), check_bool(is_descending_ints([13, 7, 11, 5, 3, 2]), false))
+    let generic_strict_order_status = sum6(check_bool(is_strictly_descending_ints([13, 11, 9, 7, 5, 3]), true), check_bool(is_strictly_descending_ints([13, 11, 11, 7, 5, 3]), false), check_bool(is_ascending_ints([2, 3, 4, 5, 6, 7]), true), check_bool(is_descending_ints([7, 6, 5, 4, 3, 2]), true), 0, 0)
     let transform_status = sum6(check_int(clamp_bounds_int(12, 9, 3), 9), check_int(abs_int(0 - 7), 7), check_int(abs_diff_int(3, 9), 6), check_int(range_span_int(9, 3), 6), check_int(lower_bound_int(9, 3), 3), check_int(upper_bound_int(9, 3), 9))
     let boundary_status = sum6(check_int(distance_to_range_int(2, 3, 9), 1), check_int(distance_to_bounds_int(10, 9, 3), 1), check_int(distance_to_range_int(5, 3, 9), 0), check_int(sign_int(0 - 5), 0 - 1), check_int(sign_int(0), 0), check_int(sign_int(5), 1))
     let aggregate_status = sum6(check_int(sum3_int(2, 3, 4), 9), check_int(sum4_int(2, 3, 4, 5), 14), check_int(sum5_int(2, 3, 4, 5, 6), 20), check_int(product3_int(2, 3, 4), 24), check_int(product4_int(2, 3, 4, 5), 120), check_int(product5_int(2, 3, 4, 5, 6), 720))
@@ -98,5 +104,5 @@ fn main() -> Int {
     let bool_none_status = sum6(check_bool(none3_bool(false, false, false), true), check_bool(none4_bool(false, false, true, false), false), check_bool(none5_bool(false, false, false, false, false), true), 0, 0, 0)
     let generic_bool_status = sum6(check_bool(all_bools([true, true, true]), true), check_bool(all_bools([true, false, true, true]), false), check_bool(any_bools([false, false, true]), true), check_bool(any_bools([false, false, false, false]), false), check_bool(none_bools([false, false, false]), true), check_bool(none_bools([false, true, false]), false))
 
-    return extrema_status + compare_status + range_status + order_status + order4_status + order5_status + transform_status + boundary_status + aggregate_status + average_status + generic_aggregate_status + division_status + bool_aggregate_status + bool_none_status + generic_bool_status + check_int(bool_to_int(true), 1)
+    return extrema_status + compare_status + range_status + order_status + order4_status + order5_status + generic_order_status + generic_strict_order_status + transform_status + boundary_status + aggregate_status + average_status + generic_aggregate_status + division_status + bool_aggregate_status + bool_none_status + generic_bool_status + check_int(bool_to_int(true), 1)
 }

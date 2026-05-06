@@ -12,14 +12,14 @@
 
 ## 推荐 API
 
-- `std.core` 的数组聚合 helpers，例如 `sum_ints`、`product_ints`、`average_ints`、`max_ints`、`min_ints`、`all_bools`、`any_bools`、`none_bools`
+- `std.core` 的数组 helpers，例如 `sum_ints`、`product_ints`、`average_ints`、`max_ints`、`min_ints`、`all_bools`、`is_ascending_ints`、`is_strictly_descending_ints`
 - `std.option.Option[T]`
 - `std.result.Result[T, E]`
 - `std.array` 的 length-generic helpers，例如 `first_array`、`last_array`、`at_array_or`、`contains_array`、`count_array`、`len_array`、`reverse_array`、`repeat_array`、`average_int_array`
 - `std.test` 的普通断言和数组断言 helpers
 
 `std.array` 不再导出 `first3_array`、`reverse3_array`、`repeat3_array` 这类固定长度 helper；新代码只使用 length-generic API。重复数组使用语言级 `[value; N]`，标准库暴露 `repeat_array[T, N](value) -> [T; N]`。
-`std.core` 里的 `sum3_int`、`max4_int`、`all5_bool` 等固定 arity 名称只作为兼容包装保留，新代码应传数组给泛型聚合 API。
+`std.core` 里的 `sum3_int`、`max4_int`、`all5_bool`、`is_ascending4_int` 等固定 arity 名称只作为兼容包装保留，新代码应传数组给泛型 API。
 
 ## 本地依赖
 

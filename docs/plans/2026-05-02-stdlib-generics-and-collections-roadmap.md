@@ -6,7 +6,7 @@
 
 - 包：`std.core`、`std.option`、`std.result`、`std.array`、`std.test`。
 - generic carrier：`Option[T]`、`Result[T, E]`。
-- `std.core` 有 canonical length-generic aggregate helpers：`sum_ints`、`product_ints`、`average_ints`、`max_ints`、`min_ints`、`all_bools`、`any_bools`、`none_bools`。
+- `std.core` 有 canonical length-generic aggregate/order helpers：`sum_ints`、`product_ints`、`average_ints`、`max_ints`、`min_ints`、`all_bools`、`any_bools`、`none_bools`、`is_ascending_ints`、`is_descending_ints`。
 - `std.array` 有 canonical length-generic access/query/count/aggregate helpers、`reverse_array[T, N]` 和 `repeat_array[T, N]`。
 - 数组长度泛型参数可作为 `Int` 值读取。
 - 重复数组字面量 `[value; N]` 支持整数字面量长度和数组长度泛型。
