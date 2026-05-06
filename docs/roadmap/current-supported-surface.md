@@ -35,7 +35,7 @@
 - 数组长度泛型参数可在函数体内作为 `Int` 值读取。
 - dependency generic specialization 能递归处理同依赖模块内的 generic helper 直调。
 - `ql test` 已用真实 smoke 覆盖 dependency public functions、public values、generic public functions、public struct/type alias/method/trait bridge。
-- `Option[T]`、`Result[T, E]`、`std.core` / `std.array` length-generic aggregate/order helpers、`std.test` generic assertions / status merge 已有真实 smoke。
+- `Option[T]`、`Result[T, E]`、`std.core` / `std.array` length-generic aggregate/order helpers、`std.test` generic aggregate assertions / status merge 已有真实 smoke。
 - 语言级重复数组字面量 `[value; N]` 已支持整数字面量长度和数组长度泛型；`std.array` 固定长度 helper 已删除。
 
 ### LSP 和 VSCode

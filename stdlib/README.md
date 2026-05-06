@@ -20,7 +20,7 @@
 
 `std.array` 不再导出 `first3_array`、`reverse3_array`、`repeat3_array` 这类固定长度 helper；新代码只使用 length-generic API。重复数组使用语言级 `[value; N]`，标准库暴露 `repeat_array[T, N](value) -> [T; N]`。
 `std.core` 里的 `sum3_int`、`max4_int`、`all5_bool`、`is_ascending4_int` 等固定 arity 名称只作为兼容包装保留，新代码应传数组给泛型 API。
-`std.test` 的状态合并使用 `merge_statuses([status1, status2, ...])`；固定 arity 的 `merge_status3` / `merge_status4` / `merge_status5` / `merge_status6` 已删除。
+`std.test` 的聚合断言和状态合并使用数组 API；固定 arity 的 `expect_*3/4/5` 聚合断言和 `merge_status3/4/5/6` 已删除。
 
 ## 本地依赖
 

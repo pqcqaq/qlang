@@ -1,6 +1,3 @@
-use std.test.expect_bool_all3 as expect_bool_all3
-use std.test.expect_bool_all4 as expect_bool_all4
-use std.test.expect_bool_all5 as expect_bool_all5
 use std.test.expect_bool_and as expect_bool_and
 use std.test.expect_bool_array_all as expect_bool_array_all
 use std.test.expect_bool_array_at as expect_bool_array_at
@@ -11,15 +8,9 @@ use std.test.expect_bool_array_first as expect_bool_array_first
 use std.test.expect_bool_array_last as expect_bool_array_last
 use std.test.expect_bool_array_none as expect_bool_array_none
 use std.test.expect_bool_array_reverse as expect_bool_array_reverse
-use std.test.expect_bool_any3 as expect_bool_any3
-use std.test.expect_bool_any4 as expect_bool_any4
-use std.test.expect_bool_any5 as expect_bool_any5
 use std.test.expect_bool_eq as expect_bool_eq
 use std.test.expect_bool_implies as expect_bool_implies
 use std.test.expect_bool_ne as expect_bool_ne
-use std.test.expect_bool_none3 as expect_bool_none3
-use std.test.expect_bool_none4 as expect_bool_none4
-use std.test.expect_bool_none5 as expect_bool_none5
 use std.test.expect_bool_not as expect_bool_not
 use std.test.expect_bool_or as expect_bool_or
 use std.test.expect_bool_to_int as expect_bool_to_int
@@ -66,6 +57,7 @@ use std.test.expect_generic_int_result_to_option_some as expect_generic_int_resu
 use std.test.expect_int_abs as expect_int_abs
 use std.test.expect_int_abs_diff as expect_int_abs_diff
 use std.test.expect_int_array_at as expect_int_array_at
+use std.test.expect_int_array_average as expect_int_array_average
 use std.test.expect_int_array_contains as expect_int_array_contains
 use std.test.expect_int_array_count as expect_int_array_count
 use std.test.expect_int_array_first as expect_int_array_first
@@ -75,10 +67,6 @@ use std.test.expect_int_array_min as expect_int_array_min
 use std.test.expect_int_array_product as expect_int_array_product
 use std.test.expect_int_array_reverse as expect_int_array_reverse
 use std.test.expect_int_array_sum as expect_int_array_sum
-use std.test.expect_int_average2 as expect_int_average2
-use std.test.expect_int_average3 as expect_int_average3
-use std.test.expect_int_average4 as expect_int_average4
-use std.test.expect_int_average5 as expect_int_average5
 use std.test.expect_int_ascending as expect_int_ascending
 use std.test.expect_int_ascending4 as expect_int_ascending4
 use std.test.expect_int_ascending5 as expect_int_ascending5
@@ -119,14 +107,8 @@ use std.test.expect_int_le as expect_int_le
 use std.test.expect_int_lower_bound as expect_int_lower_bound
 use std.test.expect_int_lt as expect_int_lt
 use std.test.expect_int_max as expect_int_max
-use std.test.expect_int_max3 as expect_int_max3
-use std.test.expect_int_max4 as expect_int_max4
-use std.test.expect_int_max5 as expect_int_max5
 use std.test.expect_int_median3 as expect_int_median3
 use std.test.expect_int_min as expect_int_min
-use std.test.expect_int_min3 as expect_int_min3
-use std.test.expect_int_min4 as expect_int_min4
-use std.test.expect_int_min5 as expect_int_min5
 use std.test.expect_int_ne as expect_int_ne
 use std.test.expect_int_negative as expect_int_negative
 use std.test.expect_int_nonnegative as expect_int_nonnegative
@@ -136,9 +118,6 @@ use std.test.expect_int_odd as expect_int_odd
 use std.test.expect_int_outside as expect_int_outside
 use std.test.expect_int_outside_bounds as expect_int_outside_bounds
 use std.test.expect_int_positive as expect_int_positive
-use std.test.expect_int_product3 as expect_int_product3
-use std.test.expect_int_product4 as expect_int_product4
-use std.test.expect_int_product5 as expect_int_product5
 use std.test.expect_int_quotient_or_zero as expect_int_quotient_or_zero
 use std.test.expect_int_range_span as expect_int_range_span
 use std.test.expect_int_remainder_or_zero as expect_int_remainder_or_zero
@@ -149,9 +128,6 @@ use std.test.expect_int_strictly_ascending4 as expect_int_strictly_ascending4
 use std.test.expect_int_strictly_ascending5 as expect_int_strictly_ascending5
 use std.test.expect_int_strictly_descending4 as expect_int_strictly_descending4
 use std.test.expect_int_strictly_descending5 as expect_int_strictly_descending5
-use std.test.expect_int_sum3 as expect_int_sum3
-use std.test.expect_int_sum4 as expect_int_sum4
-use std.test.expect_int_sum5 as expect_int_sum5
 use std.test.expect_int_upper_bound as expect_int_upper_bound
 use std.test.expect_int_within as expect_int_within
 use std.test.expect_nonzero as expect_nonzero
@@ -197,13 +173,13 @@ fn main() -> Int {
     let bool_logic_pass = sum4(check_int(expect_bool_not(false, true), 0), check_int(expect_bool_and(true, false, false), 0), check_int(expect_bool_or(false, true, true), 0), check_int(expect_bool_xor(true, true, false), 0))
     let bool_failure = sum4(check_int(expect_true(false), 1), check_int(expect_false(true), 1), check_int(expect_bool_eq(true, false), 1), check_int(expect_bool_ne(true, true), 1))
     let bool_logic_failure = sum4(check_int(expect_bool_not(false, false), 1), check_int(expect_bool_and(true, false, true), 1), check_int(expect_bool_or(false, false, true), 1), check_int(expect_bool_xor(true, false, false), 1))
-    let bool_aggregate_pass = sum4(check_int(expect_bool_all3(true, true, true, true), 0), check_int(expect_bool_all4(true, true, false, true, false), 0), check_int(expect_bool_any3(false, false, true, true), 0), check_int(expect_bool_any4(false, false, false, false, false), 0))
-    let bool_aggregate5_pass = sum4(check_int(expect_bool_all5(true, true, true, true, true, true), 0), check_int(expect_bool_any5(false, false, false, false, true, true), 0), 0, 0)
-    let bool_none_pass = sum4(check_int(expect_bool_none3(false, false, false, true), 0), check_int(expect_bool_none4(false, false, true, false, false), 0), check_int(expect_bool_none5(false, false, false, false, false, true), 0), 0)
+    let bool_aggregate_pass = sum4(check_int(expect_bool_array_all([true, true, true], true), 0), check_int(expect_bool_array_all([true, true, false, true], false), 0), check_int(expect_bool_array_any([false, false, true], true), 0), check_int(expect_bool_array_any([false, false, false, false], false), 0))
+    let bool_aggregate5_pass = sum4(check_int(expect_bool_array_all([true, true, true, true, true], true), 0), check_int(expect_bool_array_any([false, false, false, false, true], true), 0), 0, 0)
+    let bool_none_pass = sum4(check_int(expect_bool_array_none([false, false, false], true), 0), check_int(expect_bool_array_none([false, false, true, false], false), 0), check_int(expect_bool_array_none([false, false, false, false, false], true), 0), 0)
     let bool_conversion_pass = sum4(check_int(expect_bool_to_int(true, 1), 0), check_int(expect_bool_to_int(false, 0), 0), 0, 0)
-    let bool_aggregate_failure = sum4(check_int(expect_bool_all3(true, true, false, true), 1), check_int(expect_bool_all4(true, true, true, true, false), 1), check_int(expect_bool_any3(false, false, false, true), 1), check_int(expect_bool_any4(false, false, true, false, false), 1))
-    let bool_aggregate5_failure = sum4(check_int(expect_bool_all5(true, true, true, true, false, true), 1), check_int(expect_bool_any5(false, false, false, false, false, true), 1), 0, 0)
-    let bool_none_failure = sum4(check_int(expect_bool_none3(false, true, false, true), 1), check_int(expect_bool_none4(false, false, false, false, false), 1), check_int(expect_bool_none5(false, false, true, false, false, true), 1), 0)
+    let bool_aggregate_failure = sum4(check_int(expect_bool_array_all([true, true, false], true), 1), check_int(expect_bool_array_all([true, true, true, true], false), 1), check_int(expect_bool_array_any([false, false, false], true), 1), check_int(expect_bool_array_any([false, false, true, false], false), 1))
+    let bool_aggregate5_failure = sum4(check_int(expect_bool_array_all([true, true, true, true, false], true), 1), check_int(expect_bool_array_any([false, false, false, false, false], true), 1), 0, 0)
+    let bool_none_failure = sum4(check_int(expect_bool_array_none([false, true, false], true), 1), check_int(expect_bool_array_none([false, false, false, false], false), 1), check_int(expect_bool_array_none([false, false, true, false, false], true), 1), 0)
     let bool_conversion_failure = sum4(check_int(expect_bool_to_int(false, 1), 1), check_int(expect_bool_to_int(true, 0), 1), 0, 0)
     let int_order_pass = sum4(check_int(expect_int_eq(8, 8), 0), check_int(expect_int_ne(8, 9), 0), check_int(expect_int_gt(9, 8), 0), check_int(expect_int_ge(8, 8), 0))
     let int_boundary_pass = sum4(check_int(expect_int_lt(7, 8), 0), check_int(expect_int_le(8, 8), 0), check_int(expect_zero(0), 0), check_int(expect_nonzero(1), 0))
@@ -227,12 +203,12 @@ fn main() -> Int {
     let transform_failure = sum4(check_int(expect_int_clamped(12, 3, 9, 12), 1), check_int(expect_int_clamped_bounds(2, 9, 3, 2), 1), check_int(expect_int_distance_to_range(5, 3, 9, 1), 1), check_int(expect_int_distance_to_bounds(5, 9, 3, 1), 1))
     let transform_clamp_pass = sum4(check_int(expect_int_clamp_min(19, 20, 20), 0), check_int(expect_int_clamp_max(23, 22, 22), 0), 0, 0)
     let transform_clamp_failure = sum4(check_int(expect_int_clamp_min(19, 20, 19), 1), check_int(expect_int_clamp_max(23, 22, 23), 1), 0, 0)
-    let aggregate_pass = sum4(check_int(expect_int_sum3(2, 3, 4, 9), 0), check_int(expect_int_sum4(2, 3, 4, 5, 14), 0), check_int(expect_int_product3(2, 3, 4, 24), 0), check_int(expect_int_product4(2, 3, 4, 5, 120), 0))
-    let aggregate5_pass = sum4(check_int(expect_int_sum5(2, 3, 4, 5, 6, 20), 0), check_int(expect_int_product5(2, 3, 4, 5, 6, 720), 0), 0, 0)
-    let average_pass = sum4(check_int(expect_int_average2(5, 8, 6), 0), check_int(expect_int_average3(3, 6, 9, 6), 0), check_int(expect_int_average4(2, 4, 6, 8, 5), 0), check_int(expect_int_average5(2, 4, 6, 8, 10, 6), 0))
-    let aggregate_failure = sum4(check_int(expect_int_sum3(2, 3, 4, 10), 1), check_int(expect_int_sum4(2, 3, 4, 5, 15), 1), check_int(expect_int_product3(2, 3, 4, 25), 1), check_int(expect_int_product4(2, 3, 4, 5, 121), 1))
-    let aggregate5_failure = sum4(check_int(expect_int_sum5(2, 3, 4, 5, 6, 21), 1), check_int(expect_int_product5(2, 3, 4, 5, 6, 721), 1), 0, 0)
-    let average_failure = sum4(check_int(expect_int_average2(5, 8, 7), 1), check_int(expect_int_average3(3, 6, 9, 7), 1), check_int(expect_int_average4(2, 4, 6, 8, 6), 1), check_int(expect_int_average5(2, 4, 6, 8, 10, 7), 1))
+    let aggregate_pass = sum4(check_int(expect_int_array_sum([2, 3, 4], 9), 0), check_int(expect_int_array_sum([2, 3, 4, 5], 14), 0), check_int(expect_int_array_product([2, 3, 4], 24), 0), check_int(expect_int_array_product([2, 3, 4, 5], 120), 0))
+    let aggregate5_pass = sum4(check_int(expect_int_array_sum([2, 3, 4, 5, 6], 20), 0), check_int(expect_int_array_product([2, 3, 4, 5, 6], 720), 0), 0, 0)
+    let average_pass = sum4(check_int(expect_int_array_average([5, 8], 6), 0), check_int(expect_int_array_average([3, 6, 9], 6), 0), check_int(expect_int_array_average([2, 4, 6, 8], 5), 0), check_int(expect_int_array_average([2, 4, 6, 8, 10], 6), 0))
+    let aggregate_failure = sum4(check_int(expect_int_array_sum([2, 3, 4], 10), 1), check_int(expect_int_array_sum([2, 3, 4, 5], 15), 1), check_int(expect_int_array_product([2, 3, 4], 25), 1), check_int(expect_int_array_product([2, 3, 4, 5], 121), 1))
+    let aggregate5_failure = sum4(check_int(expect_int_array_sum([2, 3, 4, 5, 6], 21), 1), check_int(expect_int_array_product([2, 3, 4, 5, 6], 721), 1), 0, 0)
+    let average_failure = sum4(check_int(expect_int_array_average([5, 8], 7), 1), check_int(expect_int_array_average([3, 6, 9], 7), 1), check_int(expect_int_array_average([2, 4, 6, 8], 6), 1), check_int(expect_int_array_average([2, 4, 6, 8, 10], 7), 1))
     let division_pass = sum4(check_int(expect_int_quotient_or_zero(21, 7, 3), 0), check_int(expect_int_quotient_or_zero(21, 0, 0), 0), check_int(expect_int_remainder_or_zero(22, 7, 1), 0), check_int(expect_int_remainder_or_zero(22, 0, 0), 0))
     let division_bool_pass = sum4(check_int(expect_int_has_remainder(22, 7), 0), check_int(expect_int_factor_of(7, 21), 0), 0, 0)
     let division_failure = sum4(check_int(expect_int_quotient_or_zero(21, 7, 4), 1), check_int(expect_int_remainder_or_zero(22, 7, 2), 1), check_int(expect_int_has_remainder(21, 7), 1), check_int(expect_int_factor_of(0, 21), 1))
@@ -240,12 +216,12 @@ fn main() -> Int {
     let compare_sign_pass = sum4(check_int(expect_int_sign(0 - 5, 0 - 1), 0), check_int(expect_int_sign(0, 0), 0), check_int(expect_int_sign(5, 1), 0), check_int(expect_int_compare(3, 9, 0 - 1), 0))
     let compare_sign_more_pass = sum4(check_int(expect_int_compare(9, 9, 0), 0), check_int(expect_int_compare(9, 3, 1), 0), 0, 0)
     let compare_sign_failure = sum4(check_int(expect_int_sign(5, 0 - 1), 1), check_int(expect_int_compare(9, 9, 1), 1), check_int(expect_int_compare(3, 9, 1), 1), 0)
-    let extrema_pass = sum4(check_int(expect_int_max(20, 22, 22), 0), check_int(expect_int_min(20, 22, 20), 0), check_int(expect_int_max3(20, 22, 21, 22), 0), check_int(expect_int_min3(20, 22, 21, 20), 0))
-    let extrema4_pass = sum4(check_int(expect_int_max4(20, 22, 21, 19, 22), 0), check_int(expect_int_min4(20, 22, 21, 19, 19), 0), check_int(expect_int_median3(22, 20, 21, 21), 0), 0)
-    let extrema5_pass = sum4(check_int(expect_int_max5(20, 22, 21, 19, 23, 23), 0), check_int(expect_int_min5(20, 22, 21, 19, 23, 19), 0), 0, 0)
-    let extrema_failure = sum4(check_int(expect_int_max(20, 22, 20), 1), check_int(expect_int_min(20, 22, 22), 1), check_int(expect_int_max3(20, 22, 21, 21), 1), check_int(expect_int_min3(20, 22, 21, 21), 1))
-    let extrema4_failure = sum4(check_int(expect_int_max4(20, 22, 21, 19, 21), 1), check_int(expect_int_min4(20, 22, 21, 19, 20), 1), check_int(expect_int_median3(22, 20, 21, 22), 1), 0)
-    let extrema5_failure = sum4(check_int(expect_int_max5(20, 22, 21, 19, 23, 22), 1), check_int(expect_int_min5(20, 22, 21, 19, 23, 20), 1), 0, 0)
+    let extrema_pass = sum4(check_int(expect_int_max(20, 22, 22), 0), check_int(expect_int_min(20, 22, 20), 0), check_int(expect_int_array_max([20, 22, 21], 22), 0), check_int(expect_int_array_min([20, 22, 21], 20), 0))
+    let extrema4_pass = sum4(check_int(expect_int_array_max([20, 22, 21, 19], 22), 0), check_int(expect_int_array_min([20, 22, 21, 19], 19), 0), check_int(expect_int_median3(22, 20, 21, 21), 0), 0)
+    let extrema5_pass = sum4(check_int(expect_int_array_max([20, 22, 21, 19, 23], 23), 0), check_int(expect_int_array_min([20, 22, 21, 19, 23], 19), 0), 0, 0)
+    let extrema_failure = sum4(check_int(expect_int_max(20, 22, 20), 1), check_int(expect_int_min(20, 22, 22), 1), check_int(expect_int_array_max([20, 22, 21], 21), 1), check_int(expect_int_array_min([20, 22, 21], 21), 1))
+    let extrema4_failure = sum4(check_int(expect_int_array_max([20, 22, 21, 19], 21), 1), check_int(expect_int_array_min([20, 22, 21, 19], 20), 1), check_int(expect_int_median3(22, 20, 21, 22), 1), 0)
+    let extrema5_failure = sum4(check_int(expect_int_array_max([20, 22, 21, 19, 23], 22), 1), check_int(expect_int_array_min([20, 22, 21, 19, 23], 20), 1), 0, 0)
     let number_pass = sum4(check_int(expect_int_even(8), 0), check_int(expect_int_odd(9), 0), check_int(expect_int_divisible_by(21, 7), 0), check_int(expect_int_within(11, 10, 1), 0))
     let sign_pass = sum4(check_int(expect_int_not_within(12, 10, 1), 0), check_int(expect_int_positive(1), 0), check_int(expect_int_negative(0 - 1), 0), check_int(expect_int_nonnegative(0), 0))
     let number_failure = sum4(check_int(expect_int_even(9), 1), check_int(expect_int_odd(8), 1), check_int(expect_int_divisible_by(21, 0), 1), check_int(expect_int_within(12, 10, 1), 1))

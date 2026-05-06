@@ -1,17 +1,7 @@
 package std.test
 use std.core.abs_diff_int as abs_diff_int
 use std.core.abs_int as abs_int
-use std.core.all3_bool as all3_bool
-use std.core.all4_bool as all4_bool
-use std.core.all5_bool as all5_bool
 use std.core.and_bool as and_bool
-use std.core.any3_bool as any3_bool
-use std.core.any4_bool as any4_bool
-use std.core.any5_bool as any5_bool
-use std.core.average2_int as average2_int
-use std.core.average3_int as average3_int
-use std.core.average4_int as average4_int
-use std.core.average5_int as average5_int
 use std.core.bool_to_int as bool_to_int
 use std.core.clamp_bounds_int as clamp_bounds_int
 use std.core.clamp_int as clamp_int
@@ -51,30 +41,15 @@ use std.core.is_strictly_descending4_int as is_strictly_descending4_int
 use std.core.is_strictly_descending5_int as is_strictly_descending5_int
 use std.core.is_within_int as is_within_int
 use std.core.lower_bound_int as lower_bound_int
-use std.core.max3_int as max3_int
-use std.core.max4_int as max4_int
-use std.core.max5_int as max5_int
 use std.core.max_int as max_int
 use std.core.median3_int as median3_int
-use std.core.min3_int as min3_int
-use std.core.min4_int as min4_int
-use std.core.min5_int as min5_int
 use std.core.min_int as min_int
-use std.core.none3_bool as none3_bool
-use std.core.none4_bool as none4_bool
-use std.core.none5_bool as none5_bool
 use std.core.not_bool as not_bool
 use std.core.or_bool as or_bool
-use std.core.product3_int as product3_int
-use std.core.product4_int as product4_int
-use std.core.product5_int as product5_int
 use std.core.quotient_or_zero_int as quotient_or_zero_int
 use std.core.range_span_int as range_span_int
 use std.core.remainder_or_zero_int as remainder_or_zero_int
 use std.core.sign_int as sign_int
-use std.core.sum3_int as sum3_int
-use std.core.sum4_int as sum4_int
-use std.core.sum5_int as sum5_int
 use std.core.upper_bound_int as upper_bound_int
 use std.core.xor_bool as xor_bool
 use std.option.BoolOption as BoolOption
@@ -162,69 +137,6 @@ pub fn expect_bool_or(left: Bool, right: Bool, expected: Bool) -> Int {
 
 pub fn expect_bool_xor(left: Bool, right: Bool, expected: Bool) -> Int {
     if xor_bool(left, right) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_bool_all3(first: Bool, second: Bool, third: Bool, expected: Bool) -> Int {
-    if all3_bool(first, second, third) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_bool_all4(first: Bool, second: Bool, third: Bool, fourth: Bool, expected: Bool) -> Int {
-    if all4_bool(first, second, third, fourth) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_bool_all5(first: Bool, second: Bool, third: Bool, fourth: Bool, fifth: Bool, expected: Bool) -> Int {
-    if all5_bool(first, second, third, fourth, fifth) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_bool_any3(first: Bool, second: Bool, third: Bool, expected: Bool) -> Int {
-    if any3_bool(first, second, third) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_bool_any4(first: Bool, second: Bool, third: Bool, fourth: Bool, expected: Bool) -> Int {
-    if any4_bool(first, second, third, fourth) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_bool_any5(first: Bool, second: Bool, third: Bool, fourth: Bool, fifth: Bool, expected: Bool) -> Int {
-    if any5_bool(first, second, third, fourth, fifth) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_bool_none3(first: Bool, second: Bool, third: Bool, expected: Bool) -> Int {
-    if none3_bool(first, second, third) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_bool_none4(first: Bool, second: Bool, third: Bool, fourth: Bool, expected: Bool) -> Int {
-    if none4_bool(first, second, third, fourth) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_bool_none5(first: Bool, second: Bool, third: Bool, fourth: Bool, fifth: Bool, expected: Bool) -> Int {
-    if none5_bool(first, second, third, fourth, fifth) == expected {
         return 0
     }
     return 1
@@ -342,6 +254,17 @@ pub fn expect_int_array_product[N](values: [Int; N], expected: Int) -> Int {
         total = total * value
     }
     return expect_int_eq(total, expected)
+}
+
+pub fn expect_int_array_average[N](values: [Int; N], expected: Int) -> Int {
+    if N == 0 {
+        return expect_int_eq(0, expected)
+    }
+    var total = 0
+    for value in values {
+        total = total + value
+    }
+    return expect_int_eq(total / N, expected)
 }
 
 pub fn expect_int_array_max[N](values: [Int; N], expected: Int) -> Int {
@@ -462,120 +385,8 @@ pub fn expect_int_min(left: Int, right: Int, expected: Int) -> Int {
     return 1
 }
 
-pub fn expect_int_max3(first: Int, second: Int, third: Int, expected: Int) -> Int {
-    if max3_int(first, second, third) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_int_min3(first: Int, second: Int, third: Int, expected: Int) -> Int {
-    if min3_int(first, second, third) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_int_max4(first: Int, second: Int, third: Int, fourth: Int, expected: Int) -> Int {
-    if max4_int(first, second, third, fourth) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_int_min4(first: Int, second: Int, third: Int, fourth: Int, expected: Int) -> Int {
-    if min4_int(first, second, third, fourth) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_int_max5(first: Int, second: Int, third: Int, fourth: Int, fifth: Int, expected: Int) -> Int {
-    if max5_int(first, second, third, fourth, fifth) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_int_min5(first: Int, second: Int, third: Int, fourth: Int, fifth: Int, expected: Int) -> Int {
-    if min5_int(first, second, third, fourth, fifth) == expected {
-        return 0
-    }
-    return 1
-}
-
 pub fn expect_int_median3(first: Int, second: Int, third: Int, expected: Int) -> Int {
     if median3_int(first, second, third) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_int_sum3(first: Int, second: Int, third: Int, expected: Int) -> Int {
-    if sum3_int(first, second, third) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_int_sum4(first: Int, second: Int, third: Int, fourth: Int, expected: Int) -> Int {
-    if sum4_int(first, second, third, fourth) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_int_sum5(first: Int, second: Int, third: Int, fourth: Int, fifth: Int, expected: Int) -> Int {
-    if sum5_int(first, second, third, fourth, fifth) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_int_product3(first: Int, second: Int, third: Int, expected: Int) -> Int {
-    if product3_int(first, second, third) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_int_product4(first: Int, second: Int, third: Int, fourth: Int, expected: Int) -> Int {
-    if product4_int(first, second, third, fourth) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_int_product5(first: Int, second: Int, third: Int, fourth: Int, fifth: Int, expected: Int) -> Int {
-    if product5_int(first, second, third, fourth, fifth) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_int_average2(left: Int, right: Int, expected: Int) -> Int {
-    if average2_int(left, right) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_int_average3(first: Int, second: Int, third: Int, expected: Int) -> Int {
-    if average3_int(first, second, third) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_int_average4(first: Int, second: Int, third: Int, fourth: Int, expected: Int) -> Int {
-    if average4_int(first, second, third, fourth) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_int_average5(first: Int, second: Int, third: Int, fourth: Int, fifth: Int, expected: Int) -> Int {
-    if average5_int(first, second, third, fourth, fifth) == expected {
         return 0
     }
     return 1
