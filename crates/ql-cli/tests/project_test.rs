@@ -1,7 +1,7 @@
 mod support;
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ql_analysis::analyze_source;
 use ql_diagnostics::render_diagnostics;
@@ -43,6 +43,110 @@ fn ui_snapshot(diagnostic_path: &str, source: &str) -> String {
 fn parse_json_output(case_name: &str, stdout: &str) -> JsonValue {
     serde_json::from_str(&normalize_output_text(stdout))
         .unwrap_or_else(|error| panic!("[{case_name}] parse json stdout: {error}\n{stdout}"))
+}
+
+struct DependencySmokeProject {
+    temp: TempDir,
+    project_root: PathBuf,
+    interface_output: PathBuf,
+    dependency_output: PathBuf,
+    smoke_output: PathBuf,
+}
+
+fn write_dependency_smoke_project(
+    prefix: &str,
+    dependency_source: &str,
+    smoke_source: &str,
+) -> DependencySmokeProject {
+    let temp = TempDir::new(prefix);
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    fs::create_dir_all(dep_root.join("src")).expect("create dependency source tree");
+    fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+
+    temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write("dep/src/lib.ql", dependency_source);
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    temp.write("app/tests/smoke.ql", smoke_source);
+
+    let interface_output = dep_root.join("dep.qi");
+    let dependency_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+    assert!(
+        !interface_output.exists(),
+        "dependency interface should start missing for {prefix}"
+    );
+
+    DependencySmokeProject {
+        temp,
+        project_root,
+        interface_output,
+        dependency_output,
+        smoke_output,
+    }
+}
+
+fn expect_dependency_smoke_project_passes(
+    case_name: &str,
+    action: &str,
+    command_description: &str,
+    fixture: &DependencySmokeProject,
+) {
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["test"]).arg(&fixture.project_root);
+    let output = run_command_capture(&mut command, command_description);
+    let (stdout, stderr) = expect_success(case_name, action, &output)
+        .expect("dependency smoke project should pass `ql test`");
+    expect_empty_stderr(case_name, action, &stderr)
+        .expect("dependency smoke project should not print stderr");
+    expect_stdout_contains_all(
+        case_name,
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("dependency smoke project should report one passing smoke test");
+    expect_file_exists(
+        case_name,
+        &fixture.interface_output,
+        "synced dependency interface",
+        action,
+    )
+    .expect("dependency smoke project should emit the dependency interface");
+    expect_file_exists(
+        case_name,
+        &fixture.dependency_output,
+        "dependency package artifact",
+        action,
+    )
+    .expect("dependency smoke project should build the dependency package artifact");
+    expect_file_exists(
+        case_name,
+        &fixture.smoke_output,
+        "smoke test executable",
+        action,
+    )
+    .expect("dependency smoke project should emit the smoke test executable");
 }
 
 #[test]
@@ -952,6 +1056,71 @@ fn main() -> Int {
         "`ql test` current package generic result-context function",
     )
     .expect("generic result-context function package test should emit the smoke test executable");
+}
+
+#[test]
+fn test_package_path_supports_direct_dependency_public_functions() {
+    if !toolchain_available("`ql test` dependency public function test") {
+        return;
+    }
+
+    let fixture = write_dependency_smoke_project(
+        "ql-project-test-dependency-public-function",
+        "pub fn add(left: Int, right: Int) -> Int { return left + right }\n",
+        "use dep.add as sum\n\nfn main() -> Int { return sum(9, 4) - 13 }\n",
+    );
+    expect_dependency_smoke_project_passes(
+        "project-test-dependency-public-function",
+        "package dependency public function test",
+        "`ql test` dependency public function",
+        &fixture,
+    );
+}
+
+#[test]
+fn test_package_path_supports_direct_dependency_public_values() {
+    if !toolchain_available("`ql test` dependency public value test") {
+        return;
+    }
+
+    let fixture = write_dependency_smoke_project(
+        "ql-project-test-dependency-public-value",
+        "pub const VALUE: Int = 7\npub static READY: Bool = true\npub static VALUES: [Int; 3] = [1, 3, 5]\n",
+        "use dep.VALUE as THRESHOLD\nuse dep.READY as ENABLED\nuse dep.VALUES as ITEMS\n\nfn main() -> Int {\n    if ENABLED {\n        return THRESHOLD + ITEMS[1] - 10\n    }\n    return 1\n}\n",
+    );
+    expect_dependency_smoke_project_passes(
+        "project-test-dependency-public-value",
+        "package dependency public value test",
+        "`ql test` dependency public value",
+        &fixture,
+    );
+}
+
+#[test]
+fn test_package_path_supports_direct_dependency_generic_public_functions() {
+    if !toolchain_available("`ql test` dependency generic public function test") {
+        return;
+    }
+
+    let fixture = write_dependency_smoke_project(
+        "ql-project-test-dependency-generic-public-function",
+        r#"
+pub fn identity[T](value: T) -> T {
+    return value
+}
+
+pub fn first[T, N](values: [T; N]) -> T {
+    return values[0]
+}
+"#,
+        "use dep.identity as identity\nuse dep.first as first\n\nfn main() -> Int {\n    let value: Int = identity(7)\n    let picked: Int = first([5, 8, 13])\n    return value + picked - 12\n}\n",
+    );
+    expect_dependency_smoke_project_passes(
+        "project-test-dependency-generic-public-function",
+        "package dependency generic public function test",
+        "`ql test` dependency generic public function",
+        &fixture,
+    );
 }
 
 #[test]

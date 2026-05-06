@@ -1,6 +1,6 @@
 # 当前支持基线
 
-> 最后同步：2026-05-05
+> 最后同步：2026-05-06
 
 这页记录当前可依赖能力。更细节的行为以代码和回归测试为准。
 
@@ -34,6 +34,7 @@
 - public/local generic free function 支持 direct-call 多实例 specialization。
 - 数组长度泛型参数可在函数体内作为 `Int` 值读取。
 - dependency generic specialization 能递归处理同依赖模块内的 generic helper 直调。
+- `ql test` 已用真实 smoke 覆盖 dependency public functions、public values、generic public functions、public struct/type alias/method/trait bridge。
 - `Option[T]`、`Result[T, E]`、`std.array` length-generic helpers、`std.test` assertions 已有真实 smoke。
 - 固定长度数组 helper 和 concrete carrier 只保留兼容层，不再作为主方向扩张。
 
@@ -57,7 +58,7 @@
 ## 主要缺口
 
 - `ql-cli` 主链路仍过度集中，`check/build/run/test/project build` 需要抽成共享 project pipeline。
-- `ql test` 仍有测试专用 bridge/source override 路径，需要用 parity 回归证明与 `build/run` 依赖语义一致。
+- `ql test` 仍有测试专用 bridge/source override 路径，需要继续抽成共享 project pipeline，并扩大到更宽 dependency-aware backend 语义。
 - LSP 还不是稳定 workspace service；diagnostics、references、rename、symbols 需要统一 workspace index。
 - stdlib 仍保留固定 arity 和 concrete carrier 兼容层，推荐 API 必须继续向 generic/length-generic 收敛。
 - `project init --stdlib` 已生成简洁 starter，但模板仍直接绑定当前 stdlib 包和函数名。

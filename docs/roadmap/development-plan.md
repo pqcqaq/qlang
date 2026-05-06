@@ -1,6 +1,6 @@
 # 开发计划
 
-> 最后同步：2026-05-03
+> 最后同步：2026-05-06
 
 这页只记录当前开发顺序。不写日期承诺，不写流水账。
 
@@ -25,7 +25,7 @@
 ## 当前工作项
 
 - 抽 `ql-cli` project pipeline，统一 `check/build/run/test/project build` 的 request context、target selection、dependency/interface prep 和 reporting。
-- 收紧 `ql test`，把 tests 变成普通 package target/import consumer，并补 `build/run/test` dependency parity 回归。
+- 收紧 `ql test`，继续把测试专用 bridge/source override 抽进共享 project pipeline，并扩大 dependency consumer smoke 覆盖。
 - 建立 LSP workspace index，让 diagnostics、references、rename、symbols 和 semantic tokens 走同一份分析缓存。
 - 收紧 `stdlib` generic carrier、length-generic array helpers 和 `std.test` downstream smoke，逐步隐藏固定 arity/concrete 兼容层。
 - 把 `project init --stdlib` 模板迁向 versioned stdlib example，避免 CLI 直接绑定 stdlib 内部 API。
