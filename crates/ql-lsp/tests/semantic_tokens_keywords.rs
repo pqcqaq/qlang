@@ -68,7 +68,7 @@ fn assert_stdlib_compat_import_deprecated_modifiers(
     for (needle, expected_deprecated) in [
         ("MaybeInt", true),
         ("GenericOption", false),
-        ("sum_three", true),
+        ("reverse_any", false),
         ("sum_any", false),
     ] {
         let position = offset_to_position(source, nth_offset(source, needle, 1));
@@ -307,7 +307,7 @@ package demo.app
 
 use std.option.IntOption as MaybeInt
 use std.option.Option as GenericOption
-use std.array.sum3_int_array as sum_three
+use std.array.reverse_array as reverse_any
 use std.array.sum_int_array as sum_any
 
 pub fn main() -> Int {
@@ -343,7 +343,7 @@ package demo.app
 
 use std.option.IntOption as MaybeInt
 use std.option.Option as GenericOption
-use std.array.sum3_int_array as sum_three
+use std.array.reverse_array as reverse_any
 use std.array.sum_int_array as sum_any
 
 pub fn main() -> Int {
@@ -383,7 +383,7 @@ package demo.app
 
 use std.option.IntOption as MaybeInt
 use std.option.Option as GenericOption
-use std.array.sum3_int_array as sum_three
+use std.array.reverse_array as reverse_any
 use std.array.sum_int_array as sum_any
 
 pub fn main() -> Int {

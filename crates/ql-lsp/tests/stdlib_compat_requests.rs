@@ -85,8 +85,7 @@ pub fn main() -> Int {
     .expect("std.array completion request should return items");
     let array_items = completion_items(array_completion);
     assert_recommended_completion(completion_item(&array_items, "sum_int_array"));
-    assert_compat_completion(completion_item(&array_items, "sum3_int_array"));
-    assert_compat_completion(completion_item(&array_items, "repeat3_array"));
+    assert_recommended_completion(completion_item(&array_items, "reverse_array"));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -97,7 +96,7 @@ package demo.app
 
 use std.option.IntOption as MaybeInt
 use std.option.Option as GenericOption
-use std.array.sum3_int_array as sum_three
+use std.array.reverse_array as reverse_any
 
 pub fn main() -> Int {
     return 0
@@ -135,17 +134,13 @@ pub fn main() -> Int {
     let array_hover = hover_via_request(
         &mut service,
         app_uri,
-        offset_to_position(app_source, nth_offset(app_source, "sum_three", 1)),
+        offset_to_position(app_source, nth_offset(app_source, "reverse_any", 1)),
     )
     .await
-    .expect("compat array import hover request should return markup");
+    .expect("recommended array import hover request should return markup");
     let HoverContents::Markup(array_markup) = array_hover.contents else {
         panic!("hover should use markdown")
     };
-    assert!(array_markup.value.contains("**function** `sum3_int_array`"));
-    assert!(
-        array_markup
-            .value
-            .contains("length-generic `std.array` helpers")
-    );
+    assert!(array_markup.value.contains("**function** `reverse_array`"));
+    assert!(!array_markup.value.contains("Compatibility API"));
 }

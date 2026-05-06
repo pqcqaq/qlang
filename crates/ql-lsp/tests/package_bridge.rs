@@ -993,8 +993,7 @@ pub fn main() -> Int {
         panic!("std.array completion should exist")
     };
     assert_recommended_completion(completion_item(&array_items, "sum_int_array"));
-    assert_compat_completion(completion_item(&array_items, "sum3_int_array"));
-    assert_compat_completion(completion_item(&array_items, "repeat3_array"));
+    assert_recommended_completion(completion_item(&array_items, "reverse_array"));
 }
 
 #[test]
@@ -1005,7 +1004,7 @@ package demo.app
 
 use std.option.IntOption as MaybeInt
 use std.option.Option as GenericOption
-use std.array.sum3_int_array as sum_three
+use std.array.reverse_array as reverse_any
 
 pub fn main() -> Int {
     return 0
@@ -1041,18 +1040,14 @@ pub fn main() -> Int {
     let array_hover = hover_for_dependency_imports(
         source,
         &package,
-        offset_to_position(source, nth_offset(source, "sum_three", 1)),
+        offset_to_position(source, nth_offset(source, "reverse_any", 1)),
     )
-    .expect("compat array import hover should exist");
+    .expect("recommended array import hover should exist");
     let HoverContents::Markup(array_markup) = array_hover.contents else {
         panic!("hover should use markdown")
     };
-    assert!(array_markup.value.contains("**function** `sum3_int_array`"));
-    assert!(
-        array_markup
-            .value
-            .contains("length-generic `std.array` helpers")
-    );
+    assert!(array_markup.value.contains("**function** `reverse_array`"));
+    assert!(!array_markup.value.contains("Compatibility API"));
 }
 
 #[test]
@@ -1063,7 +1058,7 @@ package demo.app
 
 use std.option.IntOption as MaybeInt
 use std.option.Option as GenericOption
-use std.array.sum3_int_array as sum_three
+use std.array.reverse_array as reverse_any
 use std.array.sum_int_array as sum_any
 
 pub fn main() -> Int {
@@ -1090,7 +1085,7 @@ pub fn main() -> Int {
     for (needle, expected_deprecated) in [
         ("MaybeInt", true),
         ("GenericOption", false),
-        ("sum_three", true),
+        ("reverse_any", false),
         ("sum_any", false),
     ] {
         let range = span_to_range(source, nth_span(source, needle, 1));

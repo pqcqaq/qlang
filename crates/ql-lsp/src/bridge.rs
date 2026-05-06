@@ -1122,9 +1122,6 @@ fn stdlib_compat_note(package: Option<&str>, label: &str) -> Option<&'static str
         "std.result" if is_std_result_compat_symbol(label) => Some(
             "Compatibility API. Prefer generic `Result[T, E]` helpers such as `ok`, `err`, `unwrap_result_or`, `or_result`, `error_or`, `ok_or`, `to_option`, and `error_to_option`.",
         ),
-        "std.array" if is_std_array_fixed_arity_symbol(label) => Some(
-            "Compatibility API. Prefer length-generic `std.array` helpers such as `first_array`, `last_array`, `at_array_or`, `contains_array`, `count_array`, `len_array`, `sum_int_array`, `product_int_array`, `max_int_array`, `min_int_array`, `all_bool_array`, `any_bool_array`, and `none_bool_array`.",
-        ),
         _ => None,
     }
 }
@@ -1179,18 +1176,6 @@ fn is_std_result_compat_symbol(label: &str) -> bool {
             | "to_option_int"
             | "to_option_bool"
     )
-}
-
-fn is_std_array_fixed_arity_symbol(label: &str) -> bool {
-    let Some(stem) = label.strip_suffix("_array") else {
-        return false;
-    };
-
-    ["3", "4", "5"].iter().any(|arity| {
-        stem.ends_with(arity)
-            || stem.ends_with(&format!("{arity}_int"))
-            || stem.ends_with(&format!("{arity}_bool"))
-    })
 }
 
 fn completion_item_data(item: &ql_analysis::CompletionItem) -> Option<serde_json::Value> {

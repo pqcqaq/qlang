@@ -133,8 +133,7 @@ name = "std.array"
 package std.array
 
 pub fn sum_int_array[N](values: [Int; N]) -> Int
-pub fn sum3_int_array(values: [Int; 3]) -> Int
-pub fn repeat3_array[T](value: T) -> [T; 3]
+pub fn reverse_array[T, N](values: [T; N]) -> [T; N]
 "#,
     );
     let app_uri = Url::from_file_path(app_path).expect("app path should convert to URI");

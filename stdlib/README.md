@@ -14,10 +14,10 @@
 
 - `std.option.Option[T]`
 - `std.result.Result[T, E]`
-- `std.array` 的 length-generic helpers，例如 `first_array`、`last_array`、`at_array_or`、`contains_array`、`count_array`、`len_array`
+- `std.array` 的 length-generic helpers，例如 `first_array`、`last_array`、`at_array_or`、`contains_array`、`count_array`、`len_array`、`reverse_array`
 - `std.test` 的普通断言和数组断言 helpers
 
-固定长度数组 helper 和 concrete carrier 只保留兼容，不再扩张；`std.test` 的主 smoke 已迁向 generic 数组断言，只保留 reverse/repeat 的固定长度兼容覆盖。LSP 已用真实 `textDocument/hover`、`textDocument/completion` 和 semantic tokens 请求回归覆盖这些兼容 API 的 deprecated 标记与迁移 guidance。
+`std.array` 不再导出 `first3_array`、`reverse3_array`、`repeat3_array` 这类固定长度 helper；新代码只使用 length-generic API。`repeat_array[T, N]` 需要语言支持 `[value; N]` 或等价安全初始化后再实现。
 
 ## 本地依赖
 
@@ -48,7 +48,7 @@ cargo run -q -p ql-cli -- project init D:\Projects\my-qlang-app --stdlib D:\Proj
 cargo run -q -p ql-cli -- project init D:\Projects\my-qlang-workspace --workspace --name app --stdlib D:\Projects\language_q\stdlib
 ```
 
-生成的 starter 使用推荐的 generic `Option[T]`、`Result[T, E]` 和 length-generic array helpers；固定 arity / concrete helper 只作为兼容层保留。
+生成的 starter 使用推荐的 generic `Option[T]`、`Result[T, E]` 和 length-generic array helpers。
 
 ## 验证
 

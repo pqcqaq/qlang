@@ -27,7 +27,7 @@
 - 抽 `ql-cli` project pipeline，统一 `check/build/run/test/project build` 的 request context、target selection、dependency/interface prep 和 reporting。
 - 收紧 `ql test`，继续把测试专用 bridge/source override 抽进共享 project pipeline，并扩大 dependency consumer smoke 覆盖。
 - 建立 LSP workspace index，让 diagnostics、references、rename、symbols 和 semantic tokens 走同一份分析缓存。
-- 收紧 `stdlib` generic carrier、length-generic array helpers 和 `std.test` downstream smoke，逐步隐藏固定 arity/concrete 兼容层。
+- 收紧 `stdlib` generic carrier、length-generic array helpers 和 `std.test` downstream smoke；`std.array` 固定 arity wrapper 直接删除，非数组 legacy 只在没有语言级替代时保留。
 - 把 `project init --stdlib` 模板迁向 versioned stdlib example，避免 CLI 直接绑定 stdlib 内部 API。
 - 保持 README、roadmap、stdlib、VSCode 文档与实现同步。
 
@@ -42,7 +42,7 @@
 
 ## 代码整理规则
 
-- 不新增 `foo3/foo4/foo5` 这类固定 arity API，除非它只是兼容层并立即解锁 smoke。
+- 不新增 `foo3/foo4/foo5` 这类固定 arity API；先补泛型、数组初始化或可变参数等语言能力。
 - 不在 LSP 里复制语义规则；缺能力先补 `ql-analysis` query。
 - 不把测试 fixture 写进生产路径。
 - 大文件拆分必须行为不变，并用现有回归证明。

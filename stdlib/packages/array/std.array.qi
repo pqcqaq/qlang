@@ -16,47 +16,7 @@ pub fn count_array[T, N](values: [T; N], needle: T) -> Int
 
 pub fn len_array[T, N](values: [T; N]) -> Int
 
-pub fn first3_array[T](values: [T; 3]) -> T
-
-pub fn first4_array[T](values: [T; 4]) -> T
-
-pub fn first5_array[T](values: [T; 5]) -> T
-
-pub fn last3_array[T](values: [T; 3]) -> T
-
-pub fn last4_array[T](values: [T; 4]) -> T
-
-pub fn last5_array[T](values: [T; 5]) -> T
-
-pub fn at3_array_or[T](values: [T; 3], index: Int, fallback: T) -> T
-
-pub fn at4_array_or[T](values: [T; 4], index: Int, fallback: T) -> T
-
-pub fn at5_array_or[T](values: [T; 5], index: Int, fallback: T) -> T
-
-pub fn reverse3_array[T](values: [T; 3]) -> [T; 3]
-
-pub fn reverse4_array[T](values: [T; 4]) -> [T; 4]
-
-pub fn reverse5_array[T](values: [T; 5]) -> [T; 5]
-
-pub fn repeat3_array[T](value: T) -> [T; 3]
-
-pub fn repeat4_array[T](value: T) -> [T; 4]
-
-pub fn repeat5_array[T](value: T) -> [T; 5]
-
-pub fn contains3_array[T](values: [T; 3], needle: T) -> Bool
-
-pub fn contains4_array[T](values: [T; 4], needle: T) -> Bool
-
-pub fn contains5_array[T](values: [T; 5], needle: T) -> Bool
-
-pub fn count3_array[T](values: [T; 3], needle: T) -> Int
-
-pub fn count4_array[T](values: [T; 4], needle: T) -> Int
-
-pub fn count5_array[T](values: [T; 5], needle: T) -> Int
+pub fn reverse_array[T, N](values: [T; N]) -> [T; N]
 
 pub fn sum_int_array[N](values: [Int; N]) -> Int
 
@@ -71,45 +31,3 @@ pub fn all_bool_array[N](values: [Bool; N]) -> Bool
 pub fn any_bool_array[N](values: [Bool; N]) -> Bool
 
 pub fn none_bool_array[N](values: [Bool; N]) -> Bool
-
-pub fn sum3_int_array(values: [Int; 3]) -> Int
-
-pub fn sum4_int_array(values: [Int; 4]) -> Int
-
-pub fn sum5_int_array(values: [Int; 5]) -> Int
-
-pub fn product3_int_array(values: [Int; 3]) -> Int
-
-pub fn product4_int_array(values: [Int; 4]) -> Int
-
-pub fn product5_int_array(values: [Int; 5]) -> Int
-
-pub fn max3_int_array(values: [Int; 3]) -> Int
-
-pub fn max4_int_array(values: [Int; 4]) -> Int
-
-pub fn max5_int_array(values: [Int; 5]) -> Int
-
-pub fn min3_int_array(values: [Int; 3]) -> Int
-
-pub fn min4_int_array(values: [Int; 4]) -> Int
-
-pub fn min5_int_array(values: [Int; 5]) -> Int
-
-pub fn all3_bool_array(values: [Bool; 3]) -> Bool
-
-pub fn all4_bool_array(values: [Bool; 4]) -> Bool
-
-pub fn all5_bool_array(values: [Bool; 5]) -> Bool
-
-pub fn any3_bool_array(values: [Bool; 3]) -> Bool
-
-pub fn any4_bool_array(values: [Bool; 4]) -> Bool
-
-pub fn any5_bool_array(values: [Bool; 5]) -> Bool
-
-pub fn none3_bool_array(values: [Bool; 3]) -> Bool
-
-pub fn none4_bool_array(values: [Bool; 4]) -> Bool
-
-pub fn none5_bool_array(values: [Bool; 5]) -> Bool
