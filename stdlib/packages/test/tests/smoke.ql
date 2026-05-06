@@ -2,37 +2,13 @@ use std.test.expect_bool_all3 as expect_bool_all3
 use std.test.expect_bool_all4 as expect_bool_all4
 use std.test.expect_bool_all5 as expect_bool_all5
 use std.test.expect_bool_and as expect_bool_and
-use std.test.expect_bool_array_all3 as expect_bool_array_all3
-use std.test.expect_bool_array_all4 as expect_bool_array_all4
-use std.test.expect_bool_array_all5 as expect_bool_array_all5
 use std.test.expect_bool_array_all as expect_bool_array_all
-use std.test.expect_bool_array_at3 as expect_bool_array_at3
-use std.test.expect_bool_array_at4 as expect_bool_array_at4
-use std.test.expect_bool_array_at5 as expect_bool_array_at5
 use std.test.expect_bool_array_at as expect_bool_array_at
-use std.test.expect_bool_array_any3 as expect_bool_array_any3
-use std.test.expect_bool_array_any4 as expect_bool_array_any4
-use std.test.expect_bool_array_any5 as expect_bool_array_any5
 use std.test.expect_bool_array_any as expect_bool_array_any
-use std.test.expect_bool_array_contains3 as expect_bool_array_contains3
-use std.test.expect_bool_array_contains4 as expect_bool_array_contains4
-use std.test.expect_bool_array_contains5 as expect_bool_array_contains5
 use std.test.expect_bool_array_contains as expect_bool_array_contains
-use std.test.expect_bool_array_count3 as expect_bool_array_count3
-use std.test.expect_bool_array_count4 as expect_bool_array_count4
-use std.test.expect_bool_array_count5 as expect_bool_array_count5
 use std.test.expect_bool_array_count as expect_bool_array_count
-use std.test.expect_bool_array_first3 as expect_bool_array_first3
-use std.test.expect_bool_array_first4 as expect_bool_array_first4
-use std.test.expect_bool_array_first5 as expect_bool_array_first5
 use std.test.expect_bool_array_first as expect_bool_array_first
-use std.test.expect_bool_array_last3 as expect_bool_array_last3
-use std.test.expect_bool_array_last4 as expect_bool_array_last4
-use std.test.expect_bool_array_last5 as expect_bool_array_last5
 use std.test.expect_bool_array_last as expect_bool_array_last
-use std.test.expect_bool_array_none3 as expect_bool_array_none3
-use std.test.expect_bool_array_none4 as expect_bool_array_none4
-use std.test.expect_bool_array_none5 as expect_bool_array_none5
 use std.test.expect_bool_array_none as expect_bool_array_none
 use std.test.expect_bool_array_repeat3 as expect_bool_array_repeat3
 use std.test.expect_bool_array_repeat4 as expect_bool_array_repeat4
@@ -94,37 +70,13 @@ use std.test.expect_generic_int_result_to_option_none as expect_generic_int_resu
 use std.test.expect_generic_int_result_to_option_some as expect_generic_int_result_to_option_some
 use std.test.expect_int_abs as expect_int_abs
 use std.test.expect_int_abs_diff as expect_int_abs_diff
-use std.test.expect_int_array_at3 as expect_int_array_at3
-use std.test.expect_int_array_at4 as expect_int_array_at4
-use std.test.expect_int_array_at5 as expect_int_array_at5
 use std.test.expect_int_array_at as expect_int_array_at
-use std.test.expect_int_array_contains3 as expect_int_array_contains3
-use std.test.expect_int_array_contains4 as expect_int_array_contains4
-use std.test.expect_int_array_contains5 as expect_int_array_contains5
 use std.test.expect_int_array_contains as expect_int_array_contains
-use std.test.expect_int_array_count3 as expect_int_array_count3
-use std.test.expect_int_array_count4 as expect_int_array_count4
-use std.test.expect_int_array_count5 as expect_int_array_count5
 use std.test.expect_int_array_count as expect_int_array_count
-use std.test.expect_int_array_first3 as expect_int_array_first3
-use std.test.expect_int_array_first4 as expect_int_array_first4
-use std.test.expect_int_array_first5 as expect_int_array_first5
 use std.test.expect_int_array_first as expect_int_array_first
-use std.test.expect_int_array_last3 as expect_int_array_last3
-use std.test.expect_int_array_last4 as expect_int_array_last4
-use std.test.expect_int_array_last5 as expect_int_array_last5
 use std.test.expect_int_array_last as expect_int_array_last
-use std.test.expect_int_array_max3 as expect_int_array_max3
-use std.test.expect_int_array_max4 as expect_int_array_max4
-use std.test.expect_int_array_max5 as expect_int_array_max5
 use std.test.expect_int_array_max as expect_int_array_max
-use std.test.expect_int_array_min3 as expect_int_array_min3
-use std.test.expect_int_array_min4 as expect_int_array_min4
-use std.test.expect_int_array_min5 as expect_int_array_min5
 use std.test.expect_int_array_min as expect_int_array_min
-use std.test.expect_int_array_product3 as expect_int_array_product3
-use std.test.expect_int_array_product4 as expect_int_array_product4
-use std.test.expect_int_array_product5 as expect_int_array_product5
 use std.test.expect_int_array_product as expect_int_array_product
 use std.test.expect_int_array_repeat3 as expect_int_array_repeat3
 use std.test.expect_int_array_repeat4 as expect_int_array_repeat4
@@ -132,9 +84,6 @@ use std.test.expect_int_array_repeat5 as expect_int_array_repeat5
 use std.test.expect_int_array_reverse3 as expect_int_array_reverse3
 use std.test.expect_int_array_reverse4 as expect_int_array_reverse4
 use std.test.expect_int_array_reverse5 as expect_int_array_reverse5
-use std.test.expect_int_array_sum3 as expect_int_array_sum3
-use std.test.expect_int_array_sum4 as expect_int_array_sum4
-use std.test.expect_int_array_sum5 as expect_int_array_sum5
 use std.test.expect_int_array_sum as expect_int_array_sum
 use std.test.expect_int_average2 as expect_int_average2
 use std.test.expect_int_average3 as expect_int_average3
@@ -347,27 +296,27 @@ fn main() -> Int {
     let generic_array_query_status = sum4(check_int(expect_int_array_contains([2, 3, 4, 5], 3, true), 0), check_int(expect_int_array_count([2, 3, 2, 2, 4], 2, 3), 0), check_int(expect_bool_array_contains([true, false, true], false, true), 0), check_int(expect_bool_array_count([true, false, true, false], false, 2), 0))
     let generic_array_aggregate_status = sum4(check_int(expect_int_array_sum([2, 3, 4, 5], 14), 0), check_int(expect_int_array_product([2, 3, 4], 24), 0), check_int(expect_int_array_max([3, 9, 5, 7], 9), 0), check_int(expect_int_array_min([3, 9, 5, 7], 3), 0))
     let generic_array_bool_aggregate_status = sum4(check_int(expect_bool_array_all([true, true, true], true), 0), check_int(expect_bool_array_any([false, false, true, false], true), 0), check_int(expect_bool_array_none([false, false, false, false, false], true), 0), 0)
-    let array_int_access_pass = sum4(check_int(expect_int_array_first3([2, 3, 4], 2), 0), check_int(expect_int_array_first4([2, 3, 4, 5], 2), 0), check_int(expect_int_array_first5([2, 3, 4, 5, 6], 2), 0), check_int(expect_int_array_last3([2, 3, 4], 4), 0))
-    let array_int_access5_pass = sum4(check_int(expect_int_array_last4([2, 3, 4, 5], 5), 0), check_int(expect_int_array_last5([2, 3, 4, 5, 6], 6), 0), 0, 0)
-    let array_bool_access_pass = sum4(check_int(expect_bool_array_first3([true, false, false], true), 0), check_int(expect_bool_array_first4([false, true, true, true], false), 0), check_int(expect_bool_array_first5([true, false, true, false, true], true), 0), check_int(expect_bool_array_last3([true, false, true], true), 0))
-    let array_bool_access5_pass = sum4(check_int(expect_bool_array_last4([true, true, false, false], false), 0), check_int(expect_bool_array_last5([false, true, false, true, false], false), 0), 0, 0)
-    let array_int_at_pass = sum4(check_int(expect_int_array_at3([2, 3, 4], 1, 99, 3), 0), check_int(expect_int_array_at4([2, 3, 4, 5], 3, 99, 5), 0), check_int(expect_int_array_at5([2, 3, 4, 5, 6], 4, 99, 6), 0), check_int(expect_int_array_at3([2, 3, 4], 5, 99, 99), 0))
-    let array_bool_at_pass = sum4(check_int(expect_bool_array_at3([true, false, true], 1, true, false), 0), check_int(expect_bool_array_at4([false, true, true, false], 3, true, false), 0), check_int(expect_bool_array_at5([true, false, true, false, true], 4, false, true), 0), check_int(expect_bool_array_at4([false, true, true, false], 8, true, true), 0))
+    let array_int_access_pass = sum4(check_int(expect_int_array_first([2, 3, 4], 2), 0), check_int(expect_int_array_first([2, 3, 4, 5], 2), 0), check_int(expect_int_array_first([2, 3, 4, 5, 6], 2), 0), check_int(expect_int_array_last([2, 3, 4], 4), 0))
+    let array_int_access5_pass = sum4(check_int(expect_int_array_last([2, 3, 4, 5], 5), 0), check_int(expect_int_array_last([2, 3, 4, 5, 6], 6), 0), 0, 0)
+    let array_bool_access_pass = sum4(check_int(expect_bool_array_first([true, false, false], true), 0), check_int(expect_bool_array_first([false, true, true, true], false), 0), check_int(expect_bool_array_first([true, false, true, false, true], true), 0), check_int(expect_bool_array_last([true, false, true], true), 0))
+    let array_bool_access5_pass = sum4(check_int(expect_bool_array_last([true, true, false, false], false), 0), check_int(expect_bool_array_last([false, true, false, true, false], false), 0), 0, 0)
+    let array_int_at_pass = sum4(check_int(expect_int_array_at([2, 3, 4], 1, 99, 3), 0), check_int(expect_int_array_at([2, 3, 4, 5], 3, 99, 5), 0), check_int(expect_int_array_at([2, 3, 4, 5, 6], 4, 99, 6), 0), check_int(expect_int_array_at([2, 3, 4], 5, 99, 99), 0))
+    let array_bool_at_pass = sum4(check_int(expect_bool_array_at([true, false, true], 1, true, false), 0), check_int(expect_bool_array_at([false, true, true, false], 3, true, false), 0), check_int(expect_bool_array_at([true, false, true, false, true], 4, false, true), 0), check_int(expect_bool_array_at([false, true, true, false], 8, true, true), 0))
     let array_int_transform_pass = sum4(check_int(expect_int_array_reverse3([2, 3, 4], 4, 2), 0), check_int(expect_int_array_reverse4([2, 3, 4, 5], 5, 2), 0), check_int(expect_int_array_reverse5([2, 3, 4, 5, 6], 6, 2), 0), check_int(expect_int_array_repeat3(7, 7), 0))
     let array_repeat_pass = sum4(check_int(expect_int_array_repeat4(7, 7), 0), check_int(expect_int_array_repeat5(7, 7), 0), check_int(expect_bool_array_repeat3(true, true), 0), check_int(expect_bool_array_repeat4(false, false), 0))
     let array_bool_transform_pass = sum4(check_int(expect_bool_array_repeat5(false, false), 0), check_int(expect_bool_array_reverse3([true, false, false], false, true), 0), check_int(expect_bool_array_reverse4([false, true, true, false], false, false), 0), check_int(expect_bool_array_reverse5([true, false, true, false, false], false, true), 0))
-    let array_int_query_pass = sum4(check_int(expect_int_array_contains3([2, 3, 4], 3, true), 0), check_int(expect_int_array_contains4([2, 3, 4, 5], 9, false), 0), check_int(expect_int_array_count4([2, 3, 2, 2], 2, 3), 0), check_int(expect_int_array_count5([1, 2, 3, 4, 5], 9, 0), 0))
-    let array_bool_query_pass = sum4(check_int(expect_bool_array_contains3([true, false, true], false, true), 0), check_int(expect_bool_array_contains5([true, true, true, true, true], false, false), 0), check_int(expect_bool_array_count3([true, false, true], true, 2), 0), check_int(expect_bool_array_count5([true, false, true, false, true], false, 2), 0))
-    let array_int_aggregate_pass = sum4(check_int(expect_int_array_sum3([2, 3, 4], 9), 0), check_int(expect_int_array_sum4([2, 3, 4, 5], 14), 0), check_int(expect_int_array_sum5([2, 3, 4, 5, 6], 20), 0), check_int(expect_int_array_product3([2, 3, 4], 24), 0))
-    let array_int_aggregate5_pass = sum4(check_int(expect_int_array_product4([2, 3, 4, 5], 120), 0), check_int(expect_int_array_product5([2, 3, 4, 5, 6], 720), 0), check_int(expect_int_array_max3([3, 9, 5], 9), 0), check_int(expect_int_array_max4([3, 9, 5, 7], 9), 0))
-    let array_int_extrema_pass = sum4(check_int(expect_int_array_max5([3, 9, 5, 7, 11], 11), 0), check_int(expect_int_array_min3([3, 9, 5], 3), 0), check_int(expect_int_array_min4([3, 9, 5, 7], 3), 0), check_int(expect_int_array_min5([3, 9, 5, 7, 1], 1), 0))
-    let array_bool_aggregate_pass = sum4(check_int(expect_bool_array_all3([true, true, true], true), 0), check_int(expect_bool_array_all4([true, true, true, false], false), 0), check_int(expect_bool_array_all5([true, true, true, true, true], true), 0), check_int(expect_bool_array_any3([false, false, true], true), 0))
-    let array_bool_aggregate5_pass = sum4(check_int(expect_bool_array_any4([false, false, false, false], false), 0), check_int(expect_bool_array_any5([false, false, false, false, true], true), 0), check_int(expect_bool_array_none3([false, false, false], true), 0), check_int(expect_bool_array_none4([false, false, true, false], false), 0))
-    let array_bool_none5_pass = sum4(check_int(expect_bool_array_none5([false, false, false, false, false], true), 0), 0, 0, 0)
-    let array_failure = sum4(check_int(expect_int_array_first3([2, 3, 4], 3), 1), check_int(expect_bool_array_last5([false, true, false, true, false], true), 1), check_int(expect_int_array_sum5([2, 3, 4, 5, 6], 21), 1), check_int(expect_bool_array_none4([false, false, false, false], false), 1))
-    let array_at_failure = sum4(check_int(expect_int_array_at3([2, 3, 4], 1, 99, 2), 1), check_int(expect_int_array_at5([2, 3, 4, 5, 6], 8, 99, 6), 1), check_int(expect_bool_array_at3([true, false, true], 1, true, true), 1), check_int(expect_bool_array_at5([true, false, true, false, true], 8, false, true), 1))
+    let array_int_query_pass = sum4(check_int(expect_int_array_contains([2, 3, 4], 3, true), 0), check_int(expect_int_array_contains([2, 3, 4, 5], 9, false), 0), check_int(expect_int_array_count([2, 3, 2, 2], 2, 3), 0), check_int(expect_int_array_count([1, 2, 3, 4, 5], 9, 0), 0))
+    let array_bool_query_pass = sum4(check_int(expect_bool_array_contains([true, false, true], false, true), 0), check_int(expect_bool_array_contains([true, true, true, true, true], false, false), 0), check_int(expect_bool_array_count([true, false, true], true, 2), 0), check_int(expect_bool_array_count([true, false, true, false, true], false, 2), 0))
+    let array_int_aggregate_pass = sum4(check_int(expect_int_array_sum([2, 3, 4], 9), 0), check_int(expect_int_array_sum([2, 3, 4, 5], 14), 0), check_int(expect_int_array_sum([2, 3, 4, 5, 6], 20), 0), check_int(expect_int_array_product([2, 3, 4], 24), 0))
+    let array_int_aggregate5_pass = sum4(check_int(expect_int_array_product([2, 3, 4, 5], 120), 0), check_int(expect_int_array_product([2, 3, 4, 5, 6], 720), 0), check_int(expect_int_array_max([3, 9, 5], 9), 0), check_int(expect_int_array_max([3, 9, 5, 7], 9), 0))
+    let array_int_extrema_pass = sum4(check_int(expect_int_array_max([3, 9, 5, 7, 11], 11), 0), check_int(expect_int_array_min([3, 9, 5], 3), 0), check_int(expect_int_array_min([3, 9, 5, 7], 3), 0), check_int(expect_int_array_min([3, 9, 5, 7, 1], 1), 0))
+    let array_bool_aggregate_pass = sum4(check_int(expect_bool_array_all([true, true, true], true), 0), check_int(expect_bool_array_all([true, true, true, false], false), 0), check_int(expect_bool_array_all([true, true, true, true, true], true), 0), check_int(expect_bool_array_any([false, false, true], true), 0))
+    let array_bool_aggregate5_pass = sum4(check_int(expect_bool_array_any([false, false, false, false], false), 0), check_int(expect_bool_array_any([false, false, false, false, true], true), 0), check_int(expect_bool_array_none([false, false, false], true), 0), check_int(expect_bool_array_none([false, false, true, false], false), 0))
+    let array_bool_none5_pass = sum4(check_int(expect_bool_array_none([false, false, false, false, false], true), 0), 0, 0, 0)
+    let array_failure = sum4(check_int(expect_int_array_first([2, 3, 4], 3), 1), check_int(expect_bool_array_last([false, true, false, true, false], true), 1), check_int(expect_int_array_sum([2, 3, 4, 5, 6], 21), 1), check_int(expect_bool_array_none([false, false, false, false], false), 1))
+    let array_at_failure = sum4(check_int(expect_int_array_at([2, 3, 4], 1, 99, 2), 1), check_int(expect_int_array_at([2, 3, 4, 5, 6], 8, 99, 6), 1), check_int(expect_bool_array_at([true, false, true], 1, true, true), 1), check_int(expect_bool_array_at([true, false, true, false, true], 8, false, true), 1))
     let array_transform_failure = sum4(check_int(expect_int_array_reverse3([2, 3, 4], 2, 4), 2), check_int(expect_int_array_repeat5(7, 8), 2), check_int(expect_bool_array_repeat4(false, true), 2), check_int(expect_bool_array_reverse5([true, false, true, false, false], true, false), 2))
-    let array_query_failure = sum4(check_int(expect_int_array_contains5([2, 3, 4, 5, 6], 7, true), 1), check_int(expect_int_array_count3([2, 3, 2], 2, 1), 1), check_int(expect_bool_array_contains4([false, false, false, false], true, true), 1), check_int(expect_bool_array_count4([true, false, true, false], false, 1), 1))
+    let array_query_failure = sum4(check_int(expect_int_array_contains([2, 3, 4, 5, 6], 7, true), 1), check_int(expect_int_array_count([2, 3, 2], 2, 1), 1), check_int(expect_bool_array_contains([false, false, false, false], true, true), 1), check_int(expect_bool_array_count([true, false, true, false], false, 1), 1))
     let bool_status = sum4(bool_pass + bool_aggregate_pass + bool_aggregate5_pass + bool_conversion_pass, bool_logic_pass + bool_none_pass, bool_failure + bool_aggregate_failure + bool_aggregate5_failure + bool_conversion_failure, bool_logic_failure + bool_none_failure)
     let int_status = sum4(int_order_pass, int_boundary_pass, int_order_failure, int_boundary_failure)
     let range_status = sum4(range_pass, bounds_pass, range_failure, bounds_failure)
