@@ -24,6 +24,8 @@ pub fn sum_int_array[N](values: [Int; N]) -> Int
 
 pub fn product_int_array[N](values: [Int; N]) -> Int
 
+pub fn average_int_array[N](values: [Int; N]) -> Int
+
 pub fn max_int_array[N](values: [Int; N]) -> Int
 
 pub fn min_int_array[N](values: [Int; N]) -> Int

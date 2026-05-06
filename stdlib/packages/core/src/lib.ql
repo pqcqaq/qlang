@@ -14,68 +14,111 @@ pub fn min_int(left: Int, right: Int) -> Int {
     return right
 }
 
+pub fn max_ints[N](values: [Int; N]) -> Int {
+    var selected = values[0]
+    for value in values {
+        if value > selected {
+            selected = value
+        }
+    }
+    return selected
+}
+
+pub fn min_ints[N](values: [Int; N]) -> Int {
+    var selected = values[0]
+    for value in values {
+        if value < selected {
+            selected = value
+        }
+    }
+    return selected
+}
+
+pub fn sum_ints[N](values: [Int; N]) -> Int {
+    var total = 0
+    for value in values {
+        total = total + value
+    }
+    return total
+}
+
+pub fn product_ints[N](values: [Int; N]) -> Int {
+    var total = 1
+    for value in values {
+        total = total * value
+    }
+    return total
+}
+
+pub fn average_ints[N](values: [Int; N]) -> Int {
+    if N == 0 {
+        return 0
+    }
+    return sum_ints(values) / N
+}
+
 pub fn max3_int(first: Int, second: Int, third: Int) -> Int {
-    return max_int(max_int(first, second), third)
+    return max_ints([first, second, third])
 }
 
 pub fn max4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
-    return max_int(max3_int(first, second, third), fourth)
+    return max_ints([first, second, third, fourth])
 }
 
 pub fn max5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
-    return max_int(max4_int(first, second, third, fourth), fifth)
+    return max_ints([first, second, third, fourth, fifth])
 }
 
 pub fn min3_int(first: Int, second: Int, third: Int) -> Int {
-    return min_int(min_int(first, second), third)
+    return min_ints([first, second, third])
 }
 
 pub fn min4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
-    return min_int(min3_int(first, second, third), fourth)
+    return min_ints([first, second, third, fourth])
 }
 
 pub fn min5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
-    return min_int(min4_int(first, second, third, fourth), fifth)
+    return min_ints([first, second, third, fourth, fifth])
 }
 
 pub fn sum3_int(first: Int, second: Int, third: Int) -> Int {
-    return first + second + third
+    return sum_ints([first, second, third])
 }
 
 pub fn sum4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
-    return sum3_int(first, second, third) + fourth
+    return sum_ints([first, second, third, fourth])
 }
 
 pub fn sum5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
-    return sum4_int(first, second, third, fourth) + fifth
+    return sum_ints([first, second, third, fourth, fifth])
 }
 
 pub fn product3_int(first: Int, second: Int, third: Int) -> Int {
-    return first * second * third
+    return product_ints([first, second, third])
 }
 
 pub fn product4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
-    return product3_int(first, second, third) * fourth
+    return product_ints([first, second, third, fourth])
 }
 
 pub fn product5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
-    return product4_int(first, second, third, fourth) * fifth
+    return product_ints([first, second, third, fourth, fifth])
 }
 
 pub fn average2_int(left: Int, right: Int) -> Int {
-    return (left + right) / 2
+    return average_ints([left, right])
 }
 
 pub fn average3_int(first: Int, second: Int, third: Int) -> Int {
-    return sum3_int(first, second, third) / 3
+    return average_ints([first, second, third])
 }
 
 pub fn average4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
-    return sum4_int(first, second, third, fourth) / 4
+    return average_ints([first, second, third, fourth])
 }
 
 pub fn average5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
-    return sum5_int(first, second, third, fourth, fifth) / 5
+    return average_ints([first, second, third, fourth, fifth])
 }
 
 pub fn quotient_or_zero_int(value: Int, divisor: Int) -> Int {
@@ -321,40 +364,62 @@ pub fn bool_to_int(value: Bool) -> Int {
     return 0
 }
 
+pub fn all_bools[N](values: [Bool; N]) -> Bool {
+    for value in values {
+        if !value {
+            return false
+        }
+    }
+    return true
+}
+
+pub fn any_bools[N](values: [Bool; N]) -> Bool {
+    for value in values {
+        if value {
+            return true
+        }
+    }
+    return false
+}
+
+pub fn none_bools[N](values: [Bool; N]) -> Bool {
+    return !any_bools(values)
+}
+
 pub fn all3_bool(first: Bool, second: Bool, third: Bool) -> Bool {
-    return first && second && third
+    return all_bools([first, second, third])
 }
 
 pub fn all4_bool(first: Bool, second: Bool, third: Bool, fourth: Bool) -> Bool {
-    return all3_bool(first, second, third) && fourth
+    return all_bools([first, second, third, fourth])
 }
 
 pub fn all5_bool(first: Bool, second: Bool, third: Bool, fourth: Bool, fifth: Bool) -> Bool {
-    return all4_bool(first, second, third, fourth) && fifth
+    return all_bools([first, second, third, fourth, fifth])
 }
 
 pub fn any3_bool(first: Bool, second: Bool, third: Bool) -> Bool {
-    return first || second || third
+    return any_bools([first, second, third])
 }
 
 pub fn any4_bool(first: Bool, second: Bool, third: Bool, fourth: Bool) -> Bool {
-    return any3_bool(first, second, third) || fourth
+    return any_bools([first, second, third, fourth])
 }
 
 pub fn any5_bool(first: Bool, second: Bool, third: Bool, fourth: Bool, fifth: Bool) -> Bool {
-    return any4_bool(first, second, third, fourth) || fifth
+    return any_bools([first, second, third, fourth, fifth])
 }
 
 pub fn none3_bool(first: Bool, second: Bool, third: Bool) -> Bool {
-    return !any3_bool(first, second, third)
+    return none_bools([first, second, third])
 }
 
 pub fn none4_bool(first: Bool, second: Bool, third: Bool, fourth: Bool) -> Bool {
-    return !any4_bool(first, second, third, fourth)
+    return none_bools([first, second, third, fourth])
 }
 
 pub fn none5_bool(first: Bool, second: Bool, third: Bool, fourth: Bool, fifth: Bool) -> Bool {
-    return !any5_bool(first, second, third, fourth, fifth)
+    return none_bools([first, second, third, fourth, fifth])
 }
 
 pub fn not_bool(value: Bool) -> Bool {

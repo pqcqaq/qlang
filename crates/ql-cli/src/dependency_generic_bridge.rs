@@ -229,11 +229,33 @@ fn render_public_function_specialized_forwarder(
     let body_start = body_span.start + leading_trim;
     let body = apply_specialized_body_rewrites(body_source.trim(), body_start, &body_call_rewrites);
     let body = replace_generic_identifiers(&body, substitutions);
+    let generic_params =
+        render_dependency_bridge_generic_params_with_substitutions(function, substitutions);
 
     declarations.push(format!(
-        "fn {specialized_name}({params}){return_suffix} {body}"
+        "fn {specialized_name}{generic_params}({params}){return_suffix} {body}"
     ));
     Some(())
+}
+
+fn render_dependency_bridge_generic_params_with_substitutions(
+    function: &FunctionDecl,
+    substitutions: &BTreeMap<String, String>,
+) -> String {
+    let preserved = function
+        .generics
+        .iter()
+        .filter_map(|generic| {
+            substitutions
+                .get(&generic.name)
+                .filter(|replacement| *replacement == &generic.name)
+                .map(|_| generic.name.as_str())
+        })
+        .collect::<Vec<_>>();
+    if preserved.is_empty() {
+        return String::new();
+    }
+    format!("[{}]", preserved.join(", "))
 }
 
 fn render_dependency_bridge_param_list_with_substitutions(
@@ -457,6 +479,64 @@ fn main() -> Int {
         assert_eq!(
             rendered.call_rewrites[0].replacement,
             "__ql_bridge_local_dep_first3__generic_Int"
+        );
+    }
+
+    #[test]
+    fn public_specialization_preserves_unresolved_array_length_generics() {
+        let dependency_source = r#"
+package dep
+
+pub fn total[N](values: [Int; N]) -> Int {
+    var sum = 0
+    for value in values {
+        sum = sum + value
+    }
+    return sum
+}
+
+pub fn mirror_sum[N](values: [Int; N]) -> Int {
+    return total(values)
+}
+"#;
+        let dependency = parse_module(dependency_source);
+        let root = parse_module(
+            r#"
+use dep.mirror_sum as mirror_sum
+
+fn score[N](values: [Int; N]) -> Int {
+    return mirror_sum(values)
+}
+"#,
+        );
+
+        let rendered = render_public_function_specializations(
+            &["dep".to_owned()],
+            function(&dependency, "mirror_sum"),
+            dependency_source,
+            &root,
+            &dependency,
+            &mut BTreeSet::new(),
+        )
+        .expect("mirror_sum should render a length-generic specialization");
+
+        assert!(rendered.declarations.contains(
+            "fn __ql_bridge_local_dep_mirror_sum__generic_N[N](values: [Int; N]) -> Int"
+        ));
+        assert!(
+            rendered
+                .declarations
+                .contains("fn __ql_bridge_local_dep_total__generic_N[N](values: [Int; N]) -> Int")
+        );
+        assert!(
+            rendered
+                .declarations
+                .contains("return __ql_bridge_local_dep_total__generic_N(values)")
+        );
+        assert_eq!(rendered.call_rewrites.len(), 1);
+        assert_eq!(
+            rendered.call_rewrites[0].replacement,
+            "__ql_bridge_local_dep_mirror_sum__generic_N"
         );
     }
 }

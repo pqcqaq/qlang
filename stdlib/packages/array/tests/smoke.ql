@@ -1,6 +1,7 @@
 use std.array.all_bool_array as all_bool_array
 use std.array.any_bool_array as any_bool_array
 use std.array.at_array_or as at_array_or
+use std.array.average_int_array as average_int_array
 use std.array.contains_array as contains_array
 use std.array.count_array as count_array
 use std.array.first_array as first_array
@@ -63,8 +64,9 @@ fn contains_count_status() -> Int {
 
 fn numeric_status() -> Int {
     let aggregate_status = sum6(check_int(sum_int_array([2, 3, 4]), 9), check_int(sum_int_array([2, 3, 4, 5]), 14), check_int(sum_int_array([2, 3, 4, 5, 6]), 20), check_int(product_int_array([2, 3, 4]), 24), check_int(product_int_array([2, 3, 4, 5]), 120), check_int(product_int_array([2, 3, 4, 5, 6]), 720))
+    let average_status = sum6(check_int(average_int_array([5, 8]), 6), check_int(average_int_array([3, 6, 9]), 6), check_int(average_int_array([2, 4, 6, 8]), 5), check_int(average_int_array([2, 4, 6, 8, 10]), 6), 0, 0)
     let extrema_status = sum6(check_int(max_int_array([3, 9, 5]), 9), check_int(max_int_array([3, 9, 5, 7]), 9), check_int(max_int_array([3, 9, 5, 7, 11]), 11), check_int(min_int_array([3, 9, 5]), 3), check_int(min_int_array([3, 9, 5, 7]), 3), check_int(min_int_array([3, 9, 5, 7, 1]), 1))
-    return aggregate_status + extrema_status
+    return aggregate_status + average_status + extrema_status
 }
 
 fn bool_status() -> Int {

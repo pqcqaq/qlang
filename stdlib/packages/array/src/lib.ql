@@ -76,6 +76,13 @@ pub fn product_int_array[N](values: [Int; N]) -> Int {
     return total
 }
 
+pub fn average_int_array[N](values: [Int; N]) -> Int {
+    if N == 0 {
+        return 0
+    }
+    return sum_int_array(values) / N
+}
+
 pub fn max_int_array[N](values: [Int; N]) -> Int {
     var selected = values[0]
     for value in values {
