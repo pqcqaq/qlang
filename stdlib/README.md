@@ -16,10 +16,11 @@
 - `std.option.Option[T]`
 - `std.result.Result[T, E]`
 - `std.array` 的 length-generic helpers，例如 `first_array`、`last_array`、`at_array_or`、`contains_array`、`count_array`、`len_array`、`reverse_array`、`repeat_array`、`average_int_array`
-- `std.test` 的普通断言和数组断言 helpers
+- `std.test` 的普通断言、数组断言和 `merge_statuses` 状态合并 helper
 
 `std.array` 不再导出 `first3_array`、`reverse3_array`、`repeat3_array` 这类固定长度 helper；新代码只使用 length-generic API。重复数组使用语言级 `[value; N]`，标准库暴露 `repeat_array[T, N](value) -> [T; N]`。
 `std.core` 里的 `sum3_int`、`max4_int`、`all5_bool`、`is_ascending4_int` 等固定 arity 名称只作为兼容包装保留，新代码应传数组给泛型 API。
+`std.test` 的状态合并使用 `merge_statuses([status1, status2, ...])`；固定 arity 的 `merge_status3` / `merge_status4` / `merge_status5` / `merge_status6` 已删除。
 
 ## 本地依赖
 

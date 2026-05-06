@@ -12,7 +12,7 @@
 - 重复数组字面量 `[value; N]` 支持整数字面量长度和数组长度泛型。
 - dependency generic bridge 支持 wrapper specialization 内继续直调同模块 generic helper。
 - 单文件和 project 入口共用本地 generic free function direct-call specialization。
-- `std.test` 已有普通断言和 length-generic 数组断言。
+- `std.test` 已有普通断言、length-generic 数组断言和 `merge_statuses[N]` 状态合并。
 - `ql project init --stdlib` 已生成可 `check/run/test` 的模板。
 
 ## 下一步顺序

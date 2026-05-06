@@ -666,24 +666,16 @@ pub fn is_status_failed(status: Int) -> Bool {
     return status != 0
 }
 
+pub fn merge_statuses[N](statuses: [Int; N]) -> Int {
+    var total = 0
+    for status in statuses {
+        total = total + status
+    }
+    return total
+}
+
 pub fn merge_status(left: Int, right: Int) -> Int {
-    return left + right
-}
-
-pub fn merge_status3(first: Int, second: Int, third: Int) -> Int {
-    return merge_status(merge_status(first, second), third)
-}
-
-pub fn merge_status4(first: Int, second: Int, third: Int, fourth: Int) -> Int {
-    return merge_status(merge_status3(first, second, third), fourth)
-}
-
-pub fn merge_status5(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
-    return merge_status(merge_status4(first, second, third, fourth), fifth)
-}
-
-pub fn merge_status6(first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int) -> Int {
-    return merge_status(merge_status5(first, second, third, fourth, fifth), sixth)
+    return merge_statuses([left, right])
 }
 
 pub fn expect_status_ok(status: Int) -> Int {

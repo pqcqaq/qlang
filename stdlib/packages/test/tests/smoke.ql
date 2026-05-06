@@ -162,10 +162,7 @@ use std.test.expect_zero as expect_zero
 use std.test.is_status_failed as is_status_failed
 use std.test.is_status_ok as is_status_ok
 use std.test.merge_status as merge_status
-use std.test.merge_status3 as merge_status3
-use std.test.merge_status4 as merge_status4
-use std.test.merge_status5 as merge_status5
-use std.test.merge_status6 as merge_status6
+use std.test.merge_statuses as merge_statuses
 use std.option.Option as Option
 use std.option.none_bool as option_none_bool
 use std.option.none_int as option_none_int
@@ -254,8 +251,8 @@ fn main() -> Int {
     let number_failure = sum4(check_int(expect_int_even(9), 1), check_int(expect_int_odd(8), 1), check_int(expect_int_divisible_by(21, 0), 1), check_int(expect_int_within(12, 10, 1), 1))
     let sign_failure = sum4(check_int(expect_int_not_within(10, 10, 0), 1), check_int(expect_int_positive(0), 1), check_int(expect_int_negative(0), 1), check_int(expect_int_nonnegative(0 - 1), 1))
     let status_bool = sum4(check_bool(is_status_ok(0), true), check_bool(is_status_ok(1), false), check_bool(is_status_failed(1), true), check_bool(is_status_failed(0), false))
-    let status_merge = sum4(check_int(merge_status(1, 2), 3), check_int(merge_status3(1, 2, 3), 6), check_int(merge_status4(1, 2, 3, 4), 10), check_int(merge_status5(1, 2, 3, 4, 5), 15))
-    let status_merge_large = sum4(check_int(merge_status6(1, 2, 3, 4, 5, 6), 21), check_int(expect_bool_implies(false, false), 0), 0, 0)
+    let status_merge = sum4(check_int(merge_status(1, 2), 3), check_int(merge_statuses([1, 2, 3]), 6), check_int(merge_statuses([1, 2, 3, 4]), 10), check_int(merge_statuses([1, 2, 3, 4, 5]), 15))
+    let status_merge_large = sum4(check_int(merge_statuses([1, 2, 3, 4, 5, 6]), 21), check_int(merge_statuses([1, 2, 3, 4, 5, 6, 7]), 28), check_int(expect_bool_implies(false, false), 0), 0)
     let status_expect = sum4(check_int(expect_status_ok(0), 0), check_int(expect_status_ok(1), 1), check_int(expect_status_failed(1), 0), check_int(expect_status_failed(0), 1))
     let sign_boundary = sum4(check_int(expect_int_nonpositive(0), 0), check_int(expect_int_nonpositive(1), 1), check_int(expect_bool_implies(true, false), 1), 0)
     let option_status = sum4(check_int(expect_int_option_some(option_some_int(7), 7), 0), check_int(expect_int_option_none(option_none_int()), 0), check_int(expect_bool_option_some(option_some_bool(true), true), 0), check_int(expect_bool_option_none(option_none_bool()), 0))
