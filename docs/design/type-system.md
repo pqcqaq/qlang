@@ -24,7 +24,7 @@ Qlang 的类型系统要同时满足四件事：
 
 - `std.option` 提供 `Option[T]`、`some`、`none_option`、`is_some`、`is_none`、`unwrap_or`、`or_option`
 - `std.result` 提供 `Result[T, E]`、`ok`、`err`、`is_ok`、`is_err`、`unwrap_result_or`、`or_result`、`error_or`、`ok_or`、`to_option`、`error_to_option`
-- concrete `IntOption` / `BoolOption` / `IntResult` / `BoolResult` 只保留为兼容面
+- concrete `IntOption` / `BoolOption` / `IntResult` / `BoolResult` 已从 stdlib 正式 API 删除
 
 ## 可调用值
 

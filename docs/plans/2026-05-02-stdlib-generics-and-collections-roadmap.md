@@ -8,6 +8,7 @@
 - generic carrier：`Option[T]`、`Result[T, E]`。
 - `std.core` 聚合、布尔聚合和顺序判断只保留 canonical length-generic helpers：`sum_ints`、`product_ints`、`average_ints`、`max_ints`、`min_ints`、`all_bools`、`any_bools`、`none_bools`、`is_ascending_ints`、`is_descending_ints`。
 - `std.array` 有 canonical length-generic access/query/count/aggregate helpers、`reverse_array[T, N]` 和 `repeat_array[T, N]`。
+- `std.option` / `std.result` 只保留 generic carrier API；`IntOption` / `BoolOption` / `IntResult` / `BoolResult` 等 concrete carrier API 已删除。
 - 数组长度泛型参数可作为 `Int` 值读取。
 - 重复数组字面量 `[value; N]` 支持整数字面量长度和数组长度泛型。
 - dependency generic bridge 支持 wrapper specialization 内继续直调同模块 generic helper。
@@ -17,7 +18,7 @@
 
 ## 下一步顺序
 
-1. 继续修语言和后端能力，让剩余固定 arity 兼容层逐步退场。
+1. 继续修 generic monomorphization 和 dependency-aware backend，让测试和真实项目能直接消费 generic public functions。
 2. 为每个 public stdlib API 补 package-local 测试和 downstream consumer smoke。
 3. 扩 method/value generic import 和非 direct-call generic 值前，先补清楚 monomorphization contract。
 

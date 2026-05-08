@@ -98,7 +98,7 @@ ql build workspace --json
 推荐原则：
 
 - generic carrier 和 canonical array API 优先
-- concrete wrappers 仅保留为兼容面
+- 不新增 concrete carrier / fixed arity wrappers
 - 生成项目模板必须能直接跑 `ql check/build/run/test`
 
 ## 接口产物

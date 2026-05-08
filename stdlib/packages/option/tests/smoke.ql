@@ -1,26 +1,10 @@
-use std.option.is_none_bool as is_none_bool
-use std.option.is_none as is_none
-use std.option.is_none_int as is_none_int
 use std.option.Option as Option
+use std.option.is_none as is_none
 use std.option.is_some as is_some
-use std.option.is_some_bool as is_some_bool
-use std.option.is_some_int as is_some_int
 use std.option.none_option as option_none
-use std.option.none_bool as none_bool
-use std.option.none_int as none_int
 use std.option.or_option as or_option
-use std.option.or_option_bool as or_option_bool
-use std.option.or_option_int as or_option_int
-use std.option.or_int as or_int
 use std.option.some as some
-use std.option.some_bool as some_bool
-use std.option.some_int as some_int
 use std.option.unwrap_or as unwrap_or
-use std.option.unwrap_or_bool as unwrap_or_bool
-use std.option.unwrap_or_int as unwrap_or_int
-use std.option.value_or_false_bool as value_or_false_bool
-use std.option.value_or_true_bool as value_or_true_bool
-use std.option.value_or_zero_int as value_or_zero_int
 
 fn check_int(actual: Int, expected: Int) -> Int {
     if actual == expected {
@@ -53,13 +37,19 @@ fn generic_option_status(some_value: Option[Int], none_value: Option[Int]) -> In
 }
 
 fn main() -> Int {
-    let int_status = sum6(check_bool(is_some_int(some_int(7)), true), check_bool(is_none_int(none_int()), true), check_int(unwrap_or_int(some_int(7), 3), 7), check_int(unwrap_or_int(none_int(), 3), 3), check_int(value_or_zero_int(none_int()), 0), check_int(unwrap_or_int(or_int(none_int(), some_int(9)), 0), 9))
-    let int_alias_status = sum6(check_int(unwrap_or_int(or_option_int(none_int(), some_int(11)), 0), 11), check_int(unwrap_or_int(or_option_int(some_int(13), some_int(11)), 0), 13), 0, 0, 0, 0)
-    let bool_status = sum6(check_bool(is_some_bool(some_bool(true)), true), check_bool(is_none_bool(none_bool()), true), check_bool(unwrap_or_bool(some_bool(true), false), true), check_bool(unwrap_or_bool(none_bool(), true), true), check_bool(value_or_false_bool(none_bool()), false), check_bool(value_or_true_bool(none_bool()), true))
-    let generic_some: Option[Int] = some(15)
-    let generic_none: Option[Int] = option_none()
-    let generic_or: Option[Int] = or_option(generic_none, generic_some)
-    let generic_status = sum6(check_bool(is_some(generic_some), true), check_bool(is_none(generic_none), true), check_int(unwrap_or(generic_some, 0), 15), check_int(unwrap_or(generic_none, 3), 3), check_int(unwrap_or(generic_or, 0), 15), 0)
+    let int_some: Option[Int] = some(7)
+    let int_none: Option[Int] = option_none()
+    let int_fallback: Option[Int] = some(9)
+    let int_present: Option[Int] = some(13)
+    let bool_some: Option[Bool] = some(true)
+    let bool_none: Option[Bool] = option_none()
+    let bool_fallback: Option[Bool] = some(false)
+    let direct_some: Option[Int] = Option.Some(15)
+    let direct_none: Option[Int] = Option.None
 
-    return int_status + int_alias_status + bool_status + generic_status + check_bool(unwrap_or_bool(or_option_bool(none_bool(), some_bool(false)), true), false) + check_int(generic_option_status(Option.Some(7), Option.None), 7)
+    let int_status = sum6(check_bool(is_some(int_some), true), check_bool(is_none(int_none), true), check_int(unwrap_or(int_some, 3), 7), check_int(unwrap_or(int_none, 3), 3), check_int(unwrap_or(or_option(int_none, int_fallback), 0), 9), check_int(unwrap_or(or_option(int_present, int_fallback), 0), 13))
+    let bool_status = sum6(check_bool(is_some(bool_some), true), check_bool(is_none(bool_none), true), check_bool(unwrap_or(bool_some, false), true), check_bool(unwrap_or(bool_none, true), true), check_bool(unwrap_or(or_option(bool_none, bool_fallback), true), false), 0)
+    let constructor_status = sum6(check_bool(is_some(direct_some), true), check_bool(is_none(direct_none), true), check_int(unwrap_or(direct_some, 0), 15), check_int(unwrap_or(direct_none, 3), 3), 0, 0)
+
+    return int_status + bool_status + constructor_status + check_int(generic_option_status(Option.Some(7), Option.None), 7)
 }

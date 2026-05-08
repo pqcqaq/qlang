@@ -1,6 +1,6 @@
 # 开发计划
 
-> 最后同步：2026-05-06
+> 最后同步：2026-05-08
 
 这页只记录当前开发顺序。不写日期承诺，不写流水账。
 
@@ -17,7 +17,7 @@
 | --- | --- | --- |
 | 1 | 项目可用性 | `ql project/check/build/run/test` 在真实本地 workspace 中稳定工作 |
 | 2 | stdlib | `std.core`、`std.option`、`std.result`、`std.array`、`std.test` 形成可消费 API |
-| 3 | generics/backend | 减少固定 arity helper，优先修语言和后端能力 |
+| 3 | generics/backend | 补齐 generic monomorphization 和 dependency-aware backend |
 | 4 | LSP/VSCode | 补齐真实 workspace 下的导航、高亮、补全、格式化、code action |
 | 5 | 分发准备 | release、VSIX、CI、JSON 输出、安装文档 |
 | 6 | 语言扩面 | 更宽 async/runtime、trait/effect、workspace-wide refactor |
@@ -27,7 +27,7 @@
 - 抽 `ql-cli` project pipeline，统一 `check/build/run/test/project build` 的 request context、target selection、dependency/interface prep 和 reporting。
 - 收紧 `ql test`，继续把测试专用 bridge/source override 抽进共享 project pipeline，并扩大 dependency consumer smoke 覆盖。
 - 建立 LSP workspace index，让 diagnostics、references、rename、symbols 和 semantic tokens 走同一份分析缓存。
-- 收紧 `stdlib` generic carrier、length-generic array helpers 和 `std.test` downstream smoke；数组重复初始化走 `[value; N]` / `repeat_array[T, N]`，聚合/顺序判断/测试状态合并走数组泛型入口，剩余 legacy arity 优先直接删除。
+- 收紧 generic backend：让 package-local tests、downstream smoke 和 dependency consumers 都能直接覆盖 generic public functions，不再依赖具体 wrapper。
 - 把 `project init --stdlib` 模板迁向 versioned stdlib example，避免 CLI 直接绑定 stdlib 内部 API。
 - 保持 README、roadmap、stdlib、VSCode 文档与实现同步。
 
