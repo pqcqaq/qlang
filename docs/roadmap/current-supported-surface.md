@@ -26,7 +26,7 @@
 - `ql project init/add/remove/status/dependencies/dependents/targets/graph/lock/emit-interface` 已可维护本地 workspace。
 - `ql build/run/test/check` 支持 project-aware 入口和常用 `--json`、`--list`、`--package`、`--target`。
 - 单文件 `ql build/run/test file.ql` 可复用本地 generic free function direct-call specialization。
-- `ql project init --stdlib` 能生成依赖 `std.core`、`std.option`、`std.result`、`std.array`、`std.test` 的项目。
+- `ql project init --stdlib` 能生成依赖 `std.core`、`std.option`、`std.result`、`std.array`、`std.test` 的项目，并用 `check/run/test` 覆盖 generic result conversions、length-generic array helpers 和重复数组。
 
 ### stdlib 和依赖桥接
 
@@ -60,8 +60,8 @@
 - `ql-cli` 主链路仍过度集中，`check/build/run/test/project build` 需要抽成共享 project pipeline。
 - `ql test` 仍有测试专用 bridge/source override 路径，需要继续抽成共享 project pipeline，并扩大到更宽 dependency-aware backend 语义。
 - LSP 还不是稳定 workspace service；diagnostics、references、rename、symbols 需要统一 workspace index。
-- stdlib public API 已清掉 concrete carrier 和主要固定 arity 包装；`std.result` package-local smoke 已直接覆盖 `to_option`、`ok_or`、`error_to_option`。剩余重点是更完整 generic backend、共享 project pipeline 和更宽 dependency-aware backend。
-- `project init --stdlib` 已生成简洁 starter，但模板仍直接绑定当前 stdlib 包和函数名。
+- stdlib public API 已清掉 concrete carrier 和主要固定 arity 包装；`std.result` package-local smoke 和 `project init --stdlib` starter 已直接覆盖 `to_option`、`ok_or`、`error_to_option`。剩余重点是更完整 generic backend、共享 project pipeline 和更宽 dependency-aware backend。
+- `project init --stdlib` 已生成简洁 starter，但模板仍直接绑定当前本地 stdlib 包和函数名。
 
 ## 继续阅读
 

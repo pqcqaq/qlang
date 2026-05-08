@@ -51,7 +51,7 @@ cargo run -q -p ql-cli -- project init D:\Projects\my-qlang-app --stdlib D:\Proj
 cargo run -q -p ql-cli -- project init D:\Projects\my-qlang-workspace --workspace --name app --stdlib D:\Projects\language_q\stdlib
 ```
 
-生成的 starter 使用推荐的 generic `Option[T]`、`Result[T, E]` 和 length-generic array helpers。
+生成的 starter 使用推荐的 generic `Option[T]`、`Result[T, E]`、result/option conversions、length-generic array helpers 和重复数组。
 
 ## 验证
 

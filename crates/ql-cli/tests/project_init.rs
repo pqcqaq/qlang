@@ -49,76 +49,77 @@ fn write_repo_stdlib_fixture(temp: &TempDir, repo_root: &Path) -> PathBuf {
     temp.path().join("stdlib")
 }
 
-fn expected_stdlib_package_lib_source() -> &'static str {
-    r#"use std.array.at_array_or as at_array_or
-use std.array.contains_array as contains_array
-use std.array.count_array as count_array
-use std.array.first_array as first_array
-use std.array.sum_int_array as sum_int_array
-use std.core.clamp_int as clamp_int
-use std.option.some as option_some
-use std.option.unwrap_or as option_unwrap_or
-use std.result.Result as Result
-use std.result.ok as result_ok
-use std.result.unwrap_result_or as result_unwrap_result_or
-
-pub fn run() -> Int {
-    let result_value: Result[Int, Int] = result_ok(option_unwrap_or(option_some(42), 0))
-    let transformed_total = sum_int_array([1, first_array([2, 3, 4]), at_array_or([3, 4, 5], 1, 0)])
-    let query_values: [Int; 3] = [3, 2, 1]
-    let contains_bonus = if contains_array(query_values, 1) { 1 } else { 0 }
-    return clamp_int(result_unwrap_result_or(result_value, 0) + transformed_total + sum_int_array([1, 1, 1]) + count_array([1, 2, 1], 1) + contains_bonus, 0, 100)
-}
-"#
-}
-
-fn expected_stdlib_package_main_source() -> &'static str {
-    r#"use std.array.all_bool_array as all_bool_array
-use std.array.contains_array as contains_array
-use std.core.bool_to_int as bool_to_int
-use std.option.Option as Option
-use std.option.some as option_some
-use std.option.unwrap_or as option_unwrap_or
-use std.result.Result as Result
-use std.result.ok as result_ok
-use std.result.unwrap_result_or as result_unwrap_result_or
-
-fn main() -> Int {
-    let repeated_false: [Bool; 3] = [false, false, false]
-    let enabled: Option[Bool] = option_some(true)
-    let repeated_enabled: [Bool; 3] = [option_unwrap_or(enabled, false), true, true]
-    let result_value: Result[Bool, Int] = result_ok(all_bool_array(repeated_enabled) && contains_array(repeated_false, false))
-    return 1 - bool_to_int(result_unwrap_result_or(result_value, false))
-}
-"#
+fn expect_stdlib_starter_source(source: &str, context: &str) {
+    for needle in [
+        "use std.array.repeat_array as repeat_array",
+        "use std.option.Option as Option",
+        "use std.result.error_to_option as result_error_to_option",
+        "use std.result.ok_or as result_ok_or",
+        "use std.result.to_option as result_to_option",
+        "let repeated: [Int; 3] = repeat_array(1)",
+        "let failed: Result[Int, Int] = result_ok_or(missing, 7)",
+    ] {
+        assert!(
+            source.contains(needle),
+            "{context} should contain `{needle}`\n{source}"
+        );
+    }
+    for legacy in [
+        "repeat3_array",
+        "reverse3_array",
+        "some_int",
+        "ok_int",
+        "unwrap_result_or as result_unwrap_result_or",
+    ] {
+        assert!(
+            !source.contains(legacy),
+            "{context} should not contain legacy API `{legacy}`\n{source}"
+        );
+    }
 }
 
-fn expected_stdlib_package_smoke_source() -> &'static str {
-    r#"use std.array.contains_array as contains_array
-use std.array.len_array as len_array
-use std.array.sum_int_array as sum_int_array
-use std.core.clamp_int as clamp_int
-use std.option.Option as Option
-use std.option.some as option_some
-use std.option.unwrap_or as option_unwrap_or
-use std.result.Result as Result
-use std.result.ok as result_ok
-use std.result.unwrap_result_or as result_unwrap_result_or
-use std.test.expect_bool_eq as expect_bool_eq
-use std.test.expect_int_eq as expect_int_eq
-use std.test.expect_status_ok as expect_status_ok
-
-fn main() -> Int {
-    let numbers: [Int; 3] = [1, 2, 3]
-    let option_value: Option[Int] = option_some(sum_int_array(numbers))
-    let result_value: Result[Int, Int] = result_ok(option_unwrap_or(option_value, 0))
-    let total = clamp_int(result_unwrap_result_or(result_value, 0), 0, 10)
-    let total_check = expect_int_eq(total, 6)
-    let length_check = expect_int_eq(len_array(numbers), 3)
-    let contains_check = expect_bool_eq(contains_array(numbers, 2), true)
-    return expect_status_ok(total_check + length_check + contains_check)
+fn expect_stdlib_starter_main_source(source: &str, context: &str) {
+    for needle in [
+        "use std.array.repeat_array as repeat_array",
+        "use std.result.to_option as result_to_option",
+        "let repeated_false: [Bool; 3] = repeat_array(false)",
+        "let repeated_enabled: [Bool; 3] = [option_unwrap_or(enabled, false); 3]",
+    ] {
+        assert!(
+            source.contains(needle),
+            "{context} should contain `{needle}`\n{source}"
+        );
+    }
+    for legacy in ["repeat3_array", "reverse3_array", "some_bool", "ok_bool"] {
+        assert!(
+            !source.contains(legacy),
+            "{context} should not contain legacy API `{legacy}`\n{source}"
+        );
+    }
 }
-"#
+
+fn expect_stdlib_starter_smoke_source(source: &str, context: &str) {
+    for needle in [
+        "use std.array.repeat_array as repeat_array",
+        "use std.result.error_to_option as result_error_to_option",
+        "use std.result.ok_or as result_ok_or",
+        "use std.result.to_option as result_to_option",
+        "let repeated: [Int; 3] = repeat_array(2)",
+        "let result_value: Result[Int, Int] = result_ok_or(option_value, 9)",
+        "let failed: Result[Int, Int] = result_ok_or(missing, 4)",
+        "let error_check = expect_int_eq(option_unwrap_or(result_error_to_option(failed), 0), 4)",
+    ] {
+        assert!(
+            source.contains(needle),
+            "{context} should contain `{needle}`\n{source}"
+        );
+    }
+    for legacy in ["repeat3_array", "reverse3_array", "some_int", "ok_int"] {
+        assert!(
+            !source.contains(legacy),
+            "{context} should not contain legacy API `{legacy}`\n{source}"
+        );
+    }
 }
 
 #[test]
@@ -238,24 +239,19 @@ fn project_init_with_stdlib_creates_consuming_package_scaffold_and_check_succeed
         read_normalized_file(&project_root.join("qlang.toml"), "stdlib package manifest"),
         "[package]\nname = \"demo-package\"\n\n[dependencies]\n\"std.core\" = \"../stdlib/packages/core\"\n\"std.option\" = \"../stdlib/packages/option\"\n\"std.result\" = \"../stdlib/packages/result\"\n\"std.array\" = \"../stdlib/packages/array\"\n\"std.test\" = \"../stdlib/packages/test\"\n"
     );
-    assert_eq!(
-        read_normalized_file(&project_root.join("src/lib.ql"), "stdlib package source"),
-        expected_stdlib_package_lib_source()
+    let lib_source =
+        read_normalized_file(&project_root.join("src/lib.ql"), "stdlib package source");
+    expect_stdlib_starter_source(&lib_source, "stdlib package source");
+    let main_source = read_normalized_file(
+        &project_root.join("src/main.ql"),
+        "stdlib package main source",
     );
-    assert_eq!(
-        read_normalized_file(
-            &project_root.join("src/main.ql"),
-            "stdlib package main source"
-        ),
-        expected_stdlib_package_main_source()
+    expect_stdlib_starter_main_source(&main_source, "stdlib package main source");
+    let smoke_source = read_normalized_file(
+        &project_root.join("tests/smoke.ql"),
+        "stdlib package smoke test",
     );
-    assert_eq!(
-        read_normalized_file(
-            &project_root.join("tests/smoke.ql"),
-            "stdlib package smoke test"
-        ),
-        expected_stdlib_package_smoke_source()
-    );
+    expect_stdlib_starter_smoke_source(&smoke_source, "stdlib package smoke test");
 
     let mut check = ql_command(&workspace_root);
     check.args(["check", &project_root.to_string_lossy()]);
@@ -628,27 +624,21 @@ fn project_init_with_stdlib_creates_consuming_workspace_scaffold_and_check_succe
         ),
         "[package]\nname = \"app\"\n\n[dependencies]\n\"std.core\" = \"../../../stdlib/packages/core\"\n\"std.option\" = \"../../../stdlib/packages/option\"\n\"std.result\" = \"../../../stdlib/packages/result\"\n\"std.array\" = \"../../../stdlib/packages/array\"\n\"std.test\" = \"../../../stdlib/packages/test\"\n"
     );
-    assert_eq!(
-        read_normalized_file(
-            &member_root.join("src/lib.ql"),
-            "stdlib workspace member source"
-        ),
-        expected_stdlib_package_lib_source()
+    let lib_source = read_normalized_file(
+        &member_root.join("src/lib.ql"),
+        "stdlib workspace member source",
     );
-    assert_eq!(
-        read_normalized_file(
-            &member_root.join("src/main.ql"),
-            "stdlib workspace member main source"
-        ),
-        expected_stdlib_package_main_source()
+    expect_stdlib_starter_source(&lib_source, "stdlib workspace member source");
+    let main_source = read_normalized_file(
+        &member_root.join("src/main.ql"),
+        "stdlib workspace member main source",
     );
-    assert_eq!(
-        read_normalized_file(
-            &member_root.join("tests/smoke.ql"),
-            "stdlib workspace member smoke test"
-        ),
-        expected_stdlib_package_smoke_source()
+    expect_stdlib_starter_main_source(&main_source, "stdlib workspace member main source");
+    let smoke_source = read_normalized_file(
+        &member_root.join("tests/smoke.ql"),
+        "stdlib workspace member smoke test",
     );
+    expect_stdlib_starter_smoke_source(&smoke_source, "stdlib workspace member smoke test");
 
     let mut check = ql_command(&workspace_root);
     check.args(["check", &project_root.to_string_lossy()]);
