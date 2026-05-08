@@ -33,7 +33,7 @@
 - 跨包执行仍是保守切片：public const/static、受限 free function、`extern "c"`、部分 type/value bridge、受限 receiver method。
 - public/local generic free function 支持 direct-call 多实例 specialization。
 - 数组长度泛型参数可在函数体内作为 `Int` 值读取。
-- dependency generic specialization 能递归处理同依赖模块内的 generic helper 直调。
+- dependency generic specialization 能递归处理同依赖模块内的 generic helper 直调，并能从外层调用参数/返回上下文推断嵌套 direct-call specialization。
 - `ql test` 已用真实 smoke 覆盖 dependency public functions、public values、generic public functions、public struct/type alias/method/trait bridge。
 - `Option[T]`、`Result[T, E]`、`std.core` / `std.array` length-generic aggregate/order helpers、`std.test` option/result/array/status assertions 已有真实 smoke。
 - 语言级重复数组字面量 `[value; N]` 已支持整数字面量长度和数组长度泛型；`std.option` / `std.result` concrete carrier API 和 `std.array` 固定长度 helper 已删除。
@@ -60,7 +60,7 @@
 - `ql-cli` 主链路仍过度集中，`check/build/run/test/project build` 需要抽成共享 project pipeline。
 - `ql test` 仍有测试专用 bridge/source override 路径，需要继续抽成共享 project pipeline，并扩大到更宽 dependency-aware backend 语义。
 - LSP 还不是稳定 workspace service；diagnostics、references、rename、symbols 需要统一 workspace index。
-- stdlib public API 已清掉 concrete carrier 和主要固定 arity 包装；剩余重点是更完整 generic backend、共享 project pipeline 和更宽 dependency-aware backend。
+- stdlib public API 已清掉 concrete carrier 和主要固定 arity 包装；`std.result` package-local smoke 已直接覆盖 `to_option`、`ok_or`、`error_to_option`。剩余重点是更完整 generic backend、共享 project pipeline 和更宽 dependency-aware backend。
 - `project init --stdlib` 已生成简洁 starter，但模板仍直接绑定当前 stdlib 包和函数名。
 
 ## 继续阅读

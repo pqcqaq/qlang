@@ -45,15 +45,18 @@ pub fn render_public_function_specializations(
     }
     let dependency_function_bindings =
         instantiations::collect_local_function_type_bindings(dependency_module);
+    let mut root_function_bindings =
+        instantiations::collect_local_function_type_bindings(root_module);
+    root_function_bindings.extend(instantiations::collect_imported_function_type_bindings(
+        root_module,
+        module_import_path,
+        dependency_module,
+    ));
     let call_instantiations = instantiations::collect_public_function_call_instantiations(
         root_module,
         module_import_path,
         function,
-        &instantiations::collect_imported_function_type_bindings(
-            root_module,
-            module_import_path,
-            dependency_module,
-        ),
+        &root_function_bindings,
     );
     render_function_specializations(
         module_import_path,

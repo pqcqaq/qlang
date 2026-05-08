@@ -1059,6 +1059,117 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_package_tests_support_current_package_generic_function_from_nested_context() {
+    if !toolchain_available("`ql test` current package nested generic function test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-current-package-nested-generic-function");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source root for nested generic function import test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "app/src/lib.ql",
+        r#"
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+
+pub enum Result[T, E] {
+    Ok(T),
+    Err(E),
+}
+
+pub fn to_option[T, E](value: Result[T, E]) -> Option[T] {
+    return match value {
+        Result.Ok(inner) => Option.Some(inner),
+        Result.Err(_) => Option.None,
+    }
+}
+"#,
+    );
+    temp.write(
+        "app/tests/smoke.ql",
+        r#"
+use app.Option as Option
+use app.Result as Result
+use app.to_option as result_to_option
+
+fn value_or(value: Option[Int], fallback: Int) -> Int {
+    return match value {
+        Option.Some(inner) => inner,
+        Option.None => fallback,
+    }
+}
+
+fn main() -> Int {
+    let ok: Result[Int, Int] = Result.Ok(13)
+    let err: Result[Int, Int] = Result.Err(5)
+    let status = value_or(result_to_option(ok), 0) + value_or(result_to_option(err), 8)
+    return status - 21
+}
+"#,
+    );
+
+    let package_output = static_library_output_path(&project_root.join("target/ql/debug"), "lib");
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test` current package nested generic function",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-current-package-nested-generic-function",
+        "package tests importing current package generic function in nested context",
+        &output,
+    )
+    .expect(
+        "package-path `ql test` should infer current package generic public functions from nested call contexts",
+    );
+    expect_empty_stderr(
+        "project-test-current-package-nested-generic-function",
+        "package tests importing current package generic function in nested context",
+        &stderr,
+    )
+    .expect("nested generic function package test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-current-package-nested-generic-function",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("nested generic function package test should report a passing smoke test");
+    expect_file_exists(
+        "project-test-current-package-nested-generic-function",
+        &package_output,
+        "current package library",
+        "`ql test` current package nested generic function",
+    )
+    .expect("current package library should build before the nested generic bridge runs");
+    expect_file_exists(
+        "project-test-current-package-nested-generic-function",
+        &smoke_output,
+        "current package nested generic function test executable",
+        "`ql test` current package nested generic function",
+    )
+    .expect("nested generic function package test should emit the smoke test executable");
+}
+
+#[test]
 fn test_package_path_supports_direct_dependency_public_functions() {
     if !toolchain_available("`ql test` dependency public function test") {
         return;
@@ -1119,6 +1230,60 @@ pub fn first[T, N](values: [T; N]) -> T {
         "project-test-dependency-generic-public-function",
         "package dependency generic public function test",
         "`ql test` dependency generic public function",
+        &fixture,
+    );
+}
+
+#[test]
+fn test_package_path_supports_direct_dependency_generic_public_functions_from_nested_context() {
+    if !toolchain_available("`ql test` dependency nested generic public function test") {
+        return;
+    }
+
+    let fixture = write_dependency_smoke_project(
+        "ql-project-test-dependency-nested-generic-public-function",
+        r#"
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+
+pub enum Result[T, E] {
+    Ok(T),
+    Err(E),
+}
+
+pub fn to_option[T, E](value: Result[T, E]) -> Option[T] {
+    return match value {
+        Result.Ok(inner) => Option.Some(inner),
+        Result.Err(_) => Option.None,
+    }
+}
+"#,
+        r#"
+use dep.Option as Option
+use dep.Result as Result
+use dep.to_option as result_to_option
+
+fn value_or(value: Option[Int], fallback: Int) -> Int {
+    return match value {
+        Option.Some(inner) => inner,
+        Option.None => fallback,
+    }
+}
+
+fn main() -> Int {
+    let ok: Result[Int, Int] = Result.Ok(13)
+    let err: Result[Int, Int] = Result.Err(5)
+    let status = value_or(result_to_option(ok), 0) + value_or(result_to_option(err), 8)
+    return status - 21
+}
+"#,
+    );
+    expect_dependency_smoke_project_passes(
+        "project-test-dependency-nested-generic-public-function",
+        "package dependency nested generic public function test",
+        "`ql test` dependency nested generic public function",
         &fixture,
     );
 }

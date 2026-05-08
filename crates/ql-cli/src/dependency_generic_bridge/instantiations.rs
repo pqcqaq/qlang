@@ -591,6 +591,13 @@ fn collect_dependency_generic_function_instantiations_from_expr(
 ) {
     match &expr.kind {
         ExprKind::Call { callee, args } => {
+            let ordered_arg_expected_types = ordered_call_arg_expected_types(
+                callee,
+                args,
+                expected_ty,
+                bindings,
+                function_bindings,
+            );
             if let ExprKind::Name(name) = &callee.kind
                 && local_names.contains(name)
                 && let Some(substitutions) = infer_dependency_generic_function_substitutions(
@@ -616,21 +623,17 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 function_bindings,
                 instantiations,
             );
-            for arg in args {
-                match arg {
-                    CallArg::Positional(value) | CallArg::Named { value, .. } => {
-                        collect_dependency_generic_function_instantiations_from_expr(
-                            value,
-                            None,
-                            return_expected_ty,
-                            local_names,
-                            function,
-                            bindings,
-                            function_bindings,
-                            instantiations,
-                        );
-                    }
-                }
+            for (arg, arg_expected_ty) in args.iter().zip(ordered_arg_expected_types.iter()) {
+                collect_dependency_generic_function_instantiations_from_expr(
+                    call_arg_expr(arg),
+                    arg_expected_ty.as_ref(),
+                    return_expected_ty,
+                    local_names,
+                    function,
+                    bindings,
+                    function_bindings,
+                    instantiations,
+                );
             }
         }
         ExprKind::Tuple(items) | ExprKind::Array(items) => {
@@ -961,6 +964,86 @@ fn ordered_dependency_generic_call_args<'f, 'a>(
         .zip(ordered)
         .map(|((_, param_ty), arg)| arg.map(|arg| (param_ty, arg)))
         .collect()
+}
+
+fn ordered_call_arg_expected_types(
+    callee: &Expr,
+    args: &[CallArg],
+    expected_ty: Option<&TypeExpr>,
+    bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
+) -> Vec<Option<TypeExpr>> {
+    let mut expected_types = vec![None; args.len()];
+    let ExprKind::Name(name) = &callee.kind else {
+        return expected_types;
+    };
+    let Some(function) = function_bindings.get(name) else {
+        return expected_types;
+    };
+    let generic_names = function
+        .generics
+        .iter()
+        .map(|generic| generic.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut substitutions = expected_ty
+        .and_then(|expected_ty| {
+            infer_dependency_generic_return_substitutions(function, expected_ty)
+        })
+        .unwrap_or_default();
+    let Some(ordered_args) = ordered_dependency_generic_call_args(function, args) else {
+        return expected_types;
+    };
+
+    for (param_ty, arg) in ordered_args {
+        if !type_expr_mentions_generic(param_ty, &generic_names) {
+            continue;
+        }
+        let _ = collect_generic_type_substitutions_from_arg_expr(
+            param_ty,
+            arg,
+            &generic_names,
+            bindings,
+            function_bindings,
+            &mut substitutions,
+        );
+    }
+
+    let Some(ordered_args) = ordered_dependency_generic_call_args(function, args) else {
+        return expected_types;
+    };
+    for (param_ty, arg) in ordered_args {
+        let Some(source_index) = args
+            .iter()
+            .position(|candidate| std::ptr::eq(candidate, arg))
+        else {
+            continue;
+        };
+        expected_types[source_index] =
+            inferred_type_from_type_expr_with_substitutions(param_ty, &substitutions)
+                .map(|ty| type_expr_from_inferred_type(&ty))
+                .or_else(|| Some(param_ty.clone()));
+    }
+
+    expected_types
+}
+
+fn infer_dependency_generic_return_substitutions(
+    function: &FunctionDecl,
+    expected_ty: &TypeExpr,
+) -> Option<TypeSubstitutions> {
+    let return_ty = function.return_type.as_ref()?;
+    let generic_names = function
+        .generics
+        .iter()
+        .map(|generic| generic.name.as_str())
+        .collect::<BTreeSet<_>>();
+    if !type_expr_mentions_generic(return_ty, &generic_names) {
+        return Some(TypeSubstitutions::new());
+    }
+    let expected_ty = InferredType::from_type_expr(expected_ty)?;
+    let mut substitutions = TypeSubstitutions::new();
+    collect_generic_type_substitutions(return_ty, &expected_ty, &generic_names, &mut substitutions)
+        .then_some(substitutions)
 }
 
 fn collect_function_param_type_bindings(function: &FunctionDecl, bindings: &mut ValueTypeBindings) {
@@ -1524,15 +1607,68 @@ fn inferred_type_from_type_expr_with_substitutions(
 }
 
 fn inferred_type_from_rendered_substitution(rendered: &str) -> InferredType {
-    match rendered {
-        "Int" | "Bool" | "String" => InferredType::primitive(rendered),
-        _ => InferredType {
-            rendered: rendered.to_owned(),
-            kind: InferredTypeKind::Named {
-                path: rendered.split('.').map(str::to_owned).collect(),
-                args: Vec::new(),
-            },
+    if let Some(ty) = parse_rendered_type_substitution(rendered)
+        && let Some(ty) = InferredType::from_type_expr(&ty)
+    {
+        return ty;
+    }
+    InferredType {
+        rendered: rendered.to_owned(),
+        kind: InferredTypeKind::Named {
+            path: rendered.split('.').map(str::to_owned).collect(),
+            args: Vec::new(),
         },
+    }
+}
+
+fn parse_rendered_type_substitution(rendered: &str) -> Option<TypeExpr> {
+    let source = format!("fn __ql_type_probe(value: {rendered}) -> Int {{ return 0 }}");
+    let module = ql_parser::parse_source(&source).ok()?;
+    module.items.into_iter().find_map(|item| {
+        let ItemKind::Function(function) = item.kind else {
+            return None;
+        };
+        function.params.into_iter().find_map(|param| match param {
+            Param::Regular { ty, .. } => Some(ty),
+            Param::Receiver { .. } => None,
+        })
+    })
+}
+
+fn type_expr_from_inferred_type(ty: &InferredType) -> TypeExpr {
+    match &ty.kind {
+        InferredTypeKind::Pointer { is_const, inner } => TypeExpr::new(
+            Span::default(),
+            TypeExprKind::Pointer {
+                is_const: *is_const,
+                inner: Box::new(type_expr_from_inferred_type(inner)),
+            },
+        ),
+        InferredTypeKind::Array { element, len } => TypeExpr::new(
+            Span::default(),
+            TypeExprKind::Array {
+                element: Box::new(type_expr_from_inferred_type(element)),
+                len: len.clone(),
+            },
+        ),
+        InferredTypeKind::Named { path, args } => TypeExpr::new(
+            Span::default(),
+            TypeExprKind::Named {
+                path: ql_ast::Path::new(path.clone()),
+                args: args.iter().map(type_expr_from_inferred_type).collect(),
+            },
+        ),
+        InferredTypeKind::Tuple(items) => TypeExpr::new(
+            Span::default(),
+            TypeExprKind::Tuple(items.iter().map(type_expr_from_inferred_type).collect()),
+        ),
+        InferredTypeKind::Callable { params, ret } => TypeExpr::new(
+            Span::default(),
+            TypeExprKind::Callable {
+                params: params.iter().map(type_expr_from_inferred_type).collect(),
+                ret: Box::new(type_expr_from_inferred_type(ret)),
+            },
+        ),
     }
 }
 
@@ -2236,6 +2372,74 @@ fn run() -> Int {
             .expect("err should infer one substitution");
         assert_eq!(err.get("T").map(String::as_str), Some("Int"));
         assert_eq!(err.get("E").map(String::as_str), Some("Int"));
+    }
+
+    #[test]
+    fn infers_nested_call_substitution_from_outer_parameter_context() {
+        let dependency = parse_module(
+            r#"
+package std.result
+
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+
+pub enum Result[T, E] {
+    Ok(T),
+    Err(E),
+}
+
+pub fn to_option[T, E](value: Result[T, E]) -> Option[T] {
+    return match value {
+        Result.Ok(inner) => Option.Some(inner),
+        Result.Err(_) => Option.None,
+    }
+}
+
+pub fn value_or[T](value: Option[T], fallback: T) -> T {
+    return match value {
+        Option.Some(inner) => inner,
+        Option.None => fallback,
+    }
+}
+
+pub fn identity[T](value: T) -> T {
+    return value
+}
+"#,
+        );
+        let root = parse_module(
+            r#"
+use std.result.Option as Option
+use std.result.Result as Result
+use std.result.identity as identity
+use std.result.to_option as result_to_option
+use std.result.value_or as option_value_or
+
+fn run(value: Result[Int, Int]) -> Int {
+    return option_value_or(result_to_option(value), 0)
+}
+
+fn nested(value: Result[Int, Int]) -> Option[Int] {
+    return identity(result_to_option(value))
+}
+"#,
+        );
+
+        let instantiations = collect_public_function_instantiations(
+            &root,
+            &["std".to_owned(), "result".to_owned()],
+            function(&dependency, "to_option"),
+        );
+
+        assert_eq!(instantiations.len(), 1);
+        let substitutions = instantiations
+            .iter()
+            .next()
+            .expect("to_option should infer one nested substitution");
+        assert_eq!(substitutions.get("T").map(String::as_str), Some("Int"));
+        assert_eq!(substitutions.get("E").map(String::as_str), Some("Int"));
     }
 
     #[test]
