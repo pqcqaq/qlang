@@ -60,16 +60,17 @@ use std.test.expect_int_array_at as expect_int_array_at
 use std.test.expect_int_array_average as expect_int_array_average
 use std.test.expect_int_array_contains as expect_int_array_contains
 use std.test.expect_int_array_count as expect_int_array_count
+use std.test.expect_int_array_descending as expect_int_array_descending
 use std.test.expect_int_array_first as expect_int_array_first
 use std.test.expect_int_array_last as expect_int_array_last
 use std.test.expect_int_array_max as expect_int_array_max
 use std.test.expect_int_array_min as expect_int_array_min
 use std.test.expect_int_array_product as expect_int_array_product
 use std.test.expect_int_array_reverse as expect_int_array_reverse
+use std.test.expect_int_array_ascending as expect_int_array_ascending
+use std.test.expect_int_array_strictly_ascending as expect_int_array_strictly_ascending
+use std.test.expect_int_array_strictly_descending as expect_int_array_strictly_descending
 use std.test.expect_int_array_sum as expect_int_array_sum
-use std.test.expect_int_ascending as expect_int_ascending
-use std.test.expect_int_ascending4 as expect_int_ascending4
-use std.test.expect_int_ascending5 as expect_int_ascending5
 use std.test.expect_int_between as expect_int_between
 use std.test.expect_int_between_bounds as expect_int_between_bounds
 use std.test.expect_int_clamp_max as expect_int_clamp_max
@@ -77,9 +78,6 @@ use std.test.expect_int_clamp_min as expect_int_clamp_min
 use std.test.expect_int_clamped as expect_int_clamped
 use std.test.expect_int_clamped_bounds as expect_int_clamped_bounds
 use std.test.expect_int_compare as expect_int_compare
-use std.test.expect_int_descending as expect_int_descending
-use std.test.expect_int_descending4 as expect_int_descending4
-use std.test.expect_int_descending5 as expect_int_descending5
 use std.test.expect_int_distance_to_bounds as expect_int_distance_to_bounds
 use std.test.expect_int_distance_to_range as expect_int_distance_to_range
 use std.test.expect_int_divisible_by as expect_int_divisible_by
@@ -122,12 +120,6 @@ use std.test.expect_int_quotient_or_zero as expect_int_quotient_or_zero
 use std.test.expect_int_range_span as expect_int_range_span
 use std.test.expect_int_remainder_or_zero as expect_int_remainder_or_zero
 use std.test.expect_int_sign as expect_int_sign
-use std.test.expect_int_strictly_descending as expect_int_strictly_descending
-use std.test.expect_int_strictly_ascending as expect_int_strictly_ascending
-use std.test.expect_int_strictly_ascending4 as expect_int_strictly_ascending4
-use std.test.expect_int_strictly_ascending5 as expect_int_strictly_ascending5
-use std.test.expect_int_strictly_descending4 as expect_int_strictly_descending4
-use std.test.expect_int_strictly_descending5 as expect_int_strictly_descending5
 use std.test.expect_int_upper_bound as expect_int_upper_bound
 use std.test.expect_int_within as expect_int_within
 use std.test.expect_nonzero as expect_nonzero
@@ -186,15 +178,15 @@ fn main() -> Int {
     let int_order_failure = sum4(check_int(expect_int_eq(8, 9), 1), check_int(expect_int_ne(8, 8), 1), check_int(expect_int_gt(8, 8), 1), check_int(expect_int_ge(7, 8), 1))
     let int_boundary_failure = sum4(check_int(expect_int_lt(8, 8), 1), check_int(expect_int_le(9, 8), 1), check_int(expect_zero(1), 1), check_int(expect_nonzero(0), 1))
     let range_pass = sum4(check_int(expect_int_between(5, 3, 9), 0), check_int(expect_int_exclusive_between(5, 3, 9), 0), check_int(expect_int_outside(2, 3, 9), 0), check_int(expect_int_between_bounds(5, 9, 3), 0))
-    let bounds_pass = sum4(check_int(expect_int_exclusive_between_bounds(5, 9, 3), 0), check_int(expect_int_outside_bounds(2, 9, 3), 0), check_int(expect_int_ascending(3, 3, 9), 0), check_int(expect_int_descending(9, 9, 3), 0))
-    let order_pass = sum4(check_int(expect_int_strictly_ascending(3, 5, 9), 0), check_int(expect_int_strictly_descending(9, 5, 3), 0), 0, 0)
-    let order4_pass = sum4(check_int(expect_int_ascending4(3, 5, 5, 9), 0), check_int(expect_int_ascending5(3, 5, 5, 9, 10), 0), check_int(expect_int_strictly_ascending4(3, 5, 7, 9), 0), check_int(expect_int_strictly_ascending5(3, 5, 7, 9, 11), 0))
-    let order5_pass = sum4(check_int(expect_int_descending4(9, 7, 7, 3), 0), check_int(expect_int_descending5(11, 9, 7, 7, 3), 0), check_int(expect_int_strictly_descending4(9, 7, 5, 3), 0), check_int(expect_int_strictly_descending5(11, 9, 7, 5, 3), 0))
+    let bounds_pass = sum4(check_int(expect_int_exclusive_between_bounds(5, 9, 3), 0), check_int(expect_int_outside_bounds(2, 9, 3), 0), check_int(expect_int_array_ascending([3, 3, 9]), 0), check_int(expect_int_array_descending([9, 9, 3]), 0))
+    let order_pass = sum4(check_int(expect_int_array_strictly_ascending([3, 5, 9]), 0), check_int(expect_int_array_strictly_descending([9, 5, 3]), 0), 0, 0)
+    let order4_pass = sum4(check_int(expect_int_array_ascending([3, 5, 5, 9]), 0), check_int(expect_int_array_ascending([3, 5, 5, 9, 10]), 0), check_int(expect_int_array_strictly_ascending([3, 5, 7, 9]), 0), check_int(expect_int_array_strictly_ascending([3, 5, 7, 9, 11]), 0))
+    let order5_pass = sum4(check_int(expect_int_array_descending([9, 7, 7, 3]), 0), check_int(expect_int_array_descending([11, 9, 7, 7, 3]), 0), check_int(expect_int_array_strictly_descending([9, 7, 5, 3]), 0), check_int(expect_int_array_strictly_descending([11, 9, 7, 5, 3]), 0))
     let range_failure = sum4(check_int(expect_int_between(2, 3, 9), 1), check_int(expect_int_exclusive_between(3, 3, 9), 1), check_int(expect_int_outside(5, 3, 9), 1), check_int(expect_int_between_bounds(10, 9, 3), 1))
-    let bounds_failure = sum4(check_int(expect_int_exclusive_between_bounds(9, 9, 3), 1), check_int(expect_int_outside_bounds(5, 9, 3), 1), check_int(expect_int_ascending(9, 5, 3), 1), check_int(expect_int_descending(3, 9, 5), 1))
-    let order_failure = sum4(check_int(expect_int_strictly_ascending(3, 3, 9), 1), check_int(expect_int_strictly_descending(9, 9, 3), 1), 0, 0)
-    let order4_failure = sum4(check_int(expect_int_ascending4(3, 9, 5, 7), 1), check_int(expect_int_ascending5(3, 5, 9, 7, 10), 1), check_int(expect_int_strictly_ascending4(3, 5, 5, 9), 1), check_int(expect_int_strictly_ascending5(3, 5, 7, 9, 9), 1))
-    let order5_failure = sum4(check_int(expect_int_descending4(9, 3, 7, 5), 1), check_int(expect_int_descending5(11, 9, 3, 7, 5), 1), check_int(expect_int_strictly_descending4(9, 7, 7, 3), 1), check_int(expect_int_strictly_descending5(11, 9, 7, 7, 3), 1))
+    let bounds_failure = sum4(check_int(expect_int_exclusive_between_bounds(9, 9, 3), 1), check_int(expect_int_outside_bounds(5, 9, 3), 1), check_int(expect_int_array_ascending([9, 5, 3]), 1), check_int(expect_int_array_descending([3, 9, 5]), 1))
+    let order_failure = sum4(check_int(expect_int_array_strictly_ascending([3, 3, 9]), 1), check_int(expect_int_array_strictly_descending([9, 9, 3]), 1), 0, 0)
+    let order4_failure = sum4(check_int(expect_int_array_ascending([3, 9, 5, 7]), 1), check_int(expect_int_array_ascending([3, 5, 9, 7, 10]), 1), check_int(expect_int_array_strictly_ascending([3, 5, 5, 9]), 1), check_int(expect_int_array_strictly_ascending([3, 5, 7, 9, 9]), 1))
+    let order5_failure = sum4(check_int(expect_int_array_descending([9, 3, 7, 5]), 1), check_int(expect_int_array_descending([11, 9, 3, 7, 5]), 1), check_int(expect_int_array_strictly_descending([9, 7, 7, 3]), 1), check_int(expect_int_array_strictly_descending([11, 9, 7, 7, 3]), 1))
     let transform_core_pass = sum4(check_int(expect_int_abs(0 - 7, 7), 0), check_int(expect_int_abs_diff(3, 9, 6), 0), check_int(expect_int_range_span(9, 3, 6), 0), check_int(expect_int_lower_bound(9, 3, 3), 0))
     let transform_bound_pass = sum4(check_int(expect_int_upper_bound(9, 3, 9), 0), 0, 0, 0)
     let transform_core_failure = sum4(check_int(expect_int_abs(0 - 7, 0 - 7), 1), check_int(expect_int_abs_diff(3, 9, 5), 1), check_int(expect_int_range_span(9, 3, 5), 1), check_int(expect_int_lower_bound(9, 3, 9), 1))
