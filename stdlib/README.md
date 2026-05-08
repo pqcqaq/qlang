@@ -19,7 +19,7 @@
 - `std.test` 的普通断言、数组断言、数组顺序断言和 `merge_statuses` 状态合并 helper
 
 `std.array` 不再导出 `first3_array`、`reverse3_array`、`repeat3_array` 这类固定长度 helper；新代码只使用 length-generic API。重复数组使用语言级 `[value; N]`，标准库暴露 `repeat_array[T, N](value) -> [T; N]`。
-`std.core` 里的 `sum3_int`、`max4_int`、`all5_bool`、`is_ascending4_int` 等固定 arity 名称只作为兼容包装保留，新代码应传数组给泛型 API。
+`std.core` 的聚合、布尔聚合和顺序判断使用数组 API；固定 arity 的 `sum3_int`、`max4_int`、`all5_bool`、`is_ascending4_int` 等历史包装已删除。
 `std.test` 的聚合断言、顺序断言和状态合并使用数组 API；固定 arity 的 `expect_*3/4/5` 聚合/顺序断言和 `merge_status3/4/5/6` 已删除。
 
 ## 本地依赖

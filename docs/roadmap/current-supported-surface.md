@@ -60,7 +60,7 @@
 - `ql-cli` 主链路仍过度集中，`check/build/run/test/project build` 需要抽成共享 project pipeline。
 - `ql test` 仍有测试专用 bridge/source override 路径，需要继续抽成共享 project pipeline，并扩大到更宽 dependency-aware backend 语义。
 - LSP 还不是稳定 workspace service；diagnostics、references、rename、symbols 需要统一 workspace index。
-- stdlib 仍有部分固定 arity / concrete carrier 兼容层；聚合、顺序判断和测试状态合并 API 已向数组泛型入口收敛，剩余重点是更完整 generic backend 和兼容层退场。
+- stdlib 仍有部分 concrete carrier 兼容层；`std.core` 聚合/顺序判断和 `std.test` 状态合并已删除固定 arity 包装，剩余重点是更完整 generic backend 和兼容层退场。
 - `project init --stdlib` 已生成简洁 starter，但模板仍直接绑定当前 stdlib 包和函数名。
 
 ## 继续阅读

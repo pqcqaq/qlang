@@ -57,70 +57,6 @@ pub fn average_ints[N](values: [Int; N]) -> Int {
     return sum_ints(values) / N
 }
 
-pub fn max3_int(first: Int, second: Int, third: Int) -> Int {
-    return max_ints([first, second, third])
-}
-
-pub fn max4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
-    return max_ints([first, second, third, fourth])
-}
-
-pub fn max5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
-    return max_ints([first, second, third, fourth, fifth])
-}
-
-pub fn min3_int(first: Int, second: Int, third: Int) -> Int {
-    return min_ints([first, second, third])
-}
-
-pub fn min4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
-    return min_ints([first, second, third, fourth])
-}
-
-pub fn min5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
-    return min_ints([first, second, third, fourth, fifth])
-}
-
-pub fn sum3_int(first: Int, second: Int, third: Int) -> Int {
-    return sum_ints([first, second, third])
-}
-
-pub fn sum4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
-    return sum_ints([first, second, third, fourth])
-}
-
-pub fn sum5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
-    return sum_ints([first, second, third, fourth, fifth])
-}
-
-pub fn product3_int(first: Int, second: Int, third: Int) -> Int {
-    return product_ints([first, second, third])
-}
-
-pub fn product4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
-    return product_ints([first, second, third, fourth])
-}
-
-pub fn product5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
-    return product_ints([first, second, third, fourth, fifth])
-}
-
-pub fn average2_int(left: Int, right: Int) -> Int {
-    return average_ints([left, right])
-}
-
-pub fn average3_int(first: Int, second: Int, third: Int) -> Int {
-    return average_ints([first, second, third])
-}
-
-pub fn average4_int(first: Int, second: Int, third: Int, fourth: Int) -> Int {
-    return average_ints([first, second, third, fourth])
-}
-
-pub fn average5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Int {
-    return average_ints([first, second, third, fourth, fifth])
-}
-
 pub fn quotient_or_zero_int(value: Int, divisor: Int) -> Int {
     if divisor == 0 {
         return 0
@@ -224,10 +160,10 @@ pub fn compare_int(left: Int, right: Int) -> Int {
 }
 
 pub fn median3_int(first: Int, second: Int, third: Int) -> Int {
-    if is_ascending_int(first, second, third) || is_ascending_int(third, second, first) {
+    if is_ascending_ints([first, second, third]) || is_ascending_ints([third, second, first]) {
         return second
     }
-    if is_ascending_int(second, first, third) || is_ascending_int(third, first, second) {
+    if is_ascending_ints([second, first, third]) || is_ascending_ints([third, first, second]) {
         return first
     }
     return third
@@ -302,18 +238,6 @@ pub fn is_ascending_ints[N](values: [Int; N]) -> Bool {
     return true
 }
 
-pub fn is_ascending_int(first: Int, second: Int, third: Int) -> Bool {
-    return is_ascending_ints([first, second, third])
-}
-
-pub fn is_ascending4_int(first: Int, second: Int, third: Int, fourth: Int) -> Bool {
-    return is_ascending_ints([first, second, third, fourth])
-}
-
-pub fn is_ascending5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Bool {
-    return is_ascending_ints([first, second, third, fourth, fifth])
-}
-
 pub fn is_strictly_ascending_ints[N](values: [Int; N]) -> Bool {
     var index = 0
     var previous = 0
@@ -325,18 +249,6 @@ pub fn is_strictly_ascending_ints[N](values: [Int; N]) -> Bool {
         index = index + 1
     }
     return true
-}
-
-pub fn is_strictly_ascending_int(first: Int, second: Int, third: Int) -> Bool {
-    return is_strictly_ascending_ints([first, second, third])
-}
-
-pub fn is_strictly_ascending4_int(first: Int, second: Int, third: Int, fourth: Int) -> Bool {
-    return is_strictly_ascending_ints([first, second, third, fourth])
-}
-
-pub fn is_strictly_ascending5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Bool {
-    return is_strictly_ascending_ints([first, second, third, fourth, fifth])
 }
 
 pub fn is_descending_ints[N](values: [Int; N]) -> Bool {
@@ -352,18 +264,6 @@ pub fn is_descending_ints[N](values: [Int; N]) -> Bool {
     return true
 }
 
-pub fn is_descending_int(first: Int, second: Int, third: Int) -> Bool {
-    return is_descending_ints([first, second, third])
-}
-
-pub fn is_descending4_int(first: Int, second: Int, third: Int, fourth: Int) -> Bool {
-    return is_descending_ints([first, second, third, fourth])
-}
-
-pub fn is_descending5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Bool {
-    return is_descending_ints([first, second, third, fourth, fifth])
-}
-
 pub fn is_strictly_descending_ints[N](values: [Int; N]) -> Bool {
     var index = 0
     var previous = 0
@@ -375,18 +275,6 @@ pub fn is_strictly_descending_ints[N](values: [Int; N]) -> Bool {
         index = index + 1
     }
     return true
-}
-
-pub fn is_strictly_descending_int(first: Int, second: Int, third: Int) -> Bool {
-    return is_strictly_descending_ints([first, second, third])
-}
-
-pub fn is_strictly_descending4_int(first: Int, second: Int, third: Int, fourth: Int) -> Bool {
-    return is_strictly_descending_ints([first, second, third, fourth])
-}
-
-pub fn is_strictly_descending5_int(first: Int, second: Int, third: Int, fourth: Int, fifth: Int) -> Bool {
-    return is_strictly_descending_ints([first, second, third, fourth, fifth])
 }
 
 pub fn is_divisible_by_int(value: Int, divisor: Int) -> Bool {
@@ -436,42 +324,6 @@ pub fn any_bools[N](values: [Bool; N]) -> Bool {
 
 pub fn none_bools[N](values: [Bool; N]) -> Bool {
     return !any_bools(values)
-}
-
-pub fn all3_bool(first: Bool, second: Bool, third: Bool) -> Bool {
-    return all_bools([first, second, third])
-}
-
-pub fn all4_bool(first: Bool, second: Bool, third: Bool, fourth: Bool) -> Bool {
-    return all_bools([first, second, third, fourth])
-}
-
-pub fn all5_bool(first: Bool, second: Bool, third: Bool, fourth: Bool, fifth: Bool) -> Bool {
-    return all_bools([first, second, third, fourth, fifth])
-}
-
-pub fn any3_bool(first: Bool, second: Bool, third: Bool) -> Bool {
-    return any_bools([first, second, third])
-}
-
-pub fn any4_bool(first: Bool, second: Bool, third: Bool, fourth: Bool) -> Bool {
-    return any_bools([first, second, third, fourth])
-}
-
-pub fn any5_bool(first: Bool, second: Bool, third: Bool, fourth: Bool, fifth: Bool) -> Bool {
-    return any_bools([first, second, third, fourth, fifth])
-}
-
-pub fn none3_bool(first: Bool, second: Bool, third: Bool) -> Bool {
-    return none_bools([first, second, third])
-}
-
-pub fn none4_bool(first: Bool, second: Bool, third: Bool, fourth: Bool) -> Bool {
-    return none_bools([first, second, third, fourth])
-}
-
-pub fn none5_bool(first: Bool, second: Bool, third: Bool, fourth: Bool, fifth: Bool) -> Bool {
-    return none_bools([first, second, third, fourth, fifth])
 }
 
 pub fn not_bool(value: Bool) -> Bool {
