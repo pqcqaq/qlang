@@ -46,6 +46,7 @@ const SEMANTIC_TOKEN_MODIFIER: u32 = 13;
 const SEMANTIC_TOKEN_STRING: u32 = 14;
 const SEMANTIC_TOKEN_NUMBER: u32 = 15;
 const SEMANTIC_TOKEN_OPERATOR: u32 = 16;
+const SEMANTIC_TOKEN_COMMENT: u32 = 17;
 
 pub fn position_to_offset(source: &str, position: Position) -> Option<usize> {
     let line_starts = line_starts(source);
@@ -1227,6 +1228,7 @@ pub fn semantic_tokens_legend() -> SemanticTokensLegend {
             SemanticTokenType::STRING,
             SemanticTokenType::NUMBER,
             SemanticTokenType::OPERATOR,
+            SemanticTokenType::COMMENT,
         ],
         token_modifiers: vec![
             SemanticTokenModifier::DECLARATION,
@@ -1928,6 +1930,7 @@ fn semantic_tokens_result_for_occurrences(
                 .iter()
                 .any(|span| spans_overlap(*span, token.span))
         }));
+        entries.extend(lexical_comment_semantic_tokens(source));
     }
     if let Some((start, end)) = filter {
         entries.retain(|token| token.span.start < end && token.span.end > start);
@@ -1955,6 +1958,92 @@ fn lexical_semantic_tokens(source: &str) -> Vec<LspSemanticTokenOccurrence> {
             })
         })
         .collect()
+}
+
+fn lexical_comment_semantic_tokens(source: &str) -> Vec<LspSemanticTokenOccurrence> {
+    let bytes = source.as_bytes();
+    let mut tokens = Vec::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'f' && bytes.get(index + 1) == Some(&b'"') {
+            index = skip_string_literal(bytes, index + 2);
+            continue;
+        }
+        if bytes[index] == b'"' {
+            index = skip_string_literal(bytes, index + 1);
+            continue;
+        }
+        if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'/') {
+            let start = index;
+            index += 2;
+            while index < bytes.len() && !matches!(bytes[index], b'\n' | b'\r') {
+                index += 1;
+            }
+            push_comment_semantic_tokens(source, start, index, &mut tokens);
+            continue;
+        }
+        if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            let start = index;
+            index += 2;
+            while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/') {
+                index += 1;
+            }
+            index = if index + 1 < bytes.len() {
+                index + 2
+            } else {
+                bytes.len()
+            };
+            push_comment_semantic_tokens(source, start, index, &mut tokens);
+            continue;
+        }
+        index += 1;
+    }
+    tokens
+}
+
+fn push_comment_semantic_tokens(
+    source: &str,
+    start: usize,
+    end: usize,
+    tokens: &mut Vec<LspSemanticTokenOccurrence>,
+) {
+    let mut line_start = start;
+    for (relative_offset, ch) in source[start..end].char_indices() {
+        if ch == '\n' || ch == '\r' {
+            let line_end = start + relative_offset;
+            push_comment_semantic_token(line_start, line_end, tokens);
+            line_start = line_end + ch.len_utf8();
+        }
+    }
+    push_comment_semantic_token(line_start, end, tokens);
+}
+
+fn push_comment_semantic_token(
+    start: usize,
+    end: usize,
+    tokens: &mut Vec<LspSemanticTokenOccurrence>,
+) {
+    if start < end {
+        tokens.push(LspSemanticTokenOccurrence {
+            span: Span::new(start, end),
+            token_type: SEMANTIC_TOKEN_COMMENT,
+            token_modifiers_bitset: 0,
+        });
+    }
+}
+
+fn skip_string_literal(bytes: &[u8], mut index: usize) -> usize {
+    while index < bytes.len() {
+        if bytes[index] == b'"' {
+            return index + 1;
+        }
+        if bytes[index] == b'\\' {
+            index = (index + 2).min(bytes.len());
+        } else {
+            index += 1;
+        }
+    }
+    bytes.len()
 }
 
 fn lexical_semantic_token_type(kind: TokenKind) -> Option<u32> {

@@ -17,7 +17,7 @@
 - references、documentHighlight、documentSymbol、workspaceSymbol
 - completion、completionItem/resolve、signatureHelp、inlayHint
 - foldingRange、selectionRange
-- semanticTokens full/range，含 parse-error lexical fallback 和 `self` keyword token
+- semanticTokens full/range，含 parse-error lexical fallback、注释 token 和 `self` keyword token
 - document/range/on-type formatting
 - codeAction/resolve、organize imports、codeLens
 - same-file callHierarchy/typeHierarchy

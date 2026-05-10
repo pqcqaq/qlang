@@ -95,8 +95,11 @@ async fn semantic_tokens_include_lexical_keyword_literal_and_operator_tokens() {
         "tokens.ql",
         r#"
 pub fn main() -> Int {
+    // line note
+    /* block
+       note */
     let value = 1 + 2
-    let text = "ok"
+    let text = "not // comment"
     return value
 }
 "#,
@@ -140,14 +143,22 @@ pub fn main() -> Int {
         .iter()
         .position(|token_type| *token_type == SemanticTokenType::OPERATOR)
         .expect("operator token type should exist") as u32;
+    let comment_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::COMMENT)
+        .expect("comment token type should exist") as u32;
 
     for (needle, token_type) in [
         ("pub", modifier_type),
         ("fn", keyword_type),
+        ("// line note", comment_type),
+        ("/* block", comment_type),
+        ("       note */", comment_type),
         ("let", keyword_type),
         ("1", number_type),
         ("+", operator_type),
-        ("\"ok\"", string_type),
+        ("\"not // comment\"", string_type),
         ("return", keyword_type),
     ] {
         let pos = offset_to_position(&source, nth_offset(&source, needle, 1));
@@ -156,6 +167,16 @@ pub fn main() -> Int {
             "{needle} should have token type {token_type}; decoded={decoded:#?}",
         );
     }
+    let fake_comment_pos = offset_to_position(&source, nth_offset(&source, "// comment", 1));
+    assert!(
+        !decoded.contains(&(
+            fake_comment_pos.line,
+            fake_comment_pos.character,
+            "// comment".len() as u32,
+            comment_type
+        )),
+        "comment marker inside strings must not become a comment token: {decoded:#?}",
+    );
 
     let range = Range::new(
         offset_to_position(&source, nth_offset(&source, "let text", 1)),
@@ -169,12 +190,12 @@ pub fn main() -> Int {
         panic!("semanticTokens/range should return full token data")
     };
     let range_decoded = decode(&range_tokens.data);
-    let string_pos = offset_to_position(&source, nth_offset(&source, "\"ok\"", 1));
+    let string_pos = offset_to_position(&source, nth_offset(&source, "\"not // comment\"", 1));
     assert!(
         range_decoded.contains(&(
             string_pos.line,
             string_pos.character,
-            "\"ok\"".len() as u32,
+            "\"not // comment\"".len() as u32,
             string_type
         )),
         "range tokens should include string token inside requested range: {range_decoded:#?}",
@@ -188,6 +209,7 @@ async fn semantic_tokens_fallback_includes_self_keyword_token() {
 package demo.app
 
 pub fn main() -> Int {
+    // fallback note
     self
     return 0 +
 }
@@ -214,10 +236,25 @@ pub fn main() -> Int {
         .iter()
         .position(|token_type| *token_type == SemanticTokenType::KEYWORD)
         .expect("keyword token type should exist") as u32;
+    let comment_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::COMMENT)
+        .expect("comment token type should exist") as u32;
     let pos = offset_to_position(&source, nth_offset(&source, "self", 1));
     assert!(
         decoded.contains(&(pos.line, pos.character, "self".len() as u32, keyword_type)),
         "self should keep keyword token color in lexical fallback; decoded={decoded:#?}",
+    );
+    let comment_pos = offset_to_position(&source, nth_offset(&source, "// fallback note", 1));
+    assert!(
+        decoded.contains(&(
+            comment_pos.line,
+            comment_pos.character,
+            "// fallback note".len() as u32,
+            comment_type
+        )),
+        "comments should keep token color in lexical fallback; decoded={decoded:#?}",
     );
 }
 
