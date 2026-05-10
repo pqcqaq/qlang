@@ -30,6 +30,7 @@
 - diagnostics 不是 workspace-wide push。
 - organize imports 只处理连续顶层 `use` block。
 - hierarchy、rename、references、code action 仍是保守 workspace 切片。
+- `initialize` capability 回归测试锁在 `crates/ql-lsp/tests/initialize_capabilities.rs`。
 
 ## 开发模式
 

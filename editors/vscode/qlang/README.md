@@ -55,5 +55,5 @@ qlsp --version
 ## Scope
 
 - TextMate grammar mirrors the current lexer keyword set.
-- `qlsp` provides hover, semantic tokens, completion, signature help, inlay hints, folding, selection, formatting, code actions, code lenses, hierarchy, references and rename.
+- `qlsp` declares text sync, hover, definition/declaration/typeDefinition/implementation, references, documentHighlight, documentSymbol, workspaceSymbol, completion/resolve, signatureHelp, inlayHint, foldingRange, selectionRange, semanticTokens full/range, formatting, codeAction/resolve, codeLens/resolve, callHierarchy, typeHierarchy and rename/prepareRename.
 - The reliable surface is still conservative and follows `docs/roadmap/current-supported-surface.md`.

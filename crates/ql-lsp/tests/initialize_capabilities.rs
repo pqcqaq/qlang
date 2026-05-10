@@ -5,15 +5,68 @@ use ql_lsp::Backend;
 use tower_lsp::LspService;
 use tower_lsp::lsp_types::{
     CallHierarchyServerCapability, CodeActionKind, CodeActionProviderCapability,
-    FoldingRangeProviderCapability, OneOf, SelectionRangeProviderCapability,
-    SemanticTokensFullOptions, SemanticTokensServerCapabilities,
+    DeclarationCapability, FoldingRangeProviderCapability, HoverProviderCapability,
+    ImplementationProviderCapability, OneOf, SelectionRangeProviderCapability,
+    SemanticTokensFullOptions, SemanticTokensServerCapabilities, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TypeDefinitionProviderCapability,
 };
 
 #[tokio::test(flavor = "current_thread")]
 async fn initialize_declares_rich_editor_capabilities() {
     let (mut service, _) = LspService::new(Backend::new);
     let result = initialize_service(&mut service).await;
+    assert_eq!(
+        result.server_info.as_ref().map(|info| info.name.as_str()),
+        Some("qlsp")
+    );
     let capabilities = result.capabilities;
+
+    let text_document_sync = capabilities
+        .text_document_sync
+        .as_ref()
+        .expect("textDocumentSync should be declared");
+    let TextDocumentSyncCapability::Options(sync_options) = text_document_sync else {
+        panic!("textDocumentSync should declare options, got {text_document_sync:?}")
+    };
+    assert_eq!(sync_options.open_close, Some(true));
+    assert_eq!(sync_options.change, Some(TextDocumentSyncKind::FULL));
+
+    assert!(matches!(
+        capabilities.hover_provider,
+        Some(HoverProviderCapability::Simple(true))
+    ));
+    assert!(matches!(
+        capabilities.definition_provider,
+        Some(OneOf::Left(true))
+    ));
+    assert!(matches!(
+        capabilities.declaration_provider,
+        Some(DeclarationCapability::Simple(true))
+    ));
+    assert!(matches!(
+        capabilities.type_definition_provider,
+        Some(TypeDefinitionProviderCapability::Simple(true))
+    ));
+    assert!(matches!(
+        capabilities.implementation_provider,
+        Some(ImplementationProviderCapability::Simple(true))
+    ));
+    assert!(matches!(
+        capabilities.references_provider,
+        Some(OneOf::Left(true))
+    ));
+    assert!(matches!(
+        capabilities.document_highlight_provider,
+        Some(OneOf::Left(true))
+    ));
+    assert!(matches!(
+        capabilities.document_symbol_provider,
+        Some(OneOf::Left(true))
+    ));
+    assert!(matches!(
+        capabilities.workspace_symbol_provider,
+        Some(OneOf::Left(true))
+    ));
 
     let completion = capabilities
         .completion_provider
@@ -88,6 +141,14 @@ async fn initialize_declares_rich_editor_capabilities() {
         capabilities.inlay_hint_provider,
         Some(OneOf::Left(true))
     ));
+    let rename = capabilities
+        .rename_provider
+        .as_ref()
+        .expect("rename provider should be declared");
+    let OneOf::Right(rename_options) = rename else {
+        panic!("rename provider should declare options, got {rename:?}")
+    };
+    assert_eq!(rename_options.prepare_provider, Some(true));
     assert!(matches!(
         capabilities.call_hierarchy_provider,
         Some(CallHierarchyServerCapability::Simple(true))
