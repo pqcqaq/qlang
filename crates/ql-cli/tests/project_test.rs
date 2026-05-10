@@ -1235,6 +1235,29 @@ pub fn first[T, N](values: [T; N]) -> T {
 }
 
 #[test]
+fn test_package_path_allows_unused_direct_dependency_generic_public_function_imports() {
+    if !toolchain_available("`ql test` unused dependency generic public function import test") {
+        return;
+    }
+
+    let fixture = write_dependency_smoke_project(
+        "ql-project-test-unused-dependency-generic-public-function-import",
+        r#"
+pub fn identity[T](value: T) -> T {
+    return value
+}
+"#,
+        "use dep.identity as identity\n\nfn main() -> Int {\n    return 0\n}\n",
+    );
+    expect_dependency_smoke_project_passes(
+        "project-test-unused-dependency-generic-public-function-import",
+        "package unused dependency generic public function import test",
+        "`ql test` unused dependency generic public function import",
+        &fixture,
+    );
+}
+
+#[test]
 fn test_package_path_supports_direct_dependency_generic_public_functions_from_nested_context() {
     if !toolchain_available("`ql test` dependency nested generic public function test") {
         return;

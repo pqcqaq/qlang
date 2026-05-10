@@ -419,7 +419,7 @@ ql run demo-workspace
 ql test demo-workspace
 ```
 
-但这还不是“完整跨包语义可用”。当前工作区里真正稳定可依赖的跨包执行，只覆盖 direct dependency 的 bridgeable public `const/static` values、受限 public top-level free function、direct-call 多实例 public generic free function specialization、public `extern "c"` 符号、public `struct` / `enum` / `type alias` declaration bridge，以及这些 bridgeable public `struct` 上的受限 public receiver method forwarder（含不可变局部 alias 的 method value direct call）；更宽的跨包 lowering 仍在后续阶段。
+但这还不是“完整跨包语义可用”。当前工作区里真正稳定可依赖的跨包执行，只覆盖 direct dependency 的 bridgeable public `const/static` values、受限 public top-level free function、direct-call 多实例 public generic free function specialization、public `extern "c"` 符号、public `struct` / `enum` / `type alias` declaration bridge，以及这些 bridgeable public `struct` 上的受限 public receiver method forwarder（含不可变局部 alias 的 method value direct call）。未使用的 generic dependency import 会被忽略；实际调用但无法推断单态化参数仍会报错。更宽的跨包 lowering 仍在后续阶段。
 
 继续阅读建议：
 

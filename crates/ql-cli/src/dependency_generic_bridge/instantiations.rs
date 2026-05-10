@@ -17,6 +17,12 @@ pub(super) struct PublicFunctionCallInstantiation {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct PublicFunctionCallInstantiations {
+    pub(super) saw_call: bool,
+    pub(super) instantiations: Vec<PublicFunctionCallInstantiation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct InferredType {
     rendered: String,
     kind: InferredTypeKind,
@@ -168,19 +174,39 @@ fn collect_public_function_instantiations(
     .collect()
 }
 
+#[cfg(test)]
 pub(super) fn collect_public_function_call_instantiations(
     root_module: &Module,
     module_import_path: &[String],
     function: &FunctionDecl,
     function_bindings: &FunctionTypeBindings,
 ) -> Vec<PublicFunctionCallInstantiation> {
+    collect_public_function_call_instantiation_status(
+        root_module,
+        module_import_path,
+        function,
+        function_bindings,
+    )
+    .instantiations
+}
+
+pub(super) fn collect_public_function_call_instantiation_status(
+    root_module: &Module,
+    module_import_path: &[String],
+    function: &FunctionDecl,
+    function_bindings: &FunctionTypeBindings,
+) -> PublicFunctionCallInstantiations {
     let local_names =
         dependency_imported_local_names(root_module, module_import_path, function.name.as_str());
     if local_names.is_empty() {
-        return Vec::new();
+        return PublicFunctionCallInstantiations {
+            saw_call: false,
+            instantiations: Vec::new(),
+        };
     }
 
     let root_bindings = collect_root_value_type_bindings(root_module);
+    let mut saw_call = false;
     let mut instantiations = Vec::new();
     for item in &root_module.items {
         collect_dependency_generic_function_instantiations_from_item(
@@ -189,10 +215,14 @@ pub(super) fn collect_public_function_call_instantiations(
             function,
             &root_bindings,
             function_bindings,
+            &mut saw_call,
             &mut instantiations,
         );
     }
-    instantiations
+    PublicFunctionCallInstantiations {
+        saw_call,
+        instantiations,
+    }
 }
 
 pub(super) fn collect_local_function_call_instantiations(
@@ -202,6 +232,7 @@ pub(super) fn collect_local_function_call_instantiations(
 ) -> Vec<PublicFunctionCallInstantiation> {
     let local_names = BTreeSet::from([function.name.clone()]);
     let root_bindings = collect_root_value_type_bindings(root_module);
+    let mut saw_call = false;
     let mut instantiations = Vec::new();
     for item in &root_module.items {
         let ItemKind::Function(root_function) = &item.kind else {
@@ -211,6 +242,7 @@ pub(super) fn collect_local_function_call_instantiations(
                 function,
                 &root_bindings,
                 function_bindings,
+                &mut saw_call,
                 &mut instantiations,
             );
             continue;
@@ -222,6 +254,7 @@ pub(super) fn collect_local_function_call_instantiations(
                 function,
                 &root_bindings,
                 function_bindings,
+                &mut saw_call,
                 &mut instantiations,
             );
         }
@@ -276,12 +309,14 @@ pub(super) fn collect_specialized_body_call_instantiations(
         &mut bindings,
     );
     let mut instantiations = Vec::new();
+    let mut saw_call = false;
     collect_dependency_generic_function_instantiations_from_block(
         body,
         &local_names,
         target_function,
         &mut bindings,
         function_bindings,
+        &mut saw_call,
         &mut instantiations,
         None,
         None,
@@ -345,6 +380,7 @@ fn collect_dependency_generic_function_instantiations_from_item(
     dependency_function: &FunctionDecl,
     root_bindings: &ValueTypeBindings,
     function_bindings: &FunctionTypeBindings,
+    saw_call: &mut bool,
     instantiations: &mut Vec<PublicFunctionCallInstantiation>,
 ) {
     match &item.kind {
@@ -358,6 +394,7 @@ fn collect_dependency_generic_function_instantiations_from_item(
                     dependency_function,
                     &mut bindings,
                     function_bindings,
+                    saw_call,
                     instantiations,
                     root_function.return_type.as_ref(),
                     root_function.return_type.as_ref(),
@@ -373,6 +410,7 @@ fn collect_dependency_generic_function_instantiations_from_item(
                 dependency_function,
                 root_bindings,
                 function_bindings,
+                saw_call,
                 instantiations,
             );
         }
@@ -387,6 +425,7 @@ fn collect_dependency_generic_function_instantiations_from_item(
                         dependency_function,
                         root_bindings,
                         function_bindings,
+                        saw_call,
                         instantiations,
                     );
                 }
@@ -403,6 +442,7 @@ fn collect_dependency_generic_function_instantiations_from_item(
                         dependency_function,
                         &mut bindings,
                         function_bindings,
+                        saw_call,
                         instantiations,
                         method.return_type.as_ref(),
                         method.return_type.as_ref(),
@@ -421,6 +461,7 @@ fn collect_dependency_generic_function_instantiations_from_item(
                         dependency_function,
                         &mut bindings,
                         function_bindings,
+                        saw_call,
                         instantiations,
                         method.return_type.as_ref(),
                         method.return_type.as_ref(),
@@ -439,6 +480,7 @@ fn collect_dependency_generic_function_instantiations_from_item(
                         dependency_function,
                         &mut bindings,
                         function_bindings,
+                        saw_call,
                         instantiations,
                         method.return_type.as_ref(),
                         method.return_type.as_ref(),
@@ -456,6 +498,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
     function: &FunctionDecl,
     bindings: &mut ValueTypeBindings,
     function_bindings: &FunctionTypeBindings,
+    saw_call: &mut bool,
     instantiations: &mut Vec<PublicFunctionCallInstantiation>,
     return_expected_ty: Option<&TypeExpr>,
     tail_expected_ty: Option<&TypeExpr>,
@@ -473,6 +516,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     function,
                     bindings,
                     function_bindings,
+                    saw_call,
                     instantiations,
                 );
                 record_let_type_bindings(pattern, ty.as_ref(), value, bindings, function_bindings);
@@ -486,6 +530,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     function,
                     bindings,
                     function_bindings,
+                    saw_call,
                     instantiations,
                 );
             }
@@ -498,6 +543,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     function,
                     bindings,
                     function_bindings,
+                    saw_call,
                     instantiations,
                 );
             }
@@ -510,6 +556,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     function,
                     bindings,
                     function_bindings,
+                    saw_call,
                     instantiations,
                 );
                 let mut body_bindings = bindings.clone();
@@ -519,6 +566,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     function,
                     &mut body_bindings,
                     function_bindings,
+                    saw_call,
                     instantiations,
                     return_expected_ty,
                     None,
@@ -532,6 +580,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     function,
                     &mut body_bindings,
                     function_bindings,
+                    saw_call,
                     instantiations,
                     return_expected_ty,
                     None,
@@ -546,6 +595,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     function,
                     bindings,
                     function_bindings,
+                    saw_call,
                     instantiations,
                 );
                 let mut body_bindings = bindings.clone();
@@ -555,6 +605,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
                     function,
                     &mut body_bindings,
                     function_bindings,
+                    saw_call,
                     instantiations,
                     return_expected_ty,
                     None,
@@ -574,6 +625,7 @@ fn collect_dependency_generic_function_instantiations_from_block(
             function,
             bindings,
             function_bindings,
+            saw_call,
             instantiations,
         );
     }
@@ -587,6 +639,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
     function: &FunctionDecl,
     bindings: &ValueTypeBindings,
     function_bindings: &FunctionTypeBindings,
+    saw_call: &mut bool,
     instantiations: &mut Vec<PublicFunctionCallInstantiation>,
 ) {
     match &expr.kind {
@@ -600,18 +653,20 @@ fn collect_dependency_generic_function_instantiations_from_expr(
             );
             if let ExprKind::Name(name) = &callee.kind
                 && local_names.contains(name)
-                && let Some(substitutions) = infer_dependency_generic_function_substitutions(
+            {
+                *saw_call = true;
+                if let Some(substitutions) = infer_dependency_generic_function_substitutions(
                     function,
                     args,
                     expected_ty,
                     bindings,
                     function_bindings,
-                )
-            {
-                instantiations.push(PublicFunctionCallInstantiation {
-                    callee_span: callee.span,
-                    substitutions,
-                });
+                ) {
+                    instantiations.push(PublicFunctionCallInstantiation {
+                        callee_span: callee.span,
+                        substitutions,
+                    });
+                }
             }
             collect_dependency_generic_function_instantiations_from_expr(
                 callee,
@@ -621,6 +676,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 function,
                 bindings,
                 function_bindings,
+                saw_call,
                 instantiations,
             );
             for (arg, arg_expected_ty) in args.iter().zip(ordered_arg_expected_types.iter()) {
@@ -632,6 +688,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                     function,
                     bindings,
                     function_bindings,
+                    saw_call,
                     instantiations,
                 );
             }
@@ -646,6 +703,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                     function,
                     bindings,
                     function_bindings,
+                    saw_call,
                     instantiations,
                 );
             }
@@ -659,6 +717,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 function,
                 bindings,
                 function_bindings,
+                saw_call,
                 instantiations,
             );
         }
@@ -673,6 +732,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                         function,
                         bindings,
                         function_bindings,
+                        saw_call,
                         instantiations,
                     );
                 }
@@ -687,6 +747,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 function,
                 bindings,
                 function_bindings,
+                saw_call,
                 instantiations,
             );
             collect_dependency_generic_function_instantiations_from_expr(
@@ -697,6 +758,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 function,
                 bindings,
                 function_bindings,
+                saw_call,
                 instantiations,
             );
         }
@@ -709,6 +771,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 function,
                 bindings,
                 function_bindings,
+                saw_call,
                 instantiations,
             );
         }
@@ -721,6 +784,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 function,
                 bindings,
                 function_bindings,
+                saw_call,
                 instantiations,
             );
         }
@@ -733,6 +797,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 function,
                 bindings,
                 function_bindings,
+                saw_call,
                 instantiations,
             );
             for item in items {
@@ -744,6 +809,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                     function,
                     bindings,
                     function_bindings,
+                    saw_call,
                     instantiations,
                 );
             }
@@ -756,6 +822,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 function,
                 &mut block_bindings,
                 function_bindings,
+                saw_call,
                 instantiations,
                 return_expected_ty,
                 expected_ty,
@@ -774,6 +841,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 function,
                 bindings,
                 function_bindings,
+                saw_call,
                 instantiations,
             );
             let mut then_bindings = bindings.clone();
@@ -783,6 +851,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 function,
                 &mut then_bindings,
                 function_bindings,
+                saw_call,
                 instantiations,
                 return_expected_ty,
                 expected_ty,
@@ -796,6 +865,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                     function,
                     bindings,
                     function_bindings,
+                    saw_call,
                     instantiations,
                 );
             }
@@ -809,6 +879,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 function,
                 bindings,
                 function_bindings,
+                saw_call,
                 instantiations,
             );
             for arm in arms {
@@ -821,6 +892,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                         function,
                         bindings,
                         function_bindings,
+                        saw_call,
                         instantiations,
                     );
                 }
@@ -832,6 +904,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                     function,
                     bindings,
                     function_bindings,
+                    saw_call,
                     instantiations,
                 );
             }
@@ -845,6 +918,7 @@ fn collect_dependency_generic_function_instantiations_from_expr(
                 function,
                 bindings,
                 function_bindings,
+                saw_call,
                 instantiations,
             );
         }

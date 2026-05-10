@@ -9212,18 +9212,30 @@ fn collect_dependency_module_public_function_forwarders(
             continue;
         }
         if dependency_generic_bridge::supports_public_function_specialization(function) {
-            let Some(rendered) = dependency_generic_bridge::render_public_function_specializations(
-                &module_import_path,
-                function,
-                contents,
-                root_module,
-                module,
-                rendered_specializations,
-            ) else {
-                return Err(DependencyPublicFunctionForwarderError::UnsupportedGeneric {
-                    symbol: function.name.clone(),
-                });
-            };
+            let rendered =
+                match dependency_generic_bridge::render_public_function_specialization_status(
+                    &module_import_path,
+                    function,
+                    contents,
+                    root_module,
+                    module,
+                    rendered_specializations,
+                ) {
+                    dependency_generic_bridge::PublicFunctionSpecializationRender::Rendered(
+                        rendered,
+                    ) => rendered,
+                    dependency_generic_bridge::PublicFunctionSpecializationRender::NotCalled
+                        if !required_by_value =>
+                    {
+                        continue;
+                    }
+                    dependency_generic_bridge::PublicFunctionSpecializationRender::NotCalled
+                    | dependency_generic_bridge::PublicFunctionSpecializationRender::Unsupported => {
+                        return Err(DependencyPublicFunctionForwarderError::UnsupportedGeneric {
+                            symbol: function.name.clone(),
+                        });
+                    }
+                };
             record_dependency_extern_declaration(
                 dependency_package,
                 dependency_manifest_path,

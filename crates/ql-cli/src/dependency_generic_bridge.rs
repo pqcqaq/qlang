@@ -16,6 +16,13 @@ pub struct RenderedPublicFunctionSpecializations {
     pub call_rewrites: Vec<SourceRewrite>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PublicFunctionSpecializationRender {
+    NotCalled,
+    Unsupported,
+    Rendered(RenderedPublicFunctionSpecializations),
+}
+
 pub fn supports_public_function_specialization(function: &FunctionDecl) -> bool {
     function.visibility == Visibility::Public && supports_local_function_specialization(function)
 }
@@ -32,6 +39,7 @@ pub fn supports_local_function_specialization(function: &FunctionDecl) -> bool {
             .all(|param| matches!(param, Param::Regular { .. }))
 }
 
+#[cfg(test)]
 pub fn render_public_function_specializations(
     module_import_path: &[String],
     function: &FunctionDecl,
@@ -40,8 +48,30 @@ pub fn render_public_function_specializations(
     dependency_module: &Module,
     rendered_specializations: &mut BTreeSet<String>,
 ) -> Option<RenderedPublicFunctionSpecializations> {
+    match render_public_function_specialization_status(
+        module_import_path,
+        function,
+        contents,
+        root_module,
+        dependency_module,
+        rendered_specializations,
+    ) {
+        PublicFunctionSpecializationRender::Rendered(rendered) => Some(rendered),
+        PublicFunctionSpecializationRender::NotCalled
+        | PublicFunctionSpecializationRender::Unsupported => None,
+    }
+}
+
+pub fn render_public_function_specialization_status(
+    module_import_path: &[String],
+    function: &FunctionDecl,
+    contents: &str,
+    root_module: &Module,
+    dependency_module: &Module,
+    rendered_specializations: &mut BTreeSet<String>,
+) -> PublicFunctionSpecializationRender {
     if !supports_public_function_specialization(function) || function.body.is_none() {
-        return None;
+        return PublicFunctionSpecializationRender::Unsupported;
     }
     let dependency_function_bindings =
         instantiations::collect_local_function_type_bindings(dependency_module);
@@ -52,21 +82,27 @@ pub fn render_public_function_specializations(
         module_import_path,
         dependency_module,
     ));
-    let call_instantiations = instantiations::collect_public_function_call_instantiations(
+    let call_instantiations = instantiations::collect_public_function_call_instantiation_status(
         root_module,
         module_import_path,
         function,
         &root_function_bindings,
     );
-    render_function_specializations(
+    if !call_instantiations.saw_call {
+        return PublicFunctionSpecializationRender::NotCalled;
+    }
+    match render_function_specializations(
         module_import_path,
         function,
         contents,
         dependency_module,
         &dependency_function_bindings,
-        call_instantiations,
+        call_instantiations.instantiations,
         rendered_specializations,
-    )
+    ) {
+        Some(rendered) => PublicFunctionSpecializationRender::Rendered(rendered),
+        None => PublicFunctionSpecializationRender::Unsupported,
+    }
 }
 
 pub fn render_local_function_specializations(
