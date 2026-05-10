@@ -10,6 +10,10 @@
 - `std.array`
 - `std.test`
 
+## 示例
+
+- `examples/starter` 是 `ql project init --stdlib` 使用的真实 starter 模板。
+
 ## 推荐 API
 
 - `std.core` 的数组 helpers，例如 `sum_ints`、`product_ints`、`average_ints`、`max_ints`、`min_ints`、`all_bools`、`is_ascending_ints`、`is_strictly_descending_ints`
@@ -51,7 +55,7 @@ cargo run -q -p ql-cli -- project init D:\Projects\my-qlang-app --stdlib D:\Proj
 cargo run -q -p ql-cli -- project init D:\Projects\my-qlang-workspace --workspace --name app --stdlib D:\Projects\language_q\stdlib
 ```
 
-生成的 starter 使用推荐的 generic `Option[T]`、`Result[T, E]`、result/option conversions、length-generic array helpers 和重复数组。
+生成的 starter 直接复制 `examples/starter`，使用推荐的 generic `Option[T]`、`Result[T, E]`、result/option conversions、length-generic array helpers 和重复数组。
 
 ## 验证
 
@@ -62,4 +66,4 @@ cargo run -q -p ql-cli -- build stdlib
 cargo run -q -p ql-cli -- test stdlib
 ```
 
-事实源：`stdlib/packages/*/src/lib.ql`、smoke tests 和生成的 `.qi`。
+事实源：`stdlib/packages/*/src/lib.ql`、`stdlib/examples/starter`、smoke tests 和生成的 `.qi`。

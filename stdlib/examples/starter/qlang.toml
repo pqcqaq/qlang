@@ -1,0 +1,9 @@
+[package]
+name = "stdlib.starter"
+
+[dependencies]
+"std.core" = "../../packages/core"
+"std.option" = "../../packages/option"
+"std.result" = "../../packages/result"
+"std.array" = "../../packages/array"
+"std.test" = "../../packages/test"

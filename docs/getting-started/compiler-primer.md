@@ -381,7 +381,7 @@ ql project init demo-package
 ql project init demo-package --stdlib path/to/language_q/stdlib
 ```
 
-这会在新 package 的 `[dependencies]` 中写入 quoted-key 形式的 `std.core` / `std.option` / `std.result` / `std.array` / `std.test` 本地依赖，并生成直接消费这些 package 的 `src/lib.ql`、`src/main.ql` 与 `tests/smoke.ql`。生成的 starter 覆盖 generic `Option[T]` / `Result[T, E]`、`ok_or` / `to_option` / `error_to_option` 转换、length-generic array helpers、`std.array.repeat_array[T, N]` 和语言级 `[value; N]` 重复数组。`std.array` 不再提供 `reverse3_array`、`repeat3_array` 这类固定长度 helper。workspace 初始化也支持同一个 `--stdlib <path>` 选项。LSP 仍会对第三方旧接口里的 `std.option` / `std.result` concrete carrier 名称提示 deprecated/guidance；当前 stdlib 正式 API 使用 generic carrier 和 length-generic helpers。
+这会在新 package 的 `[dependencies]` 中写入 quoted-key 形式的 `std.core` / `std.option` / `std.result` / `std.array` / `std.test` 本地依赖，并从 `<stdlib>/examples/starter` 复制 `src/lib.ql`、`src/main.ql` 与 `tests/smoke.ql`。starter 覆盖 generic `Option[T]` / `Result[T, E]`、`ok_or` / `to_option` / `error_to_option` 转换、length-generic array helpers、`std.array.repeat_array[T, N]` 和语言级 `[value; N]` 重复数组。`std.array` 不再提供 `reverse3_array`、`repeat3_array` 这类固定长度 helper。workspace 初始化也支持同一个 `--stdlib <path>` 选项。LSP 仍会对第三方旧接口里的 `std.option` / `std.result` concrete carrier 名称提示 deprecated/guidance；当前 stdlib 正式 API 使用 generic carrier 和 length-generic helpers。
 
 初始化 workspace：
 

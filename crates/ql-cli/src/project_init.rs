@@ -106,33 +106,41 @@ pub(crate) fn create_package_scaffold(
     target_root: &Path,
     package_name: &str,
     dependencies: &[(String, String)],
-    stdlib_template: bool,
+) -> Result<Vec<PathBuf>, String> {
+    let sources = templates::default_package_sources();
+    create_package_scaffold_with_sources(target_root, package_name, dependencies, &sources)
+}
+
+fn create_stdlib_package_scaffold(
+    target_root: &Path,
+    package_name: &str,
+    dependencies: &[(String, String)],
+    stdlib_path: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let sources = load_stdlib_package_sources(stdlib_path)?;
+    create_package_scaffold_with_sources(target_root, package_name, dependencies, &sources)
+}
+
+fn load_stdlib_package_sources(stdlib_path: &Path) -> Result<templates::PackageSources, String> {
+    templates::stdlib_package_sources(&absolute_user_path(stdlib_path))
+}
+
+fn create_package_scaffold_with_sources(
+    target_root: &Path,
+    package_name: &str,
+    dependencies: &[(String, String)],
+    sources: &templates::PackageSources,
 ) -> Result<Vec<PathBuf>, String> {
     let manifest_path = target_root.join("qlang.toml");
     let source_path = target_root.join("src").join("lib.ql");
     let main_path = target_root.join("src").join("main.ql");
     let test_path = target_root.join("tests").join("smoke.ql");
     let manifest = render_package_manifest(package_name, dependencies);
-    let package_source = if stdlib_template {
-        templates::stdlib_package_source()
-    } else {
-        templates::default_package_source()
-    };
-    let main_source = if stdlib_template {
-        templates::stdlib_package_main_source()
-    } else {
-        templates::default_package_main_source()
-    };
-    let test_source = if stdlib_template {
-        templates::stdlib_package_test_source()
-    } else {
-        templates::default_package_test_source()
-    };
 
     write_new_file(&manifest_path, &manifest)?;
-    write_new_file(&source_path, package_source)?;
-    write_new_file(&main_path, main_source)?;
-    write_new_file(&test_path, test_source)?;
+    write_new_file(&source_path, &sources.package_source)?;
+    write_new_file(&main_path, &sources.main_source)?;
+    write_new_file(&test_path, &sources.test_source)?;
 
     Ok(vec![manifest_path, source_path, main_path, test_path])
 }
@@ -192,12 +200,11 @@ fn init_package_project(
 ) -> Result<Vec<PathBuf>, String> {
     ensure_target_root(target_root)?;
     let dependencies = resolve_stdlib_dependencies(target_root, stdlib_path)?;
-    let created_paths = create_package_scaffold(
-        target_root,
-        package_name,
-        &dependencies,
-        stdlib_path.is_some(),
-    )?;
+    let created_paths = if let Some(stdlib_path) = stdlib_path {
+        create_stdlib_package_scaffold(target_root, package_name, &dependencies, stdlib_path)?
+    } else {
+        create_package_scaffold(target_root, package_name, &dependencies)?
+    };
     sync_stdlib_interfaces(&[target_root.join("qlang.toml")], stdlib_path)?;
     Ok(created_paths)
 }
@@ -212,16 +219,17 @@ fn init_workspace_project(
     let workspace_manifest_path = target_root.join("qlang.toml");
     let member_dir = target_root.join("packages").join(package_name);
     let workspace_manifest = render_workspace_manifest(package_name);
+    let dependencies = resolve_stdlib_dependencies(&member_dir, stdlib_path)?;
+    let stdlib_sources = stdlib_path.map(load_stdlib_package_sources).transpose()?;
 
     write_new_file(&workspace_manifest_path, &workspace_manifest)?;
     let mut created_paths = vec![workspace_manifest_path];
-    let dependencies = resolve_stdlib_dependencies(&member_dir, stdlib_path)?;
-    created_paths.extend(create_package_scaffold(
-        &member_dir,
-        package_name,
-        &dependencies,
-        stdlib_path.is_some(),
-    )?);
+    let member_paths = if let Some(sources) = &stdlib_sources {
+        create_package_scaffold_with_sources(&member_dir, package_name, &dependencies, sources)?
+    } else {
+        create_package_scaffold(&member_dir, package_name, &dependencies)?
+    };
+    created_paths.extend(member_paths);
     sync_stdlib_interfaces(&[member_dir.join("qlang.toml")], stdlib_path)?;
     Ok(created_paths)
 }

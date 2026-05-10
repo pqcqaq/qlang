@@ -242,7 +242,7 @@ fn add_workspace_project_member(
         )
     })?;
     let created_paths =
-        project_init::create_package_scaffold(&member_root, package_name, dependencies, false)?;
+        project_init::create_package_scaffold(&member_root, package_name, dependencies)?;
 
     Ok((workspace_manifest.manifest_path.clone(), created_paths))
 }
