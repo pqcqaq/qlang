@@ -69,6 +69,87 @@ async fn main() -> Int {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn keyword_hover_survives_parse_errors_for_full_keyword_surface() {
+    let temp = TempDir::new("ql-lsp-keyword-hover-fallback");
+    let source = format!(
+        " {} ",
+        [
+            "package use pub const static let var fn async await spawn defer return break continue",
+            "if else match for while loop in where struct data enum trait impl extend type opaque",
+            "extern unsafe is as satisfies none true false self move",
+        ]
+        .join(" ")
+    );
+    let source_path = temp.write("broken_keywords.ql", &source);
+    let uri = Url::from_file_path(&source_path).expect("source path should convert to URI");
+    let mut service =
+        initialized_service_with_open_documents(vec![(uri.clone(), source.clone())]).await;
+
+    for keyword in [
+        "package",
+        "use",
+        "pub",
+        "const",
+        "static",
+        "let",
+        "var",
+        "fn",
+        "async",
+        "await",
+        "spawn",
+        "defer",
+        "return",
+        "break",
+        "continue",
+        "if",
+        "else",
+        "match",
+        "for",
+        "while",
+        "loop",
+        "in",
+        "where",
+        "struct",
+        "data",
+        "enum",
+        "trait",
+        "impl",
+        "extend",
+        "type",
+        "opaque",
+        "extern",
+        "unsafe",
+        "is",
+        "as",
+        "satisfies",
+        "none",
+        "true",
+        "false",
+        "self",
+        "move",
+    ] {
+        let hover = hover_via_request(
+            &mut service,
+            uri.clone(),
+            offset_to_position(
+                &source,
+                source
+                    .find(&format!(" {keyword} "))
+                    .unwrap_or_else(|| panic!("{keyword} should be a standalone word"))
+                    + 1,
+            ),
+        )
+        .await
+        .unwrap_or_else(|| panic!("{keyword} should return fallback keyword hover"));
+        let markup = hover_markup(hover);
+        assert!(
+            markup.contains(&format!("keyword `{keyword}`")),
+            "{keyword} fallback hover should identify the keyword: {markup}",
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn escaped_keyword_identifier_does_not_use_keyword_hover() {
     let temp = TempDir::new("ql-lsp-escaped-keyword-hover");
     let source_path = temp.write(

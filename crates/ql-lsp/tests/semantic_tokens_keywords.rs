@@ -182,6 +182,46 @@ pub fn main() -> Int {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn semantic_tokens_fallback_includes_self_keyword_token() {
+    let temp = TempDir::new("ql-lsp-self-keyword-semantic-token-fallback");
+    let source = r#"
+package demo.app
+
+pub fn main() -> Int {
+    self
+    return 0 +
+}
+"#;
+    let app_uri = write_stdlib_compat_workspace(&temp, source);
+
+    let workspace_root_uri = Url::from_file_path(temp.path().join("workspace"))
+        .expect("workspace root path should convert to URI");
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service_with_workspace_roots(&mut service, vec![workspace_root_uri]).await;
+    did_open_via_request(&mut service, app_uri.clone(), source.to_owned()).await;
+
+    let SemanticTokensResult::Tokens(tokens) =
+        semantic_tokens_full_via_request(&mut service, app_uri)
+            .await
+            .expect("semanticTokens/full fallback should return tokens")
+    else {
+        panic!("semanticTokens/full should return full tokens")
+    };
+    let decoded = decode(&tokens.data);
+    let legend = ql_lsp::bridge::semantic_tokens_legend();
+    let keyword_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::KEYWORD)
+        .expect("keyword token type should exist") as u32;
+    let pos = offset_to_position(&source, nth_offset(&source, "self", 1));
+    assert!(
+        decoded.contains(&(pos.line, pos.character, "self".len() as u32, keyword_type)),
+        "self should keep keyword token color in lexical fallback; decoded={decoded:#?}",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn semantic_tokens_range_uses_workspace_open_docs_like_full() {
     let temp = TempDir::new("ql-lsp-semantic-token-range-open-docs");
     let app_source = r#"

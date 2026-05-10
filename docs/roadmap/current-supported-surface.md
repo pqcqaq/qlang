@@ -40,9 +40,9 @@
 
 ### LSP 和 VSCode
 
-- same-file：hover、definition、declaration、typeDefinition、references、documentHighlight、completion、semantic tokens、formatting、codeAction、codeLens、callHierarchy、typeHierarchy、rename。
+- same-file：hover、keyword hover、definition、declaration、typeDefinition、references、documentHighlight、completion、semantic tokens、formatting、codeAction、codeLens、callHierarchy、typeHierarchy、rename。
 - workspace：`workspace/symbol`、`implementation`、open-doc dependency navigation、保守 workspace rename。
-- stdlib 兼容 API 会在真实 `textDocument/completion`、`textDocument/hover` 和 `textDocument/semanticTokens/full/range` 请求中提示 deprecated 并带迁移 guidance；semantic tokens 覆盖 parse-error fallback。
+- stdlib 兼容 API 会在真实 `textDocument/completion`、`textDocument/hover` 和 `textDocument/semanticTokens/full/range` 请求中提示 deprecated 并带迁移 guidance；semantic tokens 覆盖 parse-error fallback，lexical keyword token 包含 `self`。
 - formatting：document/range/on-type formatting 复用 `ql fmt`。
 - VSCode 插件是 thin client，不自带 `qlsp`。
 

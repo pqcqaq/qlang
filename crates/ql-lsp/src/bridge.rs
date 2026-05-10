@@ -29,6 +29,24 @@ use tower_lsp::lsp_types::{
     TypeHierarchyItem, Url, WorkspaceEdit,
 };
 
+const SEMANTIC_TOKEN_NAMESPACE: u32 = 0;
+const SEMANTIC_TOKEN_TYPE: u32 = 1;
+const SEMANTIC_TOKEN_CLASS: u32 = 2;
+const SEMANTIC_TOKEN_ENUM: u32 = 3;
+const SEMANTIC_TOKEN_ENUM_MEMBER: u32 = 4;
+const SEMANTIC_TOKEN_INTERFACE: u32 = 5;
+const SEMANTIC_TOKEN_TYPE_PARAMETER: u32 = 6;
+const SEMANTIC_TOKEN_PARAMETER: u32 = 7;
+const SEMANTIC_TOKEN_VARIABLE: u32 = 8;
+const SEMANTIC_TOKEN_PROPERTY: u32 = 9;
+const SEMANTIC_TOKEN_FUNCTION: u32 = 10;
+const SEMANTIC_TOKEN_METHOD: u32 = 11;
+const SEMANTIC_TOKEN_KEYWORD: u32 = 12;
+const SEMANTIC_TOKEN_MODIFIER: u32 = 13;
+const SEMANTIC_TOKEN_STRING: u32 = 14;
+const SEMANTIC_TOKEN_NUMBER: u32 = 15;
+const SEMANTIC_TOKEN_OPERATOR: u32 = 16;
+
 pub fn position_to_offset(source: &str, position: Position) -> Option<usize> {
     let line_starts = line_starts(source);
     let line_index = usize::try_from(position.line).ok()?;
@@ -1742,18 +1760,18 @@ const fn completion_item_kind(kind: SymbolKind) -> CompletionItemKind {
 
 const fn semantic_token_kind_index(kind: SymbolKind) -> u32 {
     match kind {
-        SymbolKind::Import => 0,
-        SymbolKind::BuiltinType | SymbolKind::TypeAlias => 1,
-        SymbolKind::Struct => 2,
-        SymbolKind::Enum => 3,
-        SymbolKind::Variant => 4,
-        SymbolKind::Trait => 5,
-        SymbolKind::Generic => 6,
-        SymbolKind::Parameter => 7,
-        SymbolKind::Local | SymbolKind::SelfParameter => 8,
-        SymbolKind::Field => 9,
-        SymbolKind::Function | SymbolKind::Const | SymbolKind::Static => 10,
-        SymbolKind::Method => 11,
+        SymbolKind::Import => SEMANTIC_TOKEN_NAMESPACE,
+        SymbolKind::BuiltinType | SymbolKind::TypeAlias => SEMANTIC_TOKEN_TYPE,
+        SymbolKind::Struct => SEMANTIC_TOKEN_CLASS,
+        SymbolKind::Enum => SEMANTIC_TOKEN_ENUM,
+        SymbolKind::Variant => SEMANTIC_TOKEN_ENUM_MEMBER,
+        SymbolKind::Trait => SEMANTIC_TOKEN_INTERFACE,
+        SymbolKind::Generic => SEMANTIC_TOKEN_TYPE_PARAMETER,
+        SymbolKind::Parameter => SEMANTIC_TOKEN_PARAMETER,
+        SymbolKind::Local | SymbolKind::SelfParameter => SEMANTIC_TOKEN_VARIABLE,
+        SymbolKind::Field => SEMANTIC_TOKEN_PROPERTY,
+        SymbolKind::Function | SymbolKind::Const | SymbolKind::Static => SEMANTIC_TOKEN_FUNCTION,
+        SymbolKind::Method => SEMANTIC_TOKEN_METHOD,
     }
 }
 
@@ -1977,10 +1995,11 @@ fn lexical_semantic_token_type(kind: TokenKind) -> Option<u32> {
         | TokenKind::NoneKw
         | TokenKind::TrueKw
         | TokenKind::FalseKw
-        | TokenKind::MoveKw => 12,
-        TokenKind::Pub | TokenKind::Async | TokenKind::Unsafe => 13,
-        TokenKind::String | TokenKind::FormatString => 14,
-        TokenKind::Int => 15,
+        | TokenKind::SelfKw
+        | TokenKind::MoveKw => SEMANTIC_TOKEN_KEYWORD,
+        TokenKind::Pub | TokenKind::Async | TokenKind::Unsafe => SEMANTIC_TOKEN_MODIFIER,
+        TokenKind::String | TokenKind::FormatString => SEMANTIC_TOKEN_STRING,
+        TokenKind::Int => SEMANTIC_TOKEN_NUMBER,
         TokenKind::Arrow
         | TokenKind::FatArrow
         | TokenKind::Question
@@ -1998,7 +2017,7 @@ fn lexical_semantic_token_type(kind: TokenKind) -> Option<u32> {
         | TokenKind::Lt
         | TokenKind::Gt
         | TokenKind::LtEq
-        | TokenKind::GtEq => 16,
+        | TokenKind::GtEq => SEMANTIC_TOKEN_OPERATOR,
         _ => return None,
     })
 }
