@@ -9257,6 +9257,64 @@ fn code_lenses_for_analysis(uri: &Url, source: &str, analysis: &Analysis) -> Vec
     lenses
 }
 
+fn code_lenses_for_workspace_package_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+) -> Vec<CodeLens> {
+    let mut lenses = Vec::new();
+    for (range, position) in code_lens_targets_for_analysis(source, analysis) {
+        let references = workspace_source_references_for_root_symbol_with_open_docs(
+            uri, source, analysis, package, open_docs, position, false,
+        )
+        .or_else(|| {
+            references_for_package_analysis(uri, source, analysis, package, position, false)
+        });
+        if let Some(locations) = references
+            && !locations.is_empty()
+        {
+            lenses.push(CodeLens {
+                range,
+                command: Some(show_locations_command(
+                    location_count_title(locations.len(), "reference", "references"),
+                    uri,
+                    position,
+                    &locations,
+                )),
+                data: None,
+            });
+        }
+
+        let implementation = workspace_source_implementation_with_open_docs(
+            uri,
+            source,
+            Some(analysis),
+            package,
+            open_docs,
+            position,
+        )
+        .or_else(|| fallback_implementation_for_analysis(uri, source, Some(analysis), position));
+        if let Some(implementation) = implementation {
+            let locations = locations_from_goto_response(implementation);
+            if !locations.is_empty() {
+                lenses.push(CodeLens {
+                    range,
+                    command: Some(show_locations_command(
+                        location_count_title(locations.len(), "implementation", "implementations"),
+                        uri,
+                        position,
+                        &locations,
+                    )),
+                    data: None,
+                });
+            }
+        }
+    }
+    lenses
+}
+
 fn code_lens_targets_for_analysis(source: &str, analysis: &Analysis) -> Vec<(Range, Position)> {
     match document_symbols_for_analysis(source, analysis) {
         DocumentSymbolResponse::Nested(symbols) => {
@@ -9578,9 +9636,22 @@ impl LanguageServer for Backend {
 
     async fn code_lens(&self, params: CodeLensParams) -> Result<Option<Vec<CodeLens>>> {
         let uri = params.text_document.uri;
-        let Some((source, analysis)) = self.analyzed_document(&uri).await else {
+        let Some(source) = self.documents.get(&uri).await else {
             return Ok(None);
         };
+
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
+
+        if let Some(package) = self.package_analysis_for_uri(&uri) {
+            let open_docs = self.open_file_documents().await;
+            let lenses = code_lenses_for_workspace_package_analysis(
+                &uri, &source, &analysis, &package, &open_docs,
+            );
+            return Ok((!lenses.is_empty()).then_some(lenses));
+        }
+
         let lenses = code_lenses_for_analysis(&uri, &source, &analysis);
         Ok((!lenses.is_empty()).then_some(lenses))
     }

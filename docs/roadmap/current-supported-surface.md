@@ -45,6 +45,7 @@
 - stdlib 兼容 API 会在真实 `textDocument/completion`、`textDocument/hover` 和 `textDocument/semanticTokens/full/range` 请求中提示 deprecated 并带迁移 guidance；semantic tokens 覆盖 parse-error fallback、注释 token 和 `self` keyword token。
 - inlay hints 覆盖 same-file inferred local type，以及 same-file/dependency 调用参数名提示；方法调用会隐藏 receiver `self`。
 - folding range 覆盖代码块、块注释和连续整行 `//` 注释；字符串内注释标记不会生成注释折叠。
+- codeLens 覆盖同文件引用/实现计数，并能在 workspace package 源文件上统计可见 consumer 的引用/实现。
 - formatting：document/range/on-type formatting 复用 `ql fmt`。
 - VSCode 插件是 thin client，不自带 `qlsp`。
 

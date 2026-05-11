@@ -20,7 +20,7 @@
 - foldingRange，含代码块、块注释和连续整行 `//` 注释；selectionRange
 - semanticTokens full/range，含 parse-error lexical fallback、注释 token 和 `self` keyword token
 - document/range/on-type formatting
-- codeAction/resolve、organize imports、codeLens
+- codeAction/resolve、organize imports、codeLens，同文件和 workspace 可见引用/实现计数
 - same-file callHierarchy/typeHierarchy
 - same-file rename 和保守 workspace rename
 
