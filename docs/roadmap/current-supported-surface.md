@@ -43,7 +43,7 @@
 - same-file：hover、keyword hover、definition、declaration、typeDefinition、references、documentHighlight、completion、semantic tokens、formatting、codeAction、codeLens、callHierarchy、typeHierarchy、rename。
 - workspace：`workspace/symbol`、`implementation`、open-doc dependency navigation、依赖调用 signatureHelp、保守 workspace rename。
 - stdlib 兼容 API 会在真实 `textDocument/completion`、`textDocument/hover` 和 `textDocument/semanticTokens/full/range` 请求中提示 deprecated 并带迁移 guidance；semantic tokens 覆盖 parse-error fallback、注释 token 和 `self` keyword token。
-- same-file inlay hints 覆盖 inferred local type 和调用参数名提示；方法调用会隐藏 receiver `self`。
+- inlay hints 覆盖 same-file inferred local type，以及 same-file/dependency 调用参数名提示；方法调用会隐藏 receiver `self`。
 - formatting：document/range/on-type formatting 复用 `ql fmt`。
 - VSCode 插件是 thin client，不自带 `qlsp`。
 

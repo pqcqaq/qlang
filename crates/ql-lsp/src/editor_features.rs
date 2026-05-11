@@ -197,9 +197,25 @@ pub fn inlay_hints_for_analysis(
         }
         index += 1;
     }
-    hints.extend(parameter_name_inlay_hints(source, analysis, &tokens, range));
+    hints.extend(parameter_name_inlay_hints_for_callable_detail(
+        source,
+        range,
+        |offset| analysis.hover_at(offset).map(|info| info.detail),
+    ));
     hints.sort_by_key(|hint| (hint.position.line, hint.position.character));
     (!hints.is_empty()).then_some(hints)
+}
+
+pub fn parameter_name_inlay_hints_for_callable_detail<F>(
+    source: &str,
+    range: Range,
+    mut detail_at: F,
+) -> Vec<InlayHint>
+where
+    F: FnMut(usize) -> Option<String>,
+{
+    let (tokens, _) = lex(source);
+    parameter_name_inlay_hints_with_tokens(source, &tokens, range, |offset| detail_at(offset))
 }
 
 pub fn folding_ranges_for_source(source: &str) -> Option<Vec<FoldingRange>> {
@@ -735,12 +751,15 @@ fn is_method_call(tokens: &[Token], callee_index: usize) -> bool {
     callee_index > 0 && tokens[callee_index - 1].kind == TokenKind::Dot
 }
 
-fn parameter_name_inlay_hints(
+fn parameter_name_inlay_hints_with_tokens<F>(
     source: &str,
-    analysis: &Analysis,
     tokens: &[Token],
     range: Range,
-) -> Vec<InlayHint> {
+    mut detail_at: F,
+) -> Vec<InlayHint>
+where
+    F: FnMut(usize) -> Option<String>,
+{
     let mut hints = Vec::new();
     let mut index = 0usize;
     while index + 1 < tokens.len() {
@@ -757,11 +776,11 @@ fn parameter_name_inlay_hints(
             index += 1;
             continue;
         };
-        let Some(hover) = analysis.hover_at(tokens[index].span.start) else {
+        let Some(detail) = detail_at(tokens[index].span.start) else {
             index += 1;
             continue;
         };
-        let mut parameters = signature_parameters(&hover.detail);
+        let mut parameters = signature_parameters(&detail);
         if is_method_call(tokens, index) && parameters.first().is_some_and(|p| p == "self") {
             parameters.remove(0);
         }

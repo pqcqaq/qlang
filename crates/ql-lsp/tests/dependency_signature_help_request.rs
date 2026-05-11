@@ -1,12 +1,14 @@
 mod common;
 
 use common::request::{
-    TempDir, did_open_via_request, initialize_service_with_workspace_roots, nth_offset,
-    offset_to_position, signature_help_via_request,
+    TempDir, did_change_via_request, did_open_via_request, initialize_service_with_workspace_roots,
+    inlay_hint_via_request, nth_offset, offset_to_position, signature_help_via_request,
 };
 use ql_lsp::Backend;
 use tower_lsp::LspService;
-use tower_lsp::lsp_types::{ParameterLabel, SignatureHelp, Url};
+use tower_lsp::lsp_types::{
+    InlayHint, InlayHintKind, InlayHintLabel, ParameterLabel, Range, SignatureHelp, Url,
+};
 
 #[tokio::test(flavor = "current_thread")]
 async fn signature_help_request_uses_dependency_function_and_method_signatures() {
@@ -91,7 +93,7 @@ pub fn main() -> Int {
 
     let method_signature = signature_help_via_request(
         &mut service,
-        app_uri,
+        app_uri.clone(),
         offset_to_position(&source, nth_offset(&source, "get(3, ", 1) + "get(3, ".len()),
     )
     .await
@@ -105,6 +107,47 @@ pub fn main() -> Int {
         parameter_labels(&method_signature),
         vec!["delta: Int", "scale: Int"]
     );
+
+    let full_range = Range::new(
+        offset_to_position(&source, 0),
+        offset_to_position(&source, source.len()),
+    );
+    let hints = inlay_hint_via_request(&mut service, app_uri.clone(), full_range)
+        .await
+        .expect("dependency call inlayHint should return parameter hints");
+    assert_parameter_hint(&hints, "left:");
+    assert_parameter_hint(&hints, "right:");
+    assert_parameter_hint(&hints, "delta:");
+    assert_parameter_hint(&hints, "scale:");
+
+    let broken_source = source.replace(
+        "    return child.get(3, 4) + first",
+        "    return child.get(3, 4) + first\n    let broken =",
+    );
+    did_change_via_request(&mut service, app_uri.clone(), 2, broken_source.clone()).await;
+    let broken_signature = signature_help_via_request(
+        &mut service,
+        app_uri.clone(),
+        offset_to_position(
+            &broken_source,
+            nth_offset(&broken_source, "get(3, ", 1) + "get(3, ".len(),
+        ),
+    )
+    .await
+    .expect("dependency method signatureHelp should survive unsaved parse errors");
+    assert_eq!(
+        parameter_labels(&broken_signature),
+        vec!["delta: Int", "scale: Int"]
+    );
+    let broken_range = Range::new(
+        offset_to_position(&broken_source, 0),
+        offset_to_position(&broken_source, broken_source.len()),
+    );
+    let broken_hints = inlay_hint_via_request(&mut service, app_uri, broken_range)
+        .await
+        .expect("dependency inlayHint should survive unsaved parse errors");
+    assert_parameter_hint(&broken_hints, "delta:");
+    assert_parameter_hint(&broken_hints, "scale:");
 }
 
 fn parameter_labels(signature: &SignatureHelp) -> Vec<String> {
@@ -118,4 +161,13 @@ fn parameter_labels(signature: &SignatureHelp) -> Vec<String> {
             ParameterLabel::LabelOffsets(_) => panic!("parameter labels should be strings"),
         })
         .collect()
+}
+
+fn assert_parameter_hint(hints: &[InlayHint], expected: &str) {
+    assert!(
+        hints.iter().any(
+            |hint| matches!((&hint.kind, &hint.label), (Some(InlayHintKind::PARAMETER), InlayHintLabel::String(label)) if label == expected)
+        ),
+        "inlay hints should include dependency parameter `{expected}`: {hints:#?}",
+    );
 }

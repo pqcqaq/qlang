@@ -84,8 +84,9 @@ use crate::bridge::{
 };
 use crate::editor_features::{
     completion_for_keywords, folding_ranges_for_source, hover_for_keyword,
-    inlay_hints_for_analysis, resolve_completion_item, selection_ranges_for_source,
-    signature_help_for_analysis, signature_help_for_callable_detail,
+    inlay_hints_for_analysis, parameter_name_inlay_hints_for_callable_detail,
+    resolve_completion_item, selection_ranges_for_source, signature_help_for_analysis,
+    signature_help_for_callable_detail,
 };
 use crate::store::DocumentStore;
 
@@ -417,23 +418,43 @@ fn signature_help_for_package_analysis(
     position: Position,
 ) -> Option<SignatureHelp> {
     signature_help_for_callable_detail(source, position, |offset| {
-        let dependency_detail = analysis
-            .and_then(|analysis| {
-                package
-                    .dependency_method_hover_at(analysis, offset)
-                    .or_else(|| package.dependency_variant_hover_at(analysis, source, offset))
-                    .or_else(|| package.dependency_hover_at(analysis, offset))
-            })
-            .or_else(|| {
-                package
-                    .dependency_method_hover_in_source_at(source, offset)
-                    .or_else(|| package.dependency_variant_hover_in_source_at(source, offset))
-                    .or_else(|| package.dependency_hover_in_source_at(source, offset))
-            });
-        dependency_detail.map(|info| info.detail).or_else(|| {
+        dependency_callable_detail_at(source, analysis, package, offset).or_else(|| {
             analysis.and_then(|analysis| analysis.hover_at(offset).map(|info| info.detail))
         })
     })
+}
+
+fn dependency_parameter_name_inlay_hints_for_package_analysis(
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    range: Range,
+) -> Vec<InlayHint> {
+    parameter_name_inlay_hints_for_callable_detail(source, range, |offset| {
+        dependency_callable_detail_at(source, analysis, package, offset)
+    })
+}
+
+fn dependency_callable_detail_at(
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    offset: usize,
+) -> Option<String> {
+    analysis
+        .and_then(|analysis| {
+            package
+                .dependency_method_hover_at(analysis, offset)
+                .or_else(|| package.dependency_variant_hover_at(analysis, source, offset))
+                .or_else(|| package.dependency_hover_at(analysis, offset))
+        })
+        .or_else(|| {
+            package
+                .dependency_method_hover_in_source_at(source, offset)
+                .or_else(|| package.dependency_variant_hover_in_source_at(source, offset))
+                .or_else(|| package.dependency_hover_in_source_at(source, offset))
+        })
+        .map(|info| info.detail)
 }
 
 fn document_diagnostics(uri: &Url, source: &str) -> Vec<Diagnostic> {
@@ -10139,10 +10160,25 @@ impl LanguageServer for Backend {
         let Some(source) = self.documents.get(&uri).await else {
             return Ok(None);
         };
-        let Ok(analysis) = analyze_source(&source) else {
+        let analysis = analyze_source(&source).ok();
+        if let Some(package) = self.package_analysis_for_uri(&uri) {
+            let mut hints = analysis
+                .as_ref()
+                .and_then(|analysis| inlay_hints_for_analysis(&source, analysis, params.range))
+                .unwrap_or_default();
+            hints.extend(dependency_parameter_name_inlay_hints_for_package_analysis(
+                &source,
+                analysis.as_ref(),
+                &package,
+                params.range,
+            ));
+            hints.sort_by_key(|hint| (hint.position.line, hint.position.character));
+            return Ok((!hints.is_empty()).then_some(hints));
+        }
+        let Some(analysis) = analysis.as_ref() else {
             return Ok(None);
         };
-        Ok(inlay_hints_for_analysis(&source, &analysis, params.range))
+        Ok(inlay_hints_for_analysis(&source, analysis, params.range))
     }
 
     async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
