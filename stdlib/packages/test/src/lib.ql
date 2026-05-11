@@ -1,4 +1,5 @@
 package std.test
+
 use std.core.abs_diff_int as abs_diff_int
 use std.core.abs_int as abs_int
 use std.core.and_bool as and_bool
@@ -46,6 +47,62 @@ use std.result.error_to_option as result_error_to_option
 use std.result.ok_or as result_ok_or
 use std.result.to_option as result_to_option
 
+pub fn expect_eq[T](actual: T, expected: T) -> Int {
+    if actual == expected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_ne[T](actual: T, unexpected: T) -> Int {
+    if actual != unexpected {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_array_first[T, N](values: [T; N], expected: T) -> Int {
+    return expect_eq(values[0], expected)
+}
+
+pub fn expect_array_last[T, N](values: [T; N], expected: T) -> Int {
+    var last = values[0]
+    for value in values {
+        last = value
+    }
+    return expect_eq(last, expected)
+}
+
+pub fn expect_array_at[T, N](values: [T; N], index: Int, fallback: T, expected: T) -> Int {
+    var current_index = 0
+    for value in values {
+        if current_index == index {
+            return expect_eq(value, expected)
+        };
+        current_index = current_index + 1
+    }
+    return expect_eq(fallback, expected)
+}
+
+pub fn expect_array_contains[T, N](values: [T; N], needle: T, expected: Bool) -> Int {
+    for value in values {
+        if value == needle {
+            return expect_eq(true, expected)
+        }
+    }
+    return expect_eq(false, expected)
+}
+
+pub fn expect_array_count[T, N](values: [T; N], needle: T, expected: Int) -> Int {
+    var count = 0
+    for value in values {
+        if value == needle {
+            count = count + 1
+        }
+    }
+    return expect_eq(count, expected)
+}
+
 pub fn expect_true(value: Bool) -> Int {
     if value {
         return 0
@@ -61,17 +118,11 @@ pub fn expect_false(value: Bool) -> Int {
 }
 
 pub fn expect_bool_eq(actual: Bool, expected: Bool) -> Int {
-    if actual == expected {
-        return 0
-    }
-    return 1
+    return expect_eq(actual, expected)
 }
 
 pub fn expect_bool_ne(actual: Bool, unexpected: Bool) -> Int {
-    if actual != unexpected {
-        return 0
-    }
-    return 1
+    return expect_ne(actual, unexpected)
 }
 
 pub fn expect_bool_not(value: Bool, expected: Bool) -> Int {
@@ -110,94 +161,47 @@ pub fn expect_bool_to_int(value: Bool, expected: Int) -> Int {
 }
 
 pub fn expect_int_eq(actual: Int, expected: Int) -> Int {
-    if actual == expected {
-        return 0
-    }
-    return 1
+    return expect_eq(actual, expected)
 }
 
 pub fn expect_int_array_first[N](values: [Int; N], expected: Int) -> Int {
-    return expect_int_eq(values[0], expected)
+    return expect_array_first(values, expected)
 }
 
 pub fn expect_int_array_last[N](values: [Int; N], expected: Int) -> Int {
-    var last = values[0]
-    for value in values {
-        last = value
-    }
-    return expect_int_eq(last, expected)
+    return expect_array_last(values, expected)
 }
 
 pub fn expect_bool_array_first[N](values: [Bool; N], expected: Bool) -> Int {
-    return expect_bool_eq(values[0], expected)
+    return expect_array_first(values, expected)
 }
 
 pub fn expect_bool_array_last[N](values: [Bool; N], expected: Bool) -> Int {
-    var last = values[0]
-    for value in values {
-        last = value
-    }
-    return expect_bool_eq(last, expected)
+    return expect_array_last(values, expected)
 }
 
 pub fn expect_int_array_at[N](values: [Int; N], index: Int, fallback: Int, expected: Int) -> Int {
-    var current_index = 0
-    for value in values {
-        if current_index == index {
-            return expect_int_eq(value, expected)
-        };
-        current_index = current_index + 1
-    }
-    return expect_int_eq(fallback, expected)
+    return expect_array_at(values, index, fallback, expected)
 }
 
 pub fn expect_bool_array_at[N](values: [Bool; N], index: Int, fallback: Bool, expected: Bool) -> Int {
-    var current_index = 0
-    for value in values {
-        if current_index == index {
-            return expect_bool_eq(value, expected)
-        };
-        current_index = current_index + 1
-    }
-    return expect_bool_eq(fallback, expected)
+    return expect_array_at(values, index, fallback, expected)
 }
 
 pub fn expect_int_array_contains[N](values: [Int; N], needle: Int, expected: Bool) -> Int {
-    for value in values {
-        if value == needle {
-            return expect_bool_eq(true, expected)
-        }
-    }
-    return expect_bool_eq(false, expected)
+    return expect_array_contains(values, needle, expected)
 }
 
 pub fn expect_bool_array_contains[N](values: [Bool; N], needle: Bool, expected: Bool) -> Int {
-    for value in values {
-        if value == needle {
-            return expect_bool_eq(true, expected)
-        }
-    }
-    return expect_bool_eq(false, expected)
+    return expect_array_contains(values, needle, expected)
 }
 
 pub fn expect_int_array_count[N](values: [Int; N], needle: Int, expected: Int) -> Int {
-    var count = 0
-    for value in values {
-        if value == needle {
-            count = count + 1
-        }
-    }
-    return expect_int_eq(count, expected)
+    return expect_array_count(values, needle, expected)
 }
 
 pub fn expect_bool_array_count[N](values: [Bool; N], needle: Bool, expected: Int) -> Int {
-    var count = 0
-    for value in values {
-        if value == needle {
-            count = count + 1
-        }
-    }
-    return expect_int_eq(count, expected)
+    return expect_array_count(values, needle, expected)
 }
 
 pub fn expect_int_array_sum[N](values: [Int; N], expected: Int) -> Int {

@@ -108,10 +108,11 @@ fn expect_stdlib_starter_smoke_source(source: &str, context: &str) {
         "use std.result.error_to_option as result_error_to_option",
         "use std.result.ok_or as result_ok_or",
         "use std.result.to_option as result_to_option",
+        "use std.test.expect_eq as expect_eq",
         "let repeated: [Int; 3] = repeat_array(2)",
         "let result_value: Result[Int, Int] = result_ok_or(option_value, 9)",
         "let failed: Result[Int, Int] = result_ok_or(missing, 4)",
-        "let error_check = expect_int_eq(option_unwrap_or(result_error_to_option(failed), 0), 4)",
+        "let error_check = expect_eq(option_unwrap_or(result_error_to_option(failed), 0), 4)",
     ] {
         assert!(
             source.contains(needle),

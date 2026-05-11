@@ -10,8 +10,7 @@ use std.result.Result as Result
 use std.result.error_to_option as result_error_to_option
 use std.result.ok_or as result_ok_or
 use std.result.to_option as result_to_option
-use std.test.expect_bool_eq as expect_bool_eq
-use std.test.expect_int_eq as expect_int_eq
+use std.test.expect_eq as expect_eq
 use std.test.expect_status_ok as expect_status_ok
 
 fn main() -> Int {
@@ -22,10 +21,10 @@ fn main() -> Int {
     let result_value: Result[Int, Int] = result_ok_or(option_value, 9)
     let failed: Result[Int, Int] = result_ok_or(missing, 4)
     let total = clamp_int(option_unwrap_or(result_to_option(result_value), 0), 0, 10)
-    let total_check = expect_int_eq(total, 6)
-    let length_check = expect_int_eq(len_array(numbers), 3)
-    let contains_check = expect_bool_eq(contains_array(numbers, 2), true)
-    let repeated_check = expect_int_eq(sum_int_array(repeated), 6)
-    let error_check = expect_int_eq(option_unwrap_or(result_error_to_option(failed), 0), 4)
+    let total_check = expect_eq(total, 6)
+    let length_check = expect_eq(len_array(numbers), 3)
+    let contains_check = expect_eq(contains_array(numbers, 2), true)
+    let repeated_check = expect_eq(sum_int_array(repeated), 6)
+    let error_check = expect_eq(option_unwrap_or(result_error_to_option(failed), 0), 4)
     return expect_status_ok(total_check + length_check + contains_check + repeated_check + error_check)
 }

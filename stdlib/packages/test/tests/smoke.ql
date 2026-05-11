@@ -27,6 +27,12 @@ use std.test.expect_bool_result_ok as expect_bool_result_ok
 use std.test.expect_bool_result_or as expect_bool_result_or
 use std.test.expect_bool_result_to_option_none as expect_bool_result_to_option_none
 use std.test.expect_bool_result_to_option_some as expect_bool_result_to_option_some
+use std.test.expect_array_at as expect_array_at
+use std.test.expect_array_contains as expect_array_contains
+use std.test.expect_array_count as expect_array_count
+use std.test.expect_array_first as expect_array_first
+use std.test.expect_array_last as expect_array_last
+use std.test.expect_eq as expect_eq
 use std.test.expect_false as expect_false
 use std.test.expect_int_abs as expect_int_abs
 use std.test.expect_int_abs_diff as expect_int_abs_diff
@@ -96,6 +102,7 @@ use std.test.expect_int_remainder_or_zero as expect_int_remainder_or_zero
 use std.test.expect_int_sign as expect_int_sign
 use std.test.expect_int_upper_bound as expect_int_upper_bound
 use std.test.expect_int_within as expect_int_within
+use std.test.expect_ne as expect_ne
 use std.test.expect_nonzero as expect_nonzero
 use std.test.expect_status_failed as expect_status_failed
 use std.test.expect_status_ok as expect_status_ok
@@ -127,6 +134,9 @@ fn sum4(first: Int, second: Int, third: Int, fourth: Int) -> Int {
 }
 
 fn main() -> Int {
+    let generic_pass = sum4(check_int(expect_eq(7, 7), 0), check_int(expect_eq(true, true), 0), check_int(expect_ne("left", "right"), 0), check_int(expect_array_first(["red", "blue", "green"], "red"), 0))
+    let generic_array_pass = sum4(check_int(expect_array_last(["red", "blue", "green"], "green"), 0), check_int(expect_array_at(["red", "blue", "green"], 1, "none", "blue"), 0), check_int(expect_array_contains(["red", "blue", "green"], "blue", true), 0), check_int(expect_array_count(["red", "blue", "red"], "red", 2), 0))
+    let generic_failure = sum4(check_int(expect_eq(7, 8), 1), check_int(expect_ne(true, true), 1), check_int(expect_array_at(["red", "blue"], 8, "none", "blue"), 1), check_int(expect_array_contains(["red", "blue"], "green", true), 1))
     let bool_pass = sum4(check_int(expect_true(true), 0), check_int(expect_false(false), 0), check_int(expect_bool_eq(true, true), 0), check_int(expect_bool_ne(true, false), 0))
     let bool_logic_pass = sum4(check_int(expect_bool_not(false, true), 0), check_int(expect_bool_and(true, false, false), 0), check_int(expect_bool_or(false, true, true), 0), check_int(expect_bool_xor(true, true, false), 0))
     let bool_failure = sum4(check_int(expect_true(false), 1), check_int(expect_false(true), 1), check_int(expect_bool_eq(true, false), 1), check_int(expect_bool_ne(true, true), 1))
@@ -221,5 +231,5 @@ fn main() -> Int {
     let order_status = sum4(order_pass + order4_pass + order5_pass, order_failure + order4_failure + order5_failure, compare_sign_pass, compare_sign_more_pass + compare_sign_failure)
     let number_status = sum4(number_pass, sign_pass, number_failure, sign_failure)
     let status_status = sum4(status_bool, status_merge, status_merge_large, status_expect)
-    return check_int(sum4(bool_status, int_status, range_status, sum4(order_status, number_status, status_status, sum4(sign_boundary, transform_pass + transform_core_pass + transform_clamp_pass, transform_failure + transform_core_failure + transform_clamp_failure, sum4(aggregate_pass + aggregate5_pass + extrema_pass + division_pass, average_pass + extrema4_pass + extrema5_pass + division_bool_pass + transform_bound_pass, aggregate_failure + aggregate5_failure + extrema_failure + division_failure, average_failure + extrema4_failure + extrema5_failure + division_zero_failure + transform_bound_failure)))), 0) + option_status + option_or_status + option_failure + result_status + result_or_status + result_failure + result_conversion_status + option_conversion_status + result_conversion_failure + option_conversion_failure + result_error_status + result_error_failure + result_conversion_more_status + result_error_option_status + option_conversion_more_status + generic_array_access_status + generic_array_at_status + generic_array_query_status + generic_array_aggregate_status + generic_array_bool_aggregate_status + generic_array_reverse_status + array_failure + array_at_failure + array_transform_failure + array_query_failure
+    return check_int(sum4(bool_status, int_status, range_status, sum4(order_status, number_status, status_status, sum4(sign_boundary, transform_pass + transform_core_pass + transform_clamp_pass, transform_failure + transform_core_failure + transform_clamp_failure, sum4(aggregate_pass + aggregate5_pass + extrema_pass + division_pass, average_pass + extrema4_pass + extrema5_pass + division_bool_pass + transform_bound_pass, aggregate_failure + aggregate5_failure + extrema_failure + division_failure, average_failure + extrema4_failure + extrema5_failure + division_zero_failure + transform_bound_failure)))), 0) + generic_pass + generic_array_pass + generic_failure + option_status + option_or_status + option_failure + result_status + result_or_status + result_failure + result_conversion_status + option_conversion_status + result_conversion_failure + option_conversion_failure + result_error_status + result_error_failure + result_conversion_more_status + result_error_option_status + option_conversion_more_status + generic_array_access_status + generic_array_at_status + generic_array_query_status + generic_array_aggregate_status + generic_array_bool_aggregate_status + generic_array_reverse_status + array_failure + array_at_failure + array_transform_failure + array_query_failure
 }
