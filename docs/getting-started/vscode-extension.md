@@ -17,7 +17,7 @@
 - references、documentHighlight、documentSymbol、workspaceSymbol
 - completion、completionItem/resolve、signatureHelp，同文件和依赖调用签名
 - inlayHint，本地类型和同文件/依赖调用参数名提示
-- foldingRange、selectionRange
+- foldingRange，含代码块、块注释和连续整行 `//` 注释；selectionRange
 - semanticTokens full/range，含 parse-error lexical fallback、注释 token 和 `self` keyword token
 - document/range/on-type formatting
 - codeAction/resolve、organize imports、codeLens

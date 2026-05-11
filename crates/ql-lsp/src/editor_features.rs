@@ -4,10 +4,10 @@ use ql_span::Span;
 use serde_json::Value as JsonValue;
 use tower_lsp::lsp_types::{
     CompletionItem as LspCompletionItem, CompletionItemKind, CompletionResponse,
-    CompletionTextEdit, Documentation, FoldingRange, Hover, HoverContents, InlayHint,
-    InlayHintKind, InlayHintLabel, InlayHintTooltip, InsertTextFormat, MarkupContent, MarkupKind,
-    ParameterInformation, ParameterLabel, Position, Range, SelectionRange, SignatureHelp,
-    SignatureInformation, TextEdit,
+    CompletionTextEdit, Documentation, FoldingRange, FoldingRangeKind, Hover, HoverContents,
+    InlayHint, InlayHintKind, InlayHintLabel, InlayHintTooltip, InsertTextFormat, MarkupContent,
+    MarkupKind, ParameterInformation, ParameterLabel, Position, Range, SelectionRange,
+    SignatureHelp, SignatureInformation, TextEdit,
 };
 
 use crate::bridge::completion_documentation_from_parts;
@@ -247,6 +247,21 @@ pub fn folding_ranges_for_source(source: &str) -> Option<Vec<FoldingRange>> {
             _ => {}
         }
     }
+    ranges.extend(comment_folding_ranges_for_source(source));
+    ranges.sort_by_key(|range| {
+        (
+            range.start_line,
+            range.start_character.unwrap_or_default(),
+            range.end_line,
+            range.end_character.unwrap_or_default(),
+        )
+    });
+    ranges.dedup_by(|left, right| {
+        left.start_line == right.start_line
+            && left.start_character == right.start_character
+            && left.end_line == right.end_line
+            && left.end_character == right.end_character
+    });
     (!ranges.is_empty()).then_some(ranges)
 }
 
@@ -749,6 +764,214 @@ fn previous_identifier_index(tokens: &[Token], before: usize) -> Option<usize> {
 
 fn is_method_call(tokens: &[Token], callee_index: usize) -> bool {
     callee_index > 0 && tokens[callee_index - 1].kind == TokenKind::Dot
+}
+
+fn comment_folding_ranges_for_source(source: &str) -> Vec<FoldingRange> {
+    let mut ranges = block_comment_folding_ranges_for_source(source);
+    ranges.extend(line_comment_folding_ranges_for_source(source));
+    ranges
+}
+
+fn block_comment_folding_ranges_for_source(source: &str) -> Vec<FoldingRange> {
+    let bytes = source.as_bytes();
+    let mut ranges = Vec::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'f' && bytes.get(index + 1) == Some(&b'"') {
+            index = skip_string_literal_bytes(bytes, index + 2);
+            continue;
+        }
+        if bytes[index] == b'"' {
+            index = skip_string_literal_bytes(bytes, index + 1);
+            continue;
+        }
+        if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'/') {
+            index = line_end_after(source, index);
+            continue;
+        }
+        if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            let start = index;
+            index = block_comment_end_offset(bytes, index);
+            push_comment_folding_range(source, Span::new(start, index), &mut ranges);
+            continue;
+        }
+        index += 1;
+    }
+    ranges
+}
+
+fn line_comment_folding_ranges_for_source(source: &str) -> Vec<FoldingRange> {
+    let mut ranges = Vec::new();
+    let mut group_start = None;
+    let mut group_end = None;
+    let mut group_len = 0usize;
+    let mut previous_line = None;
+    for (line, comment_start, comment_end) in leading_line_comment_spans_for_source(source) {
+        if previous_line.is_some_and(|previous| line != previous + 1) {
+            flush_line_comment_folding_range(
+                source,
+                group_start,
+                group_end,
+                group_len,
+                &mut ranges,
+            );
+            group_start = None;
+            group_len = 0;
+        }
+        group_start.get_or_insert((line, comment_start));
+        group_end = Some((line, comment_end));
+        group_len += 1;
+        previous_line = Some(line);
+    }
+    flush_line_comment_folding_range(source, group_start, group_end, group_len, &mut ranges);
+    ranges
+}
+
+fn leading_line_comment_spans_for_source(source: &str) -> Vec<(u32, usize, usize)> {
+    let bytes = source.as_bytes();
+    let mut spans = Vec::new();
+    let mut line = 0u32;
+    let mut line_start = 0usize;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'\n' {
+            line += 1;
+            index += 1;
+            line_start = index;
+            continue;
+        }
+        if bytes[index] == b'f' && bytes.get(index + 1) == Some(&b'"') {
+            let next = skip_string_literal_bytes(bytes, index + 2);
+            advance_line_state(source, index, next, &mut line, &mut line_start);
+            index = next;
+            continue;
+        }
+        if bytes[index] == b'"' {
+            let next = skip_string_literal_bytes(bytes, index + 1);
+            advance_line_state(source, index, next, &mut line, &mut line_start);
+            index = next;
+            continue;
+        }
+        if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            let next = block_comment_end_offset(bytes, index);
+            advance_line_state(source, index, next, &mut line, &mut line_start);
+            index = next;
+            continue;
+        }
+        if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'/') {
+            let line_end = line_end_after(source, index);
+            if source[line_start..index].chars().all(char::is_whitespace) {
+                spans.push((line, index, line_content_end_after(source, index)));
+            }
+            index = line_end;
+            continue;
+        }
+        index += 1;
+    }
+    spans
+}
+
+fn flush_line_comment_folding_range(
+    source: &str,
+    group_start: Option<(u32, usize)>,
+    group_end: Option<(u32, usize)>,
+    group_len: usize,
+    ranges: &mut Vec<FoldingRange>,
+) {
+    if group_len < 2 {
+        return;
+    }
+    let Some((start_line, start_offset)) = group_start else {
+        return;
+    };
+    let Some((end_line, end_offset)) = group_end else {
+        return;
+    };
+    let start_character = span_to_range(source, Span::new(start_offset, start_offset))
+        .start
+        .character;
+    let end_character = span_to_range(source, Span::new(end_offset, end_offset))
+        .start
+        .character;
+    ranges.push(FoldingRange {
+        start_line,
+        start_character: Some(start_character),
+        end_line,
+        end_character: Some(end_character),
+        kind: Some(FoldingRangeKind::Comment),
+        collapsed_text: None,
+    });
+}
+
+fn push_comment_folding_range(source: &str, span: Span, ranges: &mut Vec<FoldingRange>) {
+    let range = span_to_range(source, span);
+    if range.start.line < range.end.line {
+        ranges.push(FoldingRange {
+            start_line: range.start.line,
+            start_character: Some(range.start.character),
+            end_line: range.end.line,
+            end_character: Some(range.end.character),
+            kind: Some(FoldingRangeKind::Comment),
+            collapsed_text: None,
+        });
+    }
+}
+
+fn skip_string_literal_bytes(bytes: &[u8], mut index: usize) -> usize {
+    while index < bytes.len() {
+        if bytes[index] == b'"' {
+            return index + 1;
+        }
+        if bytes[index] == b'\\' {
+            index = (index + 2).min(bytes.len());
+        } else {
+            index += 1;
+        }
+    }
+    bytes.len()
+}
+
+fn block_comment_end_offset(bytes: &[u8], mut index: usize) -> usize {
+    index += 2;
+    while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/') {
+        index += 1;
+    }
+    if index + 1 < bytes.len() {
+        index + 2
+    } else {
+        bytes.len()
+    }
+}
+
+fn advance_line_state(
+    source: &str,
+    start: usize,
+    end: usize,
+    line: &mut u32,
+    line_start: &mut usize,
+) {
+    for (relative, ch) in source[start..end].char_indices() {
+        if ch == '\n' {
+            *line += 1;
+            *line_start = start + relative + ch.len_utf8();
+        }
+    }
+}
+
+fn line_end_after(source: &str, offset: usize) -> usize {
+    source[offset..]
+        .find('\n')
+        .map(|relative| offset + relative)
+        .unwrap_or(source.len())
+}
+
+fn line_content_end_after(source: &str, offset: usize) -> usize {
+    let end = line_end_after(source, offset);
+    if end > offset && source.as_bytes().get(end - 1) == Some(&b'\r') {
+        end - 1
+    } else {
+        end
+    }
 }
 
 fn parameter_name_inlay_hints_with_tokens<F>(

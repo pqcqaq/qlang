@@ -5,7 +5,7 @@ use common::request::{
     inlay_hint_via_request, nth_offset, offset_to_position, selection_range_via_request,
     signature_help_via_request,
 };
-use tower_lsp::lsp_types::{InlayHintKind, InlayHintLabel, Range, Url};
+use tower_lsp::lsp_types::{FoldingRangeKind, InlayHintKind, InlayHintLabel, Range, Url};
 
 #[tokio::test(flavor = "current_thread")]
 async fn rich_editor_requests_cover_signature_inlay_folding_and_selection() {
@@ -13,10 +13,15 @@ async fn rich_editor_requests_cover_signature_inlay_folding_and_selection() {
     let source_path = temp.write(
         "rich.ql",
         r#"
+/* module fold
+   stays foldable
+*/
 fn add(left: Int, right: Int) -> Int {
     return left + right
 }
 
+// group fold alpha
+// group fold beta
 struct Counter { value: Int }
 
 impl Counter {
@@ -29,6 +34,10 @@ fn main() -> Int {
     let counter = Counter { value: 1 }
     let total = add(1, 2)
     let next = counter.add(3, 4)
+    let marker: String = "not a comment
+// not a line comment
+/* not a block comment */
+// still not a line comment"
     if total > 0 {
         return next
     }
@@ -98,6 +107,31 @@ fn main() -> Int {
     assert!(
         folds.iter().any(|range| range.start_line < range.end_line),
         "foldingRange should include multiline blocks: {folds:#?}",
+    );
+    let comment_folds = folds
+        .iter()
+        .filter(|range| range.kind.as_ref() == Some(&FoldingRangeKind::Comment))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        comment_folds.len(),
+        2,
+        "foldingRange should include only real comment folds, not string markers: {folds:#?}",
+    );
+    let block_comment_line =
+        offset_to_position(&source, nth_offset(&source, "/* module fold", 1)).line;
+    let line_comment_line =
+        offset_to_position(&source, nth_offset(&source, "// group fold alpha", 1)).line;
+    assert!(
+        comment_folds
+            .iter()
+            .any(|range| range.start_line == block_comment_line),
+        "foldingRange should include block comment folds: {folds:#?}",
+    );
+    assert!(
+        comment_folds
+            .iter()
+            .any(|range| range.start_line == line_comment_line),
+        "foldingRange should include consecutive line comment folds: {folds:#?}",
     );
 
     let selections = selection_range_via_request(
