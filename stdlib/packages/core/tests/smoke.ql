@@ -21,7 +21,7 @@ use std.core.is_strictly_ascending_ints as is_strictly_ascending_ints
 use std.core.is_within_int as is_within_int
 use std.core.lower_bound_int as lower_bound_int
 use std.core.max_ints as max_ints
-use std.core.median3_int as median3_int
+use std.core.median_ints as median_ints
 use std.core.min_ints as min_ints
 use std.core.none_bools as none_bools
 use std.core.product_ints as product_ints
@@ -52,7 +52,7 @@ fn sum6(first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int
 
 fn main() -> Int {
     let extrema_status = sum6(check_int(max_ints([3, 9, 5]), 9), check_int(max_ints([3, 9, 5, 7]), 9), check_int(max_ints([3, 9, 5, 7, 11]), 11), check_int(min_ints([3, 9, 5]), 3), check_int(min_ints([3, 9, 5, 7]), 3), check_int(min_ints([3, 9, 5, 7, 1]), 1))
-    let compare_status = sum6(check_int(median3_int(9, 3, 5), 5), check_int(compare_int(9, 3), 1), 0, 0, 0, 0)
+    let compare_status = sum6(check_int(median_ints([9, 3, 5]), 5), check_int(median_ints([9, 3, 5, 7]), 7), check_int(compare_int(9, 3), 1), 0, 0, 0)
     let range_status = sum6(check_bool(in_bounds_int(5, 9, 3), true), check_bool(is_outside_range_int(2, 3, 9), true), check_bool(is_outside_range_int(5, 3, 9), false), check_bool(is_outside_bounds_int(10, 9, 3), true), check_bool(is_outside_bounds_int(5, 9, 3), false), check_bool(is_within_int(11, 10, 1), true))
     let order_status = sum6(check_bool(is_not_within_int(12, 10, 1), true), check_bool(is_not_within_int(10, 10, 0), false), check_bool(is_descending_ints([9, 9, 3]), true), check_bool(is_descending_ints([3, 9, 5]), false), check_bool(is_strictly_descending_ints([9, 5, 3]), true), check_bool(is_strictly_descending_ints([9, 9, 3]), false))
     let order4_status = sum6(check_bool(is_ascending_ints([3, 5, 5, 9]), true), check_bool(is_ascending_ints([3, 5, 5, 9, 10]), true), check_bool(is_strictly_ascending_ints([3, 5, 7, 9]), true), check_bool(is_strictly_ascending_ints([3, 5, 7, 9, 11]), true), check_bool(is_strictly_ascending_ints([3, 5, 5, 9]), false), check_bool(is_strictly_ascending_ints([3, 5, 7, 9, 9]), false))
@@ -68,6 +68,5 @@ fn main() -> Int {
     let bool_aggregate_status = sum6(check_bool(all_bools([true, true, true]), true), check_bool(all_bools([true, true, true, false]), false), check_bool(all_bools([true, true, true, true, true]), true), check_bool(any_bools([false, false, true]), true), check_bool(any_bools([false, false, false, false]), false), check_bool(any_bools([false, false, false, false, true]), true))
     let bool_none_status = sum6(check_bool(none_bools([false, false, false]), true), check_bool(none_bools([false, false, true, false]), false), check_bool(none_bools([false, false, false, false, false]), true), 0, 0, 0)
     let generic_bool_status = sum6(check_bool(all_bools([true, true, true]), true), check_bool(all_bools([true, false, true, true]), false), check_bool(any_bools([false, false, true]), true), check_bool(any_bools([false, false, false, false]), false), check_bool(none_bools([false, false, false]), true), check_bool(none_bools([false, true, false]), false))
-
     return extrema_status + compare_status + range_status + order_status + order4_status + order5_status + generic_order_status + generic_strict_order_status + transform_status + boundary_status + aggregate_status + average_status + generic_aggregate_status + division_status + bool_aggregate_status + bool_none_status + generic_bool_status + check_int(bool_to_int(true), 1)
 }

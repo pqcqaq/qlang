@@ -159,14 +159,25 @@ pub fn compare_int(left: Int, right: Int) -> Int {
     return 0
 }
 
-pub fn median3_int(first: Int, second: Int, third: Int) -> Int {
-    if is_ascending_ints([first, second, third]) || is_ascending_ints([third, second, first]) {
-        return second
+pub fn median_ints[N](values: [Int; N]) -> Int {
+    if N == 0 {
+        return 0
     }
-    if is_ascending_ints([second, first, third]) || is_ascending_ints([third, first, second]) {
-        return first
+    var sorted = values
+    var outer = 0
+    while outer < N {
+        var inner = outer + 1
+        while inner < N {
+            if sorted[inner] < sorted[outer] {
+                let current = sorted[outer]
+                sorted[outer] = sorted[inner];
+                sorted[inner] = current
+            };
+            inner = inner + 1
+        }
+        outer = outer + 1
     }
-    return third
+    return sorted[N / 2]
 }
 
 pub fn is_zero_int(value: Int) -> Bool {

@@ -31,7 +31,6 @@ use std.core.is_positive_int as is_positive_int
 use std.core.is_within_int as is_within_int
 use std.core.lower_bound_int as lower_bound_int
 use std.core.max_int as max_int
-use std.core.median3_int as median3_int
 use std.core.min_int as min_int
 use std.core.not_bool as not_bool
 use std.core.or_bool as or_bool
@@ -396,13 +395,6 @@ pub fn expect_int_max(left: Int, right: Int, expected: Int) -> Int {
 
 pub fn expect_int_min(left: Int, right: Int, expected: Int) -> Int {
     if min_int(left, right) == expected {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_int_median3(first: Int, second: Int, third: Int, expected: Int) -> Int {
-    if median3_int(first, second, third) == expected {
         return 0
     }
     return 1

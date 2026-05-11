@@ -1,3 +1,4 @@
+use std.core.median_ints as median_ints
 use std.test.expect_bool_and as expect_bool_and
 use std.test.expect_bool_array_all as expect_bool_array_all
 use std.test.expect_bool_array_at as expect_bool_array_at
@@ -85,7 +86,6 @@ use std.test.expect_int_le as expect_int_le
 use std.test.expect_int_lower_bound as expect_int_lower_bound
 use std.test.expect_int_lt as expect_int_lt
 use std.test.expect_int_max as expect_int_max
-use std.test.expect_int_median3 as expect_int_median3
 use std.test.expect_int_min as expect_int_min
 use std.test.expect_int_ne as expect_int_ne
 use std.test.expect_int_negative as expect_int_negative
@@ -185,10 +185,10 @@ fn main() -> Int {
     let compare_sign_more_pass = sum4(check_int(expect_int_compare(9, 9, 0), 0), check_int(expect_int_compare(9, 3, 1), 0), 0, 0)
     let compare_sign_failure = sum4(check_int(expect_int_sign(5, 0 - 1), 1), check_int(expect_int_compare(9, 9, 1), 1), check_int(expect_int_compare(3, 9, 1), 1), 0)
     let extrema_pass = sum4(check_int(expect_int_max(20, 22, 22), 0), check_int(expect_int_min(20, 22, 20), 0), check_int(expect_int_array_max([20, 22, 21], 22), 0), check_int(expect_int_array_min([20, 22, 21], 20), 0))
-    let extrema4_pass = sum4(check_int(expect_int_array_max([20, 22, 21, 19], 22), 0), check_int(expect_int_array_min([20, 22, 21, 19], 19), 0), check_int(expect_int_median3(22, 20, 21, 21), 0), 0)
+    let extrema4_pass = sum4(check_int(expect_int_array_max([20, 22, 21, 19], 22), 0), check_int(expect_int_array_min([20, 22, 21, 19], 19), 0), check_int(expect_eq(median_ints([22, 20, 21]), 21), 0), 0)
     let extrema5_pass = sum4(check_int(expect_int_array_max([20, 22, 21, 19, 23], 23), 0), check_int(expect_int_array_min([20, 22, 21, 19, 23], 19), 0), 0, 0)
     let extrema_failure = sum4(check_int(expect_int_max(20, 22, 20), 1), check_int(expect_int_min(20, 22, 22), 1), check_int(expect_int_array_max([20, 22, 21], 21), 1), check_int(expect_int_array_min([20, 22, 21], 21), 1))
-    let extrema4_failure = sum4(check_int(expect_int_array_max([20, 22, 21, 19], 21), 1), check_int(expect_int_array_min([20, 22, 21, 19], 20), 1), check_int(expect_int_median3(22, 20, 21, 22), 1), 0)
+    let extrema4_failure = sum4(check_int(expect_int_array_max([20, 22, 21, 19], 21), 1), check_int(expect_int_array_min([20, 22, 21, 19], 20), 1), check_int(expect_eq(median_ints([22, 20, 21]), 22), 1), 0)
     let extrema5_failure = sum4(check_int(expect_int_array_max([20, 22, 21, 19, 23], 22), 1), check_int(expect_int_array_min([20, 22, 21, 19, 23], 20), 1), 0, 0)
     let number_pass = sum4(check_int(expect_int_even(8), 0), check_int(expect_int_odd(9), 0), check_int(expect_int_divisible_by(21, 7), 0), check_int(expect_int_within(11, 10, 1), 0))
     let sign_pass = sum4(check_int(expect_int_not_within(12, 10, 1), 0), check_int(expect_int_positive(1), 0), check_int(expect_int_negative(0 - 1), 0), check_int(expect_int_nonnegative(0), 0))

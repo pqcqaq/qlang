@@ -6,7 +6,7 @@
 
 - 包：`std.core`、`std.option`、`std.result`、`std.array`、`std.test`。
 - generic carrier：`Option[T]`、`Result[T, E]`。
-- `std.core` 聚合、布尔聚合和顺序判断只保留 canonical length-generic helpers：`sum_ints`、`product_ints`、`average_ints`、`max_ints`、`min_ints`、`all_bools`、`any_bools`、`none_bools`、`is_ascending_ints`、`is_descending_ints`。
+- `std.core` 聚合、布尔聚合、顺序判断和中位数只保留 canonical length-generic helpers：`sum_ints`、`product_ints`、`average_ints`、`max_ints`、`min_ints`、`median_ints`、`all_bools`、`any_bools`、`none_bools`、`is_ascending_ints`、`is_descending_ints`。
 - `std.array` 有 canonical length-generic access/query/count/aggregate helpers、`reverse_array[T, N]` 和 `repeat_array[T, N]`。
 - `std.option` / `std.result` 只保留 generic carrier API；`IntOption` / `BoolOption` / `IntResult` / `BoolResult` 等 concrete carrier API 已删除。
 - 数组长度泛型参数可作为 `Int` 值读取。
