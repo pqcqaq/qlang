@@ -5,7 +5,7 @@ use common::request::{
     inlay_hint_via_request, nth_offset, offset_to_position, selection_range_via_request,
     signature_help_via_request,
 };
-use tower_lsp::lsp_types::{InlayHintLabel, Range, Url};
+use tower_lsp::lsp_types::{InlayHintKind, InlayHintLabel, Range, Url};
 
 #[tokio::test(flavor = "current_thread")]
 async fn rich_editor_requests_cover_signature_inlay_folding_and_selection() {
@@ -17,10 +17,20 @@ fn add(left: Int, right: Int) -> Int {
     return left + right
 }
 
+struct Counter { value: Int }
+
+impl Counter {
+    fn add(self, delta: Int, scale: Int) -> Int {
+        return self.value + delta * scale
+    }
+}
+
 fn main() -> Int {
+    let counter = Counter { value: 1 }
     let total = add(1, 2)
+    let next = counter.add(3, 4)
     if total > 0 {
-        return total
+        return next
     }
     return 0
 }
@@ -56,6 +66,30 @@ fn main() -> Int {
             .iter()
             .any(|hint| matches!(&hint.label, InlayHintLabel::String(label) if label == ": Int")),
         "inlay hints should include inferred Int local type: {hints:#?}",
+    );
+    assert!(
+        hints.iter().any(
+            |hint| matches!((&hint.kind, &hint.label), (Some(InlayHintKind::PARAMETER), InlayHintLabel::String(label)) if label == "left:")
+        ),
+        "inlay hints should include function parameter name `left`: {hints:#?}",
+    );
+    assert!(
+        hints.iter().any(
+            |hint| matches!((&hint.kind, &hint.label), (Some(InlayHintKind::PARAMETER), InlayHintLabel::String(label)) if label == "right:")
+        ),
+        "inlay hints should include function parameter name `right`: {hints:#?}",
+    );
+    assert!(
+        hints.iter().any(
+            |hint| matches!((&hint.kind, &hint.label), (Some(InlayHintKind::PARAMETER), InlayHintLabel::String(label)) if label == "delta:")
+        ),
+        "inlay hints should skip method `self` and include `delta`: {hints:#?}",
+    );
+    assert!(
+        hints.iter().any(
+            |hint| matches!((&hint.kind, &hint.label), (Some(InlayHintKind::PARAMETER), InlayHintLabel::String(label)) if label == "scale:")
+        ),
+        "inlay hints should skip method `self` and include `scale`: {hints:#?}",
     );
 
     let folds = folding_range_via_request(&mut service, uri.clone())

@@ -86,11 +86,46 @@ pub fn signature_help_for_analysis(
     let (open_index, callee_index) = active_call_indexes(&tokens, offset)?;
     let callee = tokens.get(callee_index)?;
     let hover = analysis.hover_at(callee.span.start)?;
-    let mut parameters = signature_parameters(&hover.detail);
-    if is_method_call(&tokens, callee_index) && parameters.first().is_some_and(|p| p == "self") {
+    signature_help_from_detail(
+        &tokens,
+        open_index,
+        callee_index,
+        offset,
+        hover.detail.as_str(),
+    )
+}
+
+pub fn signature_help_for_callable_detail<F>(
+    source: &str,
+    position: Position,
+    mut detail_at: F,
+) -> Option<SignatureHelp>
+where
+    F: FnMut(usize) -> Option<String>,
+{
+    let offset = position_to_offset(source, position)?;
+    let (tokens, _) = lex(source);
+    let (open_index, callee_index) = active_call_indexes(&tokens, offset)?;
+    let callee = tokens.get(callee_index)?;
+    let detail = detail_at(callee.span.start)?;
+    signature_help_from_detail(&tokens, open_index, callee_index, offset, &detail)
+}
+
+fn signature_help_from_detail(
+    tokens: &[Token],
+    open_index: usize,
+    callee_index: usize,
+    offset: usize,
+    detail: &str,
+) -> Option<SignatureHelp> {
+    if !has_signature_parameter_list(detail) {
+        return None;
+    }
+    let mut parameters = signature_parameters(detail);
+    if is_method_call(tokens, callee_index) && parameters.first().is_some_and(|p| p == "self") {
         parameters.remove(0);
     }
-    let active_parameter = active_parameter_index(&tokens, open_index, offset)
+    let active_parameter = active_parameter_index(tokens, open_index, offset)
         .min(parameters.len().saturating_sub(1)) as u32;
     let parameter_info = parameters
         .iter()
@@ -101,10 +136,10 @@ pub fn signature_help_for_analysis(
         .collect::<Vec<_>>();
     Some(SignatureHelp {
         signatures: vec![SignatureInformation {
-            label: hover.detail.clone(),
+            label: detail.to_owned(),
             documentation: Some(Documentation::MarkupContent(MarkupContent {
                 kind: MarkupKind::Markdown,
-                value: format!("```ql\n{}\n```", hover.detail),
+                value: format!("```ql\n{detail}\n```"),
             })),
             parameters: Some(parameter_info),
             active_parameter: Some(active_parameter),
@@ -162,6 +197,8 @@ pub fn inlay_hints_for_analysis(
         }
         index += 1;
     }
+    hints.extend(parameter_name_inlay_hints(source, analysis, &tokens, range));
+    hints.sort_by_key(|hint| (hint.position.line, hint.position.character));
     (!hints.is_empty()).then_some(hints)
 }
 
@@ -698,6 +735,139 @@ fn is_method_call(tokens: &[Token], callee_index: usize) -> bool {
     callee_index > 0 && tokens[callee_index - 1].kind == TokenKind::Dot
 }
 
+fn parameter_name_inlay_hints(
+    source: &str,
+    analysis: &Analysis,
+    tokens: &[Token],
+    range: Range,
+) -> Vec<InlayHint> {
+    let mut hints = Vec::new();
+    let mut index = 0usize;
+    while index + 1 < tokens.len() {
+        if !matches!(tokens[index].kind, TokenKind::Ident | TokenKind::SelfKw)
+            || tokens[index + 1].kind != TokenKind::LParen
+            || is_function_declaration(tokens, index)
+        {
+            index += 1;
+            continue;
+        }
+
+        let open_index = index + 1;
+        let Some(close_index) = matching_close_paren_index(tokens, open_index) else {
+            index += 1;
+            continue;
+        };
+        let Some(hover) = analysis.hover_at(tokens[index].span.start) else {
+            index += 1;
+            continue;
+        };
+        let mut parameters = signature_parameters(&hover.detail);
+        if is_method_call(tokens, index) && parameters.first().is_some_and(|p| p == "self") {
+            parameters.remove(0);
+        }
+        if parameters.is_empty() {
+            index += 1;
+            continue;
+        }
+
+        for (argument_index, argument_token_index) in
+            call_argument_start_indices(tokens, open_index, close_index)
+                .into_iter()
+                .enumerate()
+        {
+            let Some(parameter) = parameters.get(argument_index) else {
+                break;
+            };
+            let Some(label) = parameter_hint_label(parameter) else {
+                continue;
+            };
+            let position = span_to_range(
+                source,
+                Span::new(
+                    tokens[argument_token_index].span.start,
+                    tokens[argument_token_index].span.start,
+                ),
+            )
+            .start;
+            if !range_contains_position(range, position) {
+                continue;
+            }
+            hints.push(InlayHint {
+                position,
+                label: InlayHintLabel::String(label),
+                kind: Some(InlayHintKind::PARAMETER),
+                text_edits: None,
+                tooltip: Some(InlayHintTooltip::String("Parameter name".to_owned())),
+                padding_left: Some(false),
+                padding_right: Some(true),
+                data: None,
+            });
+        }
+        index += 1;
+    }
+    hints
+}
+
+fn is_function_declaration(tokens: &[Token], callee_index: usize) -> bool {
+    callee_index > 0 && tokens[callee_index - 1].kind == TokenKind::Fn
+}
+
+fn matching_close_paren_index(tokens: &[Token], open_index: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (index, token) in tokens.iter().enumerate().skip(open_index) {
+        match token.kind {
+            TokenKind::LParen => depth += 1,
+            TokenKind::RParen => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn call_argument_start_indices(
+    tokens: &[Token],
+    open_index: usize,
+    close_index: usize,
+) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let mut current_start = None;
+    let mut depth = 0i32;
+    for index in open_index + 1..close_index {
+        let token = &tokens[index];
+        if token.kind == TokenKind::Comma && depth == 0 {
+            if let Some(start) = current_start.take() {
+                starts.push(start);
+            }
+            continue;
+        }
+        if current_start.is_none() {
+            current_start = Some(index);
+        }
+        match token.kind {
+            TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => depth += 1,
+            TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => depth -= 1,
+            _ => {}
+        }
+    }
+    if let Some(start) = current_start {
+        starts.push(start);
+    }
+    starts
+}
+
+fn parameter_hint_label(parameter: &str) -> Option<String> {
+    let name = parameter.split_once(':')?.0.trim();
+    if name.is_empty() || name == "_" || name == "self" {
+        return None;
+    }
+    Some(format!("{name}:"))
+}
+
 fn active_parameter_index(tokens: &[Token], open_index: usize, offset: usize) -> usize {
     let mut active = 0usize;
     let mut depth = 0i32;
@@ -727,6 +897,13 @@ fn signature_parameters(detail: &str) -> Vec<String> {
         .filter(|part| !part.trim().is_empty())
         .map(|part| part.trim().to_owned())
         .collect()
+}
+
+fn has_signature_parameter_list(detail: &str) -> bool {
+    detail
+        .find('(')
+        .and_then(|start| matching_close_paren(detail, start))
+        .is_some()
 }
 
 fn matching_close_paren(text: &str, open: usize) -> Option<usize> {

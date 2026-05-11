@@ -15,7 +15,8 @@
 - diagnostics、hover、keyword hover
 - definition、declaration、typeDefinition、implementation
 - references、documentHighlight、documentSymbol、workspaceSymbol
-- completion、completionItem/resolve、signatureHelp、inlayHint
+- completion、completionItem/resolve、signatureHelp，同文件和依赖调用签名
+- inlayHint，本地类型和同文件调用参数名提示
 - foldingRange、selectionRange
 - semanticTokens full/range，含 parse-error lexical fallback、注释 token 和 `self` keyword token
 - document/range/on-type formatting
