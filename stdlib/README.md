@@ -20,11 +20,11 @@
 - `std.option.Option[T]`
 - `std.result.Result[T, E]`
 - `std.array` 的 length-generic helpers，例如 `first_array`、`last_array`、`at_array_or`、`contains_array`、`count_array`、`len_array`、`reverse_array`、`repeat_array`、`average_int_array`
-- `std.test` 的泛型 `expect_eq` / `expect_ne`、泛型数组断言、泛型 `expect_option_*` / `expect_result_*` 断言、具体 Int/Bool 包装和 `merge_statuses` 状态合并 helper
+- `std.test` 的泛型 `expect_eq` / `expect_ne`、泛型数组 access/query/reverse 断言、泛型 `expect_option_*` / `expect_result_*` 断言、具体 Int/Bool 包装和 `merge_statuses` 状态合并 helper
 
 `std.array` 不再导出 `first3_array`、`reverse3_array`、`repeat3_array` 这类固定长度 helper；新代码只使用 length-generic API。重复数组使用语言级 `[value; N]`，标准库暴露 `repeat_array[T, N](value) -> [T; N]`。
 `std.core` 的聚合、布尔聚合、顺序判断和中位数使用数组 API；固定 arity 的 `sum3_int`、`max4_int`、`median3_int`、`all5_bool`、`is_ascending4_int` 等历史包装已删除。
-`std.test` 的新断言优先使用泛型 API，例如 `expect_eq[T]`、`expect_array_first[T, N]`、`expect_array_contains[T, N]`；具体 Int/Bool 断言保留为兼容包装。聚合断言、顺序断言和状态合并使用数组 API；固定 arity 的 `expect_*3/4/5` 聚合/顺序断言和 `merge_status3/4/5/6` 已删除。
+`std.test` 的新断言优先使用泛型 API，例如 `expect_eq[T]`、`expect_array_first[T, N]`、`expect_array_contains[T, N]`、`expect_array_reverse[T, N]`；具体 Int/Bool 断言保留为兼容包装。聚合断言、顺序断言和状态合并使用数组 API；固定 arity 的 `expect_*3/4/5` 聚合/顺序断言和 `merge_status3/4/5/6` 已删除。
 
 ## 本地依赖
 

@@ -33,6 +33,7 @@ use std.test.expect_array_contains as expect_array_contains
 use std.test.expect_array_count as expect_array_count
 use std.test.expect_array_first as expect_array_first
 use std.test.expect_array_last as expect_array_last
+use std.test.expect_array_reverse as expect_array_reverse
 use std.test.expect_eq as expect_eq
 use std.test.expect_false as expect_false
 use std.test.expect_int_abs as expect_int_abs
@@ -246,10 +247,10 @@ fn main() -> Int {
     let generic_array_query_status = sum_statuses([check_int(expect_int_array_contains([2, 3, 4, 5], 3, true), 0), check_int(expect_int_array_count([2, 3, 2, 2, 4], 2, 3), 0), check_int(expect_bool_array_contains([true, false, true], false, true), 0), check_int(expect_bool_array_count([true, false, true, false], false, 2), 0)])
     let generic_array_aggregate_status = sum_statuses([check_int(expect_int_array_sum([2, 3, 4, 5], 14), 0), check_int(expect_int_array_product([2, 3, 4], 24), 0), check_int(expect_int_array_max([3, 9, 5, 7], 9), 0), check_int(expect_int_array_min([3, 9, 5, 7], 3), 0)])
     let generic_array_bool_aggregate_status = sum_statuses([check_int(expect_bool_array_all([true, true, true], true), 0), check_int(expect_bool_array_any([false, false, true, false], true), 0), check_int(expect_bool_array_none([false, false, false, false, false], true), 0), 0])
-    let generic_array_reverse_status = sum_statuses([check_int(expect_int_array_reverse([2, 3, 4], 4, 2), 0), check_int(expect_int_array_reverse([2, 3, 4, 5], 5, 2), 0), check_int(expect_bool_array_reverse([true, false, false], false, true), 0), check_int(expect_bool_array_reverse([true, false, true, false, false], false, true), 0)])
+    let generic_array_reverse_status = sum_statuses([check_int(expect_array_reverse(["north", "east", "south"], "south", "north"), 0), check_int(expect_int_array_reverse([2, 3, 4, 5], 5, 2), 0), check_int(expect_bool_array_reverse([true, false, false], false, true), 0), check_int(expect_bool_array_reverse([true, false, true, false, false], false, true), 0)])
     let array_failure = sum_statuses([check_int(expect_int_array_first([2, 3, 4], 3), 1), check_int(expect_bool_array_last([false, true, false, true, false], true), 1), check_int(expect_int_array_sum([2, 3, 4, 5, 6], 21), 1), check_int(expect_bool_array_none([false, false, false, false], false), 1)])
     let array_at_failure = sum_statuses([check_int(expect_int_array_at([2, 3, 4], 1, 99, 2), 1), check_int(expect_int_array_at([2, 3, 4, 5, 6], 8, 99, 6), 1), check_int(expect_bool_array_at([true, false, true], 1, true, true), 1), check_int(expect_bool_array_at([true, false, true, false, true], 8, false, true), 1)])
-    let array_transform_failure = sum_statuses([check_int(expect_int_array_reverse([2, 3, 4], 2, 4), 2), check_int(expect_bool_array_reverse([true, false, true, false, false], true, false), 2), 0, 0])
+    let array_transform_failure = sum_statuses([check_int(expect_array_reverse(["north", "east", "south"], "north", "south"), 2), check_int(expect_int_array_reverse([2, 3, 4], 2, 4), 2), check_int(expect_bool_array_reverse([true, false, true, false, false], true, false), 2), 0])
     let array_query_failure = sum_statuses([check_int(expect_int_array_contains([2, 3, 4, 5, 6], 7, true), 1), check_int(expect_int_array_count([2, 3, 2], 2, 1), 1), check_int(expect_bool_array_contains([false, false, false, false], true, true), 1), check_int(expect_bool_array_count([true, false, true, false], false, 1), 1)])
     let bool_status = sum_statuses([bool_pass + bool_aggregate_pass + bool_large_aggregate_pass + bool_conversion_pass, bool_logic_pass + bool_none_pass, bool_failure + bool_aggregate_failure + bool_large_aggregate_failure + bool_conversion_failure, bool_logic_failure + bool_none_failure])
     let int_status = sum_statuses([int_order_pass, int_boundary_pass, int_order_failure, int_boundary_failure])

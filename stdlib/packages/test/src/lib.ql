@@ -326,12 +326,16 @@ pub fn expect_bool_array_none[N](values: [Bool; N], expected: Bool) -> Int {
     return expect_bool_eq(true, expected)
 }
 
+pub fn expect_array_reverse[T, N](values: [T; N], expected_first: T, expected_last: T) -> Int {
+    return expect_eq(values[N - 1], expected_first) + expect_eq(values[0], expected_last)
+}
+
 pub fn expect_int_array_reverse[N](values: [Int; N], expected_first: Int, expected_last: Int) -> Int {
-    return expect_int_eq(values[N - 1], expected_first) + expect_int_eq(values[0], expected_last)
+    return expect_array_reverse(values, expected_first, expected_last)
 }
 
 pub fn expect_bool_array_reverse[N](values: [Bool; N], expected_first: Bool, expected_last: Bool) -> Int {
-    return expect_bool_eq(values[N - 1], expected_first) + expect_bool_eq(values[0], expected_last)
+    return expect_array_reverse(values, expected_first, expected_last)
 }
 
 pub fn expect_int_ne(actual: Int, unexpected: Int) -> Int {

@@ -14,7 +14,7 @@
 - dependency generic bridge 支持 wrapper specialization 内继续直调同模块 generic helper。
 - dependency generic bridge 可从外层调用参数/返回上下文推断嵌套 direct-call specialization。
 - 单文件和 project 入口共用本地 generic free function direct-call specialization。
-- `std.test` 聚合断言、顺序断言和状态合并已使用 length-generic 数组入口。
+- `std.test` 数组 access/query/reverse 断言、聚合断言、顺序断言和状态合并已使用 length-generic 数组入口。
 - package-local smoke 的状态聚合已使用 length-generic 数组 helper，不再保留 `sum4` / `sum6` 这类测试内固定 arity helper。
 - `std.test` 已有 generic `expect_option_*` / `expect_result_*` 断言，package-local smoke 直接覆盖 generic carrier 语义。
 - `ql project init --stdlib` 已生成可 `check/run/test` 的模板。
