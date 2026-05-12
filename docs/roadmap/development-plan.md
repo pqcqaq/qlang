@@ -27,7 +27,7 @@
 - 抽 `ql-cli` project pipeline，统一 `check/build/run/test/project build` 的 request context、target selection、dependency/interface prep 和 reporting。
 - 收紧 `ql test`，继续把测试专用 bridge/source override 抽进共享 project pipeline，并扩大 dependency consumer smoke 覆盖。
 - 建立 LSP workspace index，让 diagnostics、references、rename、symbols、semantic tokens 和 rich editor hints 走同一份分析缓存。
-- 收紧 generic backend：继续扩大 package-local tests、downstream smoke 和 dependency consumers 对 generic public functions 的直接覆盖；保留未推断调用的显式错误，但不让未使用 import 触发 bridge 失败。
+- 收紧 generic backend：继续扩大 package-local tests、downstream smoke 和 dependency consumers 对 generic public functions 的直接覆盖；下一步补 dependency generic body 内跨依赖导入 generic helper 的 specialization；保留未推断调用的显式错误，但不让未使用 import 触发 bridge 失败。
 - 继续把 `project init --stdlib` 的真实模板、stdlib examples 和 downstream smoke 作为同一套可验证入口维护。
 - 保持 README、roadmap、stdlib、VSCode 文档与实现同步。
 

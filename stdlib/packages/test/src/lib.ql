@@ -99,6 +99,16 @@ pub fn expect_array_count[T, N](values: [T; N], needle: T, expected: Int) -> Int
     return expect_eq(count, expected)
 }
 
+pub fn expect_array_eq[T, N](actual: [T; N], expected: [T; N]) -> Int {
+    var status = 0
+    var index = 0
+    for value in actual {
+        status = status + expect_eq(value, expected[index]);
+        index = index + 1
+    }
+    return status
+}
+
 pub fn expect_true(value: Bool) -> Int {
     if value {
         return 0
@@ -326,16 +336,24 @@ pub fn expect_bool_array_none[N](values: [Bool; N], expected: Bool) -> Int {
     return expect_bool_eq(true, expected)
 }
 
-pub fn expect_array_reverse[T, N](values: [T; N], expected_first: T, expected_last: T) -> Int {
-    return expect_eq(values[N - 1], expected_first) + expect_eq(values[0], expected_last)
+pub fn expect_array_reverse[T, N](values: [T; N], expected: [T; N]) -> Int {
+    var status = 0
+    var index = 0
+    for value in expected {
+        if values[N - index - 1] != value {
+            status = status + 1
+        };
+        index = index + 1
+    }
+    return status
 }
 
-pub fn expect_int_array_reverse[N](values: [Int; N], expected_first: Int, expected_last: Int) -> Int {
-    return expect_array_reverse(values, expected_first, expected_last)
+pub fn expect_int_array_reverse[N](values: [Int; N], expected: [Int; N]) -> Int {
+    return expect_array_reverse(values, expected)
 }
 
-pub fn expect_bool_array_reverse[N](values: [Bool; N], expected_first: Bool, expected_last: Bool) -> Int {
-    return expect_array_reverse(values, expected_first, expected_last)
+pub fn expect_bool_array_reverse[N](values: [Bool; N], expected: [Bool; N]) -> Int {
+    return expect_array_reverse(values, expected)
 }
 
 pub fn expect_int_ne(actual: Int, unexpected: Int) -> Int {
