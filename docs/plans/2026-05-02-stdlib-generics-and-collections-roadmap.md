@@ -11,7 +11,7 @@
 - `std.option` / `std.result` 只保留 generic carrier API；`IntOption` / `BoolOption` / `IntResult` / `BoolResult` 等 concrete carrier API 已删除。
 - 数组长度泛型参数可作为 `Int` 值读取。
 - 重复数组字面量 `[value; N]` 支持整数字面量长度和数组长度泛型。
-- dependency generic bridge 支持 wrapper specialization 内继续直调同模块 generic helper。
+- dependency generic bridge 支持 wrapper specialization 内继续直调同模块 generic helper，也支持 dependency generic body 内调用直接依赖导入的 generic helper。
 - dependency generic bridge 可从外层调用参数/返回上下文推断嵌套 direct-call specialization。
 - 单文件和 project 入口共用本地 generic free function direct-call specialization。
 - `std.test` 数组 equality/access/query/reverse 断言、聚合断言、顺序断言和状态合并已使用 length-generic 数组入口；reverse 断言比较完整反转结果。

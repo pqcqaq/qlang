@@ -7106,6 +7106,50 @@ struct PackageBridgeModule {
     module: Module,
 }
 
+struct DependencyGenericSpecializationSourceModule {
+    module_import_path: Vec<String>,
+    source: String,
+    module: Module,
+}
+
+fn dependency_generic_specialization_module_refs(
+    modules: &[DependencyGenericSpecializationSourceModule],
+) -> Vec<dependency_generic_bridge::SpecializationModule<'_>> {
+    modules
+        .iter()
+        .map(|module| dependency_generic_bridge::SpecializationModule {
+            module_import_path: &module.module_import_path,
+            contents: &module.source,
+            module: &module.module,
+        })
+        .collect()
+}
+
+enum DependencyGenericSpecializationModuleLoadError {
+    DependencyManifest {
+        manifest_path: PathBuf,
+        error: ql_project::ProjectError,
+    },
+    DependencyInterface {
+        dependency_manifest_path: PathBuf,
+        dependency_package: String,
+        interface_path: PathBuf,
+        message: String,
+    },
+    DependencySourceRead {
+        dependency_manifest_path: PathBuf,
+        dependency_package: String,
+        source_path: PathBuf,
+        message: String,
+    },
+    DependencySourceParse {
+        dependency_manifest_path: PathBuf,
+        dependency_package: String,
+        source_path: PathBuf,
+        message: String,
+    },
+}
+
 fn package_under_test_bridge_modules(
     command_label: &str,
     member: &WorkspaceBuildTargets,
@@ -7139,6 +7183,188 @@ fn package_under_test_bridge_modules(
     Ok(modules)
 }
 
+fn dependency_generic_specialization_modules(
+    command_label: &str,
+    owner_manifest: &ql_project::ProjectManifest,
+    report_failure: bool,
+) -> Result<Vec<DependencyGenericSpecializationSourceModule>, u8> {
+    let dependencies = load_reference_manifests(owner_manifest).map_err(|error| {
+        if report_failure {
+            report_project_build_dependency_error(
+                command_label,
+                Some(&owner_manifest.manifest_path),
+                &error,
+            );
+        }
+        1
+    })?;
+    load_dependency_generic_specialization_modules_from_dependencies(&dependencies).map_err(
+        |error| {
+            if report_failure {
+                report_dependency_generic_specialization_module_load_error(
+                    command_label,
+                    owner_manifest,
+                    &error,
+                );
+            }
+            1
+        },
+    )
+}
+
+fn dependency_generic_specialization_modules_quiet(
+    owner_manifest: &ql_project::ProjectManifest,
+) -> Result<Vec<DependencyGenericSpecializationSourceModule>, PrepareProjectTargetBuildError> {
+    let dependencies = load_reference_manifests(owner_manifest)
+        .map_err(|error| target_prep_dependency_manifest_failure(None, &error))?;
+    load_dependency_generic_specialization_modules_from_dependencies(&dependencies)
+        .map_err(dependency_generic_specialization_module_load_error_to_target_prep_error)
+}
+
+fn load_dependency_generic_specialization_modules_from_dependencies(
+    dependencies: &[ql_project::ProjectManifest],
+) -> Result<
+    Vec<DependencyGenericSpecializationSourceModule>,
+    DependencyGenericSpecializationModuleLoadError,
+> {
+    let mut modules = Vec::new();
+    for dependency in dependencies {
+        let dependency_package = package_name(dependency)
+            .map(str::to_owned)
+            .map_err(|error| {
+                DependencyGenericSpecializationModuleLoadError::DependencyManifest {
+                    manifest_path: dependency.manifest_path.clone(),
+                    error,
+                }
+            })?;
+        let interface_path = default_interface_path(dependency).map_err(|error| {
+            DependencyGenericSpecializationModuleLoadError::DependencyManifest {
+                manifest_path: dependency.manifest_path.clone(),
+                error,
+            }
+        })?;
+        let artifact = load_interface_artifact(&interface_path).map_err(|error| {
+            DependencyGenericSpecializationModuleLoadError::DependencyInterface {
+                dependency_manifest_path: dependency.manifest_path.clone(),
+                dependency_package: dependency_package.clone(),
+                interface_path: interface_path.clone(),
+                message: format!(
+                    "failed to load referenced package interface `{}`: {error}",
+                    normalize_path(&interface_path)
+                ),
+            }
+        })?;
+        for module in &artifact.modules {
+            let dependency_source_path =
+                dependency_module_source_path(&dependency.manifest_path, &module.source_path);
+            let source = fs::read_to_string(&dependency_source_path).map_err(|error| {
+                DependencyGenericSpecializationModuleLoadError::DependencySourceRead {
+                    dependency_manifest_path: dependency.manifest_path.clone(),
+                    dependency_package: dependency_package.clone(),
+                    source_path: dependency_source_path.clone(),
+                    message: format!(
+                        "failed to access dependency source `{}`: {error}",
+                        normalize_path(&dependency_source_path)
+                    ),
+                }
+            })?;
+            let parsed = parse_source(&source).map_err(|_| {
+                DependencyGenericSpecializationModuleLoadError::DependencySourceParse {
+                    dependency_manifest_path: dependency.manifest_path.clone(),
+                    dependency_package: dependency_package.clone(),
+                    source_path: dependency_source_path.clone(),
+                    message: format!(
+                        "failed to parse dependency source `{}` while preparing imported generic helper specializations",
+                        normalize_path(&dependency_source_path)
+                    ),
+                }
+            })?;
+            let module_import_path =
+                dependency_interface_module_import_path(&dependency_package, &parsed);
+            modules.push(DependencyGenericSpecializationSourceModule {
+                module_import_path,
+                source,
+                module: parsed,
+            });
+        }
+    }
+    Ok(modules)
+}
+
+fn report_dependency_generic_specialization_module_load_error(
+    command_label: &str,
+    owner_manifest: &ql_project::ProjectManifest,
+    error: &DependencyGenericSpecializationModuleLoadError,
+) {
+    match error {
+        DependencyGenericSpecializationModuleLoadError::DependencyManifest {
+            manifest_path,
+            error,
+        } => report_project_build_dependency_error(command_label, Some(manifest_path), error),
+        DependencyGenericSpecializationModuleLoadError::DependencyInterface { message, .. }
+        | DependencyGenericSpecializationModuleLoadError::DependencySourceRead {
+            message, ..
+        } => {
+            eprintln!("error: {command_label} {message}");
+            eprintln!(
+                "note: while preparing imported generic helper specializations for `{}`",
+                normalize_path(&owner_manifest.manifest_path)
+            );
+        }
+        DependencyGenericSpecializationModuleLoadError::DependencySourceParse {
+            dependency_package,
+            message,
+            ..
+        } => {
+            eprintln!("error: {command_label} {message}");
+            eprintln!("note: dependency package: `{dependency_package}`");
+        }
+    }
+}
+
+fn dependency_generic_specialization_module_load_error_to_target_prep_error(
+    error: DependencyGenericSpecializationModuleLoadError,
+) -> PrepareProjectTargetBuildError {
+    match error {
+        DependencyGenericSpecializationModuleLoadError::DependencyManifest {
+            manifest_path,
+            error,
+        } => target_prep_dependency_manifest_failure(Some(&manifest_path), &error),
+        DependencyGenericSpecializationModuleLoadError::DependencyInterface {
+            dependency_manifest_path,
+            dependency_package,
+            interface_path,
+            message,
+        } => PrepareProjectTargetBuildError {
+            failure_kind: PrepareProjectTargetBuildFailureKind::DependencyInterface {
+                dependency_manifest_path,
+                dependency_package,
+                interface_path,
+                message,
+            },
+        },
+        DependencyGenericSpecializationModuleLoadError::DependencySourceRead {
+            dependency_manifest_path,
+            dependency_package,
+            source_path,
+            message,
+        }
+        | DependencyGenericSpecializationModuleLoadError::DependencySourceParse {
+            dependency_manifest_path,
+            dependency_package,
+            source_path,
+            message,
+        } => PrepareProjectTargetBuildError {
+            failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
+                dependency_manifest_path,
+                dependency_package,
+                source_path,
+                message,
+            },
+        },
+    }
+}
+
 fn render_package_under_test_bridge_items(
     command_label: &str,
     workspace_members: &[WorkspaceBuildTargets],
@@ -7161,6 +7387,16 @@ fn render_package_under_test_bridge_items(
     }
 
     let package_name = member.package_name.as_str();
+    let owner_manifest = load_project_manifest(manifest_path).map_err(|error| {
+        if report_failure {
+            report_project_build_dependency_error(command_label, Some(manifest_path), &error);
+        }
+        1
+    })?;
+    let specialization_modules =
+        dependency_generic_specialization_modules(command_label, &owner_manifest, report_failure)?;
+    let specialization_modules =
+        dependency_generic_specialization_module_refs(&specialization_modules);
     let module_import_paths = bridge_modules
         .iter()
         .map(|module| dependency_interface_module_import_path(package_name, &module.module))
@@ -7184,6 +7420,7 @@ fn render_package_under_test_bridge_items(
             Some(&imported_externs),
             None,
             &occupied_root_names,
+            &specialization_modules,
             &mut required_types_by_module_path,
             &mut function_owners,
             &mut forwarders,
@@ -7824,6 +8061,10 @@ fn render_direct_dependency_public_function_forwarders(
             }
             1
         })?;
+        let specialization_modules =
+            dependency_generic_specialization_modules(command_label, &dependency, report_failure)?;
+        let specialization_modules =
+            dependency_generic_specialization_module_refs(&specialization_modules);
         collect_dependency_public_function_forwarders_from_modules(
             &dependency_package,
             &dependency.manifest_path,
@@ -7831,6 +8072,7 @@ fn render_direct_dependency_public_function_forwarders(
             &root_source_module,
             required_functions_by_module_path,
             &occupied_root_names,
+            &specialization_modules,
             &mut required_types_by_module_path,
             &mut owners_by_symbol,
             &mut forwarders,
@@ -7974,6 +8216,10 @@ fn render_direct_dependency_public_function_forwarders_quiet(
                 },
             }
         })?;
+        let specialization_modules =
+            dependency_generic_specialization_modules_quiet(&dependency_manifest)?;
+        let specialization_modules =
+            dependency_generic_specialization_module_refs(&specialization_modules);
         collect_dependency_public_function_forwarders_from_modules(
             &dependency_package,
             &dependency_manifest.manifest_path,
@@ -7981,6 +8227,7 @@ fn render_direct_dependency_public_function_forwarders_quiet(
             &root_source_module,
             required_functions_by_module_path,
             &occupied_root_names,
+            &specialization_modules,
             &mut required_types_by_module_path,
             &mut owners_by_symbol,
             &mut forwarders,
@@ -8038,6 +8285,7 @@ fn collect_dependency_public_function_forwarders_from_modules<E>(
     root_source_module: &Module,
     required_functions_by_module_path: &BTreeMap<Vec<String>, BTreeSet<String>>,
     occupied_root_names: &BTreeSet<String>,
+    specialization_modules: &[dependency_generic_bridge::SpecializationModule<'_>],
     required_types_by_module_path: &mut BTreeMap<Vec<String>, BTreeSet<String>>,
     owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
     forwarders: &mut Vec<String>,
@@ -8067,6 +8315,7 @@ fn collect_dependency_public_function_forwarders_from_modules<E>(
             Some(&imported_externs),
             required_functions_by_module_path.get(&module_import_path),
             occupied_root_names,
+            specialization_modules,
             required_types_by_module_path,
             owners_by_symbol,
             forwarders,
@@ -9189,6 +9438,7 @@ fn collect_dependency_module_public_function_forwarders(
     imported_externs: Option<&ImportedDependencyExterns>,
     required_function_names: Option<&BTreeSet<String>>,
     occupied_root_names: &BTreeSet<String>,
+    specialization_modules: &[dependency_generic_bridge::SpecializationModule<'_>],
     required_types_by_module_path: &mut BTreeMap<Vec<String>, BTreeSet<String>>,
     owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
     forwarders: &mut Vec<String>,
@@ -9213,12 +9463,13 @@ fn collect_dependency_module_public_function_forwarders(
         }
         if dependency_generic_bridge::supports_public_function_specialization(function) {
             let rendered =
-                match dependency_generic_bridge::render_public_function_specialization_status(
+                match dependency_generic_bridge::render_public_function_specialization_status_with_context(
                     &module_import_path,
                     function,
                     contents,
                     root_module,
                     module,
+                    specialization_modules,
                     rendered_specializations,
                 ) {
                     dependency_generic_bridge::PublicFunctionSpecializationRender::Rendered(

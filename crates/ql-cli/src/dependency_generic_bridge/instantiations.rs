@@ -298,10 +298,26 @@ pub(super) fn collect_specialized_body_call_instantiations(
     caller_substitutions: &TypeSubstitutions,
     function_bindings: &FunctionTypeBindings,
 ) -> Vec<PublicFunctionCallInstantiation> {
+    let local_names = BTreeSet::from([target_function.name.clone()]);
+    collect_specialized_body_call_instantiations_for_local_names(
+        caller_function,
+        target_function,
+        &local_names,
+        caller_substitutions,
+        function_bindings,
+    )
+}
+
+pub(super) fn collect_specialized_body_call_instantiations_for_local_names(
+    caller_function: &FunctionDecl,
+    target_function: &FunctionDecl,
+    local_names: &BTreeSet<String>,
+    caller_substitutions: &TypeSubstitutions,
+    function_bindings: &FunctionTypeBindings,
+) -> Vec<PublicFunctionCallInstantiation> {
     let Some(body) = &caller_function.body else {
         return Vec::new();
     };
-    let local_names = BTreeSet::from([target_function.name.clone()]);
     let mut bindings = ValueTypeBindings::new();
     collect_function_param_type_bindings_with_substitutions(
         caller_function,
@@ -312,7 +328,7 @@ pub(super) fn collect_specialized_body_call_instantiations(
     let mut saw_call = false;
     collect_dependency_generic_function_instantiations_from_block(
         body,
-        &local_names,
+        local_names,
         target_function,
         &mut bindings,
         function_bindings,
@@ -337,7 +353,7 @@ fn collect_root_value_type_bindings(root_module: &Module) -> ValueTypeBindings {
     bindings
 }
 
-fn dependency_imported_local_names(
+pub(super) fn dependency_imported_local_names(
     root_module: &Module,
     module_import_path: &[String],
     symbol_name: &str,

@@ -23,6 +23,13 @@ pub enum PublicFunctionSpecializationRender {
     Rendered(RenderedPublicFunctionSpecializations),
 }
 
+#[derive(Clone, Copy)]
+pub struct SpecializationModule<'a> {
+    pub module_import_path: &'a [String],
+    pub contents: &'a str,
+    pub module: &'a Module,
+}
+
 pub fn supports_public_function_specialization(function: &FunctionDecl) -> bool {
     function.visibility == Visibility::Public && supports_local_function_specialization(function)
 }
@@ -62,6 +69,7 @@ pub fn render_public_function_specializations(
     }
 }
 
+#[cfg(test)]
 pub fn render_public_function_specialization_status(
     module_import_path: &[String],
     function: &FunctionDecl,
@@ -70,11 +78,31 @@ pub fn render_public_function_specialization_status(
     dependency_module: &Module,
     rendered_specializations: &mut BTreeSet<String>,
 ) -> PublicFunctionSpecializationRender {
+    render_public_function_specialization_status_with_context(
+        module_import_path,
+        function,
+        contents,
+        root_module,
+        dependency_module,
+        &[],
+        rendered_specializations,
+    )
+}
+
+pub fn render_public_function_specialization_status_with_context(
+    module_import_path: &[String],
+    function: &FunctionDecl,
+    contents: &str,
+    root_module: &Module,
+    dependency_module: &Module,
+    specialization_modules: &[SpecializationModule<'_>],
+    rendered_specializations: &mut BTreeSet<String>,
+) -> PublicFunctionSpecializationRender {
     if !supports_public_function_specialization(function) || function.body.is_none() {
         return PublicFunctionSpecializationRender::Unsupported;
     }
     let dependency_function_bindings =
-        instantiations::collect_local_function_type_bindings(dependency_module);
+        collect_specialization_function_type_bindings(dependency_module, specialization_modules);
     let mut root_function_bindings =
         instantiations::collect_local_function_type_bindings(root_module);
     root_function_bindings.extend(instantiations::collect_imported_function_type_bindings(
@@ -97,6 +125,7 @@ pub fn render_public_function_specialization_status(
         contents,
         dependency_module,
         &dependency_function_bindings,
+        specialization_modules,
         call_instantiations.instantiations,
         rendered_specializations,
     ) {
@@ -130,6 +159,7 @@ pub fn render_local_function_specializations(
         contents,
         root_module,
         &instantiations::collect_local_function_type_bindings(root_module),
+        &[],
         call_instantiations,
         rendered_specializations,
     )
@@ -141,6 +171,7 @@ fn render_function_specializations(
     contents: &str,
     specialization_module: &Module,
     function_bindings: &instantiations::FunctionTypeBindings,
+    specialization_modules: &[SpecializationModule<'_>],
     call_instantiations: Vec<instantiations::PublicFunctionCallInstantiation>,
     rendered_specializations: &mut BTreeSet<String>,
 ) -> Option<RenderedPublicFunctionSpecializations> {
@@ -167,6 +198,7 @@ fn render_function_specializations(
             contents,
             specialization_module,
             function_bindings,
+            specialization_modules,
             substitutions,
             rendered_specializations,
             &mut declarations,
@@ -198,6 +230,7 @@ fn render_public_function_specialized_forwarder(
     contents: &str,
     specialization_module: &Module,
     function_bindings: &instantiations::FunctionTypeBindings,
+    specialization_modules: &[SpecializationModule<'_>],
     substitutions: &BTreeMap<String, String>,
     rendered_specializations: &mut BTreeSet<String>,
     declarations: &mut Vec<String>,
@@ -246,6 +279,7 @@ fn render_public_function_specialized_forwarder(
                 contents,
                 specialization_module,
                 function_bindings,
+                specialization_modules,
                 &instantiation.substitutions,
                 rendered_specializations,
                 declarations,
@@ -261,6 +295,16 @@ fn render_public_function_specialized_forwarder(
             });
         }
     }
+    collect_imported_specialized_body_call_rewrites(
+        function,
+        specialization_module,
+        function_bindings,
+        specialization_modules,
+        substitutions,
+        rendered_specializations,
+        declarations,
+        &mut body_call_rewrites,
+    )?;
 
     let body_span = function.body.as_ref()?.span;
     let body_source = span_text(contents, body_span);
@@ -274,6 +318,103 @@ fn render_public_function_specialized_forwarder(
     declarations.push(format!(
         "fn {specialized_name}{generic_params}({params}){return_suffix} {body}"
     ));
+    Some(())
+}
+
+fn collect_specialization_function_type_bindings(
+    dependency_module: &Module,
+    specialization_modules: &[SpecializationModule<'_>],
+) -> instantiations::FunctionTypeBindings {
+    let mut bindings = instantiations::collect_local_function_type_bindings(dependency_module);
+    for module in specialization_modules {
+        bindings.extend(instantiations::collect_local_function_type_bindings(
+            module.module,
+        ));
+    }
+    for target in specialization_modules {
+        bindings.extend(instantiations::collect_imported_function_type_bindings(
+            dependency_module,
+            target.module_import_path,
+            target.module,
+        ));
+    }
+    for caller in specialization_modules {
+        for target in specialization_modules {
+            bindings.extend(instantiations::collect_imported_function_type_bindings(
+                caller.module,
+                target.module_import_path,
+                target.module,
+            ));
+        }
+    }
+    bindings
+}
+
+fn collect_imported_specialized_body_call_rewrites(
+    function: &FunctionDecl,
+    specialization_module: &Module,
+    function_bindings: &instantiations::FunctionTypeBindings,
+    specialization_modules: &[SpecializationModule<'_>],
+    substitutions: &BTreeMap<String, String>,
+    rendered_specializations: &mut BTreeSet<String>,
+    declarations: &mut Vec<String>,
+    body_call_rewrites: &mut Vec<SourceRewrite>,
+) -> Option<()> {
+    for target_module in specialization_modules {
+        for item in &target_module.module.items {
+            let ItemKind::Function(callee) = &item.kind else {
+                continue;
+            };
+            if !supports_public_function_specialization(callee) || callee.body.is_none() {
+                continue;
+            }
+            let local_names = instantiations::dependency_imported_local_names(
+                specialization_module,
+                target_module.module_import_path,
+                callee.name.as_str(),
+            );
+            if local_names.is_empty() {
+                continue;
+            }
+            for instantiation in
+                instantiations::collect_specialized_body_call_instantiations_for_local_names(
+                    function,
+                    callee,
+                    &local_names,
+                    substitutions,
+                    function_bindings,
+                )
+            {
+                if callee
+                    .generics
+                    .iter()
+                    .any(|generic| !instantiation.substitutions.contains_key(&generic.name))
+                {
+                    return None;
+                }
+                render_public_function_specialized_forwarder(
+                    target_module.module_import_path,
+                    callee,
+                    target_module.contents,
+                    target_module.module,
+                    function_bindings,
+                    specialization_modules,
+                    &instantiation.substitutions,
+                    rendered_specializations,
+                    declarations,
+                )?;
+                body_call_rewrites.push(SourceRewrite {
+                    span: instantiation.callee_span,
+                    replacement: dependency_public_function_specialized_local_forwarder_name(
+                        target_module.module_import_path,
+                        &callee.name,
+                        callee,
+                        &instantiation.substitutions,
+                    ),
+                });
+            }
+        }
+    }
     Some(())
 }
 
@@ -576,6 +717,75 @@ fn score[N](values: [Int; N]) -> Int {
         assert_eq!(
             rendered.call_rewrites[0].replacement,
             "__ql_bridge_local_dep_mirror_sum__generic_N"
+        );
+    }
+
+    #[test]
+    fn public_specialization_rewrites_imported_dependency_generic_body_calls() {
+        let helper_source = r#"
+package helper
+
+pub fn reverse_array[T, N](values: [T; N]) -> [T; N] {
+    return values
+}
+"#;
+        let dependency_source = r#"
+package dep
+
+use helper.reverse_array as reverse_array
+
+pub fn reverse_wrapped[T, N](values: [T; N]) -> [T; N] {
+    return reverse_array(values)
+}
+"#;
+        let helper = parse_module(helper_source);
+        let dependency = parse_module(dependency_source);
+        let root = parse_module(
+            r#"
+use dep.reverse_wrapped as reverse_wrapped
+
+fn run() -> [String; 3] {
+    return reverse_wrapped(["north", "east", "south"])
+}
+"#,
+        );
+        let helper_import_path = vec!["helper".to_owned()];
+        let helper_module = SpecializationModule {
+            module_import_path: &helper_import_path,
+            contents: helper_source,
+            module: &helper,
+        };
+
+        let rendered = render_public_function_specialization_status_with_context(
+            &["dep".to_owned()],
+            function(&dependency, "reverse_wrapped"),
+            dependency_source,
+            &root,
+            &dependency,
+            &[helper_module],
+            &mut BTreeSet::new(),
+        );
+        let PublicFunctionSpecializationRender::Rendered(rendered) = rendered else {
+            panic!("reverse_wrapped should render imported helper specialization");
+        };
+
+        assert!(rendered.declarations.contains(
+            "fn __ql_bridge_local_helper_reverse_array__generic_String_3(values: [String; 3]) -> [String; 3]"
+        ));
+        assert!(
+            rendered.declarations.contains(
+                "return __ql_bridge_local_helper_reverse_array__generic_String_3(values)"
+            )
+        );
+        assert!(
+            !rendered
+                .declarations
+                .contains("return reverse_array(values)")
+        );
+        assert_eq!(rendered.call_rewrites.len(), 1);
+        assert_eq!(
+            rendered.call_rewrites[0].replacement,
+            "__ql_bridge_local_dep_reverse_wrapped__generic_String_3"
         );
     }
 }

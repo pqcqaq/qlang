@@ -40,6 +40,7 @@ use std.core.remainder_or_zero_int as remainder_or_zero_int
 use std.core.sign_int as sign_int
 use std.core.upper_bound_int as upper_bound_int
 use std.core.xor_bool as xor_bool
+use std.array.reverse_array as reverse_array
 use std.option.Option as Option
 use std.result.Result as Result
 
@@ -337,15 +338,7 @@ pub fn expect_bool_array_none[N](values: [Bool; N], expected: Bool) -> Int {
 }
 
 pub fn expect_array_reverse[T, N](values: [T; N], expected: [T; N]) -> Int {
-    var status = 0
-    var index = 0
-    for value in expected {
-        if values[N - index - 1] != value {
-            status = status + 1
-        };
-        index = index + 1
-    }
-    return status
+    return expect_array_eq(reverse_array(values), expected)
 }
 
 pub fn expect_int_array_reverse[N](values: [Int; N], expected: [Int; N]) -> Int {

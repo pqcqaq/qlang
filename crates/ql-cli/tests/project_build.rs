@@ -1868,6 +1868,152 @@ fn main() -> Int {
 }
 
 #[test]
+fn build_package_path_json_supports_dependency_generic_wrapper_calling_imported_generic_helper() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-json-generic-imported-helper");
+    let helper_root = temp.path().join("helper");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(helper_root.join("src"))
+        .expect("create helper source tree for imported generic helper");
+    std::fs::create_dir_all(dep_root.join("src"))
+        .expect("create dep source tree for imported generic helper");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create app source tree for imported generic helper");
+
+    let helper_manifest = temp.write(
+        "helper/qlang.toml",
+        r#"
+[package]
+name = "helper"
+"#,
+    );
+    temp.write(
+        "helper/src/lib.ql",
+        r#"
+pub fn reverse_array[T, N](values: [T; N]) -> [T; N] {
+    var result = values
+    var index = 0
+    for value in values {
+        result[index] = values[N - index - 1];
+        index = index + 1
+    }
+    return result
+}
+"#,
+    );
+    let dep_manifest = temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+
+[dependencies]
+helper = "../helper"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        r#"
+use helper.reverse_array as reverse_array
+
+pub fn reverse_wrapped[T, N](values: [T; N]) -> [T; N] {
+    return reverse_array(values)
+}
+"#,
+    );
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "app/src/main.ql",
+        r#"
+use dep.reverse_wrapped as reverse_wrapped
+
+fn main() -> Int {
+    let reversed: [Int; 3] = reverse_wrapped([7, 8, 9])
+    return reversed[0] + reversed[1] + reversed[2]
+}
+"#,
+    );
+
+    let helper_output = static_library_output_path(&helper_root.join("target/ql/debug"), "lib");
+    let dep_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let app_output = project_root.join("target/ql/debug/main.ll");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` dependency generic wrapper calling imported generic helper",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-package-json-generic-imported-helper",
+        "package build json dependency generic wrapper calling imported generic helper",
+        &output,
+    )
+    .expect("package-path `ql build --json` should specialize imported generic helper wrappers");
+    expect_empty_stderr(
+        "project-build-package-json-generic-imported-helper",
+        "package build json dependency generic wrapper calling imported generic helper",
+        &stderr,
+    )
+    .expect("imported generic helper json build should not print stderr");
+
+    let json = parse_json_output(
+        "project-build-package-json-generic-imported-helper",
+        &stdout,
+    );
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(json["status"], "ok");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    let built_targets = json["built_targets"]
+        .as_array()
+        .expect("imported generic helper json should expose built_targets");
+    assert_eq!(built_targets.len(), 3);
+    assert_eq!(
+        built_targets[0]["manifest_path"],
+        helper_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        built_targets[1]["manifest_path"],
+        dep_manifest.display().to_string().replace('\\', "/")
+    );
+    expect_file_exists(
+        "project-build-package-json-generic-imported-helper",
+        &helper_output,
+        "transitive helper package artifact",
+        "package build json dependency generic wrapper calling imported generic helper",
+    )
+    .expect("imported generic helper build should preserve the helper artifact");
+    expect_file_exists(
+        "project-build-package-json-generic-imported-helper",
+        &dep_output,
+        "dependency package artifact",
+        "package build json dependency generic wrapper calling imported generic helper",
+    )
+    .expect("imported generic helper build should preserve the dependency artifact");
+    expect_file_exists(
+        "project-build-package-json-generic-imported-helper",
+        &app_output,
+        "selected package artifact",
+        "package build json dependency generic wrapper calling imported generic helper",
+    )
+    .expect("imported generic helper build should emit the selected artifact");
+}
+
+#[test]
 fn build_package_path_json_supports_local_generic_array_length_wrapper_function() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-package-json-local-generic-wrapper");
