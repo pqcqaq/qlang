@@ -1893,18 +1893,23 @@ pub fn sum_values[N](values: [Int; N]) -> Int {
     return total
 }
 
-pub fn sum3_values(values: [Int; 3]) -> Int {
+pub fn sum_wrapped_values[N](values: [Int; N]) -> Int {
     return sum_values(values)
+}
+
+pub fn sample_total() -> Int {
+    return sum_wrapped_values([1, 2, 3])
 }
 "#,
     );
+    let interface_output = project_root.join("app.qi");
 
     let mut command = ql_command(&workspace_root);
     command.current_dir(temp.path());
     command
         .args(["build"])
         .arg(&project_root)
-        .args(["--lib", "--json"]);
+        .args(["--lib", "--emit-interface", "--json"]);
     let output = run_command_capture(
         &mut command,
         "`ql build --lib --json` local generic wrapper function",
@@ -1929,6 +1934,27 @@ pub fn sum3_values(values: [Int; 3]) -> Int {
         app_manifest.display().to_string().replace('\\', "/")
     );
     assert_eq!(json["status"], "ok");
+    expect_file_exists(
+        "project-build-package-json-local-generic-wrapper",
+        &interface_output,
+        "package interface artifact",
+        "package build json local generic wrapper function",
+    )
+    .expect("local generic wrapper json build should emit the package interface");
+
+    let interface = read_normalized_file(&interface_output, "local generic wrapper interface");
+    assert!(
+        interface.contains("pub fn sum_values[N](values: [Int; N]) -> Int"),
+        "local generic wrapper interface should preserve generic helper declaration:\n{interface}"
+    );
+    assert!(
+        interface.contains("pub fn sum_wrapped_values[N](values: [Int; N]) -> Int"),
+        "local generic wrapper interface should preserve generic wrapper declaration:\n{interface}"
+    );
+    assert!(
+        interface.contains("pub fn sample_total() -> Int"),
+        "local generic wrapper interface should preserve concrete caller declaration:\n{interface}"
+    );
 }
 
 #[test]

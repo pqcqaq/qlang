@@ -43,6 +43,7 @@
 ## 代码整理规则
 
 - 不新增 `foo3/foo4/foo5` 这类固定 arity API；先补泛型、数组初始化或可变参数等语言能力。
+- compiler regression fixture 也遵守同一规则；用 length-generic wrapper 加具体 caller 触发实例化，不用 `sum3_*` 这类假 API。
 - 不在 LSP 里复制语义规则；缺能力先补 `ql-analysis` query。
 - 不把测试 fixture 写进生产路径。
 - 大文件拆分必须行为不变，并用现有回归证明。
