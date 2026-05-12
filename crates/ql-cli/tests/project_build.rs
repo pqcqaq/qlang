@@ -1785,7 +1785,7 @@ pub fn first[T, N](values: [T; N]) -> T {
     return values[0]
 }
 
-pub fn first3[T](values: [T; 3]) -> T {
+pub fn first_wrapped[T, N](values: [T; N]) -> T {
     return first(values)
 }
 "#,
@@ -1803,10 +1803,10 @@ dep = "../dep"
     temp.write(
         "app/src/main.ql",
         r#"
-use dep.first3 as first3
+use dep.first_wrapped as first_wrapped
 
 fn main() -> Int {
-    return first3([7, 8, 9])
+    return first_wrapped([7, 8, 9])
 }
 "#,
     );

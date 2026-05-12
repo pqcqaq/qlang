@@ -2176,18 +2176,18 @@ fn run(flag: Bool) -> Int {
             r#"
 package dep
 
-pub fn first3[T](values: [T; 3]) -> T {
+pub fn fixed_first[T](values: [T; 3]) -> T {
     return values[0]
 }
 "#,
         );
         let root = parse_module(
             r#"
-use dep.first3 as first3
+use dep.fixed_first as fixed_first
 
 fn run() -> Int {
-    let value: Int = first3([1, 2 + 3, 4])
-    let flag: Bool = first3([true, false, true])
+    let value: Int = fixed_first([1, 2 + 3, 4])
+    let flag: Bool = fixed_first([true, false, true])
     if flag {
         return value
     }
@@ -2199,7 +2199,7 @@ fn run() -> Int {
         let substitutions = collect_public_function_instantiations(
             &root,
             &["dep".to_owned()],
-            function(&dependency, "first3"),
+            function(&dependency, "fixed_first"),
         );
 
         assert_eq!(substitutions.len(), 2);

@@ -478,30 +478,30 @@ pub fn first[T, N](values: [T; N]) -> T {
     return values[0]
 }
 
-pub fn first3[T](values: [T; 3]) -> T {
+pub fn first_wrapped[T, N](values: [T; N]) -> T {
     return first(values)
 }
 "#;
         let dependency = parse_module(dependency_source);
         let root = parse_module(
             r#"
-use dep.first3 as first3
+use dep.first_wrapped as first_wrapped
 
 fn main() -> Int {
-    return first3([1, 2, 3])
+    return first_wrapped([1, 2, 3])
 }
 "#,
         );
 
         let rendered = render_public_function_specializations(
             &["dep".to_owned()],
-            function(&dependency, "first3"),
+            function(&dependency, "first_wrapped"),
             dependency_source,
             &root,
             &dependency,
             &mut BTreeSet::new(),
         )
-        .expect("first3 should render a concrete specialization");
+        .expect("first_wrapped should render a concrete specialization");
 
         assert!(
             rendered
@@ -517,7 +517,7 @@ fn main() -> Int {
         assert_eq!(rendered.call_rewrites.len(), 1);
         assert_eq!(
             rendered.call_rewrites[0].replacement,
-            "__ql_bridge_local_dep_first3__generic_Int"
+            "__ql_bridge_local_dep_first_wrapped__generic_Int_3"
         );
     }
 
