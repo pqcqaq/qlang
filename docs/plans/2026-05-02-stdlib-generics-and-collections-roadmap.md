@@ -16,7 +16,7 @@
 - 单文件和 project 入口共用本地 generic free function direct-call specialization。
 - `std.test` 聚合断言、顺序断言和状态合并已使用 length-generic 数组入口。
 - package-local smoke 的状态聚合已使用 length-generic 数组 helper，不再保留 `sum4` / `sum6` 这类测试内固定 arity helper。
-- `std.result` package-local smoke 直接覆盖 `to_option`、`ok_or`、`error_to_option`。
+- `std.test` 已有 generic `expect_option_*` / `expect_result_*` 断言，package-local smoke 直接覆盖 generic carrier 语义。
 - `ql project init --stdlib` 已生成可 `check/run/test` 的模板。
 
 ## 下一步顺序

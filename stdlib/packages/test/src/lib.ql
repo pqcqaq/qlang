@@ -42,9 +42,6 @@ use std.core.upper_bound_int as upper_bound_int
 use std.core.xor_bool as xor_bool
 use std.option.Option as Option
 use std.result.Result as Result
-use std.result.error_to_option as result_error_to_option
-use std.result.ok_or as result_ok_or
-use std.result.to_option as result_to_option
 
 pub fn expect_eq[T](actual: T, expected: T) -> Int {
     if actual == expected {
@@ -665,148 +662,197 @@ pub fn expect_bool_implies(left: Bool, right: Bool) -> Int {
     return 1
 }
 
-pub fn expect_int_option_some(value: Option[Int], expected: Int) -> Int {
+pub fn expect_option_some[T](value: Option[T], expected: T) -> Int {
     return match value {
-        Option.Some(inner) => expect_int_eq(inner, expected),
+        Option.Some(inner) => expect_eq(inner, expected),
         Option.None => 1,
     }
+}
+
+pub fn expect_option_none[T](value: Option[T]) -> Int {
+    return match value {
+        Option.Some(_) => 1,
+        Option.None => 0,
+    }
+}
+
+pub fn expect_option_or[T](value: Option[T], fallback: Option[T], expected: T) -> Int {
+    return match value {
+        Option.Some(inner) => expect_eq(inner, expected),
+        Option.None => expect_option_some(fallback, expected),
+    }
+}
+
+pub fn expect_result_ok[T, E](value: Result[T, E], expected: T) -> Int {
+    return match value {
+        Result.Ok(inner) => expect_eq(inner, expected),
+        Result.Err(_) => 1,
+    }
+}
+
+pub fn expect_result_err[T, E](value: Result[T, E], expected_error: E) -> Int {
+    return match value {
+        Result.Ok(_) => 1,
+        Result.Err(error) => expect_eq(error, expected_error),
+    }
+}
+
+pub fn expect_result_or[T, E](value: Result[T, E], fallback: Result[T, E], expected: T) -> Int {
+    return match value {
+        Result.Ok(inner) => expect_eq(inner, expected),
+        Result.Err(_) => expect_result_ok(fallback, expected),
+    }
+}
+
+pub fn expect_result_error[T, E](value: Result[T, E], fallback_error: E, expected_error: E) -> Int {
+    return match value {
+        Result.Ok(_) => expect_eq(fallback_error, expected_error),
+        Result.Err(error) => expect_eq(error, expected_error),
+    }
+}
+
+pub fn expect_result_to_option_some[T, E](value: Result[T, E], expected: T) -> Int {
+    return match value {
+        Result.Ok(inner) => expect_eq(inner, expected),
+        Result.Err(_) => 1,
+    }
+}
+
+pub fn expect_result_to_option_none[T, E](value: Result[T, E]) -> Int {
+    return match value {
+        Result.Ok(_) => 1,
+        Result.Err(_) => 0,
+    }
+}
+
+pub fn expect_result_error_some[T, E](value: Result[T, E], expected_error: E) -> Int {
+    return match value {
+        Result.Ok(_) => 1,
+        Result.Err(error) => expect_eq(error, expected_error),
+    }
+}
+
+pub fn expect_result_error_none[T, E](value: Result[T, E]) -> Int {
+    return match value {
+        Result.Ok(_) => 0,
+        Result.Err(_) => 1,
+    }
+}
+
+pub fn expect_option_ok_or[T, E](value: Option[T], error: E, expected: T) -> Int {
+    return match value {
+        Option.Some(inner) => expect_eq(inner, expected),
+        Option.None => 1,
+    }
+}
+
+pub fn expect_option_ok_or_err[T, E](value: Option[T], error: E) -> Int {
+    return match value {
+        Option.Some(_) => 1,
+        Option.None => 0,
+    }
+}
+
+pub fn expect_int_option_some(value: Option[Int], expected: Int) -> Int {
+    return expect_option_some(value, expected)
 }
 
 pub fn expect_int_option_none(value: Option[Int]) -> Int {
-    return match value {
-        Option.Some(_) => 1,
-        Option.None => 0,
-    }
+    return expect_option_none(value)
 }
 
 pub fn expect_int_option_or(value: Option[Int], fallback: Option[Int], expected: Int) -> Int {
-    return match value {
-        Option.Some(inner) => expect_int_eq(inner, expected),
-        Option.None => expect_int_option_some(fallback, expected),
-    }
+    return expect_option_or(value, fallback, expected)
 }
 
 pub fn expect_bool_option_some(value: Option[Bool], expected: Bool) -> Int {
-    return match value {
-        Option.Some(inner) => expect_bool_eq(inner, expected),
-        Option.None => 1,
-    }
+    return expect_option_some(value, expected)
 }
 
 pub fn expect_bool_option_none(value: Option[Bool]) -> Int {
-    return match value {
-        Option.Some(_) => 1,
-        Option.None => 0,
-    }
+    return expect_option_none(value)
 }
 
 pub fn expect_bool_option_or(value: Option[Bool], fallback: Option[Bool], expected: Bool) -> Int {
-    return match value {
-        Option.Some(inner) => expect_bool_eq(inner, expected),
-        Option.None => expect_bool_option_some(fallback, expected),
-    }
+    return expect_option_or(value, fallback, expected)
 }
 
 pub fn expect_int_result_ok(value: Result[Int, Int], expected: Int) -> Int {
-    return match value {
-        Result.Ok(inner) => expect_int_eq(inner, expected),
-        Result.Err(_) => 1,
-    }
+    return expect_result_ok(value, expected)
 }
 
 pub fn expect_int_result_err(value: Result[Int, Int], expected_error: Int) -> Int {
-    return match value {
-        Result.Ok(_) => 1,
-        Result.Err(error) => expect_int_eq(error, expected_error),
-    }
+    return expect_result_err(value, expected_error)
 }
 
 pub fn expect_int_result_or(value: Result[Int, Int], fallback: Result[Int, Int], expected: Int) -> Int {
-    return match value {
-        Result.Ok(inner) => expect_int_eq(inner, expected),
-        Result.Err(_) => expect_int_result_ok(fallback, expected),
-    }
+    return expect_result_or(value, fallback, expected)
 }
 
 pub fn expect_int_result_error(value: Result[Int, Int], fallback_error: Int, expected_error: Int) -> Int {
-    return match value {
-        Result.Ok(_) => expect_int_eq(fallback_error, expected_error),
-        Result.Err(error) => expect_int_eq(error, expected_error),
-    }
+    return expect_result_error(value, fallback_error, expected_error)
 }
 
 pub fn expect_int_result_to_option_some(value: Result[Int, Int], expected: Int) -> Int {
-    return expect_int_option_some(result_to_option(value), expected)
+    return expect_result_to_option_some(value, expected)
 }
 
 pub fn expect_int_result_to_option_none(value: Result[Int, Int]) -> Int {
-    return expect_int_option_none(result_to_option(value))
+    return expect_result_to_option_none(value)
 }
 
 pub fn expect_int_result_error_some(value: Result[Int, Int], expected_error: Int) -> Int {
-    return expect_int_option_some(result_error_to_option(value), expected_error)
+    return expect_result_error_some(value, expected_error)
 }
 
 pub fn expect_int_result_error_none(value: Result[Int, Int]) -> Int {
-    return expect_int_option_none(result_error_to_option(value))
+    return expect_result_error_none(value)
 }
 
 pub fn expect_int_option_ok_or(value: Option[Int], error: Int, expected: Int) -> Int {
-    return expect_int_result_ok(result_ok_or(value, error), expected)
+    return expect_option_ok_or(value, error, expected)
 }
 
 pub fn expect_int_option_ok_or_err(value: Option[Int], error: Int) -> Int {
-    return expect_int_result_err(result_ok_or(value, error), error)
+    return expect_option_ok_or_err(value, error)
 }
 
 pub fn expect_bool_result_ok(value: Result[Bool, Int], expected: Bool) -> Int {
-    return match value {
-        Result.Ok(inner) => expect_bool_eq(inner, expected),
-        Result.Err(_) => 1,
-    }
+    return expect_result_ok(value, expected)
 }
 
 pub fn expect_bool_result_err(value: Result[Bool, Int], expected_error: Int) -> Int {
-    return match value {
-        Result.Ok(_) => 1,
-        Result.Err(error) => expect_int_eq(error, expected_error),
-    }
+    return expect_result_err(value, expected_error)
 }
 
 pub fn expect_bool_result_or(value: Result[Bool, Int], fallback: Result[Bool, Int], expected: Bool) -> Int {
-    return match value {
-        Result.Ok(inner) => expect_bool_eq(inner, expected),
-        Result.Err(_) => expect_bool_result_ok(fallback, expected),
-    }
+    return expect_result_or(value, fallback, expected)
 }
 
 pub fn expect_bool_result_error(value: Result[Bool, Int], fallback_error: Int, expected_error: Int) -> Int {
-    return match value {
-        Result.Ok(_) => expect_int_eq(fallback_error, expected_error),
-        Result.Err(error) => expect_int_eq(error, expected_error),
-    }
+    return expect_result_error(value, fallback_error, expected_error)
 }
 
 pub fn expect_bool_result_to_option_some(value: Result[Bool, Int], expected: Bool) -> Int {
-    return expect_bool_option_some(result_to_option(value), expected)
+    return expect_result_to_option_some(value, expected)
 }
 
 pub fn expect_bool_result_to_option_none(value: Result[Bool, Int]) -> Int {
-    return expect_bool_option_none(result_to_option(value))
+    return expect_result_to_option_none(value)
 }
 
 pub fn expect_bool_result_error_some(value: Result[Bool, Int], expected_error: Int) -> Int {
-    return expect_int_option_some(result_error_to_option(value), expected_error)
+    return expect_result_error_some(value, expected_error)
 }
 
 pub fn expect_bool_result_error_none(value: Result[Bool, Int]) -> Int {
-    return expect_int_option_none(result_error_to_option(value))
+    return expect_result_error_none(value)
 }
 
 pub fn expect_bool_option_ok_or(value: Option[Bool], error: Int, expected: Bool) -> Int {
-    return expect_bool_result_ok(result_ok_or(value, error), expected)
+    return expect_option_ok_or(value, error, expected)
 }
 
 pub fn expect_bool_option_ok_or_err(value: Option[Bool], error: Int) -> Int {
-    return expect_bool_result_err(result_ok_or(value, error), error)
+    return expect_option_ok_or_err(value, error)
 }
