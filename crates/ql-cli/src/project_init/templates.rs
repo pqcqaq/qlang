@@ -106,14 +106,16 @@ mod tests {
         assert!(!lib.contains("unwrap_result_or as result_unwrap_result_or"));
         assert!(smoke.contains("use std.option.Option as Option"));
         assert!(smoke.contains("use std.result.Result as Result"));
-        assert!(smoke.contains("use std.result.error_to_option as result_error_to_option"));
         assert!(smoke.contains("use std.result.ok_or as result_ok_or"));
         assert!(smoke.contains("use std.result.to_option as result_to_option"));
         assert!(smoke.contains("use std.array.len_array as len_array"));
         assert!(smoke.contains("use std.array.repeat_array as repeat_array"));
         assert!(smoke.contains("use std.array.sum_int_array as sum_int_array"));
-        assert!(smoke.contains("use std.test.expect_int_eq as expect_int_eq"));
-        assert!(smoke.contains("use std.test.expect_bool_eq as expect_bool_eq"));
+        assert!(smoke.contains("use std.test.expect_eq as expect_eq"));
+        assert!(smoke.contains("use std.test.expect_option_none as expect_option_none"));
+        assert!(smoke.contains("use std.test.expect_option_some as expect_option_some"));
+        assert!(smoke.contains("use std.test.expect_result_err as expect_result_err"));
+        assert!(smoke.contains("use std.test.expect_result_ok as expect_result_ok"));
         assert!(smoke.contains("use std.test.expect_status_ok as expect_status_ok"));
         assert!(smoke.contains("let numbers: [Int; 3] = [1, 2, 3]"));
         assert!(smoke.contains("let repeated: [Int; 3] = repeat_array(2)"));
@@ -124,5 +126,12 @@ mod tests {
             smoke.contains("let result_value: Result[Int, Int] = result_ok_or(option_value, 9)")
         );
         assert!(smoke.contains("let failed: Result[Int, Int] = result_ok_or(missing, 4)"));
+        assert!(smoke.contains(
+            "let option_check = expect_option_some(option_value, 6) + expect_option_none(missing)"
+        ));
+        assert!(smoke.contains(
+            "let result_check = expect_result_ok(result_value, 6) + expect_result_err(failed, 4)"
+        ));
+        assert!(!smoke.contains("result_error_to_option"));
     }
 }

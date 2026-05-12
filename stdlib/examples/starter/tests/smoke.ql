@@ -7,10 +7,13 @@ use std.option.Option as Option
 use std.option.some as option_some
 use std.option.unwrap_or as option_unwrap_or
 use std.result.Result as Result
-use std.result.error_to_option as result_error_to_option
 use std.result.ok_or as result_ok_or
 use std.result.to_option as result_to_option
 use std.test.expect_eq as expect_eq
+use std.test.expect_option_none as expect_option_none
+use std.test.expect_option_some as expect_option_some
+use std.test.expect_result_err as expect_result_err
+use std.test.expect_result_ok as expect_result_ok
 use std.test.expect_status_ok as expect_status_ok
 
 fn main() -> Int {
@@ -25,6 +28,7 @@ fn main() -> Int {
     let length_check = expect_eq(len_array(numbers), 3)
     let contains_check = expect_eq(contains_array(numbers, 2), true)
     let repeated_check = expect_eq(sum_int_array(repeated), 6)
-    let error_check = expect_eq(option_unwrap_or(result_error_to_option(failed), 0), 4)
-    return expect_status_ok(total_check + length_check + contains_check + repeated_check + error_check)
+    let option_check = expect_option_some(option_value, 6) + expect_option_none(missing)
+    let result_check = expect_result_ok(result_value, 6) + expect_result_err(failed, 4)
+    return expect_status_ok(total_check + length_check + contains_check + repeated_check + option_check + result_check)
 }

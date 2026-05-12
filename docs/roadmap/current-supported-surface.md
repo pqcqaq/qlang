@@ -26,7 +26,7 @@
 - `ql project init/add/remove/status/dependencies/dependents/targets/graph/lock/emit-interface` 已可维护本地 workspace。
 - `ql build/run/test/check` 支持 project-aware 入口和常用 `--json`、`--list`、`--package`、`--target`。
 - 单文件 `ql build/run/test file.ql` 可复用本地 generic free function direct-call specialization。
-- `ql project init --stdlib` 从 `stdlib/examples/starter` 复制 starter，生成依赖 `std.core`、`std.option`、`std.result`、`std.array`、`std.test` 的项目，并用 `check/run/test` 覆盖 generic option/result assertions、length-generic array helpers 和重复数组。
+- `ql project init --stdlib` 从 `stdlib/examples/starter` 复制 starter，生成依赖 `std.core`、`std.option`、`std.result`、`std.array`、`std.test` 的项目，并用 `check/run/test` 直接覆盖 generic option/result assertions、length-generic array helpers 和重复数组。
 
 ### stdlib 和依赖桥接
 

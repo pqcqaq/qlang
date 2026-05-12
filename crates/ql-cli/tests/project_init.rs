@@ -105,20 +105,28 @@ fn expect_stdlib_starter_main_source(source: &str, context: &str) {
 fn expect_stdlib_starter_smoke_source(source: &str, context: &str) {
     for needle in [
         "use std.array.repeat_array as repeat_array",
-        "use std.result.error_to_option as result_error_to_option",
         "use std.result.ok_or as result_ok_or",
         "use std.result.to_option as result_to_option",
         "use std.test.expect_eq as expect_eq",
+        "use std.test.expect_option_none as expect_option_none",
+        "use std.test.expect_option_some as expect_option_some",
+        "use std.test.expect_result_err as expect_result_err",
+        "use std.test.expect_result_ok as expect_result_ok",
         "let repeated: [Int; 3] = repeat_array(2)",
         "let result_value: Result[Int, Int] = result_ok_or(option_value, 9)",
         "let failed: Result[Int, Int] = result_ok_or(missing, 4)",
-        "let error_check = expect_eq(option_unwrap_or(result_error_to_option(failed), 0), 4)",
+        "let option_check = expect_option_some(option_value, 6) + expect_option_none(missing)",
+        "let result_check = expect_result_ok(result_value, 6) + expect_result_err(failed, 4)",
     ] {
         assert!(
             source.contains(needle),
             "{context} should contain `{needle}`\n{source}"
         );
     }
+    assert!(
+        !source.contains("result_error_to_option"),
+        "{context} should not use conversion-only result assertions\n{source}"
+    );
     for legacy in ["repeat3_array", "reverse3_array", "some_int", "ok_int"] {
         assert!(
             !source.contains(legacy),

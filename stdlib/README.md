@@ -55,7 +55,7 @@ cargo run -q -p ql-cli -- project init D:\Projects\my-qlang-app --stdlib D:\Proj
 cargo run -q -p ql-cli -- project init D:\Projects\my-qlang-workspace --workspace --name app --stdlib D:\Projects\language_q\stdlib
 ```
 
-生成的 starter 直接复制 `examples/starter`，使用推荐的 generic `Option[T]`、`Result[T, E]`、length-generic array helpers、重复数组和 `std.test` 泛型断言。
+生成的 starter 直接复制 `examples/starter`，使用推荐的 generic `Option[T]`、`Result[T, E]`、length-generic array helpers、重复数组和 `std.test` 泛型断言；smoke test 直接覆盖 `expect_option_*` / `expect_result_*`。
 
 ## 验证
 
