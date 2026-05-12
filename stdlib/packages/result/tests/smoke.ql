@@ -25,8 +25,12 @@ fn check_bool(actual: Bool, expected: Bool) -> Int {
     return 1
 }
 
-fn sum6(first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int) -> Int {
-    return first + second + third + fourth + fifth + sixth
+fn sum_statuses[N](statuses: [Int; N]) -> Int {
+    var total = 0
+    for status in statuses {
+        total = total + status
+    }
+    return total
 }
 
 fn generic_result_status(ok_value: Result[Int, Int], err_value: Result[Int, Int]) -> Int {
@@ -66,11 +70,9 @@ fn main() -> Int {
     let direct_err: Result[Int, Int] = Result.Err(6)
     let option_some: Option[Int] = Option.Some(19)
     let option_none: Option[Int] = Option.None
-
-    let int_status = sum6(check_bool(result_is_ok(int_ok), true), check_bool(result_is_err(int_err), true), check_int(result_unwrap_result_or(int_ok, 0), 7), check_int(result_unwrap_result_or(int_err, 9), 9), check_int(result_error_or(int_ok, 0), 0), check_int(result_error_or(int_err, 0), 3))
-    let bool_status = sum6(check_bool(result_is_ok(bool_ok), true), check_bool(result_is_err(bool_err), true), check_bool(result_unwrap_result_or(bool_ok, false), true), check_bool(result_unwrap_result_or(bool_err, true), true), check_int(result_error_or(bool_ok, 0), 0), check_int(result_error_or(bool_err, 0), 4))
-    let constructor_status = sum6(check_int(result_unwrap_result_or(direct_ok, 0), 21), check_int(result_error_or(direct_err, 0), 6), check_bool(result_is_ok(bool_ok), true), check_bool(result_is_err(bool_err), true), 0, 0)
-    let option_status = sum6(check_int(option_value_or(result_to_option(int_ok), 0), 7), check_int(option_value_or(result_to_option(int_err), 8), 8), check_int(result_unwrap_result_or(result_ok_or(option_some, 5), 0), 19), check_int(result_error_or(result_ok_or(option_none, 5), 0), 5), check_int(option_error_or(result_error_to_option(int_err), 0), 3), check_int(option_error_or(result_error_to_option(int_ok), 0), 0))
-
+    let int_status = sum_statuses([check_bool(result_is_ok(int_ok), true), check_bool(result_is_err(int_err), true), check_int(result_unwrap_result_or(int_ok, 0), 7), check_int(result_unwrap_result_or(int_err, 9), 9), check_int(result_error_or(int_ok, 0), 0), check_int(result_error_or(int_err, 0), 3)])
+    let bool_status = sum_statuses([check_bool(result_is_ok(bool_ok), true), check_bool(result_is_err(bool_err), true), check_bool(result_unwrap_result_or(bool_ok, false), true), check_bool(result_unwrap_result_or(bool_err, true), true), check_int(result_error_or(bool_ok, 0), 0), check_int(result_error_or(bool_err, 0), 4)])
+    let constructor_status = sum_statuses([check_int(result_unwrap_result_or(direct_ok, 0), 21), check_int(result_error_or(direct_err, 0), 6), check_bool(result_is_ok(bool_ok), true), check_bool(result_is_err(bool_err), true), 0, 0])
+    let option_status = sum_statuses([check_int(option_value_or(result_to_option(int_ok), 0), 7), check_int(option_value_or(result_to_option(int_err), 8), 8), check_int(result_unwrap_result_or(result_ok_or(option_some, 5), 0), 19), check_int(result_error_or(result_ok_or(option_none, 5), 0), 5), check_int(option_error_or(result_error_to_option(int_err), 0), 3), check_int(option_error_or(result_error_to_option(int_ok), 0), 0)])
     return int_status + bool_status + constructor_status + option_status + check_int(result_unwrap_result_or(result_or(int_err, int_fallback), 0), 11) + check_bool(result_unwrap_result_or(result_or(bool_err, bool_fallback), true), false) + check_int(generic_result_status(Result.Ok(7), Result.Err(3)), 10)
 }
