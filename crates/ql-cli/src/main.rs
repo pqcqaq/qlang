@@ -2360,7 +2360,7 @@ fn build_path(
         };
         report.record_source_target(path, &artifact);
         if emit_interface {
-            match emit_built_package_interface_quiet(path, options, &artifact.path, &[]) {
+            match emit_built_package_interface_quiet(path, path, options, &artifact.path, &[]) {
                 Ok(interface_result) => {
                     report.record_interface_result(None, None, true, interface_result);
                 }
@@ -2379,7 +2379,7 @@ fn build_path(
 
     let artifact = build_single_source_target(path, options, emit_interface)?;
     if emit_interface {
-        emit_built_package_interface(path, options, &artifact.path, &[])?;
+        emit_built_package_interface(path, path, options, &artifact.path, &[])?;
     }
     Ok(())
 }
@@ -5480,6 +5480,7 @@ fn build_project_path(
         if plan_member.emit_interface {
             if let Some(report) = json_report.as_mut() {
                 let interface_result = match emit_built_package_interface_quiet(
+                    path,
                     &plan_member.member.member_manifest_path,
                     options,
                     &first_artifact.path,
@@ -5506,6 +5507,7 @@ fn build_project_path(
                 );
             } else {
                 emit_built_package_interface(
+                    path,
                     &plan_member.member.member_manifest_path,
                     options,
                     &first_artifact.path,
@@ -6292,6 +6294,26 @@ fn build_project_source_target_result(
     .map_err(BuildTargetJsonError::Build)
 }
 
+fn read_project_source_for_build(
+    path: &Path,
+    options: Option<&BuildOptions>,
+    emit_interface: bool,
+    report_failure: bool,
+) -> Result<String, u8> {
+    fs::read_to_string(path).map_err(|error| {
+        if report_failure {
+            eprintln!(
+                "error: failed to access `{}`: {error}",
+                normalize_path(path)
+            );
+            if emit_interface && let Some(options) = options {
+                report_build_input_path_failure(path, options, true);
+            }
+        }
+        1
+    })
+}
+
 fn build_project_test_source_target_silent(
     workspace_members: &[WorkspaceBuildTargets],
     command_label: &str,
@@ -6424,8 +6446,10 @@ fn build_project_source_target_impl(
         command_label,
         manifest_path,
         path,
+        options,
         dependency_options,
         profile_overridden,
+        emit_interface,
         include_public_function_exports,
         report_failure,
     )?;
@@ -6445,8 +6469,10 @@ fn prepare_project_target_build(
     command_label: &str,
     manifest_path: &Path,
     path: &Path,
+    options: &BuildOptions,
     dependency_options: &BuildOptions,
     profile_overridden: bool,
+    emit_interface: bool,
     include_public_function_exports: bool,
     report_failure: bool,
 ) -> Result<PreparedProjectTargetBuild, u8> {
@@ -6456,15 +6482,8 @@ fn prepare_project_target_build(
         resolve_project_build_plan_members(workspace_members, &selected_members, command_label)?;
     let additional_link_inputs =
         project_dependency_link_inputs(&build_plan, dependency_options, profile_overridden);
-    let source = fs::read_to_string(path).map_err(|error| {
-        if report_failure {
-            eprintln!(
-                "error: failed to access `{}`: {error}",
-                normalize_path(path)
-            );
-        }
-        1
-    })?;
+    let source =
+        read_project_source_for_build(path, Some(options), emit_interface, report_failure)?;
     let dependency_bridge_items = match render_direct_dependency_bridge_items(
         command_label,
         manifest_path,
@@ -6525,15 +6544,7 @@ fn prepare_project_test_target_build(
         dependency_options,
         profile_overridden,
     ));
-    let source = fs::read_to_string(path).map_err(|error| {
-        if report_failure {
-            eprintln!(
-                "error: failed to access `{}`: {error}",
-                normalize_path(path)
-            );
-        }
-        1
-    })?;
+    let source = read_project_source_for_build(path, None, false, report_failure)?;
     let dependency_bridge_items = match render_direct_dependency_bridge_items(
         command_label,
         manifest_path,
@@ -10412,53 +10423,71 @@ fn build_single_source_target_with_inputs_result(
 }
 
 fn emit_built_package_interface(
-    path: &Path,
+    request_path: &Path,
+    package_context_path: &Path,
     options: &BuildOptions,
     artifact_path: &Path,
     additional_artifacts: &[PathBuf],
 ) -> Result<(), u8> {
-    let result =
-        emit_built_package_interface_impl(path, options, artifact_path, additional_artifacts)?;
+    let result = emit_built_package_interface_impl(
+        request_path,
+        package_context_path,
+        options,
+        artifact_path,
+        additional_artifacts,
+    )?;
     report_emit_interface_result(result);
     Ok(())
 }
 
 fn emit_built_package_interface_quiet(
-    path: &Path,
+    request_path: &Path,
+    package_context_path: &Path,
     options: &BuildOptions,
     artifact_path: &Path,
     additional_artifacts: &[PathBuf],
 ) -> Result<EmitPackageInterfaceResult, EmitPackageInterfaceError> {
-    let _ = (options, artifact_path, additional_artifacts);
-    emit_package_interface_path_quiet(path, None, false)
+    let _ = (request_path, options, artifact_path, additional_artifacts);
+    emit_package_interface_path_quiet(package_context_path, None, false)
 }
 
 fn emit_built_package_interface_impl(
-    path: &Path,
+    request_path: &Path,
+    package_context_path: &Path,
     options: &BuildOptions,
     artifact_path: &Path,
     additional_artifacts: &[PathBuf],
 ) -> Result<EmitPackageInterfaceResult, u8> {
-    match emit_package_interface_path(path, None, "`ql build --emit-interface`", false) {
+    match emit_package_interface_path(
+        package_context_path,
+        None,
+        "`ql build --emit-interface`",
+        false,
+    ) {
         Ok(result) => Ok(result),
         Err(EmitPackageInterfaceError::ManifestNotFound { .. }) => {
-            report_build_interface_package_context_failure(path, options, true, artifact_path);
+            report_build_interface_package_context_failure(
+                request_path,
+                options,
+                true,
+                artifact_path,
+            );
             report_remaining_build_artifacts(additional_artifacts);
             Err(1)
         }
         Err(EmitPackageInterfaceError::SourceFailure { code, .. }) => {
-            report_build_interface_source_failure(path, options, true, artifact_path);
+            report_build_interface_source_failure(request_path, options, true, artifact_path);
             report_remaining_build_artifacts(additional_artifacts);
             Err(code)
         }
         Err(EmitPackageInterfaceError::Code { code, .. }) => {
-            report_build_interface_failure(path, options, true, artifact_path);
+            report_build_interface_failure(request_path, options, true, artifact_path);
             report_remaining_build_artifacts(additional_artifacts);
             Err(code)
         }
         Err(EmitPackageInterfaceError::ManifestFailure { manifest_path, .. }) => {
             report_build_interface_manifest_failure(
-                path,
+                request_path,
                 options,
                 true,
                 artifact_path,
@@ -10472,7 +10501,7 @@ fn emit_built_package_interface_impl(
             source_root,
         }) => {
             report_build_interface_no_sources_failure(
-                path,
+                request_path,
                 options,
                 true,
                 artifact_path,
@@ -10487,7 +10516,7 @@ fn emit_built_package_interface_impl(
             source_root,
         }) => {
             report_build_interface_source_root_failure(
-                path,
+                request_path,
                 options,
                 true,
                 artifact_path,
@@ -10498,7 +10527,13 @@ fn emit_built_package_interface_impl(
             Err(1)
         }
         Err(EmitPackageInterfaceError::OutputPathFailure { output_path, .. }) => {
-            report_build_interface_output_failure(path, options, true, artifact_path, &output_path);
+            report_build_interface_output_failure(
+                request_path,
+                options,
+                true,
+                artifact_path,
+                &output_path,
+            );
             report_remaining_build_artifacts(additional_artifacts);
             Err(1)
         }

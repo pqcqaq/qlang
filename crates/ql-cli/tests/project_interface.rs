@@ -46,8 +46,8 @@ $out = $null
 for ($i = 0; $i -lt $args.Count; $i++) {
     if ($args[$i] -eq '-o') { $out = $args[$i + 1] }
 }
-if ($null -eq $out) { Write-Error 'missing -o'; exit 1 }
-Write-Error "unable to open output file '$out': Permission denied"
+if ($null -eq $out) { [Console]::Error.WriteLine('missing -o'); exit 1 }
+[Console]::Error.WriteLine("unable to open output file '$out': Permission denied")
 exit 9
 "#,
         );
@@ -109,8 +109,8 @@ foreach ($arg in $args) {
 if ($null -eq $out -and $args.Count -ge 2) {
     $out = $args[1]
 }
-if ($null -eq $out) { Write-Error 'missing output path'; exit 1 }
-Write-Error "cannot open file '$out': Permission denied"
+if ($null -eq $out) { [Console]::Error.WriteLine('missing output path'); exit 1 }
+[Console]::Error.WriteLine("cannot open file '$out': Permission denied")
 exit 8
 "#,
         );
