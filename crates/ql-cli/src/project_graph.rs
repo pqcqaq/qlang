@@ -6,10 +6,10 @@ use ql_project::{
 };
 
 use super::{
-    find_workspace_member_entries_by_package_name, normalize_path,
-    package_check_manifest_path_from_project_error,
-    package_missing_name_manifest_path_from_project_error,
-    resolve_project_workspace_member_command_request_root, validate_project_package_name,
+    normalize_path, package_check_manifest_path_from_project_error,
+    package_missing_name_manifest_path_from_project_error, render_workspace_member_lookup_error,
+    resolve_project_workspace_member_command_request_root,
+    resolve_workspace_member_entry_by_package_name, validate_project_package_name,
 };
 
 pub(crate) fn project_graph_path(
@@ -72,29 +72,21 @@ fn resolve_project_graph_package_manifest(
     }
 
     if manifest.workspace.is_some() {
-        let member_entries =
-            find_workspace_member_entries_by_package_name(manifest, selected_package_name);
-        if member_entries.is_empty() {
-            eprintln!(
-                "error: `ql project graph` workspace manifest `{}` does not contain package `{selected_package_name}`",
-                normalize_path(&manifest.manifest_path)
-            );
-            return Err(1);
-        }
-        if member_entries.len() > 1 {
-            let matching_members = member_entries
-                .iter()
-                .map(|(member, _)| member.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            eprintln!(
-                "error: `ql project graph` workspace manifest `{}` contains multiple members for package `{selected_package_name}`: {matching_members}",
-                normalize_path(&manifest.manifest_path)
-            );
-            return Err(1);
-        }
+        let (_, member_manifest_path) =
+            resolve_workspace_member_entry_by_package_name(manifest, selected_package_name)
+                .map_err(|error| {
+                    eprintln!(
+                        "error: `ql project graph` {}",
+                        render_workspace_member_lookup_error(
+                            manifest,
+                            selected_package_name,
+                            &error,
+                        )
+                    );
+                    1
+                })?;
 
-        return load_project_manifest(&member_entries[0].1)
+        return load_project_manifest(&member_manifest_path)
             .map_err(|error| report_project_graph_load_error(path, &error));
     }
 

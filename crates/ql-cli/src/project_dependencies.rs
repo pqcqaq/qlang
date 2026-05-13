@@ -1,12 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use ql_project::{load_project_manifest, load_reference_manifests, package_name};
+use ql_project::{ProjectManifest, load_project_manifest, load_reference_manifests, package_name};
 use serde_json::{Value as JsonValue, json};
 
 use super::{
-    find_workspace_member_entries_by_package_name, normalize_path, relative_path_from,
+    normalize_path, relative_path_from, render_workspace_member_lookup_error,
     resolve_project_workspace_manifest, resolve_project_workspace_member_package_name,
+    resolve_workspace_member_entry_by_package_name,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,43 +30,13 @@ pub(crate) fn project_dependents_path(
     package_name: Option<&str>,
     json: bool,
 ) -> Result<(), u8> {
-    let workspace_manifest = resolve_project_workspace_manifest(path).map_err(|message| {
+    let (workspace_manifest, package_name, member_manifest_path) =
+        resolve_project_dependency_query_context(path, package_name, "`ql project dependents`")?;
+    let dependents = find_workspace_member_dependents(&workspace_manifest, &member_manifest_path)
+        .map_err(|message| {
         eprintln!("error: `ql project dependents` {message}");
         1
     })?;
-    let package_name = resolve_project_workspace_member_package_name(
-        path,
-        package_name,
-        "`ql project dependents`",
-    )?;
-    let member_entries =
-        find_workspace_member_entries_by_package_name(&workspace_manifest, &package_name);
-    if member_entries.is_empty() {
-        eprintln!(
-            "error: `ql project dependents` workspace manifest `{}` does not contain package `{package_name}`",
-            normalize_path(&workspace_manifest.manifest_path)
-        );
-        return Err(1);
-    }
-    if member_entries.len() > 1 {
-        let matching_members = member_entries
-            .iter()
-            .map(|(member, _)| member.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        eprintln!(
-            "error: `ql project dependents` workspace manifest `{}` contains multiple members for package `{package_name}`: {matching_members}",
-            normalize_path(&workspace_manifest.manifest_path)
-        );
-        return Err(1);
-    }
-
-    let (_, member_manifest_path) = &member_entries[0];
-    let dependents = find_workspace_member_dependents(&workspace_manifest, member_manifest_path)
-        .map_err(|message| {
-            eprintln!("error: `ql project dependents` {message}");
-            1
-        })?;
     let rendered = if json {
         render_project_dependents_json(path, &workspace_manifest, &package_name, &dependents)
     } else {
@@ -80,40 +51,10 @@ pub(crate) fn project_dependencies_path(
     package_name: Option<&str>,
     json: bool,
 ) -> Result<(), u8> {
-    let workspace_manifest = resolve_project_workspace_manifest(path).map_err(|message| {
-        eprintln!("error: `ql project dependencies` {message}");
-        1
-    })?;
-    let package_name = resolve_project_workspace_member_package_name(
-        path,
-        package_name,
-        "`ql project dependencies`",
-    )?;
-    let member_entries =
-        find_workspace_member_entries_by_package_name(&workspace_manifest, &package_name);
-    if member_entries.is_empty() {
-        eprintln!(
-            "error: `ql project dependencies` workspace manifest `{}` does not contain package `{package_name}`",
-            normalize_path(&workspace_manifest.manifest_path)
-        );
-        return Err(1);
-    }
-    if member_entries.len() > 1 {
-        let matching_members = member_entries
-            .iter()
-            .map(|(member, _)| member.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        eprintln!(
-            "error: `ql project dependencies` workspace manifest `{}` contains multiple members for package `{package_name}`: {matching_members}",
-            normalize_path(&workspace_manifest.manifest_path)
-        );
-        return Err(1);
-    }
-
-    let (_, member_manifest_path) = &member_entries[0];
+    let (workspace_manifest, package_name, member_manifest_path) =
+        resolve_project_dependency_query_context(path, package_name, "`ql project dependencies`")?;
     let dependencies =
-        find_workspace_member_dependencies(&workspace_manifest, member_manifest_path).map_err(
+        find_workspace_member_dependencies(&workspace_manifest, &member_manifest_path).map_err(
             |message| {
                 eprintln!("error: `ql project dependencies` {message}");
                 1
@@ -126,6 +67,33 @@ pub(crate) fn project_dependencies_path(
     };
     print!("{rendered}");
     Ok(())
+}
+
+fn resolve_project_dependency_query_context(
+    path: &Path,
+    package_name: Option<&str>,
+    command_label: &str,
+) -> Result<(ProjectManifest, String, PathBuf), u8> {
+    let workspace_manifest = resolve_project_workspace_manifest(path).map_err(|message| {
+        eprintln!("error: {command_label} {message}");
+        1
+    })?;
+    let package_name =
+        resolve_project_workspace_member_package_name(path, package_name, command_label)?;
+    let (_, member_manifest_path) =
+        resolve_workspace_member_entry_by_package_name(&workspace_manifest, &package_name)
+            .map_err(|error| {
+                eprintln!(
+                    "error: {command_label} {}",
+                    render_workspace_member_lookup_error(
+                        &workspace_manifest,
+                        &package_name,
+                        &error,
+                    )
+                );
+                1
+            })?;
+    Ok((workspace_manifest, package_name, member_manifest_path))
 }
 
 pub(crate) fn find_workspace_member_dependents(

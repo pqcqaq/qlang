@@ -2,8 +2,9 @@ mod support;
 
 use serde_json::Value as JsonValue;
 use support::{
-    TempDir, expect_empty_stderr, expect_stdout_contains_all, expect_success, normalize,
-    ql_command, run_command_capture, workspace_root,
+    TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_stderr_contains,
+    expect_stdout_contains_all, expect_success, normalize, ql_command, run_command_capture,
+    workspace_root,
 };
 
 fn parse_json_output(case_name: &str, stdout: &str) -> JsonValue {
@@ -149,4 +150,214 @@ fn project_status_supports_workspace_package_selector() {
         !stdout.contains("packages/app"),
         "package selector should not include unselected members, got:\n{stdout}"
     );
+}
+
+#[test]
+fn project_status_source_file_uses_workspace_root_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-status-source-path");
+    let project_root = write_status_workspace(&temp);
+    let request_path = project_root.join("packages/app/src/main.ql");
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "status",
+        &request_path.to_string_lossy(),
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project status --json` workspace member source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-status-source-path",
+        "project status source path",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-status-source-path",
+        "project status source path",
+        &stderr,
+    )
+    .unwrap();
+
+    let actual = parse_json_output("project-status-source-path", &stdout);
+    assert_eq!(
+        actual["path"],
+        request_path.to_string_lossy().replace('\\', "/")
+    );
+    assert_eq!(
+        actual["project_manifest_path"],
+        project_root
+            .join("qlang.toml")
+            .to_string_lossy()
+            .replace('\\', "/")
+    );
+    let members = actual["members"]
+        .as_array()
+        .expect("project status source path members should be an array");
+    assert_eq!(
+        members.len(),
+        2,
+        "workspace member source path should keep the outer workspace context"
+    );
+}
+
+#[test]
+fn project_status_member_directory_uses_workspace_root_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-status-member-dir");
+    let project_root = write_status_workspace(&temp);
+    let request_path = project_root.join("packages/app");
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "status",
+        &request_path.to_string_lossy(),
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project status --json` workspace member directory",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-status-member-dir",
+        "project status member directory",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-status-member-dir",
+        "project status member directory",
+        &stderr,
+    )
+    .unwrap();
+
+    let actual = parse_json_output("project-status-member-dir", &stdout);
+    assert_eq!(
+        actual["path"],
+        request_path.to_string_lossy().replace('\\', "/")
+    );
+    assert_eq!(
+        actual["project_manifest_path"],
+        project_root
+            .join("qlang.toml")
+            .to_string_lossy()
+            .replace('\\', "/")
+    );
+    let members = actual["members"]
+        .as_array()
+        .expect("project status member directory members should be an array");
+    assert_eq!(
+        members.len(),
+        2,
+        "workspace member directory should keep the outer workspace context"
+    );
+}
+
+#[test]
+fn project_status_source_file_supports_workspace_package_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-status-source-selector");
+    let project_root = write_status_workspace(&temp);
+    let request_path = project_root.join("packages/app/src/main.ql");
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "status",
+        &request_path.to_string_lossy(),
+        "--package",
+        "core",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project status --package --json` workspace member source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-status-source-selector",
+        "project status source path package selector",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-status-source-selector",
+        "project status source path package selector",
+        &stderr,
+    )
+    .unwrap();
+
+    let actual = parse_json_output("project-status-source-selector", &stdout);
+    assert_eq!(
+        actual["path"],
+        request_path.to_string_lossy().replace('\\', "/")
+    );
+    assert_eq!(
+        actual["project_manifest_path"],
+        project_root
+            .join("qlang.toml")
+            .to_string_lossy()
+            .replace('\\', "/")
+    );
+    let members = actual["members"]
+        .as_array()
+        .expect("project status source selector members should be an array");
+    assert_eq!(
+        members.len(),
+        1,
+        "workspace member source package selector should keep the enclosing workspace"
+    );
+    assert_eq!(members[0]["member"], "packages/core");
+    assert_eq!(members[0]["package_name"], "core");
+}
+
+#[test]
+fn project_status_workspace_root_package_selector_reports_missing_package() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-status-missing-package");
+    let project_root = write_status_workspace(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "status",
+        &project_root.to_string_lossy(),
+        "--package",
+        "missing",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project status --package` missing workspace package",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-status-missing-package",
+        "project status missing workspace package",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-status-missing-package",
+        "project status missing workspace package",
+        &stdout,
+    )
+    .unwrap();
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-status-missing-package",
+        "project status missing workspace package",
+        &normalized_stderr,
+        &format!(
+            "error: `ql project status` workspace manifest `{}` does not contain package `missing`",
+            project_root
+                .join("qlang.toml")
+                .to_string_lossy()
+                .replace('\\', "/")
+        ),
+    )
+    .unwrap();
 }

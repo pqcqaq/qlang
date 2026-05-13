@@ -42,6 +42,7 @@ mod project_lock;
 mod project_members;
 mod project_status;
 mod project_targets;
+mod project_workspace;
 
 use project_dependencies::{
     ProjectDependentMember, find_workspace_member_dependents, project_dependencies_path,
@@ -64,6 +65,13 @@ use project_targets::{
     resolve_project_command_path, resolve_project_command_scope,
     resolve_project_member_request_root, resolve_project_workspace_member_command_request_root,
     select_workspace_build_targets,
+};
+use project_workspace::{
+    WorkspaceMemberLookupError, find_workspace_member_with_package_name,
+    render_workspace_member_lookup_error, resolve_project_package_manifest,
+    resolve_project_selected_package_manifest, resolve_project_workspace_manifest,
+    resolve_project_workspace_member_package_name, resolve_workspace_member_entry_by_package_name,
+    select_workspace_members,
 };
 
 const CLI_NAME: &str = "ql";
@@ -1950,60 +1958,6 @@ fn check_workspace_manifest(
     }
 
     Ok(())
-}
-
-fn select_workspace_members(
-    manifest: &ql_project::ProjectManifest,
-    request_path: &Path,
-    package_name: Option<&str>,
-    command_label: &str,
-) -> Result<Vec<String>, u8> {
-    let Some(workspace) = &manifest.workspace else {
-        return Ok(Vec::new());
-    };
-    let Some(package_name) = package_name else {
-        return Ok(workspace.members.clone());
-    };
-    if let Err(message) = validate_project_package_name(package_name) {
-        eprintln!("error: `{command_label}` {message}");
-        return Err(1);
-    }
-
-    let matching_members = find_workspace_member_entries_by_package_name(manifest, package_name);
-    if matching_members.is_empty() {
-        let normalized_path = normalize_path(request_path);
-        let rerun_command = format!("{} {normalized_path}", command_label.trim_matches('`'));
-        eprintln!(
-            "error: {command_label} package selector matched no workspace members under `{normalized_path}`"
-        );
-        eprintln!("note: selector: package `{package_name}`");
-        eprintln!(
-            "hint: rerun `{rerun_command}` to inspect all workspace members, or adjust `--package`"
-        );
-        return Err(1);
-    }
-    if matching_members.len() > 1 {
-        let manifest_path = normalize_path(&manifest.manifest_path);
-        let rendered_members = matching_members
-            .iter()
-            .map(|(member, member_manifest)| {
-                format!("{member} ({})", normalize_path(member_manifest))
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        eprintln!(
-            "error: {command_label} workspace manifest `{manifest_path}` contains multiple members for package `{package_name}`: {rendered_members}"
-        );
-        return Err(1);
-    }
-
-    Ok(vec![
-        matching_members
-            .into_iter()
-            .next()
-            .expect("non-empty workspace check package matches should contain one entry")
-            .0,
-    ])
 }
 
 fn report_workspace_member_failure(manifest_path: &Path, hint_line: Option<&str>) {
@@ -11471,62 +11425,6 @@ fn project_remove_dependency_path(
     Ok(())
 }
 
-fn resolve_project_selected_package_manifest(
-    path: &Path,
-    target_package_name: Option<&str>,
-    command_label: &str,
-) -> Result<(ql_project::ProjectManifest, ql_project::ProjectManifest), u8> {
-    let package_manifest = if let Some(target_package_name) = target_package_name {
-        let workspace_manifest = resolve_project_workspace_manifest(path).map_err(|message| {
-            eprintln!("error: {command_label} {message}");
-            1
-        })?;
-        if let Err(message) = validate_project_package_name(target_package_name) {
-            eprintln!("error: {command_label} {message}");
-            return Err(1);
-        }
-
-        let member_entries =
-            find_workspace_member_entries_by_package_name(&workspace_manifest, target_package_name);
-        if member_entries.is_empty() {
-            eprintln!(
-                "error: {command_label} workspace manifest `{}` does not contain package `{target_package_name}`",
-                normalize_path(&workspace_manifest.manifest_path)
-            );
-            return Err(1);
-        }
-        if member_entries.len() > 1 {
-            let matching_members = member_entries
-                .iter()
-                .map(|(member, _)| member.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            eprintln!(
-                "error: {command_label} workspace manifest `{}` contains multiple members for package `{target_package_name}`: {matching_members}",
-                normalize_path(&workspace_manifest.manifest_path)
-            );
-            return Err(1);
-        }
-
-        load_project_manifest(&member_entries[0].1)
-            .map_err(|error| {
-                eprintln!("error: {command_label} {error}");
-                1
-            })
-            .map(|package_manifest| (workspace_manifest, package_manifest))?
-    } else {
-        let package_manifest = resolve_project_package_manifest(path).map_err(|message| {
-            eprintln!("error: {command_label} {message}");
-            1
-        })?;
-        let workspace_manifest =
-            resolve_project_workspace_manifest(path).unwrap_or_else(|_| package_manifest.clone());
-        (workspace_manifest, package_manifest)
-    };
-
-    Ok(package_manifest)
-}
-
 fn project_remove_dependency_from_all_workspace_members(
     path: &Path,
     package_name: &str,
@@ -11535,34 +11433,21 @@ fn project_remove_dependency_from_all_workspace_members(
         eprintln!("error: `ql project remove-dependency` {message}");
         1
     })?;
-    let dependency_entries =
-        find_workspace_member_entries_by_package_name(&workspace_manifest, package_name);
-    if dependency_entries.is_empty() {
-        eprintln!(
-            "error: `ql project remove-dependency` workspace manifest `{}` does not contain package `{package_name}`",
-            normalize_path(&workspace_manifest.manifest_path)
-        );
-        return Err(1);
-    }
-    if dependency_entries.len() > 1 {
-        let matching_members = dependency_entries
-            .iter()
-            .map(|(member, _)| member.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        eprintln!(
-            "error: `ql project remove-dependency` workspace manifest `{}` contains multiple members for package `{package_name}`: {matching_members}",
-            normalize_path(&workspace_manifest.manifest_path)
-        );
-        return Err(1);
-    }
-
-    let member_manifest_path = &dependency_entries[0].1;
-    let dependents = find_workspace_member_dependents(&workspace_manifest, member_manifest_path)
+    let (_, member_manifest_path) =
+        resolve_workspace_member_entry_by_package_name(&workspace_manifest, package_name).map_err(
+            |error| {
+                eprintln!(
+                    "error: `ql project remove-dependency` {}",
+                    render_workspace_member_lookup_error(&workspace_manifest, package_name, &error)
+                );
+                1
+            },
+        )?;
+    let dependents = find_workspace_member_dependents(&workspace_manifest, &member_manifest_path)
         .map_err(|message| {
-            eprintln!("error: `ql project remove-dependency` {message}");
-            1
-        })?;
+        eprintln!("error: `ql project remove-dependency` {message}");
+        1
+    })?;
     if dependents.is_empty() {
         eprintln!(
             "error: `ql project remove-dependency` workspace package `{package_name}` does not have any dependent members to update in workspace manifest `{}`",
@@ -11572,7 +11457,7 @@ fn project_remove_dependency_from_all_workspace_members(
     }
 
     let updated_dependency_manifests =
-        detach_workspace_member_dependents(package_name, member_manifest_path, &dependents)
+        detach_workspace_member_dependents(package_name, &member_manifest_path, &dependents)
             .map_err(|message| {
                 eprintln!("error: `ql project remove-dependency` {message}");
                 1
@@ -11608,149 +11493,6 @@ fn absolute_user_path(path: &Path) -> PathBuf {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(path)
     }
-}
-
-fn resolve_project_workspace_manifest(path: &Path) -> Result<ql_project::ProjectManifest, String> {
-    let manifest = load_project_manifest(path)
-        .map_err(|error| project_workspace_manifest_error(path, &error))?;
-    let workspace_manifest_path = if manifest.workspace.is_some() {
-        manifest.manifest_path.clone()
-    } else {
-        resolve_project_member_request_root(&manifest.manifest_path)
-    };
-    let workspace_manifest = load_project_manifest(&workspace_manifest_path)
-        .map_err(|error| project_workspace_manifest_error(path, &error))?;
-
-    if workspace_manifest.workspace.is_none() {
-        return Err(format!(
-            "requires an existing workspace manifest; `{}` resolves to package manifest `{}`",
-            normalize_path(path),
-            normalize_path(&workspace_manifest.manifest_path)
-        ));
-    }
-
-    Ok(workspace_manifest)
-}
-
-fn resolve_project_package_manifest(path: &Path) -> Result<ql_project::ProjectManifest, String> {
-    let manifest = load_project_manifest(path)
-        .map_err(|error| project_workspace_manifest_error(path, &error))?;
-    if manifest.package.is_none() {
-        return Err(format!(
-            "requires an existing package manifest; `{}` resolves to workspace manifest `{}`",
-            normalize_path(path),
-            normalize_path(&manifest.manifest_path)
-        ));
-    }
-    Ok(manifest)
-}
-
-fn resolve_project_workspace_member_package_name(
-    path: &Path,
-    selected_package_name: Option<&str>,
-    command_label: &str,
-) -> Result<String, u8> {
-    if let Some(package_name) = selected_package_name {
-        if let Err(message) = validate_project_package_name(package_name) {
-            eprintln!("error: {command_label} {message}");
-            return Err(1);
-        }
-        return Ok(package_name.to_owned());
-    }
-
-    let package_manifest = load_project_manifest(path).map_err(|error| {
-        eprintln!(
-            "error: {command_label} {}",
-            project_workspace_manifest_error(path, &error)
-        );
-        1
-    })?;
-    if package_manifest.package.is_none() {
-        eprintln!(
-            "error: {command_label} could not derive a package name from `{}`; rerun with `--name <package>`",
-            normalize_path(path)
-        );
-        return Err(1);
-    }
-
-    package_name(&package_manifest)
-        .map(str::to_owned)
-        .map_err(|error| {
-            eprintln!("error: {command_label} {error}");
-            1
-        })
-}
-
-fn project_workspace_manifest_error(path: &Path, error: &ql_project::ProjectError) -> String {
-    match error {
-        ql_project::ProjectError::ManifestNotFound { start } => format!(
-            "requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
-            normalize_path(start)
-        ),
-        ql_project::ProjectError::PackageSourceRootNotFound {
-            path: manifest_path,
-        } => format!(
-            "manifest `{}` does not have a project source root discoverable from `{}`",
-            normalize_path(manifest_path),
-            normalize_path(path)
-        ),
-        other => other.to_string(),
-    }
-}
-
-fn find_workspace_member_with_package_name(
-    workspace_manifest: &ql_project::ProjectManifest,
-    wanted_package_name: &str,
-) -> Option<PathBuf> {
-    if workspace_manifest
-        .package
-        .as_ref()
-        .is_some_and(|package| package.name == wanted_package_name)
-    {
-        return Some(workspace_manifest.manifest_path.clone());
-    }
-
-    let workspace_root = workspace_manifest
-        .manifest_path
-        .parent()
-        .unwrap_or(Path::new("."));
-    workspace_manifest
-        .workspace
-        .as_ref()?
-        .members
-        .iter()
-        .find_map(|member| {
-            let member_manifest = load_project_manifest(&workspace_root.join(member)).ok()?;
-            let existing_package_name = package_name(&member_manifest).ok()?;
-            (existing_package_name == wanted_package_name).then_some(member_manifest.manifest_path)
-        })
-}
-
-fn find_workspace_member_entries_by_package_name(
-    workspace_manifest: &ql_project::ProjectManifest,
-    wanted_package_name: &str,
-) -> Vec<(String, PathBuf)> {
-    let workspace_root = workspace_manifest
-        .manifest_path
-        .parent()
-        .unwrap_or(Path::new("."));
-    workspace_manifest
-        .workspace
-        .as_ref()
-        .map(|workspace| {
-            workspace
-                .members
-                .iter()
-                .filter_map(|member| {
-                    let member_manifest =
-                        load_project_manifest(&workspace_root.join(member)).ok()?;
-                    let existing_package_name = package_name(&member_manifest).ok()?;
-                    (existing_package_name == wanted_package_name)
-                        .then_some((member.clone(), member_manifest.manifest_path))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 fn detach_workspace_member_dependents(
@@ -11808,31 +11550,17 @@ fn resolve_project_existing_dependency_entry(
         ));
     }
 
-    let dependency_entries =
-        find_workspace_member_entries_by_package_name(workspace_manifest, dependency_name);
-    if dependency_entries.is_empty() {
-        return Err(format!(
-            "workspace manifest `{}` does not contain package `{dependency_name}`",
-            normalize_path(&workspace_manifest.manifest_path)
-        ));
-    }
-    if dependency_entries.len() > 1 {
-        let matching_members = dependency_entries
-            .iter()
-            .map(|(member, _)| member.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(format!(
-            "workspace manifest `{}` contains multiple members for package `{dependency_name}`: {matching_members}",
-            normalize_path(&workspace_manifest.manifest_path)
-        ));
-    }
+    let (_, dependency_manifest_path) =
+        resolve_workspace_member_entry_by_package_name(workspace_manifest, dependency_name)
+            .map_err(|error| {
+                render_workspace_member_lookup_error(workspace_manifest, dependency_name, &error)
+            })?;
 
     let member_root = package_manifest
         .manifest_path
         .parent()
         .unwrap_or(Path::new("."));
-    let dependency_root = dependency_entries[0].1.parent().unwrap_or(Path::new("."));
+    let dependency_root = dependency_manifest_path.parent().unwrap_or(Path::new("."));
     Ok((
         dependency_name.to_owned(),
         relative_path_from(member_root, dependency_root),

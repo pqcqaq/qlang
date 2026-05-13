@@ -1,6 +1,6 @@
 # 阶段总览
 
-> 最后同步：2026-05-03
+> 最后同步：2026-05-13
 
 ## 状态
 
@@ -13,7 +13,7 @@
 | Phase 5 | 已完成 | C ABI、header projection、host integration |
 | Phase 6 | 已完成 | same-file hover、definition、rename、completion、semantic tokens、symbols |
 | Phase 7 | 进行中 | async、runtime、task-handle、build、interop 的保守扩面 |
-| Phase 8 | 进行中 | package/workspace、`.qi`、local dependencies、dependency-backed tooling |
+| Phase 8 | 进行中 | package/workspace、`.qi`、local dependencies、dependency-backed tooling、CLI workspace request-context/member lookup 收口 |
 
 ## 主线
 

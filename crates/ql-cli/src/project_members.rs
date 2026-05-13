@@ -6,9 +6,10 @@ use ql_project::{package_name, render_manifest_with_added_binary_target};
 use toml::Value as TomlValue;
 
 use super::{
-    detach_workspace_member_dependents, find_workspace_member_with_package_name, normalize_path,
-    project_init, relative_path_from, resolve_project_package_manifest,
-    resolve_project_selected_package_manifest, resolve_project_workspace_manifest,
+    WorkspaceMemberLookupError, detach_workspace_member_dependents,
+    find_workspace_member_with_package_name, normalize_path, project_init, relative_path_from,
+    resolve_project_package_manifest, resolve_project_selected_package_manifest,
+    resolve_project_workspace_manifest, resolve_workspace_member_entry_by_package_name,
     validate_project_package_name,
 };
 
@@ -335,34 +336,28 @@ fn remove_workspace_project_member(
         ));
     };
 
-    let member_entries =
-        super::find_workspace_member_entries_by_package_name(workspace_manifest, package_name);
-    if member_entries.is_empty() {
-        return Err(format!(
+    let (member_entry, member_manifest_path) = resolve_workspace_member_entry_by_package_name(
+        workspace_manifest,
+        package_name,
+    )
+    .map_err(|error| match error {
+        WorkspaceMemberLookupError::Missing => format!(
             "workspace manifest `{}` does not contain member package `{package_name}`",
             normalize_path(&workspace_manifest.manifest_path)
-        ));
-    }
-    if member_entries.len() > 1 {
-        let matching_members = member_entries
-            .iter()
-            .map(|(member, _)| member.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(format!(
-            "workspace manifest `{}` contains multiple members for package `{package_name}`: {matching_members}",
-            normalize_path(&workspace_manifest.manifest_path)
-        ));
-    }
-
-    let (member_entry, member_manifest_path) = &member_entries[0];
+        ),
+        WorkspaceMemberLookupError::Ambiguous { matches } => format!(
+            "workspace manifest `{}` contains multiple members for package `{package_name}`: {}",
+            normalize_path(&workspace_manifest.manifest_path),
+            matches.join(", ")
+        ),
+    })?;
     let dependent_members =
-        find_workspace_member_dependents(workspace_manifest, member_manifest_path)?;
+        find_workspace_member_dependents(workspace_manifest, &member_manifest_path)?;
     if !dependent_members.is_empty() {
         if cascade {
             let updated_dependency_manifests = detach_workspace_member_dependents(
                 package_name,
-                member_manifest_path,
+                &member_manifest_path,
                 &dependent_members,
             )?;
             let workspace_manifest_source = fs::read_to_string(&workspace_manifest.manifest_path)
@@ -373,7 +368,7 @@ fn remove_workspace_project_member(
                 )
             })?;
             let updated_workspace_manifest =
-                remove_workspace_manifest_member(&workspace_manifest_source, member_entry)?;
+                remove_workspace_manifest_member(&workspace_manifest_source, &member_entry)?;
             fs::write(
                 &workspace_manifest.manifest_path,
                 updated_workspace_manifest,
@@ -413,7 +408,7 @@ fn remove_workspace_project_member(
             )
         })?;
     let updated_workspace_manifest =
-        remove_workspace_manifest_member(&workspace_manifest_source, member_entry)?;
+        remove_workspace_manifest_member(&workspace_manifest_source, &member_entry)?;
     fs::write(
         &workspace_manifest.manifest_path,
         updated_workspace_manifest,
