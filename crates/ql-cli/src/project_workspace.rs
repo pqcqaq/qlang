@@ -223,34 +223,6 @@ pub(crate) fn render_workspace_member_lookup_error(
     }
 }
 
-pub(crate) fn find_workspace_member_with_package_name(
-    workspace_manifest: &ProjectManifest,
-    wanted_package_name: &str,
-) -> Option<PathBuf> {
-    if workspace_manifest
-        .package
-        .as_ref()
-        .is_some_and(|package| package.name == wanted_package_name)
-    {
-        return Some(workspace_manifest.manifest_path.clone());
-    }
-
-    let workspace_root = workspace_manifest
-        .manifest_path
-        .parent()
-        .unwrap_or(Path::new("."));
-    workspace_manifest
-        .workspace
-        .as_ref()?
-        .members
-        .iter()
-        .find_map(|member| {
-            let member_manifest = load_project_manifest(&workspace_root.join(member)).ok()?;
-            let existing_package_name = package_name(&member_manifest).ok()?;
-            (existing_package_name == wanted_package_name).then_some(member_manifest.manifest_path)
-        })
-}
-
 pub(crate) fn find_workspace_member_entries_by_package_name(
     workspace_manifest: &ProjectManifest,
     wanted_package_name: &str,

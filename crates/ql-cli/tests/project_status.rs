@@ -361,3 +361,79 @@ fn project_status_workspace_root_package_selector_reports_missing_package() {
     )
     .unwrap();
 }
+
+#[test]
+fn project_status_package_selector_keeps_all_matching_members_with_duplicate_package_names() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-status-duplicate-package-selector");
+    let project_root = temp.path().join("workspace");
+
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/a\", \"packages/b\"]\n",
+    );
+    temp.write(
+        "workspace/packages/a/qlang.toml",
+        "[package]\nname = \"util\"\n",
+    );
+    temp.write(
+        "workspace/packages/a/src/lib.ql",
+        "pub fn left() -> Int {\n    return 1\n}\n",
+    );
+    temp.write(
+        "workspace/packages/b/qlang.toml",
+        "[package]\nname = \"util\"\n",
+    );
+    temp.write(
+        "workspace/packages/b/src/lib.ql",
+        "pub fn right() -> Int {\n    return 2\n}\n",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "status",
+        &project_root.to_string_lossy(),
+        "--package",
+        "util",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project status --package --json` duplicate workspace package",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-status-duplicate-package-selector",
+        "project status duplicate workspace package selector",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-status-duplicate-package-selector",
+        "project status duplicate workspace package selector",
+        &stderr,
+    )
+    .unwrap();
+
+    let actual = parse_json_output("project-status-duplicate-package-selector", &stdout);
+    let members = actual["members"]
+        .as_array()
+        .expect("duplicate workspace package selector members should be an array");
+    assert_eq!(
+        members.len(),
+        2,
+        "project status should keep all matching members for duplicate package names"
+    );
+    assert!(
+        members
+            .iter()
+            .any(|member| member["member"] == "packages/a"),
+        "duplicate package selector should keep packages/a, got:\n{stdout}"
+    );
+    assert!(
+        members
+            .iter()
+            .any(|member| member["member"] == "packages/b"),
+        "duplicate package selector should keep packages/b, got:\n{stdout}"
+    );
+}

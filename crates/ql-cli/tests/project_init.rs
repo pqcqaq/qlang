@@ -1200,6 +1200,63 @@ fn project_add_refuses_to_overwrite_existing_member_directory() {
 }
 
 #[test]
+fn project_add_rejects_ambiguous_existing_workspace_package_name() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-add-ambiguous-package");
+    let project_root = temp.path().join("workspace");
+
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/a\", \"packages/b\"]\n",
+    );
+    temp.write(
+        "workspace/packages/a/qlang.toml",
+        "[package]\nname = \"util\"\n",
+    );
+    temp.write(
+        "workspace/packages/b/qlang.toml",
+        "[package]\nname = \"util\"\n",
+    );
+
+    let mut add = ql_command(&workspace_root);
+    add.args([
+        "project",
+        "add",
+        &project_root.to_string_lossy(),
+        "--name",
+        "util",
+    ]);
+    let output = run_command_capture(&mut add, "`ql project add` ambiguous existing package");
+    let (stdout, stderr) = expect_exit_code(
+        "project-add-ambiguous-package",
+        "add workspace member with ambiguous existing package name",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-add-ambiguous-package",
+        "add workspace member with ambiguous existing package name",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-add-ambiguous-package",
+        "add workspace member with ambiguous existing package name",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project add` workspace manifest `{}` contains multiple members for package `util`: packages/a, packages/b",
+            project_root.join("qlang.toml").to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+    assert!(
+        !project_root.join("packages/util").exists(),
+        "ambiguous package add should not create the new workspace member directory"
+    );
+}
+
+#[test]
 fn project_add_existing_workspace_member_from_source_path() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-add-existing");
@@ -1369,6 +1426,67 @@ fn project_add_existing_refuses_name_override() {
 }
 
 #[test]
+fn project_add_existing_rejects_ambiguous_existing_workspace_package_name() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-add-existing-ambiguous-package");
+    let project_root = temp.path().join("workspace");
+    let existing_member_root = project_root.join("vendor/util");
+
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/a\", \"packages/b\"]\n",
+    );
+    temp.write(
+        "workspace/packages/a/qlang.toml",
+        "[package]\nname = \"util\"\n",
+    );
+    temp.write(
+        "workspace/packages/b/qlang.toml",
+        "[package]\nname = \"util\"\n",
+    );
+    temp.write(
+        "workspace/vendor/util/qlang.toml",
+        "[package]\nname = \"util\"\n",
+    );
+
+    let mut add = ql_command(&workspace_root);
+    add.args([
+        "project",
+        "add",
+        &project_root.to_string_lossy(),
+        "--existing",
+        &existing_member_root.to_string_lossy(),
+    ]);
+    let output = run_command_capture(
+        &mut add,
+        "`ql project add --existing` ambiguous existing package",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-add-existing-ambiguous-package",
+        "add existing workspace member with ambiguous existing package name",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-add-existing-ambiguous-package",
+        "add existing workspace member with ambiguous existing package name",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-add-existing-ambiguous-package",
+        "add existing workspace member with ambiguous existing package name",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project add` workspace manifest `{}` contains multiple members for package `util`: packages/a, packages/b",
+            project_root.join("qlang.toml").to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
 fn project_add_refuses_unknown_workspace_dependency() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-add-missing-dependency");
@@ -1440,6 +1558,65 @@ fn project_add_refuses_unknown_workspace_dependency() {
     assert!(
         !project_root.join("packages/tools").exists(),
         "missing dependency add should not create the new workspace member directory"
+    );
+}
+
+#[test]
+fn project_add_refuses_ambiguous_workspace_dependency_package() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-add-ambiguous-dependency");
+    let project_root = temp.path().join("workspace");
+
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/a\", \"packages/b\"]\n",
+    );
+    temp.write(
+        "workspace/packages/a/qlang.toml",
+        "[package]\nname = \"util\"\n",
+    );
+    temp.write(
+        "workspace/packages/b/qlang.toml",
+        "[package]\nname = \"util\"\n",
+    );
+
+    let mut add = ql_command(&workspace_root);
+    add.args([
+        "project",
+        "add",
+        &project_root.to_string_lossy(),
+        "--name",
+        "tools",
+        "--dependency",
+        "util",
+    ]);
+    let output = run_command_capture(&mut add, "`ql project add` ambiguous dependency");
+    let (stdout, stderr) = expect_exit_code(
+        "project-add-ambiguous-dependency",
+        "workspace member add with ambiguous dependency package",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-add-ambiguous-dependency",
+        "workspace member add with ambiguous dependency package",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-add-ambiguous-dependency",
+        "workspace member add with ambiguous dependency package",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project add` workspace manifest `{}` contains multiple members for package `util`: packages/a, packages/b",
+            project_root.join("qlang.toml").to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+    assert!(
+        !project_root.join("packages/tools").exists(),
+        "ambiguous dependency add should not create the new workspace member directory"
     );
 }
 
@@ -1873,6 +2050,71 @@ fn project_add_dependency_refuses_missing_workspace_package() {
         &stderr.replace('\\', "/"),
         &format!(
             "error: `ql project add-dependency` workspace manifest `{}` does not contain package `core`",
+            project_root.join("qlang.toml").to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn project_add_dependency_refuses_ambiguous_workspace_package() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-add-dependency-ambiguous");
+    let project_root = temp.path().join("workspace");
+    let request_path = project_root.join("packages/app/src/main.ql");
+
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/app\", \"packages/a\", \"packages/b\"]\n",
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        "[package]\nname = \"app\"\n",
+    );
+    temp.write(
+        "workspace/packages/app/src/main.ql",
+        "fn main() -> Int {\n    return 0\n}\n",
+    );
+    temp.write(
+        "workspace/packages/a/qlang.toml",
+        "[package]\nname = \"util\"\n",
+    );
+    temp.write(
+        "workspace/packages/b/qlang.toml",
+        "[package]\nname = \"util\"\n",
+    );
+
+    let mut add_dependency = ql_command(&workspace_root);
+    add_dependency.args([
+        "project",
+        "add-dependency",
+        &request_path.to_string_lossy(),
+        "--name",
+        "util",
+    ]);
+    let output = run_command_capture(
+        &mut add_dependency,
+        "`ql project add-dependency` ambiguous workspace package",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-add-dependency-ambiguous",
+        "add dependency with ambiguous workspace package",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-add-dependency-ambiguous",
+        "add dependency with ambiguous workspace package",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-add-dependency-ambiguous",
+        "add dependency with ambiguous workspace package",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project add-dependency` workspace manifest `{}` contains multiple members for package `util`: packages/a, packages/b",
             project_root.join("qlang.toml").to_string_lossy().replace('\\', "/")
         ),
     )

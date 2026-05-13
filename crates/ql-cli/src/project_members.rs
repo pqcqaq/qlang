@@ -6,11 +6,10 @@ use ql_project::{package_name, render_manifest_with_added_binary_target};
 use toml::Value as TomlValue;
 
 use super::{
-    WorkspaceMemberLookupError, detach_workspace_member_dependents,
-    find_workspace_member_with_package_name, normalize_path, project_init, relative_path_from,
-    resolve_project_package_manifest, resolve_project_selected_package_manifest,
-    resolve_project_workspace_manifest, resolve_workspace_member_entry_by_package_name,
-    validate_project_package_name,
+    WorkspaceMemberLookupError, detach_workspace_member_dependents, normalize_path, project_init,
+    relative_path_from, render_workspace_member_lookup_error, resolve_project_package_manifest,
+    resolve_project_selected_package_manifest, resolve_project_workspace_manifest,
+    resolve_workspace_member_entry_by_package_name, validate_project_package_name,
 };
 
 use crate::project_dependencies::find_workspace_member_dependents;
@@ -200,14 +199,22 @@ fn add_workspace_project_member(
             normalize_path(&workspace_manifest.manifest_path)
         ));
     }
-    if let Some(existing_package_manifest) =
-        find_workspace_member_with_package_name(workspace_manifest, package_name)
-    {
-        return Err(format!(
-            "workspace manifest `{}` already contains package `{package_name}` at `{}`",
-            normalize_path(&workspace_manifest.manifest_path),
-            normalize_path(&existing_package_manifest)
-        ));
+    match resolve_workspace_member_entry_by_package_name(workspace_manifest, package_name) {
+        Ok((_, existing_package_manifest)) => {
+            return Err(format!(
+                "workspace manifest `{}` already contains package `{package_name}` at `{}`",
+                normalize_path(&workspace_manifest.manifest_path),
+                normalize_path(&existing_package_manifest)
+            ));
+        }
+        Err(WorkspaceMemberLookupError::Missing) => {}
+        Err(WorkspaceMemberLookupError::Ambiguous { matches }) => {
+            return Err(format!(
+                "workspace manifest `{}` contains multiple members for package `{package_name}`: {}",
+                normalize_path(&workspace_manifest.manifest_path),
+                matches.join(", ")
+            ));
+        }
     }
     if packages_dir.exists() && !packages_dir.is_dir() {
         return Err(format!(
@@ -291,14 +298,22 @@ fn add_existing_workspace_project_member(
             normalize_path(&workspace_manifest.manifest_path)
         ));
     }
-    if let Some(existing_package_manifest) =
-        find_workspace_member_with_package_name(workspace_manifest, package_name)
-    {
-        return Err(format!(
-            "workspace manifest `{}` already contains package `{package_name}` at `{}`",
-            normalize_path(&workspace_manifest.manifest_path),
-            normalize_path(&existing_package_manifest)
-        ));
+    match resolve_workspace_member_entry_by_package_name(workspace_manifest, package_name) {
+        Ok((_, existing_package_manifest)) => {
+            return Err(format!(
+                "workspace manifest `{}` already contains package `{package_name}` at `{}`",
+                normalize_path(&workspace_manifest.manifest_path),
+                normalize_path(&existing_package_manifest)
+            ));
+        }
+        Err(WorkspaceMemberLookupError::Missing) => {}
+        Err(WorkspaceMemberLookupError::Ambiguous { matches }) => {
+            return Err(format!(
+                "workspace manifest `{}` contains multiple members for package `{package_name}`: {}",
+                normalize_path(&workspace_manifest.manifest_path),
+                matches.join(", ")
+            ));
+        }
     }
 
     let workspace_manifest_source =
@@ -511,14 +526,15 @@ fn resolve_project_add_dependency_entries(
             ));
         }
 
-        let Some(dependency_manifest_path) =
-            find_workspace_member_with_package_name(workspace_manifest, dependency_name)
-        else {
-            return Err(format!(
-                "workspace manifest `{}` does not contain package `{dependency_name}`",
-                normalize_path(&workspace_manifest.manifest_path)
-            ));
-        };
+        let (_, dependency_manifest_path) =
+            resolve_workspace_member_entry_by_package_name(workspace_manifest, dependency_name)
+                .map_err(|error| {
+                    render_workspace_member_lookup_error(
+                        workspace_manifest,
+                        dependency_name,
+                        &error,
+                    )
+                })?;
         let dependency_root = dependency_manifest_path.parent().unwrap_or(Path::new("."));
         dependencies.push((
             dependency_name.clone(),

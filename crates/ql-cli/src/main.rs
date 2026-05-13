@@ -67,11 +67,10 @@ use project_targets::{
     select_workspace_build_targets,
 };
 use project_workspace::{
-    WorkspaceMemberLookupError, find_workspace_member_with_package_name,
-    render_workspace_member_lookup_error, resolve_project_package_manifest,
-    resolve_project_selected_package_manifest, resolve_project_workspace_manifest,
-    resolve_project_workspace_member_package_name, resolve_workspace_member_entry_by_package_name,
-    select_workspace_members,
+    WorkspaceMemberLookupError, render_workspace_member_lookup_error,
+    resolve_project_package_manifest, resolve_project_selected_package_manifest,
+    resolve_project_workspace_manifest, resolve_project_workspace_member_package_name,
+    resolve_workspace_member_entry_by_package_name, select_workspace_members,
 };
 
 const CLI_NAME: &str = "ql";
