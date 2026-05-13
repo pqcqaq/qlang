@@ -2122,6 +2122,82 @@ fn project_add_dependency_refuses_ambiguous_workspace_package() {
 }
 
 #[test]
+fn project_add_dependency_refuses_unresolved_workspace_member_metadata() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-add-dependency-broken-member");
+    let project_root = temp.path().join("workspace");
+    let request_path = project_root.join("packages/app/src/main.ql");
+
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/app\", \"packages/core\", \"packages/broken\"]\n",
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        "[package]\nname = \"app\"\n",
+    );
+    temp.write(
+        "workspace/packages/app/src/main.ql",
+        "fn main() -> Int {\n    return 0\n}\n",
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        "[package]\nname = \"core\"\n",
+    );
+    temp.write(
+        "workspace/packages/broken/qlang.toml",
+        "[package]\nversion = \"0.1.0\"\n",
+    );
+
+    let mut add_dependency = ql_command(&workspace_root);
+    add_dependency.args([
+        "project",
+        "add-dependency",
+        &request_path.to_string_lossy(),
+        "--name",
+        "core",
+    ]);
+    let output = run_command_capture(
+        &mut add_dependency,
+        "`ql project add-dependency` broken workspace member metadata",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-add-dependency-broken-member",
+        "add dependency with broken workspace member metadata",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-add-dependency-broken-member",
+        "add dependency with broken workspace member metadata",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-add-dependency-broken-member",
+        "add dependency with broken workspace member metadata",
+        &stderr.replace('\\', "/"),
+        "error: `ql project add-dependency` failed to inspect workspace member `packages/broken`: manifest",
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-add-dependency-broken-member",
+        "add dependency with broken workspace member metadata",
+        &stderr,
+        "does not declare `[package].name`",
+    )
+    .unwrap();
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("packages/app/qlang.toml"),
+            "workspace member manifest after rejected add-dependency"
+        ),
+        "[package]\nname = \"app\"\n"
+    );
+}
+
+#[test]
 fn project_remove_dependency_updates_existing_package_manifest() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-remove-dependency-success");

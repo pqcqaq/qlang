@@ -2,12 +2,16 @@ use std::path::{Path, PathBuf};
 
 use ql_project::{ProjectError, ProjectManifest, load_project_manifest, package_name};
 
-use super::{normalize_path, resolve_project_member_request_root, validate_project_package_name};
+use super::{
+    normalize_path, package_missing_name_manifest_path_from_project_error,
+    resolve_project_member_request_root, validate_project_package_name,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum WorkspaceMemberLookupError {
     Missing,
     Ambiguous { matches: Vec<String> },
+    InspectionFailure { member: String, message: String },
 }
 
 pub(crate) fn select_workspace_members(
@@ -27,7 +31,14 @@ pub(crate) fn select_workspace_members(
         return Err(1);
     }
 
-    let matching_members = find_workspace_member_entries_by_package_name(manifest, package_name);
+    let matching_members = find_workspace_member_entries_by_package_name(manifest, package_name)
+        .map_err(|error| {
+            eprintln!(
+                "error: {command_label} {}",
+                render_workspace_member_lookup_error(manifest, package_name, &error)
+            );
+            1
+        })?;
     if matching_members.is_empty() {
         let normalized_path = normalize_path(request_path);
         let rerun_command = format!("{} {normalized_path}", command_label.trim_matches('`'));
@@ -186,7 +197,7 @@ pub(crate) fn resolve_workspace_member_entry_by_package_name(
     wanted_package_name: &str,
 ) -> Result<(String, PathBuf), WorkspaceMemberLookupError> {
     let member_entries =
-        find_workspace_member_entries_by_package_name(workspace_manifest, wanted_package_name);
+        find_workspace_member_entries_by_package_name(workspace_manifest, wanted_package_name)?;
     if member_entries.is_empty() {
         return Err(WorkspaceMemberLookupError::Missing);
     }
@@ -220,34 +231,53 @@ pub(crate) fn render_workspace_member_lookup_error(
             normalize_path(&workspace_manifest.manifest_path),
             matches.join(", ")
         ),
+        WorkspaceMemberLookupError::InspectionFailure { member, message } => {
+            format!("failed to inspect workspace member `{member}`: {message}")
+        }
     }
 }
 
 pub(crate) fn find_workspace_member_entries_by_package_name(
     workspace_manifest: &ProjectManifest,
     wanted_package_name: &str,
-) -> Vec<(String, PathBuf)> {
+) -> Result<Vec<(String, PathBuf)>, WorkspaceMemberLookupError> {
     let workspace_root = workspace_manifest
         .manifest_path
         .parent()
         .unwrap_or(Path::new("."));
-    workspace_manifest
-        .workspace
-        .as_ref()
-        .map(|workspace| {
-            workspace
-                .members
-                .iter()
-                .filter_map(|member| {
-                    let member_manifest =
-                        load_project_manifest(&workspace_root.join(member)).ok()?;
-                    let existing_package_name = package_name(&member_manifest).ok()?;
-                    (existing_package_name == wanted_package_name)
-                        .then_some((member.clone(), member_manifest.manifest_path))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    let Some(workspace) = workspace_manifest.workspace.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let mut member_entries = Vec::new();
+    for member in &workspace.members {
+        let member_manifest =
+            load_project_manifest(&workspace_root.join(member)).map_err(|error| {
+                WorkspaceMemberLookupError::InspectionFailure {
+                    member: member.clone(),
+                    message: normalize_workspace_member_package_error(&error),
+                }
+            })?;
+        let existing_package_name = package_name(&member_manifest).map_err(|error| {
+            WorkspaceMemberLookupError::InspectionFailure {
+                member: member.clone(),
+                message: normalize_workspace_member_package_error(&error),
+            }
+        })?;
+        if existing_package_name == wanted_package_name {
+            member_entries.push((member.clone(), member_manifest.manifest_path));
+        }
+    }
+    Ok(member_entries)
+}
+
+fn normalize_workspace_member_package_error(error: &ProjectError) -> String {
+    if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(error) {
+        return format!(
+            "manifest `{}` does not declare `[package].name`",
+            normalize_path(manifest_path)
+        );
+    }
+    error.to_string()
 }
 
 fn project_workspace_manifest_error(path: &Path, error: &ProjectError) -> String {

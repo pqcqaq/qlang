@@ -2834,6 +2834,91 @@ pub fn main() -> Int {
 }
 
 #[test]
+fn check_workspace_root_package_selector_reports_unresolved_workspace_member_metadata() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-workspace-package-selector-broken-member");
+    let app_root = temp.path().join("workspace").join("packages").join("app");
+    let broken_root = temp
+        .path()
+        .join("workspace")
+        .join("packages")
+        .join("broken");
+    let workspace_manifest = temp.path().join("workspace").join("qlang.toml");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+    std::fs::create_dir_all(&broken_root).expect("create broken member directory");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/broken/qlang.toml",
+        r#"
+[package]
+version = "0.1.0"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["check"])
+        .arg(&workspace_manifest)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check` workspace root package selector with broken member metadata",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-check-workspace-package-selector-broken-member",
+        "workspace-root ql check package selector with broken member metadata",
+        &output,
+        1,
+    )
+    .expect("workspace-root ql check package selector should fail when another member metadata is unresolved");
+    assert!(
+        stdout.trim().is_empty(),
+        "expected workspace-root ql check package selector with broken member metadata stdout to stay empty, got:\n{stdout}"
+    );
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-check-workspace-package-selector-broken-member",
+        "workspace-root ql check package selector with broken member metadata",
+        &normalized_stderr,
+        "error: `ql check` failed to inspect workspace member `packages/broken`: manifest",
+    )
+    .expect("workspace-root ql check package selector should surface the broken member error");
+    expect_stderr_contains(
+        "project-check-workspace-package-selector-broken-member",
+        "workspace-root ql check package selector with broken member metadata",
+        &stderr,
+        "does not declare `[package].name`",
+    )
+    .expect(
+        "workspace-root ql check package selector should preserve the package-name failure detail",
+    );
+}
+
+#[test]
 fn check_workspace_member_directory_uses_enclosing_workspace() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-check-workspace-member-dir");

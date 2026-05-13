@@ -215,6 +215,11 @@ fn add_workspace_project_member(
                 matches.join(", ")
             ));
         }
+        Err(WorkspaceMemberLookupError::InspectionFailure { member, message }) => {
+            return Err(format!(
+                "failed to inspect workspace member `{member}`: {message}"
+            ));
+        }
     }
     if packages_dir.exists() && !packages_dir.is_dir() {
         return Err(format!(
@@ -314,6 +319,11 @@ fn add_existing_workspace_project_member(
                 matches.join(", ")
             ));
         }
+        Err(WorkspaceMemberLookupError::InspectionFailure { member, message }) => {
+            return Err(format!(
+                "failed to inspect workspace member `{member}`: {message}"
+            ));
+        }
     }
 
     let workspace_manifest_source =
@@ -365,6 +375,9 @@ fn remove_workspace_project_member(
             normalize_path(&workspace_manifest.manifest_path),
             matches.join(", ")
         ),
+        WorkspaceMemberLookupError::InspectionFailure { member, message } => {
+            format!("failed to inspect workspace member `{member}`: {message}")
+        }
     })?;
     let dependent_members =
         find_workspace_member_dependents(workspace_manifest, &member_manifest_path)?;
