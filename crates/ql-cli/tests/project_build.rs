@@ -154,6 +154,51 @@ fn main() -> Int {
 }
 
 #[test]
+fn build_single_file_json_rejects_target_selectors_without_project_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-file-json-selector-context");
+    let source_path = temp.write("sample.ql", "fn main() -> Int { return 0 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["build"])
+        .arg(&source_path)
+        .args(["--json", "--bin", "admin"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` single file selector requires project context",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-build-file-json-selector-context",
+        "single-file build json selector preflight failure",
+        &output,
+        1,
+    )
+    .expect("single-file `ql build --json --bin admin` should exit with code 1");
+    expect_empty_stderr(
+        "project-build-file-json-selector-context",
+        "single-file build json selector preflight failure",
+        &stderr,
+    )
+    .expect("single-file `ql build --json --bin admin` should not print stderr");
+
+    let json = parse_json_output("project-build-file-json-selector-context", &stdout);
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(json["scope"], "file");
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["built_targets"], serde_json::json!([]));
+    assert_eq!(json["interfaces"], serde_json::json!([]));
+    assert_eq!(json["failure"]["error_kind"], "selector");
+    assert_eq!(json["failure"]["stage"], "project-context");
+    assert_eq!(json["failure"]["selector"], "binary `admin`");
+    assert_eq!(
+        json["failure"]["message"],
+        "target selectors require a package or workspace path"
+    );
+}
+
+#[test]
 fn build_single_file_supports_local_receiver_methods() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-file-local-receiver-method");

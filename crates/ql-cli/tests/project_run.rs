@@ -985,6 +985,62 @@ name = "app"
 }
 
 #[test]
+fn run_project_source_path_rejects_explicit_target_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-source-selector-conflict");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src/bin"))
+        .expect("create package source tree for source selector conflict run test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let main_path = temp.write("app/src/main.ql", "fn main() -> Int { return 1 }\n");
+    temp.write("app/src/bin/admin.ql", "fn main() -> Int { return 2 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["run"])
+        .arg(&main_path)
+        .args(["--bin", "admin"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql run` project source path explicit selector conflict",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-source-selector-conflict",
+        "project source selector conflict",
+        &output,
+        1,
+    )
+    .expect("project source path `ql run --bin admin` should exit with code 1");
+    expect_empty_stdout(
+        "project-run-source-selector-conflict",
+        "project source selector conflict",
+        &stdout,
+    )
+    .expect("project source selector conflict should not print stdout");
+    expect_stderr_contains(
+        "project-run-source-selector-conflict",
+        "project source selector conflict",
+        &stderr,
+        "error: `ql run` does not support combining a direct project source path with target selectors",
+    )
+    .expect("project source selector conflict should explain the invalid combination");
+    expect_stderr_contains(
+        "project-run-source-selector-conflict",
+        "project source selector conflict",
+        &stderr,
+        "note: selector: binary `admin`",
+    )
+    .expect("project source selector conflict should print the selector note");
+}
+
+#[test]
 fn run_project_path_selects_requested_binary_target() {
     if !toolchain_available("`ql run --bin` package test") {
         return;

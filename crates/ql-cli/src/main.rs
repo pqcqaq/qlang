@@ -55,11 +55,12 @@ use project_members::{
 };
 use project_status::project_status_path;
 use project_targets::{
-    ProjectTargetSelector, ProjectTargetSelectorKind, is_runnable_project_target,
-    list_build_targets_path, list_runnable_targets_path, parse_project_target_selector_option,
-    project_target_display_path, project_targets_path,
+    ProjectCommandPathError, ProjectTargetSelector, ResolvedProjectCommandPath,
+    is_runnable_project_target, list_build_targets_path, list_runnable_targets_path,
+    parse_project_target_selector_option, project_target_display_path, project_targets_path,
     report_project_source_path_rejects_target_selector,
-    report_project_target_selector_requires_project_context, select_workspace_build_targets,
+    report_project_target_selector_requires_project_context, resolve_project_command_path,
+    resolve_project_source_build_target_request, select_workspace_build_targets,
 };
 
 const CLI_NAME: &str = "ql";
@@ -2295,57 +2296,49 @@ fn build_path(
     profile_overridden: bool,
     json: bool,
 ) -> Result<(), u8> {
-    if should_use_project_build(path) {
-        return build_project_path(
-            path,
-            options,
+    match resolve_project_command_path(path, selector) {
+        Ok(ResolvedProjectCommandPath::Project {
+            request_root_manifest_path,
             selector,
-            emit_interface,
-            emit_overridden,
-            profile_overridden,
-            json,
-            None,
-        );
-    }
-
-    if let Some(request) = resolve_project_source_build_target_request(path) {
-        if selector.is_active() {
+        }) => {
+            return build_project_path(
+                path,
+                options,
+                &selector,
+                emit_interface,
+                emit_overridden,
+                profile_overridden,
+                json,
+                request_root_manifest_path.as_deref(),
+            );
+        }
+        Ok(ResolvedProjectCommandPath::DirectSource) => {}
+        Err(ProjectCommandPathError::SourcePathRejectsSelector) => {
             report_project_source_path_rejects_target_selector("`ql build`", path, selector);
             return Err(1);
         }
-        return build_project_path(
-            path,
-            options,
-            &request.selector,
-            emit_interface,
-            emit_overridden,
-            profile_overridden,
-            json,
-            Some(&request.request_root_manifest_path),
-        );
-    }
-
-    if selector.is_active() {
-        if json {
-            let mut report =
-                BuildJsonReport::new(path, None, options, profile_overridden, emit_interface);
-            report.record_preflight_failure(build_json_preflight_failure(
-                path,
-                None,
-                None,
-                None,
-                "selector",
-                "project-context",
-                "target selectors require a package or workspace path".to_owned(),
-                Some(selector.describe()),
-                None,
-                None,
-            ));
-            print!("{}", report.into_json());
-        } else {
-            report_project_target_selector_requires_project_context("`ql build`", selector);
+        Err(ProjectCommandPathError::SelectorRequiresProjectContext) => {
+            if json {
+                let mut report =
+                    BuildJsonReport::new(path, None, options, profile_overridden, emit_interface);
+                report.record_preflight_failure(build_json_preflight_failure(
+                    path,
+                    None,
+                    None,
+                    None,
+                    "selector",
+                    "project-context",
+                    "target selectors require a package or workspace path".to_owned(),
+                    Some(selector.describe()),
+                    None,
+                    None,
+                ));
+                print!("{}", report.into_json());
+            } else {
+                report_project_target_selector_requires_project_context("`ql build`", selector);
+            }
+            return Err(1);
         }
-        return Err(1);
     }
 
     if json {
@@ -3754,70 +3747,43 @@ fn run_path(
     json: bool,
 ) -> Result<(), u8> {
     let options = run_build_options(profile);
-    if json {
-        if should_use_project_build(path) {
-            return run_project_path_json(
-                path,
-                path,
-                &options,
-                profile_overridden,
-                selector,
-                program_args,
-            );
-        }
-
-        if let Some(request) = resolve_project_source_build_target_request(path) {
-            if selector.is_active() {
-                report_project_source_path_rejects_target_selector("`ql run`", path, selector);
-                return Err(1);
-            }
-            return run_project_path_json(
-                path,
-                &request.request_root_manifest_path,
-                &options,
-                profile_overridden,
-                &request.selector,
-                program_args,
-            );
-        }
-
-        if selector.is_active() {
-            report_project_target_selector_requires_project_context("`ql run`", selector);
-            return Err(1);
-        }
-
-        return run_path_json(path, &options, profile_overridden, program_args);
-    }
-
-    if should_use_project_build(path) {
-        return run_project_path(
-            path,
-            &options,
-            profile_overridden,
+    match resolve_project_command_path(path, selector) {
+        Ok(ResolvedProjectCommandPath::Project {
+            request_root_manifest_path,
             selector,
-            program_args,
-            None,
-        );
-    }
-
-    if let Some(request) = resolve_project_source_build_target_request(path) {
-        if selector.is_active() {
+        }) => {
+            if json {
+                return run_project_path_json(
+                    path,
+                    request_root_manifest_path.as_deref().unwrap_or(path),
+                    &options,
+                    profile_overridden,
+                    &selector,
+                    program_args,
+                );
+            }
+            return run_project_path(
+                path,
+                &options,
+                profile_overridden,
+                &selector,
+                program_args,
+                request_root_manifest_path.as_deref(),
+            );
+        }
+        Ok(ResolvedProjectCommandPath::DirectSource) => {}
+        Err(ProjectCommandPathError::SourcePathRejectsSelector) => {
             report_project_source_path_rejects_target_selector("`ql run`", path, selector);
             return Err(1);
         }
-        return run_project_path(
-            path,
-            &options,
-            profile_overridden,
-            &request.selector,
-            program_args,
-            Some(&request.request_root_manifest_path),
-        );
+        Err(ProjectCommandPathError::SelectorRequiresProjectContext) => {
+            report_project_target_selector_requires_project_context("`ql run`", selector);
+            return Err(1);
+        }
     }
 
-    if selector.is_active() {
-        report_project_target_selector_requires_project_context("`ql run`", selector);
-        return Err(1);
+    if json {
+        return run_path_json(path, &options, profile_overridden, program_args);
     }
 
     let artifact = build_single_source_target_silent(path, &options, false)?;
@@ -4501,12 +4467,6 @@ struct ProjectFileTestRequest {
     display_path: String,
 }
 
-#[derive(Clone, Debug)]
-struct ProjectSourceBuildTargetRequest {
-    request_root_manifest_path: PathBuf,
-    selector: ProjectTargetSelector,
-}
-
 fn test_build_options(profile: BuildProfile) -> BuildOptions {
     let mut options = BuildOptions {
         emit: BuildEmit::Executable,
@@ -4680,34 +4640,6 @@ fn resolve_project_file_test_request(path: &Path) -> Option<ProjectFileTestReque
     Some(ProjectFileTestRequest {
         request_root_manifest_path,
         display_path: display_relative_to_root(&request_root, path),
-    })
-}
-
-fn resolve_project_source_build_target_request(
-    path: &Path,
-) -> Option<ProjectSourceBuildTargetRequest> {
-    if !is_ql_source_file(path) {
-        return None;
-    }
-
-    let manifest = load_project_manifest(path).ok()?;
-    let package_name = package_name(&manifest).ok()?.to_owned();
-    let display_path = project_target_display_path(&manifest.manifest_path, path);
-    let targets = discover_package_build_targets(&manifest).ok()?;
-    if !targets.iter().any(|target| {
-        project_target_display_path(&manifest.manifest_path, target.path.as_path()) == display_path
-    }) {
-        return None;
-    }
-
-    let request_root_manifest_path = resolve_project_member_request_root(&manifest.manifest_path);
-
-    Some(ProjectSourceBuildTargetRequest {
-        request_root_manifest_path,
-        selector: ProjectTargetSelector {
-            package_name: Some(package_name),
-            target: Some(ProjectTargetSelectorKind::DisplayPath(display_path)),
-        },
     })
 }
 
