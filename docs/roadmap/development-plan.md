@@ -24,7 +24,7 @@
 
 ## 当前工作项
 
-- 继续抽 `ql-cli` project pipeline；`build/run/test` command-path resolution 已共享，下一步统一 `check/project build` 的 request context、target selection、dependency/interface prep 和 reporting。
+- 继续抽 `ql-cli` project pipeline；`build/run/test/check` 的入口 request-context 已开始共享，下一步统一 `project emit-interface/graph/status/dependencies` 的 workspace member selection、dependency/interface prep 和 reporting。
 - 收紧 `ql test`，继续把测试专用 bridge/source override 抽进共享 project pipeline，并扩大 dependency consumer smoke 覆盖。
 - 建立 LSP workspace index，让 diagnostics、references、rename、symbols、semantic tokens 和 rich editor hints 走同一份分析缓存。
 - 收紧 generic backend：继续扩大 package-local tests、downstream smoke 和 dependency consumers 对 generic public functions 的直接覆盖；继续把 direct-call specialization 扩到更宽表达式、类型和 dependency-aware backend 场景；保留未推断调用的显式错误，但不让未使用 import 触发 bridge 失败。

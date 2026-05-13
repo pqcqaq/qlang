@@ -55,12 +55,15 @@ use project_members::{
 };
 use project_status::project_status_path;
 use project_targets::{
-    ProjectCommandPathError, ProjectCommandScope, ProjectTargetSelector,
-    ResolvedProjectCommandPath, is_runnable_project_target, list_build_targets_path,
-    list_runnable_targets_path, parse_project_target_selector_option, project_target_display_path,
-    project_targets_path, report_project_source_path_rejects_target_selector,
-    report_project_target_selector_requires_project_context, resolve_project_command_path,
-    resolve_project_command_scope, select_workspace_build_targets,
+    ProjectCheckCommandScope, ProjectCommandPathError, ProjectCommandScope, ProjectTargetSelector,
+    ResolvedProjectCommandPath, display_relative_to_root, is_runnable_project_target,
+    list_build_targets_path, list_runnable_targets_path, parse_project_target_selector_option,
+    project_request_root, project_target_display_path, project_targets_path,
+    report_project_source_path_rejects_target_selector,
+    report_project_target_selector_requires_project_context, resolve_project_check_command_scope,
+    resolve_project_command_path, resolve_project_command_scope,
+    resolve_project_member_request_root, resolve_project_workspace_member_command_request_root,
+    select_workspace_build_targets,
 };
 
 const CLI_NAME: &str = "ql";
@@ -1463,8 +1466,13 @@ fn check_path(
     json: bool,
     package_name: Option<&str>,
 ) -> Result<(), u8> {
-    let request_root = resolve_project_workspace_member_command_request_root(path);
-    let manifest_request_path = request_root.as_deref().unwrap_or(path);
+    let command_scope = resolve_project_check_command_scope(path);
+    let manifest_request_path = match &command_scope {
+        ProjectCheckCommandScope::Project {
+            request_root_manifest_path,
+        } => request_root_manifest_path.as_deref().unwrap_or(path),
+        ProjectCheckCommandScope::DirectSource => path,
+    };
     if let Some(package_name) = package_name {
         let Ok(manifest) = load_project_manifest(manifest_request_path) else {
             report_check_package_selector_requires_workspace_context(package_name);
@@ -1475,9 +1483,7 @@ fn check_path(
             return Err(1);
         }
     }
-    let use_package_check = should_use_package_check(manifest_request_path)
-        || (is_ql_source_file(path) && load_project_manifest(manifest_request_path).is_ok());
-    if use_package_check {
+    if let ProjectCheckCommandScope::Project { .. } = command_scope {
         let check_command_label = format_check_command_label(sync_interfaces);
         let mut package_manifest_path = None;
         let mut json_report = None;
@@ -4607,71 +4613,6 @@ fn project_test_target(
             build_options,
             package_manifest_path: Some(member.member_manifest_path.clone()),
         },
-    }
-}
-
-pub(crate) fn project_request_root(path: &Path) -> PathBuf {
-    if path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("qlang.toml"))
-    {
-        path.parent().unwrap_or(Path::new(".")).to_path_buf()
-    } else {
-        path.to_path_buf()
-    }
-}
-
-fn resolve_project_member_request_root(package_manifest_path: &Path) -> PathBuf {
-    find_enclosing_workspace_manifest_for_member(package_manifest_path)
-        .unwrap_or_else(|| package_manifest_path.to_path_buf())
-}
-
-fn find_enclosing_workspace_manifest_for_member(package_manifest_path: &Path) -> Option<PathBuf> {
-    let package_root = package_manifest_path.parent()?;
-    let mut current = package_root.parent().map(Path::to_path_buf);
-
-    while let Some(directory) = current {
-        let candidate = directory.join("qlang.toml");
-        if candidate.is_file()
-            && let Ok(manifest) = load_project_manifest(&candidate)
-            && workspace_manifest_contains_member(&manifest, package_manifest_path)
-        {
-            return Some(manifest.manifest_path);
-        }
-        current = directory.parent().map(Path::to_path_buf);
-    }
-
-    None
-}
-
-fn workspace_manifest_contains_member(
-    workspace_manifest: &ql_project::ProjectManifest,
-    package_manifest_path: &Path,
-) -> bool {
-    let Some(workspace) = workspace_manifest.workspace.as_ref() else {
-        return false;
-    };
-
-    let expected_manifest_path = normalize_path(package_manifest_path);
-    let workspace_root = workspace_manifest
-        .manifest_path
-        .parent()
-        .unwrap_or(Path::new("."));
-    workspace.members.iter().any(|member| {
-        load_project_manifest(&workspace_root.join(member))
-            .ok()
-            .is_some_and(|member_manifest| {
-                normalize_path(&member_manifest.manifest_path) == expected_manifest_path
-            })
-    })
-}
-
-pub(crate) fn display_relative_to_root(root: &Path, path: &Path) -> String {
-    if let Ok(relative) = path.strip_prefix(root) {
-        normalize_path(relative)
-    } else {
-        normalize_path(path)
     }
 }
 
@@ -11945,21 +11886,6 @@ fn relative_path_from(from: &Path, to: &Path) -> String {
     }
 }
 
-fn resolve_project_workspace_member_command_request_root(path: &Path) -> Option<PathBuf> {
-    if !path.is_dir()
-        && !is_ql_source_file(path)
-        && !path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.eq_ignore_ascii_case("qlang.toml"))
-    {
-        return None;
-    }
-
-    let manifest = load_project_manifest(path).ok()?;
-    Some(resolve_project_member_request_root(&manifest.manifest_path))
-}
-
 fn load_workspace_build_targets_for_command_from_request_root(
     _request_path: &Path,
     request_root: &Path,
@@ -14230,14 +14156,6 @@ fn component_name(component: Component<'_>) -> Option<&str> {
         Component::Normal(segment) => segment.to_str(),
         _ => None,
     }
-}
-
-fn should_use_package_check(path: &Path) -> bool {
-    path.is_dir()
-        || path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.eq_ignore_ascii_case("qlang.toml"))
 }
 
 fn is_ql_source_file(path: &Path) -> bool {

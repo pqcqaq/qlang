@@ -2449,6 +2449,96 @@ pub fn main() -> Int {
 }
 
 #[test]
+fn check_workspace_member_source_supports_package_selectors() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-workspace-member-source-selector");
+    let app_root = temp.path().join("workspace").join("packages").join("app");
+    let tool_root = temp.path().join("workspace").join("packages").join("tool");
+    let app_source = app_root.join("src").join("lib.ql");
+    let tool_source = tool_root.join("src").join("lib.ql");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+    std::fs::create_dir_all(tool_root.join("src")).expect("create tool source directory");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub fn main() -> Int {
+    return 2
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["check"])
+        .arg(&app_source)
+        .args(["--package", "tool"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check` workspace member source package selector",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-check-workspace-member-source-selector",
+        "workspace member source ql check package selector",
+        &output,
+    )
+    .expect("workspace member source ql check package selector should succeed");
+    let normalized_stdout = stdout.replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-check-workspace-member-source-selector",
+        &normalized_stdout,
+        &[&format!(
+            "ok: {}",
+            tool_source.display().to_string().replace('\\', "/")
+        )],
+    )
+    .expect(
+        "workspace member source ql check package selector should resolve the enclosing workspace",
+    );
+    assert!(
+        !normalized_stdout.contains(&app_source.display().to_string().replace('\\', "/")),
+        "workspace member source ql check package selector should skip the unselected member, got:\n{normalized_stdout}"
+    );
+    assert!(
+        stderr.trim().is_empty(),
+        "expected workspace member source ql check package selector stderr to stay empty, got:\n{stderr}"
+    );
+}
+
+#[test]
 fn check_workspace_root_supports_package_selectors() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-check-workspace-package-selector");
@@ -2560,6 +2650,114 @@ pub fn main() -> Int {
         stderr.trim().is_empty(),
         "expected workspace-root ql check package selector stderr to stay empty, got:\n{stderr}"
     );
+}
+
+#[test]
+fn check_direct_source_file_rejects_package_selectors_without_workspace_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-direct-source-package-selector");
+    let source_path = temp.write(
+        "standalone.ql",
+        r#"
+package demo
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["check"])
+        .arg(&source_path)
+        .args(["--package", "app"]);
+    let output = run_command_capture(&mut command, "`ql check` direct source package selector");
+    let (stdout, stderr) = expect_exit_code(
+        "project-check-direct-source-package-selector",
+        "direct source ql check package selector",
+        &output,
+        1,
+    )
+    .expect("direct source ql check package selector should fail");
+    assert!(
+        stdout.trim().is_empty(),
+        "expected direct source ql check package selector stdout to stay empty, got:\n{stdout}"
+    );
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-check-direct-source-package-selector",
+        "direct source ql check package selector",
+        &normalized_stderr,
+        "error: `ql check` package selectors require a workspace path",
+    )
+    .expect("direct source ql check package selector should require a workspace path");
+    expect_stderr_contains(
+        "project-check-direct-source-package-selector",
+        "direct source ql check package selector",
+        &normalized_stderr,
+        "note: selector: package `app`",
+    )
+    .expect("direct source ql check package selector should report the selector");
+}
+
+#[test]
+fn check_package_path_rejects_package_selectors_without_workspace_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-package-path-package-selector");
+    let package_root = temp.path().join("app");
+    std::fs::create_dir_all(package_root.join("src")).expect("create package source directory");
+
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["check"])
+        .arg(&package_root)
+        .args(["--package", "app"]);
+    let output = run_command_capture(&mut command, "`ql check` package path package selector");
+    let (stdout, stderr) = expect_exit_code(
+        "project-check-package-path-package-selector",
+        "package path ql check package selector",
+        &output,
+        1,
+    )
+    .expect("package path ql check package selector should fail outside a workspace");
+    assert!(
+        stdout.trim().is_empty(),
+        "expected package path ql check package selector stdout to stay empty, got:\n{stdout}"
+    );
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-check-package-path-package-selector",
+        "package path ql check package selector",
+        &normalized_stderr,
+        "error: `ql check` package selectors require a workspace path",
+    )
+    .expect("package path ql check package selector should stay workspace-only");
+    expect_stderr_contains(
+        "project-check-package-path-package-selector",
+        "package path ql check package selector",
+        &normalized_stderr,
+        "note: selector: package `app`",
+    )
+    .expect("package path ql check package selector should report the selector");
 }
 
 #[test]
