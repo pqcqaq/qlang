@@ -6,8 +6,9 @@ use ql_project::{
 };
 
 use super::{
-    is_ql_source_file, json_string, load_workspace_build_targets_for_command_from_request_root,
-    normalize_path, resolve_project_member_request_root,
+    display_relative_to_root, is_ql_source_file, json_string,
+    load_workspace_build_targets_for_command_from_request_root, normalize_path,
+    project_request_root, resolve_project_member_request_root,
     resolve_project_workspace_member_command_request_root,
 };
 
@@ -22,6 +23,14 @@ pub(crate) enum ProjectTargetSelectorKind {
     Library,
     Binary(String),
     DisplayPath(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ProjectCommandScope {
+    Project,
+    ProjectBuildTarget(ProjectSourceBuildTargetRequest),
+    ProjectTestFile(ProjectFileTestRequest),
+    DirectSource,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -95,28 +104,41 @@ pub(crate) fn resolve_project_command_path(
     path: &Path,
     selector: &ProjectTargetSelector,
 ) -> Result<ResolvedProjectCommandPath, ProjectCommandPathError> {
-    if is_project_context_path(path) {
-        return Ok(ResolvedProjectCommandPath::Project {
+    match resolve_project_command_scope(path) {
+        ProjectCommandScope::Project => Ok(ResolvedProjectCommandPath::Project {
             request_root_manifest_path: None,
             selector: selector.clone(),
-        });
-    }
-
-    if let Some(request) = resolve_project_source_build_target_request(path) {
-        if selector.is_active() {
-            return Err(ProjectCommandPathError::SourcePathRejectsSelector);
+        }),
+        ProjectCommandScope::ProjectBuildTarget(request) => {
+            if selector.is_active() {
+                return Err(ProjectCommandPathError::SourcePathRejectsSelector);
+            }
+            Ok(ResolvedProjectCommandPath::Project {
+                request_root_manifest_path: Some(request.request_root_manifest_path),
+                selector: request.selector,
+            })
         }
-        return Ok(ResolvedProjectCommandPath::Project {
-            request_root_manifest_path: Some(request.request_root_manifest_path),
-            selector: request.selector,
-        });
+        ProjectCommandScope::ProjectTestFile(_) | ProjectCommandScope::DirectSource => {
+            if selector.is_active() {
+                Err(ProjectCommandPathError::SelectorRequiresProjectContext)
+            } else {
+                Ok(ResolvedProjectCommandPath::DirectSource)
+            }
+        }
     }
+}
 
-    if selector.is_active() {
-        Err(ProjectCommandPathError::SelectorRequiresProjectContext)
-    } else {
-        Ok(ResolvedProjectCommandPath::DirectSource)
+pub(crate) fn resolve_project_command_scope(path: &Path) -> ProjectCommandScope {
+    if is_project_context_path(path) {
+        return ProjectCommandScope::Project;
     }
+    if let Some(request) = resolve_project_source_build_target_request(path) {
+        return ProjectCommandScope::ProjectBuildTarget(request);
+    }
+    if let Some(request) = resolve_project_file_test_request(path) {
+        return ProjectCommandScope::ProjectTestFile(request);
+    }
+    ProjectCommandScope::DirectSource
 }
 
 pub(crate) fn parse_project_target_selector_option(
@@ -192,10 +214,16 @@ fn set_project_target_selector_kind(
     Ok(())
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ProjectSourceBuildTargetRequest {
     pub(crate) request_root_manifest_path: PathBuf,
     pub(crate) selector: ProjectTargetSelector,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ProjectFileTestRequest {
+    pub(crate) request_root_manifest_path: PathBuf,
+    pub(crate) display_path: String,
 }
 
 pub(crate) fn resolve_project_source_build_target_request(
@@ -223,6 +251,29 @@ pub(crate) fn resolve_project_source_build_target_request(
             package_name: Some(package_name),
             target: Some(ProjectTargetSelectorKind::DisplayPath(display_path)),
         },
+    })
+}
+
+pub(crate) fn resolve_project_file_test_request(path: &Path) -> Option<ProjectFileTestRequest> {
+    if !is_ql_source_file(path) {
+        return None;
+    }
+
+    let manifest = load_project_manifest(path).ok()?;
+    let _ = package_name(&manifest).ok()?;
+    let manifest_path = manifest.manifest_path.clone();
+    let package_root = manifest_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .to_path_buf();
+    let tests_root = package_root.join("tests");
+    path.strip_prefix(&tests_root).ok()?;
+    let request_root_manifest_path = resolve_project_member_request_root(&manifest_path);
+    let request_root = project_request_root(&request_root_manifest_path);
+
+    Some(ProjectFileTestRequest {
+        request_root_manifest_path,
+        display_path: display_relative_to_root(&request_root, path),
     })
 }
 
@@ -630,5 +681,12 @@ mod tests {
                 selector,
             })
         );
+    }
+
+    #[test]
+    fn command_scope_resolution_treats_manifest_paths_as_project_context() {
+        let resolved = resolve_project_command_scope(Path::new("packages/app/qlang.toml"));
+
+        assert_eq!(resolved, ProjectCommandScope::Project);
     }
 }

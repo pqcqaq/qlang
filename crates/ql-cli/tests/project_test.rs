@@ -2233,6 +2233,96 @@ name = "app"
 }
 
 #[test]
+fn test_workspace_member_file_accepts_package_selector() {
+    if !toolchain_available("`ql test` workspace member file package selector test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-workspace-member-file-package-selector");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create app package source tree");
+    std::fs::create_dir_all(project_root.join("packages/tool/src"))
+        .expect("create tool package source tree");
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn helper() -> Int { return 1 }\n",
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        "pub fn helper() -> Int { return 2 }\n",
+    );
+    let smoke_path = temp.write(
+        "workspace/packages/app/tests/app_only.ql",
+        "fn main() -> Int { return 0 }\n",
+    );
+    temp.write(
+        "workspace/packages/tool/tests/tool_only.ql",
+        "fn main() -> Int { return 0 }\n",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["test"])
+        .arg(&smoke_path)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test` workspace member file package selector",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-workspace-member-file-package-selector",
+        "workspace member file package selector test",
+        &output,
+    )
+    .expect("workspace-member-file `ql test --package app` should keep project-aware semantics");
+    expect_empty_stderr(
+        "project-test-workspace-member-file-package-selector",
+        "workspace member file package selector test",
+        &stderr,
+    )
+    .expect("workspace member file package selector test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-workspace-member-file-package-selector",
+        &stdout.replace('\\', "/"),
+        &[
+            "test packages/app/tests/app_only.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("workspace member file package selector test should run the selected package test");
+    assert!(
+        !stdout
+            .replace('\\', "/")
+            .contains("packages/tool/tests/tool_only.ql"),
+        "workspace member file package selector test should not run tests from other packages: {stdout}"
+    );
+}
+
+#[test]
 fn test_package_path_reports_json_success() {
     if !toolchain_available("`ql test --json` package test") {
         return;
@@ -2646,6 +2736,51 @@ name = "app"
         ],
     )
     .expect("package-path `ql test --filter` should run only matching tests");
+}
+
+#[test]
+fn test_direct_source_file_rejects_package_selector_without_project_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-direct-source-package-selector");
+    let source_path = temp.write("sample.ql", "fn main() -> Int { return 0 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["test"])
+        .arg(&source_path)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test` direct source package selector requires project context",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-test-direct-source-package-selector",
+        "direct source package selector preflight failure",
+        &output,
+        1,
+    )
+    .expect("direct source file `ql test --package app` should exit with code 1");
+    expect_empty_stdout(
+        "project-test-direct-source-package-selector",
+        "direct source package selector preflight failure",
+        &stdout,
+    )
+    .expect("direct source package selector preflight failure should not print stdout");
+    expect_stderr_contains(
+        "project-test-direct-source-package-selector",
+        "direct source package selector preflight failure",
+        &stderr,
+        "error: `ql test` package selectors require a package or workspace path",
+    )
+    .expect("direct source package selector preflight failure should explain the project-context requirement");
+    expect_stderr_contains(
+        "project-test-direct-source-package-selector",
+        "direct source package selector preflight failure",
+        &stderr,
+        "note: selector: package `app`",
+    )
+    .expect("direct source package selector preflight failure should print the selector note");
 }
 
 #[test]

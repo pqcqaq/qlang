@@ -55,12 +55,12 @@ use project_members::{
 };
 use project_status::project_status_path;
 use project_targets::{
-    ProjectCommandPathError, ProjectTargetSelector, ResolvedProjectCommandPath,
-    is_runnable_project_target, list_build_targets_path, list_runnable_targets_path,
-    parse_project_target_selector_option, project_target_display_path, project_targets_path,
-    report_project_source_path_rejects_target_selector,
+    ProjectCommandPathError, ProjectCommandScope, ProjectTargetSelector,
+    ResolvedProjectCommandPath, is_runnable_project_target, list_build_targets_path,
+    list_runnable_targets_path, parse_project_target_selector_option, project_target_display_path,
+    project_targets_path, report_project_source_path_rejects_target_selector,
     report_project_target_selector_requires_project_context, resolve_project_command_path,
-    resolve_project_source_build_target_request, select_workspace_build_targets,
+    resolve_project_command_scope, select_workspace_build_targets,
 };
 
 const CLI_NAME: &str = "ql";
@@ -2400,23 +2400,32 @@ impl BuildJsonReport {
         profile_overridden: bool,
         emit_interface: bool,
     ) -> Self {
-        let direct_source_request = resolve_project_source_build_target_request(path);
-        let project_scope = project_request_root.is_some()
-            || should_use_project_build(path)
-            || direct_source_request.is_some();
-        let project_manifest_path = if let Some(request_root) = project_request_root {
-            load_project_manifest(request_root)
-                .ok()
-                .map(|manifest| normalize_path(&manifest.manifest_path))
-        } else if let Some(request) = direct_source_request.as_ref() {
-            Some(normalize_path(&request.request_root_manifest_path))
-        } else if project_scope {
-            load_project_manifest(path)
-                .ok()
-                .map(|manifest| normalize_path(&manifest.manifest_path))
-        } else {
-            None
-        };
+        let command_scope = resolve_project_command_scope(path);
+        let (project_scope, project_manifest_path) =
+            if let Some(request_root) = project_request_root {
+                (
+                    true,
+                    load_project_manifest(request_root)
+                        .ok()
+                        .map(|manifest| normalize_path(&manifest.manifest_path)),
+                )
+            } else {
+                match &command_scope {
+                    ProjectCommandScope::Project => (
+                        true,
+                        load_project_manifest(path)
+                            .ok()
+                            .map(|manifest| normalize_path(&manifest.manifest_path)),
+                    ),
+                    ProjectCommandScope::ProjectBuildTarget(request) => (
+                        true,
+                        Some(normalize_path(&request.request_root_manifest_path)),
+                    ),
+                    ProjectCommandScope::ProjectTestFile(_) | ProjectCommandScope::DirectSource => {
+                        (false, None)
+                    }
+                }
+            };
         Self {
             scope: if project_scope { "project" } else { "file" },
             path: normalize_path(path),
@@ -4289,15 +4298,9 @@ fn test_json_failure(failure: &TestFailure) -> JsonValue {
 
 fn test_path(path: &Path, command_options: &TestCommandOptions) -> Result<(), u8> {
     let build_options = test_build_options(command_options.profile);
-    let project_file_request = (!should_use_project_build(path))
-        .then(|| resolve_project_file_test_request(path))
-        .flatten();
-    let discovered_targets = discover_test_targets(
-        path,
-        &build_options,
-        command_options,
-        project_file_request.as_ref(),
-    )?;
+    let command_scope = resolve_project_command_scope(path);
+    let discovered_targets =
+        discover_test_targets(path, &build_options, command_options, &command_scope)?;
     let discovered_total = discovered_targets.len();
 
     if discovered_targets.is_empty() {
@@ -4393,9 +4396,12 @@ fn test_path(path: &Path, command_options: &TestCommandOptions) -> Result<(), u8
 
     let execution_report = execute_test_targets(
         path,
-        project_file_request
-            .as_ref()
-            .map(|request| request.request_root_manifest_path.as_path()),
+        match &command_scope {
+            ProjectCommandScope::ProjectTestFile(request) => {
+                Some(request.request_root_manifest_path.as_path())
+            }
+            _ => None,
+        },
         &targets,
         command_options.json,
         &build_options,
@@ -4426,45 +4432,41 @@ fn discover_test_targets(
     path: &Path,
     options: &BuildOptions,
     command_options: &TestCommandOptions,
-    project_file_request: Option<&ProjectFileTestRequest>,
+    command_scope: &ProjectCommandScope,
 ) -> Result<Vec<TestTarget>, u8> {
-    if should_use_project_build(path) {
-        discover_project_test_targets(
+    match command_scope {
+        ProjectCommandScope::Project => discover_project_test_targets(
             path,
             path,
             options,
             command_options.package_name.as_deref(),
             command_options.profile_overridden,
-        )
-    } else if let Some(request) = project_file_request {
-        let discovered = discover_project_test_targets(
-            path,
-            &request.request_root_manifest_path,
-            options,
-            command_options.package_name.as_deref(),
-            command_options.profile_overridden,
-        )?;
-        Ok(select_test_targets_by_path(
-            discovered,
-            &request.display_path,
-        ))
-    } else {
-        if let Some(package_name) = command_options.package_name.as_deref() {
-            report_test_package_selector_requires_project_context(package_name);
-            return Err(1);
+        ),
+        ProjectCommandScope::ProjectTestFile(request) => {
+            let discovered = discover_project_test_targets(
+                path,
+                &request.request_root_manifest_path,
+                options,
+                command_options.package_name.as_deref(),
+                command_options.profile_overridden,
+            )?;
+            Ok(select_test_targets_by_path(
+                discovered,
+                &request.display_path,
+            ))
         }
-        if let Some(target_path) = command_options.target_path.as_deref() {
-            report_test_target_selector_requires_project_context(target_path);
-            return Err(1);
+        ProjectCommandScope::ProjectBuildTarget(_) | ProjectCommandScope::DirectSource => {
+            if let Some(package_name) = command_options.package_name.as_deref() {
+                report_test_package_selector_requires_project_context(package_name);
+                return Err(1);
+            }
+            if let Some(target_path) = command_options.target_path.as_deref() {
+                report_test_target_selector_requires_project_context(target_path);
+                return Err(1);
+            }
+            Ok(vec![direct_test_target(path, options)?])
         }
-        Ok(vec![direct_test_target(path, options)?])
     }
-}
-
-#[derive(Clone, Debug)]
-struct ProjectFileTestRequest {
-    request_root_manifest_path: PathBuf,
-    display_path: String,
 }
 
 fn test_build_options(profile: BuildProfile) -> BuildOptions {
@@ -4608,7 +4610,7 @@ fn project_test_target(
     }
 }
 
-fn project_request_root(path: &Path) -> PathBuf {
+pub(crate) fn project_request_root(path: &Path) -> PathBuf {
     if path
         .file_name()
         .and_then(|name| name.to_str())
@@ -4618,29 +4620,6 @@ fn project_request_root(path: &Path) -> PathBuf {
     } else {
         path.to_path_buf()
     }
-}
-
-fn resolve_project_file_test_request(path: &Path) -> Option<ProjectFileTestRequest> {
-    if !is_ql_source_file(path) {
-        return None;
-    }
-
-    let manifest = load_project_manifest(path).ok()?;
-    let _ = package_name(&manifest).ok()?;
-    let manifest_path = manifest.manifest_path.clone();
-    let package_root = manifest_path
-        .parent()
-        .unwrap_or(Path::new("."))
-        .to_path_buf();
-    let tests_root = package_root.join("tests");
-    path.strip_prefix(&tests_root).ok()?;
-    let request_root_manifest_path = resolve_project_member_request_root(&manifest_path);
-    let request_root = project_request_root(&request_root_manifest_path);
-
-    Some(ProjectFileTestRequest {
-        request_root_manifest_path,
-        display_path: display_relative_to_root(&request_root, path),
-    })
 }
 
 fn resolve_project_member_request_root(package_manifest_path: &Path) -> PathBuf {
@@ -4688,7 +4667,7 @@ fn workspace_manifest_contains_member(
     })
 }
 
-fn display_relative_to_root(root: &Path, path: &Path) -> String {
+pub(crate) fn display_relative_to_root(root: &Path, path: &Path) -> String {
     if let Ok(relative) = path.strip_prefix(root) {
         normalize_path(relative)
     } else {
@@ -14254,14 +14233,6 @@ fn component_name(component: Component<'_>) -> Option<&str> {
 }
 
 fn should_use_package_check(path: &Path) -> bool {
-    path.is_dir()
-        || path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.eq_ignore_ascii_case("qlang.toml"))
-}
-
-fn should_use_project_build(path: &Path) -> bool {
     path.is_dir()
         || path
             .file_name()

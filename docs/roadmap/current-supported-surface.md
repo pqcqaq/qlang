@@ -25,7 +25,7 @@
 - `ql check/fmt/mir/ownership/runtime/build/run/test/project/ffi` 已实现。
 - `ql project init/add/remove/status/dependencies/dependents/targets/graph/lock/emit-interface` 已可维护本地 workspace。
 - `ql build/run/test/check` 支持 project-aware 入口和常用 `--json`、`--list`、`--package`、`--target`。
-- `ql build/run` 已共享 project path / project source target / direct file 的 command-path resolution 和 selector preflight，workspace/member/source 入口行为有真实 CLI 回归覆盖。
+- `ql build/run/test` 已共享 project path / project source target / project test file / direct file 的 command-path resolution；`build/run` selector preflight 和 `test` 的 project-aware test-file 语义都有真实 CLI 回归覆盖。
 - 单文件 `ql build/run/test file.ql` 可复用本地 generic free function direct-call specialization。
 - `ql project init --stdlib` 从 `stdlib/examples/starter` 复制 starter，生成依赖 `std.core`、`std.option`、`std.result`、`std.array`、`std.test` 的项目，并用 `check/run/test` 直接覆盖 generic option/result assertions、数组 equality/reverse assertions、length-generic array helpers 和重复数组。
 
@@ -62,7 +62,7 @@
 
 ## 主要缺口
 
-- `ql-cli` 主链路仍过度集中；`build/run` 的 command-path resolution 已抽成共享层，但 `check/test/project build` 还需要继续汇入共享 project pipeline。
+- `ql-cli` 主链路仍过度集中；`build/run/test` 的 command-path resolution 已抽成共享层，但 `check/project build` 还需要继续汇入共享 project pipeline。
 - `ql test` 仍有 package-under-test bridge/source override 组合路径，需要继续抽成共享 project pipeline，并扩大到更宽 dependency-aware backend 语义。
 - LSP 还不是稳定 workspace service；diagnostics、references、rename、symbols 需要统一 workspace index。
 - stdlib public API 已清掉 concrete carrier、主要固定 arity 包装和 `std.test` typed facade；`std.result` package-local smoke 和 `project init --stdlib` starter 已直接覆盖 generic carrier 语义与 option/result assertions。剩余重点是更完整 generic backend、共享 project pipeline 和更宽 dependency-aware backend。
