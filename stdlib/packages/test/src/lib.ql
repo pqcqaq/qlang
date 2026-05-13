@@ -124,14 +124,6 @@ pub fn expect_false(value: Bool) -> Int {
     return 0
 }
 
-pub fn expect_bool_eq(actual: Bool, expected: Bool) -> Int {
-    return expect_eq(actual, expected)
-}
-
-pub fn expect_bool_ne(actual: Bool, unexpected: Bool) -> Int {
-    return expect_ne(actual, unexpected)
-}
-
 pub fn expect_bool_not(value: Bool, expected: Bool) -> Int {
     if not_bool(value) == expected {
         return 0
@@ -167,56 +159,12 @@ pub fn expect_bool_to_int(value: Bool, expected: Int) -> Int {
     return 1
 }
 
-pub fn expect_int_eq(actual: Int, expected: Int) -> Int {
-    return expect_eq(actual, expected)
-}
-
-pub fn expect_int_array_first[N](values: [Int; N], expected: Int) -> Int {
-    return expect_array_first(values, expected)
-}
-
-pub fn expect_int_array_last[N](values: [Int; N], expected: Int) -> Int {
-    return expect_array_last(values, expected)
-}
-
-pub fn expect_bool_array_first[N](values: [Bool; N], expected: Bool) -> Int {
-    return expect_array_first(values, expected)
-}
-
-pub fn expect_bool_array_last[N](values: [Bool; N], expected: Bool) -> Int {
-    return expect_array_last(values, expected)
-}
-
-pub fn expect_int_array_at[N](values: [Int; N], index: Int, fallback: Int, expected: Int) -> Int {
-    return expect_array_at(values, index, fallback, expected)
-}
-
-pub fn expect_bool_array_at[N](values: [Bool; N], index: Int, fallback: Bool, expected: Bool) -> Int {
-    return expect_array_at(values, index, fallback, expected)
-}
-
-pub fn expect_int_array_contains[N](values: [Int; N], needle: Int, expected: Bool) -> Int {
-    return expect_array_contains(values, needle, expected)
-}
-
-pub fn expect_bool_array_contains[N](values: [Bool; N], needle: Bool, expected: Bool) -> Int {
-    return expect_array_contains(values, needle, expected)
-}
-
-pub fn expect_int_array_count[N](values: [Int; N], needle: Int, expected: Int) -> Int {
-    return expect_array_count(values, needle, expected)
-}
-
-pub fn expect_bool_array_count[N](values: [Bool; N], needle: Bool, expected: Int) -> Int {
-    return expect_array_count(values, needle, expected)
-}
-
 pub fn expect_int_array_sum[N](values: [Int; N], expected: Int) -> Int {
     var total = 0
     for value in values {
         total = total + value
     }
-    return expect_int_eq(total, expected)
+    return expect_eq(total, expected)
 }
 
 pub fn expect_int_array_product[N](values: [Int; N], expected: Int) -> Int {
@@ -224,18 +172,18 @@ pub fn expect_int_array_product[N](values: [Int; N], expected: Int) -> Int {
     for value in values {
         total = total * value
     }
-    return expect_int_eq(total, expected)
+    return expect_eq(total, expected)
 }
 
 pub fn expect_int_array_average[N](values: [Int; N], expected: Int) -> Int {
     if N == 0 {
-        return expect_int_eq(0, expected)
+        return expect_eq(0, expected)
     }
     var total = 0
     for value in values {
         total = total + value
     }
-    return expect_int_eq(total / N, expected)
+    return expect_eq(total / N, expected)
 }
 
 pub fn expect_int_array_max[N](values: [Int; N], expected: Int) -> Int {
@@ -245,7 +193,7 @@ pub fn expect_int_array_max[N](values: [Int; N], expected: Int) -> Int {
             selected = value
         }
     }
-    return expect_int_eq(selected, expected)
+    return expect_eq(selected, expected)
 }
 
 pub fn expect_int_array_min[N](values: [Int; N], expected: Int) -> Int {
@@ -255,7 +203,7 @@ pub fn expect_int_array_min[N](values: [Int; N], expected: Int) -> Int {
             selected = value
         }
     }
-    return expect_int_eq(selected, expected)
+    return expect_eq(selected, expected)
 }
 
 pub fn expect_int_array_ascending[N](values: [Int; N]) -> Int {
@@ -313,47 +261,32 @@ pub fn expect_int_array_strictly_descending[N](values: [Int; N]) -> Int {
 pub fn expect_bool_array_all[N](values: [Bool; N], expected: Bool) -> Int {
     for value in values {
         if !value {
-            return expect_bool_eq(false, expected)
+            return expect_eq(false, expected)
         }
     }
-    return expect_bool_eq(true, expected)
+    return expect_eq(true, expected)
 }
 
 pub fn expect_bool_array_any[N](values: [Bool; N], expected: Bool) -> Int {
     for value in values {
         if value {
-            return expect_bool_eq(true, expected)
+            return expect_eq(true, expected)
         }
     }
-    return expect_bool_eq(false, expected)
+    return expect_eq(false, expected)
 }
 
 pub fn expect_bool_array_none[N](values: [Bool; N], expected: Bool) -> Int {
     for value in values {
         if value {
-            return expect_bool_eq(false, expected)
+            return expect_eq(false, expected)
         }
     }
-    return expect_bool_eq(true, expected)
+    return expect_eq(true, expected)
 }
 
 pub fn expect_array_reverse[T, N](values: [T; N], expected: [T; N]) -> Int {
     return expect_array_eq(reverse_array(values), expected)
-}
-
-pub fn expect_int_array_reverse[N](values: [Int; N], expected: [Int; N]) -> Int {
-    return expect_array_reverse(values, expected)
-}
-
-pub fn expect_bool_array_reverse[N](values: [Bool; N], expected: [Bool; N]) -> Int {
-    return expect_array_reverse(values, expected)
-}
-
-pub fn expect_int_ne(actual: Int, unexpected: Int) -> Int {
-    if actual != unexpected {
-        return 0
-    }
-    return 1
 }
 
 pub fn expect_int_gt(actual: Int, threshold: Int) -> Int {
@@ -766,108 +699,4 @@ pub fn expect_option_ok_or_err[T, E](value: Option[T], error: E) -> Int {
         Option.Some(_) => 1,
         Option.None => 0,
     }
-}
-
-pub fn expect_int_option_some(value: Option[Int], expected: Int) -> Int {
-    return expect_option_some(value, expected)
-}
-
-pub fn expect_int_option_none(value: Option[Int]) -> Int {
-    return expect_option_none(value)
-}
-
-pub fn expect_int_option_or(value: Option[Int], fallback: Option[Int], expected: Int) -> Int {
-    return expect_option_or(value, fallback, expected)
-}
-
-pub fn expect_bool_option_some(value: Option[Bool], expected: Bool) -> Int {
-    return expect_option_some(value, expected)
-}
-
-pub fn expect_bool_option_none(value: Option[Bool]) -> Int {
-    return expect_option_none(value)
-}
-
-pub fn expect_bool_option_or(value: Option[Bool], fallback: Option[Bool], expected: Bool) -> Int {
-    return expect_option_or(value, fallback, expected)
-}
-
-pub fn expect_int_result_ok(value: Result[Int, Int], expected: Int) -> Int {
-    return expect_result_ok(value, expected)
-}
-
-pub fn expect_int_result_err(value: Result[Int, Int], expected_error: Int) -> Int {
-    return expect_result_err(value, expected_error)
-}
-
-pub fn expect_int_result_or(value: Result[Int, Int], fallback: Result[Int, Int], expected: Int) -> Int {
-    return expect_result_or(value, fallback, expected)
-}
-
-pub fn expect_int_result_error(value: Result[Int, Int], fallback_error: Int, expected_error: Int) -> Int {
-    return expect_result_error(value, fallback_error, expected_error)
-}
-
-pub fn expect_int_result_to_option_some(value: Result[Int, Int], expected: Int) -> Int {
-    return expect_result_to_option_some(value, expected)
-}
-
-pub fn expect_int_result_to_option_none(value: Result[Int, Int]) -> Int {
-    return expect_result_to_option_none(value)
-}
-
-pub fn expect_int_result_error_some(value: Result[Int, Int], expected_error: Int) -> Int {
-    return expect_result_error_some(value, expected_error)
-}
-
-pub fn expect_int_result_error_none(value: Result[Int, Int]) -> Int {
-    return expect_result_error_none(value)
-}
-
-pub fn expect_int_option_ok_or(value: Option[Int], error: Int, expected: Int) -> Int {
-    return expect_option_ok_or(value, error, expected)
-}
-
-pub fn expect_int_option_ok_or_err(value: Option[Int], error: Int) -> Int {
-    return expect_option_ok_or_err(value, error)
-}
-
-pub fn expect_bool_result_ok(value: Result[Bool, Int], expected: Bool) -> Int {
-    return expect_result_ok(value, expected)
-}
-
-pub fn expect_bool_result_err(value: Result[Bool, Int], expected_error: Int) -> Int {
-    return expect_result_err(value, expected_error)
-}
-
-pub fn expect_bool_result_or(value: Result[Bool, Int], fallback: Result[Bool, Int], expected: Bool) -> Int {
-    return expect_result_or(value, fallback, expected)
-}
-
-pub fn expect_bool_result_error(value: Result[Bool, Int], fallback_error: Int, expected_error: Int) -> Int {
-    return expect_result_error(value, fallback_error, expected_error)
-}
-
-pub fn expect_bool_result_to_option_some(value: Result[Bool, Int], expected: Bool) -> Int {
-    return expect_result_to_option_some(value, expected)
-}
-
-pub fn expect_bool_result_to_option_none(value: Result[Bool, Int]) -> Int {
-    return expect_result_to_option_none(value)
-}
-
-pub fn expect_bool_result_error_some(value: Result[Bool, Int], expected_error: Int) -> Int {
-    return expect_result_error_some(value, expected_error)
-}
-
-pub fn expect_bool_result_error_none(value: Result[Bool, Int]) -> Int {
-    return expect_result_error_none(value)
-}
-
-pub fn expect_bool_option_ok_or(value: Option[Bool], error: Int, expected: Bool) -> Int {
-    return expect_option_ok_or(value, error, expected)
-}
-
-pub fn expect_bool_option_ok_or_err(value: Option[Bool], error: Int) -> Int {
-    return expect_option_ok_or_err(value, error)
 }

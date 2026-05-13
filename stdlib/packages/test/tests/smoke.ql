@@ -1,33 +1,13 @@
 use std.core.median_ints as median_ints
 use std.test.expect_bool_and as expect_bool_and
 use std.test.expect_bool_array_all as expect_bool_array_all
-use std.test.expect_bool_array_at as expect_bool_array_at
 use std.test.expect_bool_array_any as expect_bool_array_any
-use std.test.expect_bool_array_contains as expect_bool_array_contains
-use std.test.expect_bool_array_count as expect_bool_array_count
-use std.test.expect_bool_array_first as expect_bool_array_first
-use std.test.expect_bool_array_last as expect_bool_array_last
 use std.test.expect_bool_array_none as expect_bool_array_none
-use std.test.expect_bool_array_reverse as expect_bool_array_reverse
-use std.test.expect_bool_eq as expect_bool_eq
 use std.test.expect_bool_implies as expect_bool_implies
-use std.test.expect_bool_ne as expect_bool_ne
 use std.test.expect_bool_not as expect_bool_not
 use std.test.expect_bool_or as expect_bool_or
 use std.test.expect_bool_to_int as expect_bool_to_int
 use std.test.expect_bool_xor as expect_bool_xor
-use std.test.expect_bool_option_none as expect_bool_option_none
-use std.test.expect_bool_option_ok_or as expect_bool_option_ok_or
-use std.test.expect_bool_option_ok_or_err as expect_bool_option_ok_or_err
-use std.test.expect_bool_option_or as expect_bool_option_or
-use std.test.expect_bool_option_some as expect_bool_option_some
-use std.test.expect_bool_result_err as expect_bool_result_err
-use std.test.expect_bool_result_error_none as expect_bool_result_error_none
-use std.test.expect_bool_result_error_some as expect_bool_result_error_some
-use std.test.expect_bool_result_ok as expect_bool_result_ok
-use std.test.expect_bool_result_or as expect_bool_result_or
-use std.test.expect_bool_result_to_option_none as expect_bool_result_to_option_none
-use std.test.expect_bool_result_to_option_some as expect_bool_result_to_option_some
 use std.test.expect_array_at as expect_array_at
 use std.test.expect_array_contains as expect_array_contains
 use std.test.expect_array_count as expect_array_count
@@ -39,17 +19,11 @@ use std.test.expect_eq as expect_eq
 use std.test.expect_false as expect_false
 use std.test.expect_int_abs as expect_int_abs
 use std.test.expect_int_abs_diff as expect_int_abs_diff
-use std.test.expect_int_array_at as expect_int_array_at
 use std.test.expect_int_array_average as expect_int_array_average
-use std.test.expect_int_array_contains as expect_int_array_contains
-use std.test.expect_int_array_count as expect_int_array_count
 use std.test.expect_int_array_descending as expect_int_array_descending
-use std.test.expect_int_array_first as expect_int_array_first
-use std.test.expect_int_array_last as expect_int_array_last
 use std.test.expect_int_array_max as expect_int_array_max
 use std.test.expect_int_array_min as expect_int_array_min
 use std.test.expect_int_array_product as expect_int_array_product
-use std.test.expect_int_array_reverse as expect_int_array_reverse
 use std.test.expect_int_array_ascending as expect_int_array_ascending
 use std.test.expect_int_array_strictly_ascending as expect_int_array_strictly_ascending
 use std.test.expect_int_array_strictly_descending as expect_int_array_strictly_descending
@@ -64,23 +38,10 @@ use std.test.expect_int_compare as expect_int_compare
 use std.test.expect_int_distance_to_bounds as expect_int_distance_to_bounds
 use std.test.expect_int_distance_to_range as expect_int_distance_to_range
 use std.test.expect_int_divisible_by as expect_int_divisible_by
-use std.test.expect_int_eq as expect_int_eq
 use std.test.expect_int_even as expect_int_even
 use std.test.expect_int_exclusive_between as expect_int_exclusive_between
 use std.test.expect_int_exclusive_between_bounds as expect_int_exclusive_between_bounds
 use std.test.expect_int_factor_of as expect_int_factor_of
-use std.test.expect_int_option_none as expect_int_option_none
-use std.test.expect_int_option_ok_or as expect_int_option_ok_or
-use std.test.expect_int_option_ok_or_err as expect_int_option_ok_or_err
-use std.test.expect_int_option_or as expect_int_option_or
-use std.test.expect_int_option_some as expect_int_option_some
-use std.test.expect_int_result_err as expect_int_result_err
-use std.test.expect_int_result_error_none as expect_int_result_error_none
-use std.test.expect_int_result_error_some as expect_int_result_error_some
-use std.test.expect_int_result_ok as expect_int_result_ok
-use std.test.expect_int_result_or as expect_int_result_or
-use std.test.expect_int_result_to_option_none as expect_int_result_to_option_none
-use std.test.expect_int_result_to_option_some as expect_int_result_to_option_some
 use std.test.expect_int_ge as expect_int_ge
 use std.test.expect_int_gt as expect_int_gt
 use std.test.expect_int_has_remainder as expect_int_has_remainder
@@ -89,7 +50,6 @@ use std.test.expect_int_lower_bound as expect_int_lower_bound
 use std.test.expect_int_lt as expect_int_lt
 use std.test.expect_int_max as expect_int_max
 use std.test.expect_int_min as expect_int_min
-use std.test.expect_int_ne as expect_int_ne
 use std.test.expect_int_negative as expect_int_negative
 use std.test.expect_int_nonnegative as expect_int_nonnegative
 use std.test.expect_int_nonpositive as expect_int_nonpositive
@@ -157,9 +117,9 @@ fn main() -> Int {
     let generic_array_pass = sum_statuses([check_int(expect_array_last(["red", "blue", "green"], "green"), 0), check_int(expect_array_at(["red", "blue", "green"], 1, "none", "blue"), 0), check_int(expect_array_contains(["red", "blue", "green"], "blue", true), 0), check_int(expect_array_count(["red", "blue", "red"], "red", 2), 0)])
     let generic_array_eq_status = sum_statuses([check_int(expect_array_eq(["red", "blue", "green"], ["red", "blue", "green"]), 0), check_int(expect_array_eq([1, 2, 3, 4], [1, 2, 3, 4]), 0), check_int(expect_array_eq([true, false, true], [true, false, true]), 0), 0])
     let generic_failure = sum_statuses([check_int(expect_eq(7, 8), 1), check_int(expect_ne(true, true), 1), check_int(expect_array_at(["red", "blue"], 8, "none", "blue"), 1), check_int(expect_array_contains(["red", "blue"], "green", true), 1)])
-    let bool_pass = sum_statuses([check_int(expect_true(true), 0), check_int(expect_false(false), 0), check_int(expect_bool_eq(true, true), 0), check_int(expect_bool_ne(true, false), 0)])
+    let bool_pass = sum_statuses([check_int(expect_true(true), 0), check_int(expect_false(false), 0), check_int(expect_eq(true, true), 0), check_int(expect_ne(true, false), 0)])
     let bool_logic_pass = sum_statuses([check_int(expect_bool_not(false, true), 0), check_int(expect_bool_and(true, false, false), 0), check_int(expect_bool_or(false, true, true), 0), check_int(expect_bool_xor(true, true, false), 0)])
-    let bool_failure = sum_statuses([check_int(expect_true(false), 1), check_int(expect_false(true), 1), check_int(expect_bool_eq(true, false), 1), check_int(expect_bool_ne(true, true), 1)])
+    let bool_failure = sum_statuses([check_int(expect_true(false), 1), check_int(expect_false(true), 1), check_int(expect_eq(true, false), 1), check_int(expect_ne(true, true), 1)])
     let bool_logic_failure = sum_statuses([check_int(expect_bool_not(false, false), 1), check_int(expect_bool_and(true, false, true), 1), check_int(expect_bool_or(false, false, true), 1), check_int(expect_bool_xor(true, false, false), 1)])
     let bool_aggregate_pass = sum_statuses([check_int(expect_bool_array_all([true, true, true], true), 0), check_int(expect_bool_array_all([true, true, false, true], false), 0), check_int(expect_bool_array_any([false, false, true], true), 0), check_int(expect_bool_array_any([false, false, false, false], false), 0)])
     let bool_large_aggregate_pass = sum_statuses([check_int(expect_bool_array_all([true, true, true, true, true], true), 0), check_int(expect_bool_array_any([false, false, false, false, true], true), 0), 0, 0])
@@ -169,9 +129,9 @@ fn main() -> Int {
     let bool_large_aggregate_failure = sum_statuses([check_int(expect_bool_array_all([true, true, true, true, false], true), 1), check_int(expect_bool_array_any([false, false, false, false, false], true), 1), 0, 0])
     let bool_none_failure = sum_statuses([check_int(expect_bool_array_none([false, true, false], true), 1), check_int(expect_bool_array_none([false, false, false, false], false), 1), check_int(expect_bool_array_none([false, false, true, false, false], true), 1), 0])
     let bool_conversion_failure = sum_statuses([check_int(expect_bool_to_int(false, 1), 1), check_int(expect_bool_to_int(true, 0), 1), 0, 0])
-    let int_order_pass = sum_statuses([check_int(expect_int_eq(8, 8), 0), check_int(expect_int_ne(8, 9), 0), check_int(expect_int_gt(9, 8), 0), check_int(expect_int_ge(8, 8), 0)])
+    let int_order_pass = sum_statuses([check_int(expect_eq(8, 8), 0), check_int(expect_ne(8, 9), 0), check_int(expect_int_gt(9, 8), 0), check_int(expect_int_ge(8, 8), 0)])
     let int_boundary_pass = sum_statuses([check_int(expect_int_lt(7, 8), 0), check_int(expect_int_le(8, 8), 0), check_int(expect_zero(0), 0), check_int(expect_nonzero(1), 0)])
-    let int_order_failure = sum_statuses([check_int(expect_int_eq(8, 9), 1), check_int(expect_int_ne(8, 8), 1), check_int(expect_int_gt(8, 8), 1), check_int(expect_int_ge(7, 8), 1)])
+    let int_order_failure = sum_statuses([check_int(expect_eq(8, 9), 1), check_int(expect_ne(8, 8), 1), check_int(expect_int_gt(8, 8), 1), check_int(expect_int_ge(7, 8), 1)])
     let int_boundary_failure = sum_statuses([check_int(expect_int_lt(8, 8), 1), check_int(expect_int_le(9, 8), 1), check_int(expect_zero(1), 1), check_int(expect_nonzero(0), 1)])
     let range_pass = sum_statuses([check_int(expect_int_between(5, 3, 9), 0), check_int(expect_int_exclusive_between(5, 3, 9), 0), check_int(expect_int_outside(2, 3, 9), 0), check_int(expect_int_between_bounds(5, 9, 3), 0)])
     let bounds_pass = sum_statuses([check_int(expect_int_exclusive_between_bounds(5, 9, 3), 0), check_int(expect_int_outside_bounds(2, 9, 3), 0), check_int(expect_int_array_ascending([3, 3, 9]), 0), check_int(expect_int_array_descending([9, 9, 3]), 0)])
@@ -228,32 +188,49 @@ fn main() -> Int {
     let generic_option_failure = sum_statuses([check_int(expect_option_some(some_string_option, "other"), 1), check_int(expect_option_none(some_string_option), 1), check_int(expect_option_or(some_string_option, none_string_option, "other"), 1), check_int(expect_option_ok_or(some_string_option, "missing", "other"), 1), check_int(expect_option_ok_or_err(some_string_option, "missing"), 1)])
     let generic_result_status = sum_statuses([check_int(expect_result_ok(ok_string_result, "ready"), 0), check_int(expect_result_err(err_string_result, "denied"), 0), check_int(expect_result_or(err_string_result, fallback_string_result, "fallback"), 0), check_int(expect_result_error(ok_string_result, "fallback-error", "fallback-error"), 0), check_int(expect_result_to_option_some(ok_string_result, "ready"), 0), check_int(expect_result_to_option_none(err_string_result), 0), check_int(expect_result_error_some(err_string_result, "denied"), 0), check_int(expect_result_error_none(ok_string_result), 0)])
     let generic_result_failure = sum_statuses([check_int(expect_result_ok(ok_string_result, "other"), 1), check_int(expect_result_err(ok_string_result, "denied"), 1), check_int(expect_result_or(ok_string_result, fallback_string_result, "fallback"), 1), check_int(expect_result_error(err_string_result, "fallback-error", "other"), 1), check_int(expect_result_to_option_some(err_string_result, "ready"), 1), check_int(expect_result_to_option_none(ok_string_result), 1), check_int(expect_result_error_some(err_string_result, "other"), 1), check_int(expect_result_error_none(err_string_result), 1)])
-    let option_status = sum_statuses([check_int(expect_int_option_some(Option.Some(7), 7), 0), check_int(expect_int_option_none(Option.None), 0), check_int(expect_bool_option_some(Option.Some(true), true), 0), check_int(expect_bool_option_none(Option.None), 0)])
-    let option_or_status = sum_statuses([check_int(expect_int_option_or(Option.None, Option.Some(9), 9), 0), check_int(expect_bool_option_or(Option.None, Option.Some(false), false), 0), 0, 0])
-    let option_failure = sum_statuses([check_int(expect_int_option_some(Option.Some(7), 8), 1), check_int(expect_int_option_none(Option.Some(7)), 1), check_int(expect_bool_option_some(Option.Some(true), false), 1), check_int(expect_bool_option_or(Option.Some(true), Option.None, false), 1)])
-    let result_status = sum_statuses([check_int(expect_int_result_ok(Result.Ok(7), 7), 0), check_int(expect_int_result_err(Result.Err(3), 3), 0), check_int(expect_bool_result_ok(Result.Ok(true), true), 0), check_int(expect_bool_result_err(Result.Err(4), 4), 0)])
-    let result_or_status = sum_statuses([check_int(expect_int_result_or(Result.Err(5), Result.Ok(11), 11), 0), check_int(expect_bool_result_or(Result.Err(6), Result.Ok(false), false), 0), 0, 0])
-    let result_failure = sum_statuses([check_int(expect_int_result_ok(Result.Ok(7), 8), 1), check_int(expect_int_result_err(Result.Ok(7), 3), 1), check_int(expect_bool_result_ok(Result.Ok(true), false), 1), check_int(expect_bool_result_or(Result.Ok(true), Result.Err(4), false), 1)])
-    let result_conversion_status = sum_statuses([check_int(expect_int_result_to_option_some(Result.Ok(14), 14), 0), check_int(expect_int_result_to_option_none(Result.Err(4)), 0), check_int(expect_bool_result_to_option_some(Result.Ok(false), false), 0), check_int(expect_bool_result_to_option_none(Result.Err(5)), 0)])
-    let option_conversion_status = sum_statuses([check_int(expect_int_option_ok_or(Option.Some(14), 5, 14), 0), check_int(expect_int_option_ok_or_err(Option.None, 5), 0), check_int(expect_bool_option_ok_or(Option.Some(true), 6, true), 0), check_int(expect_bool_option_ok_or_err(Option.None, 6), 0)])
-    let result_conversion_failure = sum_statuses([check_int(expect_int_result_to_option_some(Result.Err(4), 14), 1), check_int(expect_int_result_to_option_none(Result.Ok(14)), 1), check_int(expect_bool_result_to_option_some(Result.Ok(false), true), 1), check_int(expect_bool_result_to_option_none(Result.Ok(false)), 1)])
-    let option_conversion_failure = sum_statuses([check_int(expect_int_option_ok_or(Option.Some(14), 5, 15), 1), check_int(expect_int_option_ok_or_err(Option.Some(14), 5), 1), check_int(expect_bool_option_ok_or(Option.Some(true), 6, false), 1), check_int(expect_bool_option_ok_or_err(Option.Some(true), 6), 1)])
-    let result_error_status = sum_statuses([check_int(expect_int_result_error_some(Result.Err(0), 0), 0), check_int(expect_int_result_error_none(Result.Ok(14)), 0), check_int(expect_bool_result_error_some(Result.Err(0), 0), 0), check_int(expect_bool_result_error_none(Result.Ok(false)), 0)])
-    let result_error_failure = sum_statuses([check_int(expect_int_result_error_some(Result.Ok(14), 0), 1), check_int(expect_int_result_error_none(Result.Err(0)), 1), check_int(expect_bool_result_error_some(Result.Err(0), 1), 1), check_int(expect_bool_result_error_none(Result.Err(0)), 1)])
+    let none_int_option: Option[Int] = Option.None
     let none_bool_option: Option[Bool] = Option.None
-    let result_conversion_more_status = sum_statuses([check_int(expect_int_result_to_option_some(Result.Ok(31), 31), 0), check_int(expect_int_result_to_option_none(Result.Err(8)), 0), check_int(expect_bool_result_to_option_some(Result.Ok(false), false), 0), check_int(expect_bool_result_to_option_none(Result.Err(9)), 0)])
-    let result_error_option_status = sum_statuses([check_int(expect_int_result_error_some(Result.Err(0), 0), 0), check_int(expect_int_result_error_none(Result.Ok(31)), 0), check_int(expect_bool_result_error_some(Result.Err(0), 0), 0), check_int(expect_bool_result_error_none(Result.Ok(false)), 0)])
-    let option_conversion_more_status = sum_statuses([check_int(expect_int_option_ok_or(Option.Some(31), 8, 31), 0), check_int(expect_int_option_ok_or_err(Option.None, 8), 0), check_int(expect_bool_option_ok_or(Option.Some(true), 9, true), 0), check_int(expect_bool_option_ok_or_err(none_bool_option, 9), 0)])
-    let generic_array_access_status = sum_statuses([check_int(expect_int_array_first([9, 8, 7, 6], 9), 0), check_int(expect_int_array_last([9, 8, 7, 6], 6), 0), check_int(expect_bool_array_first([false, true, true], false), 0), check_int(expect_bool_array_last([false, true, true], true), 0)])
-    let generic_array_at_status = sum_statuses([check_int(expect_int_array_at([2, 3, 4, 5], 2, 99, 4), 0), check_int(expect_int_array_at([2, 3, 4], 8, 99, 99), 0), check_int(expect_bool_array_at([true, false, true], 1, true, false), 0), check_int(expect_bool_array_at([true, false, true], 8, false, false), 0)])
-    let generic_array_query_status = sum_statuses([check_int(expect_int_array_contains([2, 3, 4, 5], 3, true), 0), check_int(expect_int_array_count([2, 3, 2, 2, 4], 2, 3), 0), check_int(expect_bool_array_contains([true, false, true], false, true), 0), check_int(expect_bool_array_count([true, false, true, false], false, 2), 0)])
+    let err_int_three: Result[Int, Int] = Result.Err(3)
+    let err_int_fourteen: Result[Int, Int] = Result.Err(4)
+    let err_int_five: Result[Int, Int] = Result.Err(5)
+    let err_int_zero: Result[Int, Int] = Result.Err(0)
+    let err_int_eight: Result[Int, Int] = Result.Err(8)
+    let ok_int_result_seven: Result[Int, Int] = Result.Ok(7)
+    let ok_int_result_eleven: Result[Int, Int] = Result.Ok(11)
+    let ok_int_result_fourteen: Result[Int, Int] = Result.Ok(14)
+    let ok_int_result_thirty_one: Result[Int, Int] = Result.Ok(31)
+    let err_bool_four: Result[Bool, Int] = Result.Err(4)
+    let err_bool_five: Result[Bool, Int] = Result.Err(5)
+    let err_bool_six: Result[Bool, Int] = Result.Err(6)
+    let err_bool_zero: Result[Bool, Int] = Result.Err(0)
+    let err_bool_nine: Result[Bool, Int] = Result.Err(9)
+    let ok_bool_result_true: Result[Bool, Int] = Result.Ok(true)
+    let ok_bool_result_false: Result[Bool, Int] = Result.Ok(false)
+    let option_status = sum_statuses([check_int(expect_option_some(Option.Some(7), 7), 0), check_int(expect_option_none(none_int_option), 0), check_int(expect_option_some(Option.Some(true), true), 0), check_int(expect_option_none(none_bool_option), 0)])
+    let option_or_status = sum_statuses([check_int(expect_option_or(none_int_option, Option.Some(9), 9), 0), check_int(expect_option_or(none_bool_option, Option.Some(false), false), 0), 0, 0])
+    let option_failure = sum_statuses([check_int(expect_option_some(Option.Some(7), 8), 1), check_int(expect_option_none(Option.Some(7)), 1), check_int(expect_option_some(Option.Some(true), false), 1), check_int(expect_option_or(Option.Some(true), none_bool_option, false), 1)])
+    let result_status = sum_statuses([check_int(expect_result_ok(ok_int_result_seven, 7), 0), check_int(expect_result_err(err_int_three, 3), 0), check_int(expect_result_ok(ok_bool_result_true, true), 0), check_int(expect_result_err(err_bool_four, 4), 0)])
+    let result_or_status = sum_statuses([check_int(expect_result_or(err_int_five, ok_int_result_eleven, 11), 0), check_int(expect_result_or(err_bool_six, ok_bool_result_false, false), 0), 0, 0])
+    let result_failure = sum_statuses([check_int(expect_result_ok(ok_int_result_seven, 8), 1), check_int(expect_result_err(ok_int_result_seven, 3), 1), check_int(expect_result_ok(ok_bool_result_true, false), 1), check_int(expect_result_or(ok_bool_result_true, err_bool_four, false), 1)])
+    let result_conversion_status = sum_statuses([check_int(expect_result_to_option_some(ok_int_result_fourteen, 14), 0), check_int(expect_result_to_option_none(err_int_fourteen), 0), check_int(expect_result_to_option_some(ok_bool_result_false, false), 0), check_int(expect_result_to_option_none(err_bool_five), 0)])
+    let option_conversion_status = sum_statuses([check_int(expect_option_ok_or(Option.Some(14), 5, 14), 0), check_int(expect_option_ok_or_err(none_int_option, 5), 0), check_int(expect_option_ok_or(Option.Some(true), 6, true), 0), check_int(expect_option_ok_or_err(none_bool_option, 6), 0)])
+    let result_conversion_failure = sum_statuses([check_int(expect_result_to_option_some(err_int_fourteen, 14), 1), check_int(expect_result_to_option_none(ok_int_result_fourteen), 1), check_int(expect_result_to_option_some(ok_bool_result_false, true), 1), check_int(expect_result_to_option_none(ok_bool_result_false), 1)])
+    let option_conversion_failure = sum_statuses([check_int(expect_option_ok_or(Option.Some(14), 5, 15), 1), check_int(expect_option_ok_or_err(Option.Some(14), 5), 1), check_int(expect_option_ok_or(Option.Some(true), 6, false), 1), check_int(expect_option_ok_or_err(Option.Some(true), 6), 1)])
+    let result_error_status = sum_statuses([check_int(expect_result_error_some(err_int_zero, 0), 0), check_int(expect_result_error_none(ok_int_result_fourteen), 0), check_int(expect_result_error_some(err_bool_zero, 0), 0), check_int(expect_result_error_none(ok_bool_result_false), 0)])
+    let result_error_failure = sum_statuses([check_int(expect_result_error_some(ok_int_result_fourteen, 0), 1), check_int(expect_result_error_none(err_int_zero), 1), check_int(expect_result_error_some(err_bool_zero, 1), 1), check_int(expect_result_error_none(err_bool_zero), 1)])
+    let result_conversion_more_status = sum_statuses([check_int(expect_result_to_option_some(ok_int_result_thirty_one, 31), 0), check_int(expect_result_to_option_none(err_int_eight), 0), check_int(expect_result_to_option_some(ok_bool_result_false, false), 0), check_int(expect_result_to_option_none(err_bool_nine), 0)])
+    let result_error_option_status = sum_statuses([check_int(expect_result_error_some(err_int_zero, 0), 0), check_int(expect_result_error_none(ok_int_result_thirty_one), 0), check_int(expect_result_error_some(err_bool_zero, 0), 0), check_int(expect_result_error_none(ok_bool_result_false), 0)])
+    let option_conversion_more_status = sum_statuses([check_int(expect_option_ok_or(Option.Some(31), 8, 31), 0), check_int(expect_option_ok_or_err(none_int_option, 8), 0), check_int(expect_option_ok_or(Option.Some(true), 9, true), 0), check_int(expect_option_ok_or_err(none_bool_option, 9), 0)])
+    let generic_array_access_status = sum_statuses([check_int(expect_array_first([9, 8, 7, 6], 9), 0), check_int(expect_array_last([9, 8, 7, 6], 6), 0), check_int(expect_array_first([false, true, true], false), 0), check_int(expect_array_last([false, true, true], true), 0)])
+    let generic_array_at_status = sum_statuses([check_int(expect_array_at([2, 3, 4, 5], 2, 99, 4), 0), check_int(expect_array_at([2, 3, 4], 8, 99, 99), 0), check_int(expect_array_at([true, false, true], 1, true, false), 0), check_int(expect_array_at([true, false, true], 8, false, false), 0)])
+    let generic_array_query_status = sum_statuses([check_int(expect_array_contains([2, 3, 4, 5], 3, true), 0), check_int(expect_array_count([2, 3, 2, 2, 4], 2, 3), 0), check_int(expect_array_contains([true, false, true], false, true), 0), check_int(expect_array_count([true, false, true, false], false, 2), 0)])
     let generic_array_aggregate_status = sum_statuses([check_int(expect_int_array_sum([2, 3, 4, 5], 14), 0), check_int(expect_int_array_product([2, 3, 4], 24), 0), check_int(expect_int_array_max([3, 9, 5, 7], 9), 0), check_int(expect_int_array_min([3, 9, 5, 7], 3), 0)])
     let generic_array_bool_aggregate_status = sum_statuses([check_int(expect_bool_array_all([true, true, true], true), 0), check_int(expect_bool_array_any([false, false, true, false], true), 0), check_int(expect_bool_array_none([false, false, false, false, false], true), 0), 0])
-    let generic_array_reverse_status = sum_statuses([check_int(expect_array_reverse(["north", "east", "south"], ["south", "east", "north"]), 0), check_int(expect_int_array_reverse([2, 3, 4, 5], [5, 4, 3, 2]), 0), check_int(expect_bool_array_reverse([true, false, false], [false, false, true]), 0), check_int(expect_bool_array_reverse([true, false, true, false, false], [false, false, true, false, true]), 0)])
-    let array_failure = sum_statuses([check_int(expect_int_array_first([2, 3, 4], 3), 1), check_int(expect_bool_array_last([false, true, false, true, false], true), 1), check_int(expect_int_array_sum([2, 3, 4, 5, 6], 21), 1), check_int(expect_bool_array_none([false, false, false, false], false), 1)])
-    let array_at_failure = sum_statuses([check_int(expect_int_array_at([2, 3, 4], 1, 99, 2), 1), check_int(expect_int_array_at([2, 3, 4, 5, 6], 8, 99, 6), 1), check_int(expect_bool_array_at([true, false, true], 1, true, true), 1), check_int(expect_bool_array_at([true, false, true, false, true], 8, false, true), 1)])
-    let array_transform_failure = sum_statuses([check_int(expect_array_reverse(["north", "east", "south"], ["south", "west", "north"]), 1), check_int(expect_int_array_reverse([2, 3, 4], [2, 3, 4]), 2), check_int(expect_bool_array_reverse([true, false, true, false, false], [true, false, true, false, false]), 2), check_int(expect_array_eq(["a", "b", "c"], ["a", "x", "c"]), 1)])
-    let array_query_failure = sum_statuses([check_int(expect_int_array_contains([2, 3, 4, 5, 6], 7, true), 1), check_int(expect_int_array_count([2, 3, 2], 2, 1), 1), check_int(expect_bool_array_contains([false, false, false, false], true, true), 1), check_int(expect_bool_array_count([true, false, true, false], false, 1), 1)])
+    let generic_array_reverse_status = sum_statuses([check_int(expect_array_reverse(["north", "east", "south"], ["south", "east", "north"]), 0), check_int(expect_array_reverse([2, 3, 4, 5], [5, 4, 3, 2]), 0), check_int(expect_array_reverse([true, false, false], [false, false, true]), 0), check_int(expect_array_reverse([true, false, true, false, false], [false, false, true, false, true]), 0)])
+    let array_failure = sum_statuses([check_int(expect_array_first([2, 3, 4], 3), 1), check_int(expect_array_last([false, true, false, true, false], true), 1), check_int(expect_int_array_sum([2, 3, 4, 5, 6], 21), 1), check_int(expect_bool_array_none([false, false, false, false], false), 1)])
+    let array_at_failure = sum_statuses([check_int(expect_array_at([2, 3, 4], 1, 99, 2), 1), check_int(expect_array_at([2, 3, 4, 5, 6], 8, 99, 6), 1), check_int(expect_array_at([true, false, true], 1, true, true), 1), check_int(expect_array_at([true, false, true, false, true], 8, false, true), 1)])
+    let array_transform_failure = sum_statuses([check_int(expect_array_reverse(["north", "east", "south"], ["south", "west", "north"]), 1), check_int(expect_array_reverse([2, 3, 4], [2, 3, 4]), 2), check_int(expect_array_reverse([true, false, true, false, false], [true, false, true, false, false]), 2), check_int(expect_array_eq(["a", "b", "c"], ["a", "x", "c"]), 1)])
+    let array_query_failure = sum_statuses([check_int(expect_array_contains([2, 3, 4, 5, 6], 7, true), 1), check_int(expect_array_count([2, 3, 2], 2, 1), 1), check_int(expect_array_contains([false, false, false, false], true, true), 1), check_int(expect_array_count([true, false, true, false], false, 1), 1)])
     let bool_status = sum_statuses([bool_pass + bool_aggregate_pass + bool_large_aggregate_pass + bool_conversion_pass, bool_logic_pass + bool_none_pass, bool_failure + bool_aggregate_failure + bool_large_aggregate_failure + bool_conversion_failure, bool_logic_failure + bool_none_failure])
     let int_status = sum_statuses([int_order_pass, int_boundary_pass, int_order_failure, int_boundary_failure])
     let range_status = sum_statuses([range_pass, bounds_pass, range_failure, bounds_failure])

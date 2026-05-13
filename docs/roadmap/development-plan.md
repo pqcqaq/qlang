@@ -1,6 +1,6 @@
 # 开发计划
 
-> 最后同步：2026-05-12
+> 最后同步：2026-05-13
 
 这页只记录当前开发顺序。不写日期承诺，不写流水账。
 
@@ -16,7 +16,7 @@
 | 顺序 | 主题 | 目标 |
 | --- | --- | --- |
 | 1 | 项目可用性 | `ql project/check/build/run/test` 在真实本地 workspace 中稳定工作 |
-| 2 | stdlib | `std.core`、`std.option`、`std.result`、`std.array`、`std.test` 形成可消费 API |
+| 2 | stdlib | 收口 `std.core`、`std.option`、`std.result`、`std.array`、`std.test` 的 public API，并扩大 downstream smoke |
 | 3 | generics/backend | 补齐 generic monomorphization 和 dependency-aware backend |
 | 4 | LSP/VSCode | 补齐真实 workspace 下的导航、高亮、补全、格式化、code action |
 | 5 | 分发准备 | release、VSIX、CI、JSON 输出、安装文档 |

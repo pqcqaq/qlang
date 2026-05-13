@@ -1,6 +1,6 @@
 # 当前支持基线
 
-> 最后同步：2026-05-12
+> 最后同步：2026-05-13
 
 这页记录当前可依赖能力。更细节的行为以代码和回归测试为准。
 
@@ -35,9 +35,9 @@
 - 数组长度泛型参数可在函数体内作为 `Int` 值读取。
 - dependency generic specialization 能递归处理同依赖模块内 generic helper 直调，以及 dependency generic body 内对直接依赖 generic helper 的导入调用；也能从外层调用参数/返回上下文推断嵌套 direct-call specialization。未使用的 direct dependency generic import 不再触发 bridge 合成失败。
 - `ql test` 已用真实 smoke 覆盖 dependency public functions、public values、generic public functions、public struct/type alias/method/trait bridge。
-- `Option[T]`、`Result[T, E]`、`std.core` / `std.array` length-generic aggregate/order/median helpers、`std.test` 泛型基础断言、泛型数组 equality/access/query/reverse 断言、option/result/status assertions 已有真实 smoke。
+- `Option[T]`、`Result[T, E]`、`std.core` / `std.array` length-generic aggregate/order/median helpers、`std.test` 泛型 equality/array/option/result/status assertions 已有真实 smoke。
 - stdlib package-local smoke 已改用 length-generic 状态数组聚合，不再保留测试内 `sum4` / `sum6` 固定 arity helper。
-- 语言级重复数组字面量 `[value; N]` 已支持整数字面量长度和数组长度泛型；`std.option` / `std.result` concrete carrier API 和 `std.array` 固定长度 helper 已删除。
+- 语言级重复数组字面量 `[value; N]` 已支持整数字面量长度和数组长度泛型；`std.option` / `std.result` concrete carrier API、`std.array` 固定长度 helper 和 `std.test` typed facade 已删除。
 
 ### LSP 和 VSCode
 
@@ -62,9 +62,9 @@
 ## 主要缺口
 
 - `ql-cli` 主链路仍过度集中，`check/build/run/test/project build` 需要抽成共享 project pipeline。
-- `ql test` 仍有测试专用 bridge/source override 路径，需要继续抽成共享 project pipeline，并扩大到更宽 dependency-aware backend 语义。
+- `ql test` 仍有 package-under-test bridge/source override 组合路径，需要继续抽成共享 project pipeline，并扩大到更宽 dependency-aware backend 语义。
 - LSP 还不是稳定 workspace service；diagnostics、references、rename、symbols 需要统一 workspace index。
-- stdlib public API 已清掉 concrete carrier 和主要固定 arity 包装；`std.result` package-local smoke 和 `project init --stdlib` starter 已直接覆盖 generic carrier 语义与 option/result assertions。剩余重点是更完整 generic backend、共享 project pipeline 和更宽 dependency-aware backend。
+- stdlib public API 已清掉 concrete carrier、主要固定 arity 包装和 `std.test` typed facade；`std.result` package-local smoke 和 `project init --stdlib` starter 已直接覆盖 generic carrier 语义与 option/result assertions。剩余重点是更完整 generic backend、共享 project pipeline 和更宽 dependency-aware backend。
 - `project init --stdlib` starter 已迁到 `stdlib/examples/starter`；后续重点是让更多 stdlib examples/downstream smoke 覆盖更宽 dependency-aware backend。
 
 ## 继续阅读
