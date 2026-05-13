@@ -409,11 +409,25 @@ fn project_status_workspace_root_package_selector_reports_missing_package() {
         "project status missing workspace package",
         &normalized_stderr,
         &format!(
-            "error: `ql project status` workspace manifest `{}` does not contain package `missing`",
-            project_root
-                .join("qlang.toml")
-                .to_string_lossy()
-                .replace('\\', "/")
+            "error: `ql project status` package selector matched no workspace members under `{}`",
+            project_root.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-status-missing-package",
+        "project status missing workspace package",
+        &stderr,
+        "note: selector: package `missing`",
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-status-missing-package",
+        "project status missing workspace package",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql project status {}` to inspect all workspace members, or adjust `--package`",
+            project_root.to_string_lossy().replace('\\', "/")
         ),
     )
     .unwrap();
@@ -477,8 +491,10 @@ fn project_status_package_selector_rejects_duplicate_package_names() {
         "project status duplicate workspace package selector",
         &stderr.replace('\\', "/"),
         &format!(
-            "error: `ql project status` workspace manifest `{}` contains multiple members for package `util`: packages/a, packages/b",
-            project_root.join("qlang.toml").to_string_lossy().replace('\\', "/")
+            "error: `ql project status` workspace manifest `{}` contains multiple members for package `util`: packages/a ({}/packages/a/qlang.toml), packages/b ({}/packages/b/qlang.toml)",
+            project_root.join("qlang.toml").to_string_lossy().replace('\\', "/"),
+            project_root.to_string_lossy().replace('\\', "/"),
+            project_root.to_string_lossy().replace('\\', "/")
         ),
     )
     .unwrap();

@@ -70,7 +70,8 @@ use project_workspace::{
     WorkspaceMemberLookupError, render_workspace_member_lookup_error,
     resolve_project_package_manifest, resolve_project_selected_package_manifest,
     resolve_project_workspace_manifest, resolve_project_workspace_member_package_name,
-    resolve_workspace_member_entry_by_package_name, select_workspace_members,
+    resolve_selected_workspace_member_manifest, resolve_workspace_member_entry_by_package_name,
+    select_workspace_members,
 };
 
 const CLI_NAME: &str = "ql";
@@ -1714,6 +1715,7 @@ fn check_workspace_manifest(
         request_path,
         selected_package_name,
         &check_command_label,
+        "--package",
     )?;
     let mut sync_visited = BTreeSet::new();
     let mut synced_interfaces = BTreeSet::new();
@@ -12037,8 +12039,13 @@ fn project_emit_interface_path(
     };
 
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
-    let selected_members =
-        select_workspace_members(&manifest, path, selected_package_name, command_label)?;
+    let selected_members = select_workspace_members(
+        &manifest,
+        path,
+        selected_package_name,
+        command_label,
+        "--package",
+    )?;
     let mut failing_member_count = 0usize;
     let mut emission_failure_count = 0usize;
     let mut first_failing_member_manifest = None;

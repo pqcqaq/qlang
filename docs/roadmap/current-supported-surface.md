@@ -62,7 +62,7 @@
 
 ## 主要缺口
 
-- `ql-cli` 主链路仍过度集中；`build/run/test/check` 的入口解析已开始共享，但 `project emit-interface/graph/status/dependencies` 和 workspace member selection 还需要继续汇入共享 project pipeline。
+- `ql-cli` 主链路仍过度集中；`build/run/test/check` 的入口 request-context，以及 `project emit-interface/graph/dependencies/dependents/add/status` 的 workspace member lookup 已共享并统一了 unresolved/ambiguous member reporting；剩余重点是继续收口 reporting 细节和真实 workspace smoke。
 - `ql test` 仍有 package-under-test bridge/source override 组合路径，需要继续抽成共享 project pipeline，并扩大到更宽 dependency-aware backend 语义。
 - LSP 还不是稳定 workspace service；diagnostics、references、rename、symbols 需要统一 workspace index。
 - stdlib public API 已清掉 concrete carrier、主要固定 arity 包装和 `std.test` typed facade；`std.result` package-local smoke 和 `project init --stdlib` starter 已直接覆盖 generic carrier 语义与 option/result assertions。剩余重点是更完整 generic backend、共享 project pipeline 和更宽 dependency-aware backend。

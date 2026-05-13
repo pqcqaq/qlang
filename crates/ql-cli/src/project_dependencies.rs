@@ -5,9 +5,8 @@ use ql_project::{ProjectManifest, load_project_manifest, load_reference_manifest
 use serde_json::{Value as JsonValue, json};
 
 use super::{
-    normalize_path, relative_path_from, render_workspace_member_lookup_error,
-    resolve_project_workspace_manifest, resolve_project_workspace_member_package_name,
-    resolve_workspace_member_entry_by_package_name,
+    normalize_path, relative_path_from, resolve_project_workspace_manifest,
+    resolve_project_workspace_member_package_name, resolve_selected_workspace_member_manifest,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,7 +30,12 @@ pub(crate) fn project_dependents_path(
     json: bool,
 ) -> Result<(), u8> {
     let (workspace_manifest, package_name, member_manifest_path) =
-        resolve_project_dependency_query_context(path, package_name, "`ql project dependents`")?;
+        resolve_project_dependency_query_context(
+            path,
+            package_name,
+            "`ql project dependents`",
+            "--name",
+        )?;
     let dependents = find_workspace_member_dependents(&workspace_manifest, &member_manifest_path)
         .map_err(|message| {
         eprintln!("error: `ql project dependents` {message}");
@@ -52,7 +56,12 @@ pub(crate) fn project_dependencies_path(
     json: bool,
 ) -> Result<(), u8> {
     let (workspace_manifest, package_name, member_manifest_path) =
-        resolve_project_dependency_query_context(path, package_name, "`ql project dependencies`")?;
+        resolve_project_dependency_query_context(
+            path,
+            package_name,
+            "`ql project dependencies`",
+            "--name",
+        )?;
     let dependencies =
         find_workspace_member_dependencies(&workspace_manifest, &member_manifest_path).map_err(
             |message| {
@@ -73,6 +82,7 @@ fn resolve_project_dependency_query_context(
     path: &Path,
     package_name: Option<&str>,
     command_label: &str,
+    selector_option: &str,
 ) -> Result<(ProjectManifest, String, PathBuf), u8> {
     let workspace_manifest = resolve_project_workspace_manifest(path).map_err(|message| {
         eprintln!("error: {command_label} {message}");
@@ -80,20 +90,18 @@ fn resolve_project_dependency_query_context(
     })?;
     let package_name =
         resolve_project_workspace_member_package_name(path, package_name, command_label)?;
-    let (_, member_manifest_path) =
-        resolve_workspace_member_entry_by_package_name(&workspace_manifest, &package_name)
-            .map_err(|error| {
-                eprintln!(
-                    "error: {command_label} {}",
-                    render_workspace_member_lookup_error(
-                        &workspace_manifest,
-                        &package_name,
-                        &error,
-                    )
-                );
-                1
-            })?;
-    Ok((workspace_manifest, package_name, member_manifest_path))
+    let (_, member_manifest) = resolve_selected_workspace_member_manifest(
+        &workspace_manifest,
+        path,
+        &package_name,
+        command_label,
+        selector_option,
+    )?;
+    Ok((
+        workspace_manifest,
+        package_name,
+        member_manifest.manifest_path,
+    ))
 }
 
 pub(crate) fn find_workspace_member_dependents(

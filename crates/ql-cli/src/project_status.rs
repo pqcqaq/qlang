@@ -11,8 +11,8 @@ use serde_json::{Value as JsonValue, json};
 use super::{
     normalize_path, package_check_manifest_path_from_project_error,
     package_missing_name_manifest_path_from_project_error, project_target_display_path,
-    render_workspace_member_lookup_error, resolve_project_workspace_member_command_request_root,
-    resolve_workspace_member_entry_by_package_name, validate_project_package_name,
+    resolve_project_workspace_member_command_request_root,
+    resolve_selected_workspace_member_manifest, validate_project_package_name,
 };
 
 use crate::project_dependencies::{
@@ -36,6 +36,11 @@ struct ProjectStatusInterface {
     stale_reasons: Vec<InterfaceArtifactStaleReason>,
 }
 
+enum ProjectStatusMemberSelectionError {
+    Message(String),
+    Exit(u8),
+}
+
 pub(crate) fn project_status_path(
     path: &Path,
     package_name: Option<&str>,
@@ -44,10 +49,14 @@ pub(crate) fn project_status_path(
     let request_root = resolve_project_workspace_member_command_request_root(path);
     let manifest = load_project_manifest(request_root.as_deref().unwrap_or(path))
         .map_err(|error| report_project_status_load_error(path, &error))?;
-    let members = collect_project_status_members(&manifest, package_name).map_err(|message| {
-        eprintln!("error: `ql project status` {message}");
-        1
-    })?;
+    let members = match collect_project_status_members(&manifest, path, package_name) {
+        Ok(members) => members,
+        Err(ProjectStatusMemberSelectionError::Message(message)) => {
+            eprintln!("error: `ql project status` {message}");
+            return Err(1);
+        }
+        Err(ProjectStatusMemberSelectionError::Exit(code)) => return Err(code),
+    };
     let rendered = if json {
         render_project_status_json(path, &manifest, &members)
     } else {
@@ -84,51 +93,50 @@ fn report_project_status_load_error(path: &Path, error: &ql_project::ProjectErro
 
 fn collect_project_status_members(
     manifest: &ql_project::ProjectManifest,
+    request_path: &Path,
     selected_package_name: Option<&str>,
-) -> Result<Vec<ProjectStatusMember>, String> {
+) -> Result<Vec<ProjectStatusMember>, ProjectStatusMemberSelectionError> {
     if let Some(selected_package_name) = selected_package_name {
-        validate_project_package_name(selected_package_name)?;
+        validate_project_package_name(selected_package_name)
+            .map_err(ProjectStatusMemberSelectionError::Message)?;
     }
 
     if let Some(workspace) = manifest.workspace.as_ref() {
         let workspace_root = manifest.manifest_path.parent().unwrap_or(Path::new("."));
         let workspace_profile = manifest.profile.as_ref().map(|profile| profile.default);
         if let Some(selected_package_name) = selected_package_name {
-            let (member, member_manifest_path) =
-                resolve_workspace_member_entry_by_package_name(manifest, selected_package_name)
-                    .map_err(|error| {
-                        render_workspace_member_lookup_error(
-                            manifest,
-                            selected_package_name,
-                            &error,
-                        )
-                    })?;
-            let member_manifest =
-                load_project_manifest(&member_manifest_path).map_err(|error| {
-                    format!("failed to inspect workspace member `{member}`: {error}")
-                })?;
+            let (member, member_manifest) = resolve_selected_workspace_member_manifest(
+                manifest,
+                request_path,
+                selected_package_name,
+                "`ql project status`",
+                "--package",
+            )
+            .map_err(ProjectStatusMemberSelectionError::Exit)?;
             let default_profile = member_manifest
                 .profile
                 .as_ref()
                 .map(|profile| profile.default)
                 .or(workspace_profile);
-            return Ok(vec![collect_project_status_member(
-                manifest,
-                Some(member),
-                &member_manifest,
-                default_profile,
-            )?]);
+            return Ok(vec![
+                collect_project_status_member(
+                    manifest,
+                    Some(member),
+                    &member_manifest,
+                    default_profile,
+                )
+                .map_err(ProjectStatusMemberSelectionError::Message)?,
+            ]);
         }
 
         let mut members = Vec::new();
         for member in &workspace.members {
-            let member_manifest =
-                load_project_manifest(&workspace_root.join(member)).map_err(|error| {
-                    format!("failed to inspect workspace member `{member}`: {error}")
-                })?;
-            let member_package_name = package_name(&member_manifest).map_err(|error| {
-                format!("failed to inspect workspace member `{member}`: {error}")
-            })?;
+            let member_manifest = load_project_manifest(&workspace_root.join(member))
+                .map_err(|error| format!("failed to inspect workspace member `{member}`: {error}"))
+                .map_err(ProjectStatusMemberSelectionError::Message)?;
+            let member_package_name = package_name(&member_manifest)
+                .map_err(|error| format!("failed to inspect workspace member `{member}`: {error}"))
+                .map_err(ProjectStatusMemberSelectionError::Message)?;
             if selected_package_name.is_some_and(|expected| expected != member_package_name) {
                 continue;
             }
@@ -138,33 +146,40 @@ fn collect_project_status_members(
                 .as_ref()
                 .map(|profile| profile.default)
                 .or(workspace_profile);
-            members.push(collect_project_status_member(
-                manifest,
-                Some(member.clone()),
-                &member_manifest,
-                default_profile,
-            )?);
+            members.push(
+                collect_project_status_member(
+                    manifest,
+                    Some(member.clone()),
+                    &member_manifest,
+                    default_profile,
+                )
+                .map_err(ProjectStatusMemberSelectionError::Message)?,
+            );
         }
 
         return Ok(members);
     }
 
-    let actual_package_name =
-        package_name(manifest).map_err(|error| format!("failed to inspect package: {error}"))?;
+    let actual_package_name = package_name(manifest)
+        .map_err(|error| format!("failed to inspect package: {error}"))
+        .map_err(ProjectStatusMemberSelectionError::Message)?;
     if let Some(selected_package_name) = selected_package_name {
         if selected_package_name != actual_package_name {
-            return Err(format!(
+            return Err(ProjectStatusMemberSelectionError::Message(format!(
                 "package selector expected `{selected_package_name}` but `{}` resolves to package `{actual_package_name}`",
                 normalize_path(&manifest.manifest_path)
-            ));
+            )));
         }
     }
-    Ok(vec![collect_project_status_member(
-        manifest,
-        None,
-        manifest,
-        manifest.profile.as_ref().map(|profile| profile.default),
-    )?])
+    Ok(vec![
+        collect_project_status_member(
+            manifest,
+            None,
+            manifest,
+            manifest.profile.as_ref().map(|profile| profile.default),
+        )
+        .map_err(ProjectStatusMemberSelectionError::Message)?,
+    ])
 }
 
 fn collect_project_status_member(

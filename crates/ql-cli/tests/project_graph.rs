@@ -779,16 +779,166 @@ name = "app"
         "workspace root package graph selector missing package",
         &stderr.replace('\\', "/"),
         &format!(
-            "error: `ql project graph` workspace manifest `{}` does not contain package `missing`",
-            project_root
-                .join("qlang.toml")
-                .to_string_lossy()
-                .replace('\\', "/")
+            "error: `ql project graph` package selector matched no workspace members under `{}`",
+            project_root.to_string_lossy().replace('\\', "/")
         ),
     )
     .expect(
         "workspace root package graph selector missing package should report the missing package",
     );
+    expect_stderr_contains(
+        "project-graph-workspace-package-missing",
+        "workspace root package graph selector missing package",
+        &stderr,
+        "note: selector: package `missing`",
+    )
+    .expect("workspace root package graph selector missing package should report the selector");
+    expect_stderr_contains(
+        "project-graph-workspace-package-missing",
+        "workspace root package graph selector missing package",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "hint: rerun `ql project graph {}` to inspect all workspace members, or adjust `--package`",
+            project_root.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .expect("workspace root package graph selector missing package should preserve the rerun hint");
+}
+
+#[test]
+fn project_graph_rejects_duplicate_workspace_package_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-graph-workspace-package-duplicate");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages").join("a").join("src"))
+        .expect("create first duplicate workspace directory");
+    std::fs::create_dir_all(project_root.join("packages").join("b").join("src"))
+        .expect("create second duplicate workspace directory");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/a", "packages/b"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/a/qlang.toml",
+        r#"
+[package]
+name = "util"
+"#,
+    );
+    temp.write(
+        "workspace/packages/b/qlang.toml",
+        r#"
+[package]
+name = "util"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "graph", "--package", "util"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project graph --package` duplicate workspace package",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-graph-workspace-package-duplicate",
+        "workspace root package graph selector duplicate package",
+        &output,
+        1,
+    )
+    .expect("workspace root package graph selector should fail for duplicate package names");
+    expect_empty_stdout(
+        "project-graph-workspace-package-duplicate",
+        "workspace root package graph selector duplicate package",
+        &stdout,
+    )
+    .expect("workspace root package graph selector duplicate package should not print stdout");
+    expect_stderr_contains(
+        "project-graph-workspace-package-duplicate",
+        "workspace root package graph selector duplicate package",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project graph` workspace manifest `{}` contains multiple members for package `util`: packages/a ({}/packages/a/qlang.toml), packages/b ({}/packages/b/qlang.toml)",
+            project_root.join("qlang.toml").to_string_lossy().replace('\\', "/"),
+            project_root.to_string_lossy().replace('\\', "/"),
+            project_root.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .expect("workspace root package graph selector duplicate package should list matching members");
+}
+
+#[test]
+fn project_graph_package_selector_surfaces_broken_workspace_member_metadata() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-graph-workspace-package-broken-member");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages").join("app").join("src"))
+        .expect("create healthy workspace member directory");
+    std::fs::create_dir_all(project_root.join("packages").join("broken"))
+        .expect("create broken workspace member directory");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/broken/qlang.toml",
+        r#"
+[package]
+version = "0.1.0"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "graph", "--package", "app"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project graph --package` broken workspace member metadata",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-graph-workspace-package-broken-member",
+        "workspace root package graph selector broken member metadata",
+        &output,
+        1,
+    )
+    .expect("workspace root package graph selector should fail when another member metadata is unresolved");
+    expect_empty_stdout(
+        "project-graph-workspace-package-broken-member",
+        "workspace root package graph selector broken member metadata",
+        &stdout,
+    )
+    .expect("workspace root package graph selector broken member metadata should not print stdout");
+    expect_stderr_contains(
+        "project-graph-workspace-package-broken-member",
+        "workspace root package graph selector broken member metadata",
+        &stderr.replace('\\', "/"),
+        "error: `ql project graph` failed to inspect workspace member `packages/broken`: manifest",
+    )
+    .expect("workspace root package graph selector broken member metadata should surface the broken member error");
+    expect_stderr_contains(
+        "project-graph-workspace-package-broken-member",
+        "workspace root package graph selector broken member metadata",
+        &stderr,
+        "does not declare `[package].name`",
+    )
+    .expect("workspace root package graph selector broken member metadata should preserve the missing-name detail");
 }
 
 #[test]

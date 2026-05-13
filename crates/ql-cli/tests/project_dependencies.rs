@@ -400,9 +400,143 @@ fn project_dependencies_refuses_missing_workspace_package() {
         "project dependencies missing package",
         &stderr.replace('\\', "/"),
         &format!(
-            "error: `ql project dependencies` workspace manifest `{}` does not contain package `missing`",
-            project_root.join("qlang.toml").to_string_lossy().replace('\\', "/")
+            "error: `ql project dependencies` package selector matched no workspace members under `{}`",
+            project_root.to_string_lossy().replace('\\', "/")
         ),
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-dependencies-missing",
+        "project dependencies missing package",
+        &stderr,
+        "note: selector: package `missing`",
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-dependencies-missing",
+        "project dependencies missing package",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "hint: rerun `ql project dependencies {}` to inspect all workspace members, or adjust `--name`",
+            project_root.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn project_dependencies_reject_duplicate_workspace_package_names_for_name_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependencies-duplicate");
+    let project_root = temp.path().join("workspace");
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/a\", \"packages/b\"]\n",
+    );
+    temp.write(
+        "workspace/packages/a/qlang.toml",
+        "[package]\nname = \"util\"\n",
+    );
+    temp.write(
+        "workspace/packages/b/qlang.toml",
+        "[package]\nname = \"util\"\n",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependencies",
+        &project_root.to_string_lossy(),
+        "--name",
+        "util",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependencies` duplicate workspace package",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-dependencies-duplicate",
+        "project dependencies duplicate package",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-dependencies-duplicate",
+        "project dependencies duplicate package",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-dependencies-duplicate",
+        "project dependencies duplicate package",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project dependencies` workspace manifest `{}` contains multiple members for package `util`: packages/a ({}/packages/a/qlang.toml), packages/b ({}/packages/b/qlang.toml)",
+            project_root.join("qlang.toml").to_string_lossy().replace('\\', "/"),
+            project_root.to_string_lossy().replace('\\', "/"),
+            project_root.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn project_dependencies_surface_broken_workspace_member_metadata_for_name_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependencies-broken-member");
+    let project_root = temp.path().join("workspace");
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/app\", \"packages/broken\"]\n",
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        "[package]\nname = \"app\"\n",
+    );
+    temp.write(
+        "workspace/packages/app/src/main.ql",
+        "fn main() -> Int {\n    return 0\n}\n",
+    );
+    temp.write("workspace/packages/broken/qlang.toml", "[package]\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependencies",
+        &project_root.to_string_lossy(),
+        "--name",
+        "app",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependencies` broken workspace member metadata",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-dependencies-broken-member",
+        "project dependencies broken member metadata",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-dependencies-broken-member",
+        "project dependencies broken member metadata",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-dependencies-broken-member",
+        "project dependencies broken member metadata",
+        &stderr.replace('\\', "/"),
+        "error: `ql project dependencies` failed to inspect workspace member `packages/broken`: manifest",
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-dependencies-broken-member",
+        "project dependencies broken member metadata",
+        &stderr,
+        "does not declare `[package].name`",
     )
     .unwrap();
 }

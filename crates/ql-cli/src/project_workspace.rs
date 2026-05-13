@@ -19,6 +19,7 @@ pub(crate) fn select_workspace_members(
     request_path: &Path,
     package_name: Option<&str>,
     command_label: &str,
+    selector_option: &str,
 ) -> Result<Vec<String>, u8> {
     let Some(workspace) = &manifest.workspace else {
         return Ok(Vec::new());
@@ -47,7 +48,7 @@ pub(crate) fn select_workspace_members(
         );
         eprintln!("note: selector: package `{package_name}`");
         eprintln!(
-            "hint: rerun `{rerun_command}` to inspect all workspace members, or adjust `--package`"
+            "hint: rerun `{rerun_command}` to inspect all workspace members, or adjust `{selector_option}`"
         );
         return Err(1);
     }
@@ -73,6 +74,38 @@ pub(crate) fn select_workspace_members(
             .expect("non-empty workspace check package matches should contain one entry")
             .0,
     ])
+}
+
+pub(crate) fn resolve_selected_workspace_member_manifest(
+    workspace_manifest: &ProjectManifest,
+    request_path: &Path,
+    package_name: &str,
+    command_label: &str,
+    selector_option: &str,
+) -> Result<(String, ProjectManifest), u8> {
+    let selected_member = select_workspace_members(
+        workspace_manifest,
+        request_path,
+        Some(package_name),
+        command_label,
+        selector_option,
+    )?
+    .into_iter()
+    .next()
+    .expect("workspace member selector should resolve exactly one member");
+    let workspace_root = workspace_manifest
+        .manifest_path
+        .parent()
+        .unwrap_or(Path::new("."));
+    let member_manifest =
+        load_project_manifest(&workspace_root.join(&selected_member)).map_err(|error| {
+            eprintln!(
+                "error: {command_label} failed to inspect workspace member `{selected_member}`: {}",
+                normalize_workspace_member_package_error(&error)
+            );
+            1
+        })?;
+    Ok((selected_member, member_manifest))
 }
 
 pub(crate) fn resolve_project_selected_package_manifest(

@@ -7,9 +7,9 @@ use ql_project::{
 
 use super::{
     normalize_path, package_check_manifest_path_from_project_error,
-    package_missing_name_manifest_path_from_project_error, render_workspace_member_lookup_error,
+    package_missing_name_manifest_path_from_project_error,
     resolve_project_workspace_member_command_request_root,
-    resolve_workspace_member_entry_by_package_name, validate_project_package_name,
+    resolve_selected_workspace_member_manifest, validate_project_package_name,
 };
 
 pub(crate) fn project_graph_path(
@@ -72,22 +72,14 @@ fn resolve_project_graph_package_manifest(
     }
 
     if manifest.workspace.is_some() {
-        let (_, member_manifest_path) =
-            resolve_workspace_member_entry_by_package_name(manifest, selected_package_name)
-                .map_err(|error| {
-                    eprintln!(
-                        "error: `ql project graph` {}",
-                        render_workspace_member_lookup_error(
-                            manifest,
-                            selected_package_name,
-                            &error,
-                        )
-                    );
-                    1
-                })?;
-
-        return load_project_manifest(&member_manifest_path)
-            .map_err(|error| report_project_graph_load_error(path, &error));
+        let (_, member_manifest) = resolve_selected_workspace_member_manifest(
+            manifest,
+            path,
+            selected_package_name,
+            "`ql project graph`",
+            "--package",
+        )?;
+        return Ok(member_manifest);
     }
 
     let actual_package_name = package_name(manifest).map_err(|error| {
