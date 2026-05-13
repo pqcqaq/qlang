@@ -11,7 +11,8 @@ use serde_json::{Value as JsonValue, json};
 use super::{
     normalize_path, package_check_manifest_path_from_project_error,
     package_missing_name_manifest_path_from_project_error, project_target_display_path,
-    resolve_project_workspace_member_command_request_root, validate_project_package_name,
+    render_workspace_member_lookup_error, resolve_project_workspace_member_command_request_root,
+    resolve_workspace_member_entry_by_package_name, validate_project_package_name,
 };
 
 use crate::project_dependencies::{
@@ -92,6 +93,33 @@ fn collect_project_status_members(
     if let Some(workspace) = manifest.workspace.as_ref() {
         let workspace_root = manifest.manifest_path.parent().unwrap_or(Path::new("."));
         let workspace_profile = manifest.profile.as_ref().map(|profile| profile.default);
+        if let Some(selected_package_name) = selected_package_name {
+            let (member, member_manifest_path) =
+                resolve_workspace_member_entry_by_package_name(manifest, selected_package_name)
+                    .map_err(|error| {
+                        render_workspace_member_lookup_error(
+                            manifest,
+                            selected_package_name,
+                            &error,
+                        )
+                    })?;
+            let member_manifest =
+                load_project_manifest(&member_manifest_path).map_err(|error| {
+                    format!("failed to inspect workspace member `{member}`: {error}")
+                })?;
+            let default_profile = member_manifest
+                .profile
+                .as_ref()
+                .map(|profile| profile.default)
+                .or(workspace_profile);
+            return Ok(vec![collect_project_status_member(
+                manifest,
+                Some(member),
+                &member_manifest,
+                default_profile,
+            )?]);
+        }
+
         let mut members = Vec::new();
         for member in &workspace.members {
             let member_manifest =
@@ -118,14 +146,6 @@ fn collect_project_status_members(
             )?);
         }
 
-        if let Some(selected_package_name) = selected_package_name {
-            if members.is_empty() {
-                return Err(format!(
-                    "workspace manifest `{}` does not contain package `{selected_package_name}`",
-                    normalize_path(&manifest.manifest_path)
-                ));
-            }
-        }
         return Ok(members);
     }
 

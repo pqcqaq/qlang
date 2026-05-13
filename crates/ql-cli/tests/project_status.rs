@@ -259,6 +259,63 @@ fn project_status_member_directory_uses_workspace_root_context() {
 }
 
 #[test]
+fn project_status_member_directory_supports_workspace_package_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-status-member-dir-selector");
+    let project_root = write_status_workspace(&temp);
+    let request_path = project_root.join("packages/app");
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "status",
+        &request_path.to_string_lossy(),
+        "--package",
+        "core",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project status --package --json` workspace member directory",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-status-member-dir-selector",
+        "project status member directory package selector",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-status-member-dir-selector",
+        "project status member directory package selector",
+        &stderr,
+    )
+    .unwrap();
+
+    let actual = parse_json_output("project-status-member-dir-selector", &stdout);
+    assert_eq!(
+        actual["path"],
+        request_path.to_string_lossy().replace('\\', "/")
+    );
+    assert_eq!(
+        actual["project_manifest_path"],
+        project_root
+            .join("qlang.toml")
+            .to_string_lossy()
+            .replace('\\', "/")
+    );
+    let members = actual["members"]
+        .as_array()
+        .expect("project status member directory selector members should be an array");
+    assert_eq!(
+        members.len(),
+        1,
+        "workspace member directory package selector should keep the enclosing workspace"
+    );
+    assert_eq!(members[0]["member"], "packages/core");
+    assert_eq!(members[0]["package_name"], "core");
+}
+
+#[test]
 fn project_status_source_file_supports_workspace_package_selector() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-status-source-selector");
@@ -363,7 +420,7 @@ fn project_status_workspace_root_package_selector_reports_missing_package() {
 }
 
 #[test]
-fn project_status_package_selector_keeps_all_matching_members_with_duplicate_package_names() {
+fn project_status_package_selector_rejects_duplicate_package_names() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-status-duplicate-package-selector");
     let project_root = temp.path().join("workspace");
@@ -402,38 +459,88 @@ fn project_status_package_selector_keeps_all_matching_members_with_duplicate_pac
         &mut command,
         "`ql project status --package --json` duplicate workspace package",
     );
-    let (stdout, stderr) = expect_success(
+    let (stdout, stderr) = expect_exit_code(
         "project-status-duplicate-package-selector",
         "project status duplicate workspace package selector",
         &output,
+        1,
     )
     .unwrap();
-    expect_empty_stderr(
+    expect_empty_stdout(
         "project-status-duplicate-package-selector",
         "project status duplicate workspace package selector",
-        &stderr,
+        &stdout,
     )
     .unwrap();
+    expect_stderr_contains(
+        "project-status-duplicate-package-selector",
+        "project status duplicate workspace package selector",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project status` workspace manifest `{}` contains multiple members for package `util`: packages/a, packages/b",
+            project_root.join("qlang.toml").to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+}
 
-    let actual = parse_json_output("project-status-duplicate-package-selector", &stdout);
-    let members = actual["members"]
-        .as_array()
-        .expect("duplicate workspace package selector members should be an array");
-    assert_eq!(
-        members.len(),
-        2,
-        "project status should keep all matching members for duplicate package names"
+#[test]
+fn project_status_package_selector_surfaces_broken_workspace_member_metadata() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-status-broken-member");
+    let project_root = temp.path().join("workspace");
+
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/app\", \"packages/broken\"]\n",
     );
-    assert!(
-        members
-            .iter()
-            .any(|member| member["member"] == "packages/a"),
-        "duplicate package selector should keep packages/a, got:\n{stdout}"
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        "[package]\nname = \"app\"\n",
     );
-    assert!(
-        members
-            .iter()
-            .any(|member| member["member"] == "packages/b"),
-        "duplicate package selector should keep packages/b, got:\n{stdout}"
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn ready() -> Int {\n    return 1\n}\n",
     );
+    temp.write("workspace/packages/broken/qlang.toml", "[package]\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "status",
+        &project_root.to_string_lossy(),
+        "--package",
+        "app",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project status --package` broken workspace member metadata",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-status-broken-member",
+        "project status broken workspace member metadata",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-status-broken-member",
+        "project status broken workspace member metadata",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-status-broken-member",
+        "project status broken workspace member metadata",
+        &stderr.replace('\\', "/"),
+        "error: `ql project status` failed to inspect workspace member `packages/broken`: manifest",
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-status-broken-member",
+        "project status broken workspace member metadata",
+        &stderr,
+        "does not declare `[package].name`",
+    )
+    .unwrap();
 }
