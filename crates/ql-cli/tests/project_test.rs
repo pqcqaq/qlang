@@ -1327,6 +1327,187 @@ pub fn first[T, N](values: [T; N]) -> T {
 }
 
 #[test]
+fn test_package_path_supports_dependency_generic_named_expression_args() {
+    if !toolchain_available("`ql test` dependency generic function named/expression arguments") {
+        return;
+    }
+
+    let fixture = write_dependency_smoke_project(
+        "ql-project-test-dependency-generic-function-named-expression-args",
+        r#"
+pub fn identity[T](value: T) -> T {
+    return value
+}
+
+pub fn choose[T](fallback: T, value: T) -> T {
+    return value
+}
+"#,
+        r#"
+use dep.choose as choose
+use dep.identity as identity
+
+fn bool_score(value: Bool) -> Int {
+    if value {
+        return 5
+    }
+    return 0
+}
+
+fn main() -> Int {
+    let number: Int = choose(value: 7, fallback: 0)
+    let flag: Bool = choose(value: !(false || false), fallback: false)
+    let ordered: Bool = identity(1 < 2)
+    let pair: (Int, Bool) = identity((number, flag))
+    let values: [Int; 3] = identity([number, 2 + 3, 4])
+    let projected: Int = identity(values[1])
+    let tuple_flag: Bool = identity(pair[1])
+    let selected: Int = identity(if tuple_flag { projected } else { 0 })
+    let matched: Bool = identity(match selected {
+        0 => false,
+        _ => tuple_flag,
+    })
+    if matched && ordered && number + projected + selected + bool_score(flag) == 22 {
+        return 0
+    }
+    return 1
+}
+"#,
+    );
+    expect_dependency_smoke_project_passes(
+        "project-test-dependency-generic-function-named-expression-args",
+        "package dependency generic function named/expression argument test",
+        "`ql test` dependency generic function named/expression arguments",
+        &fixture,
+    );
+}
+
+#[test]
+fn test_package_path_supports_direct_dependency_generic_public_functions_from_generic_carriers() {
+    if !toolchain_available("`ql test` dependency generic function carrier values") {
+        return;
+    }
+
+    let fixture = write_dependency_smoke_project(
+        "ql-project-test-dependency-generic-function-carrier",
+        r#"
+pub struct Box[T] {
+    value: T,
+}
+
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+
+pub fn identity[T](value: T) -> T {
+    return value
+}
+
+pub fn keep_box[T](value: Box[T]) -> Box[T] {
+    return value
+}
+
+pub fn is_some[T](value: Option[T]) -> Bool {
+    return match value {
+        Option.Some(_) => true,
+        Option.None => false,
+    }
+}
+"#,
+        r#"
+use dep.Box as Box
+use dep.Option as Option
+use dep.identity as identity
+use dep.is_some as is_some
+use dep.keep_box as keep_box
+
+fn check(value: Box[Int]) -> Int {
+    let kept: Box[Int] = identity(value)
+    let nested: Box[Int] = keep_box(kept)
+    return nested.value
+}
+
+fn main() -> Int {
+    let value: Box[Int] = Box { value: 42 }
+    if check(value) == 42 && is_some(Option.Some(42)) {
+        return 0
+    }
+    return 1
+}
+"#,
+    );
+    expect_dependency_smoke_project_passes(
+        "project-test-dependency-generic-function-carrier",
+        "package dependency generic function carrier value test",
+        "`ql test` dependency generic function carrier values",
+        &fixture,
+    );
+}
+
+#[test]
+fn test_package_path_supports_direct_dependency_generic_public_functions_from_result_context() {
+    if !toolchain_available("`ql test` dependency generic function result context") {
+        return;
+    }
+
+    let fixture = write_dependency_smoke_project(
+        "ql-project-test-dependency-generic-function-result-context",
+        r#"
+pub enum Result[T, E] {
+    Ok(T),
+    Err(E),
+}
+
+pub fn ok[T, E](value: T) -> Result[T, E] {
+    return Result.Ok(value)
+}
+
+pub fn err[T, E](error: E) -> Result[T, E] {
+    return Result.Err(error)
+}
+"#,
+        r#"
+use dep.Result as Result
+use dep.err as result_err
+use dep.ok as result_ok
+
+fn make_ok() -> Result[Int, Int] {
+    return result_ok(7)
+}
+
+fn ok_status(value: Result[Int, Int]) -> Int {
+    return match value {
+        Result.Ok(inner) => inner,
+        Result.Err(_) => 0,
+    }
+}
+
+fn err_status(value: Result[Int, Int]) -> Int {
+    return match value {
+        Result.Ok(_) => 0,
+        Result.Err(error) => error,
+    }
+}
+
+fn main() -> Int {
+    let failed: Result[Int, Int] = result_err(3)
+    if ok_status(make_ok()) + err_status(failed) == 10 {
+        return 0
+    }
+    return 1
+}
+"#,
+    );
+    expect_dependency_smoke_project_passes(
+        "project-test-dependency-generic-function-result-context",
+        "package dependency generic function result-context test",
+        "`ql test` dependency generic function result context",
+        &fixture,
+    );
+}
+
+#[test]
 fn test_package_path_allows_unused_direct_dependency_generic_public_function_imports() {
     if !toolchain_available("`ql test` unused dependency generic public function import test") {
         return;
