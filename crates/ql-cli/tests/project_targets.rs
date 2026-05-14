@@ -445,6 +445,101 @@ members = ["packages/app"]
 }
 
 #[test]
+fn project_target_add_bin_supports_workspace_member_directory() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-target-add-workspace-member-dir");
+    let project_root = temp.path().join("workspace");
+    let member_dir = project_root.join("packages/app");
+    std::fs::create_dir_all(member_dir.join("src")).expect("create workspace member source tree");
+
+    let manifest_path = temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn util() -> Int { return 1 }\n",
+    );
+    temp.write(
+        "workspace/packages/app/src/main.ql",
+        "fn main() -> Int { return 0 }\n",
+    );
+
+    let mut add = ql_command(&workspace_root);
+    add.args([
+        "project",
+        "target",
+        "add",
+        &member_dir.to_string_lossy(),
+        "--bin",
+        "worker",
+    ]);
+    let output = run_command_capture(
+        &mut add,
+        "`ql project target add --bin` workspace member directory",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-target-add-workspace-member-dir",
+        "workspace member directory binary target add",
+        &output,
+    )
+    .expect("workspace member directory binary target add should succeed");
+    expect_empty_stderr(
+        "project-target-add-workspace-member-dir",
+        "workspace member directory binary target add",
+        &stderr,
+    )
+    .expect("workspace member directory binary target add should not print stderr");
+    expect_stdout_contains_all(
+        "project-target-add-workspace-member-dir",
+        &stdout.replace('\\', "/"),
+        &[
+            &format!(
+                "updated: {}",
+                manifest_path.to_string_lossy().replace('\\', "/")
+            ),
+            &format!(
+                "created: {}",
+                member_dir
+                    .join("src/bin/worker.ql")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+        ],
+    )
+    .expect(
+        "workspace member directory binary target add should report the updated manifest and created source",
+    );
+
+    let manifest = read_normalized_file(
+        &project_root.join("packages/app/qlang.toml"),
+        "workspace member manifest after member directory binary target add",
+    );
+    assert!(
+        manifest.contains("[[bin]]\npath = \"src/main.ql\"\n")
+            && manifest.contains("[[bin]]\npath = \"src/bin/worker.ql\"\n"),
+        "workspace member directory binary target add should preserve the default main target and append the new one, got:\n{manifest}"
+    );
+    assert_eq!(
+        read_normalized_file(
+            &member_dir.join("src/bin/worker.ql"),
+            "workspace member directory binary target source",
+        ),
+        "fn main() -> Int {\n    return 0\n}\n"
+    );
+}
+
+#[test]
 fn project_targets_supports_target_selector_for_package_path() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-targets-selector-package");
