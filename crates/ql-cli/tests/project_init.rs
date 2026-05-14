@@ -138,6 +138,41 @@ fn expect_stdlib_starter_smoke_source(source: &str, context: &str) {
     }
 }
 
+struct AppCoreWorkspaceFixture {
+    app_manifest_path: PathBuf,
+    app_member_dir: PathBuf,
+}
+
+fn write_app_core_workspace_fixture(
+    temp: &TempDir,
+    app_manifest_source: &str,
+) -> AppCoreWorkspaceFixture {
+    let project_root = temp.path().join("workspace");
+    let app_member_dir = project_root.join("packages/app");
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/app\", \"packages/core\"]\n",
+    );
+    let app_manifest_path = temp.write("workspace/packages/app/qlang.toml", app_manifest_source);
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        "[package]\nname = \"core\"\n",
+    );
+    temp.write(
+        "workspace/packages/app/src/main.ql",
+        "fn main() -> Int {\n    return 0\n}\n",
+    );
+    temp.write(
+        "workspace/packages/core/src/lib.ql",
+        "pub fn core() -> Int {\n    return 1\n}\n",
+    );
+
+    AppCoreWorkspaceFixture {
+        app_manifest_path,
+        app_member_dir,
+    }
+}
+
 #[test]
 fn project_init_with_stdlib_copies_starter_template_from_stdlib_path() {
     let workspace_root = workspace_root();
@@ -1722,6 +1757,58 @@ fn project_add_dependency_updates_existing_package_manifest_from_member_source_p
 }
 
 #[test]
+fn project_add_dependency_updates_existing_package_manifest_from_member_directory() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-add-dependency-member-dir");
+    let fixture = write_app_core_workspace_fixture(&temp, "[package]\nname = \"app\"\n");
+
+    let mut add_dependency = ql_command(&workspace_root);
+    add_dependency.args([
+        "project",
+        "add-dependency",
+        &fixture.app_member_dir.to_string_lossy(),
+        "--name",
+        "core",
+    ]);
+    let output = run_command_capture(
+        &mut add_dependency,
+        "`ql project add-dependency` workspace member directory",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-add-dependency-member-dir",
+        "add dependency to existing package manifest from member directory",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-add-dependency-member-dir",
+        "add dependency to existing package manifest from member directory",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "project-add-dependency-member-dir",
+        &stdout.replace('\\', "/"),
+        &[&format!(
+            "updated: {}",
+            fixture
+                .app_manifest_path
+                .to_string_lossy()
+                .replace('\\', "/")
+        )],
+    )
+    .unwrap();
+
+    assert_eq!(
+        read_normalized_file(
+            &fixture.app_manifest_path,
+            "workspace member manifest after member directory add-dependency"
+        ),
+        "[dependencies]\ncore = \"../core\"\n\n[package]\nname = \"app\"\n"
+    );
+}
+
+#[test]
 fn project_add_dependency_supports_workspace_root_package_selector() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-add-dependency-selector");
@@ -2262,6 +2349,61 @@ fn project_remove_dependency_updates_existing_package_manifest() {
         read_normalized_file(
             &project_root.join("packages/app/qlang.toml"),
             "workspace member manifest after remove-dependency"
+        ),
+        "[package]\nname = \"app\"\n"
+    );
+}
+
+#[test]
+fn project_remove_dependency_updates_existing_package_manifest_from_member_directory() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-remove-dependency-member-dir");
+    let fixture = write_app_core_workspace_fixture(
+        &temp,
+        "[package]\nname = \"app\"\n\n[dependencies]\ncore = \"../core\"\n",
+    );
+
+    let mut remove_dependency = ql_command(&workspace_root);
+    remove_dependency.args([
+        "project",
+        "remove-dependency",
+        &fixture.app_member_dir.to_string_lossy(),
+        "--name",
+        "core",
+    ]);
+    let output = run_command_capture(
+        &mut remove_dependency,
+        "`ql project remove-dependency` workspace member directory",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-remove-dependency-member-dir",
+        "remove dependency from existing package manifest from member directory",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-remove-dependency-member-dir",
+        "remove dependency from existing package manifest from member directory",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "project-remove-dependency-member-dir",
+        &stdout.replace('\\', "/"),
+        &[&format!(
+            "updated: {}",
+            fixture
+                .app_manifest_path
+                .to_string_lossy()
+                .replace('\\', "/")
+        )],
+    )
+    .unwrap();
+
+    assert_eq!(
+        read_normalized_file(
+            &fixture.app_manifest_path,
+            "workspace member manifest after member directory remove-dependency"
         ),
         "[package]\nname = \"app\"\n"
     );
