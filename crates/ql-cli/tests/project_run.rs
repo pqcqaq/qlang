@@ -1449,6 +1449,131 @@ fn main() -> Int {
 }
 
 #[test]
+fn run_package_path_json_supports_direct_dependency_generic_public_functions() {
+    if !toolchain_available("`ql run --json` dependency generic public function test") {
+        return;
+    }
+
+    let fixture = write_dependency_run_project(
+        "ql-project-run-json-dependency-generic-public-function",
+        r#"
+pub fn identity[T](value: T) -> T {
+    return value
+}
+
+pub fn first[T, N](values: [T; N]) -> T {
+    return values[0]
+}
+"#,
+        r#"
+use dep.first as first
+use dep.identity as identity
+
+fn main() -> Int {
+    let value: Int = identity(7)
+    let picked: Int = first([5, 8, 13])
+    return value + picked
+}
+"#,
+    );
+
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["run"])
+        .arg(&fixture.project_root)
+        .arg("--json");
+    let output = run_command_capture(&mut command, "`ql run --json` dependency generic function");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-json-dependency-generic-public-function",
+        "package path run json with dependency generic public function",
+        &output,
+        12,
+    )
+    .expect("package-path `ql run --json` should preserve dependency generic program status");
+    expect_empty_stderr(
+        "project-run-json-dependency-generic-public-function",
+        "package path run json with dependency generic public function",
+        &stderr,
+    )
+    .expect("dependency generic run json should keep stderr empty");
+
+    let json = parse_json_output(
+        "project-run-json-dependency-generic-public-function",
+        &stdout,
+    );
+    assert_eq!(json["schema"], "ql.run.v1");
+    assert_eq!(
+        json["path"],
+        fixture
+            .project_root
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        fixture
+            .project_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    assert_eq!(json["requested_profile"], "debug");
+    assert_eq!(json["profile_overridden"], false);
+    assert_eq!(json["program_args"], serde_json::json!([]));
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["failure"], JsonValue::Null);
+    assert_eq!(
+        json["built_target"],
+        serde_json::json!({
+            "manifest_path": fixture.project_root.join("qlang.toml").display().to_string().replace('\\', "/"),
+            "package_name": "app",
+            "selected": true,
+            "dependency_only": false,
+            "kind": "bin",
+            "path": "src/main.ql",
+            "emit": "exe",
+            "profile": "debug",
+            "artifact_path": fixture.executable_output.display().to_string().replace('\\', "/"),
+            "c_header_path": JsonValue::Null,
+        })
+    );
+    assert_eq!(
+        json["execution"],
+        serde_json::json!({
+            "exit_code": 12,
+            "stdout": "",
+            "stderr": "",
+        })
+    );
+    expect_file_exists(
+        "project-run-json-dependency-generic-public-function",
+        &fixture.interface_output,
+        "synced dependency interface",
+        "package path run json with dependency generic public function",
+    )
+    .expect("dependency generic run json should emit the dependency interface");
+    expect_file_exists(
+        "project-run-json-dependency-generic-public-function",
+        &fixture.dependency_output,
+        "dependency package artifact",
+        "package path run json with dependency generic public function",
+    )
+    .expect("dependency generic run json should build the dependency artifact");
+    expect_file_exists(
+        "project-run-json-dependency-generic-public-function",
+        &fixture.executable_output,
+        "package executable",
+        "package path run json with dependency generic public function",
+    )
+    .expect("dependency generic run json should emit the executable artifact");
+}
+
+#[test]
 fn run_package_path_supports_dependency_generic_wrapper_calling_imported_generic_helper() {
     if !toolchain_available("`ql run` dependency generic wrapper imported helper test") {
         return;
