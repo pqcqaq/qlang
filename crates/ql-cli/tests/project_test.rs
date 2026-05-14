@@ -1327,6 +1327,188 @@ pub fn first[T, N](values: [T; N]) -> T {
 }
 
 #[test]
+fn test_package_path_supports_dependency_generic_wrapper_calling_generic_helper() {
+    if !toolchain_available("`ql test` dependency generic wrapper helper test") {
+        return;
+    }
+
+    let fixture = write_dependency_smoke_project(
+        "ql-project-test-dependency-generic-wrapper-helper",
+        r#"
+pub fn first[T, N](values: [T; N]) -> T {
+    return values[0]
+}
+
+pub fn first_wrapped[T, N](values: [T; N]) -> T {
+    return first(values)
+}
+"#,
+        r#"
+use dep.first_wrapped as first_wrapped
+
+fn main() -> Int {
+    return first_wrapped([7, 8, 9]) - 7
+}
+"#,
+    );
+    expect_dependency_smoke_project_passes(
+        "project-test-dependency-generic-wrapper-helper",
+        "package dependency generic wrapper helper test",
+        "`ql test` dependency generic wrapper helper",
+        &fixture,
+    );
+}
+
+#[test]
+fn test_package_path_supports_dependency_generic_wrapper_calling_imported_generic_helper() {
+    if !toolchain_available("`ql test` dependency generic wrapper imported helper test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-dependency-generic-imported-helper");
+    let helper_root = temp.path().join("helper");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(helper_root.join("src"))
+        .expect("create helper source tree for imported generic helper test");
+    std::fs::create_dir_all(dep_root.join("src"))
+        .expect("create dep source tree for imported generic helper test");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create app source tree for imported generic helper test");
+    std::fs::create_dir_all(project_root.join("tests"))
+        .expect("create app test tree for imported generic helper test");
+
+    temp.write(
+        "helper/qlang.toml",
+        r#"
+[package]
+name = "helper"
+"#,
+    );
+    temp.write(
+        "helper/src/lib.ql",
+        r#"
+pub fn reverse_array[T, N](values: [T; N]) -> [T; N] {
+    var result = values
+    var index = 0
+    for value in values {
+        result[index] = values[N - index - 1];
+        index = index + 1
+    }
+    return result
+}
+"#,
+    );
+    temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+
+[dependencies]
+helper = "../helper"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        r#"
+use helper.reverse_array as reverse_array
+
+pub fn reverse_wrapped[T, N](values: [T; N]) -> [T; N] {
+    return reverse_array(values)
+}
+"#,
+    );
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    temp.write(
+        "app/tests/smoke.ql",
+        r#"
+use dep.reverse_wrapped as reverse_wrapped
+
+fn main() -> Int {
+    let reversed: [Int; 3] = reverse_wrapped([7, 8, 9])
+    return reversed[0] + reversed[1] + reversed[2] - 24
+}
+"#,
+    );
+
+    let helper_output = static_library_output_path(&helper_root.join("target/ql/debug"), "lib");
+    let dep_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let interface_output = dep_root.join("dep.qi");
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test` dependency generic wrapper imported helper",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-dependency-generic-imported-helper",
+        "package dependency generic wrapper imported helper test",
+        &output,
+    )
+    .expect(
+        "package-path `ql test` should specialize dependency wrappers and imported generic helpers",
+    );
+    expect_empty_stderr(
+        "project-test-dependency-generic-imported-helper",
+        "package dependency generic wrapper imported helper test",
+        &stderr,
+    )
+    .expect("imported generic helper package test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-dependency-generic-imported-helper",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("imported generic helper package test should report one passing smoke test");
+    expect_file_exists(
+        "project-test-dependency-generic-imported-helper",
+        &helper_output,
+        "transitive helper package artifact",
+        "package dependency generic wrapper imported helper test",
+    )
+    .expect("imported generic helper test should build the transitive helper artifact");
+    expect_file_exists(
+        "project-test-dependency-generic-imported-helper",
+        &dep_output,
+        "dependency package artifact",
+        "package dependency generic wrapper imported helper test",
+    )
+    .expect("imported generic helper test should build the dependency artifact");
+    expect_file_exists(
+        "project-test-dependency-generic-imported-helper",
+        &interface_output,
+        "synced dependency interface",
+        "package dependency generic wrapper imported helper test",
+    )
+    .expect("imported generic helper test should emit the dependency interface");
+    expect_file_exists(
+        "project-test-dependency-generic-imported-helper",
+        &smoke_output,
+        "smoke test executable",
+        "package dependency generic wrapper imported helper test",
+    )
+    .expect("imported generic helper test should emit the smoke executable");
+}
+
+#[test]
 fn test_package_path_supports_dependency_generic_named_expression_args() {
     if !toolchain_available("`ql test` dependency generic function named/expression arguments") {
         return;
