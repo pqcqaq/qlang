@@ -4284,7 +4284,11 @@ fn test_path(path: &Path, command_options: &TestCommandOptions) -> Result<(), u8
     }
 
     let targets = if let Some(target_path) = command_options.target_path.as_deref() {
-        let selected = select_test_targets_by_path(discovered_targets, target_path);
+        let selected = select_test_targets_by_path(
+            discovered_targets,
+            target_path,
+            command_options.package_name.as_deref(),
+        );
         if selected.is_empty() {
             if command_options.json {
                 print!(
@@ -4417,6 +4421,7 @@ fn discover_test_targets(
             Ok(select_test_targets_by_path(
                 discovered,
                 &request.display_path,
+                None,
             ))
         }
         ProjectCommandScope::ProjectBuildTarget(_) | ProjectCommandScope::DirectSource => {
@@ -4685,15 +4690,32 @@ fn filter_test_targets(targets: Vec<TestTarget>, filter: Option<&str>) -> Vec<Te
         .collect()
 }
 
-fn select_test_targets_by_path(targets: Vec<TestTarget>, target_path: &str) -> Vec<TestTarget> {
+fn select_test_targets_by_path(
+    targets: Vec<TestTarget>,
+    target_path: &str,
+    package_name: Option<&str>,
+) -> Vec<TestTarget> {
     targets
         .into_iter()
-        .filter(|target| test_target_matches_path(target, target_path))
+        .filter(|target| test_target_matches_path(target, target_path, package_name))
         .collect()
 }
 
-fn test_target_matches_path(target: &TestTarget, target_path: &str) -> bool {
+fn test_target_matches_path(
+    target: &TestTarget,
+    target_path: &str,
+    package_name: Option<&str>,
+) -> bool {
     if target.display_path == target_path {
+        return true;
+    }
+
+    if let Some(package_name) = package_name
+        && let Some(package_relative_path) = target
+            .display_path
+            .strip_prefix(&format!("packages/{package_name}/"))
+        && package_relative_path == target_path
+    {
         return true;
     }
 

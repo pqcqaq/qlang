@@ -3638,7 +3638,67 @@ fn test_workspace_member_directory_package_selector_filters_selected_package_tes
 }
 
 #[test]
-fn test_workspace_member_directory_package_selector_selects_requested_target() {
+fn test_workspace_path_package_selector_accepts_package_relative_target() {
+    if !toolchain_available("`ql test --target --package` workspace package-relative target test") {
+        return;
+    }
+
+    let fixture =
+        write_workspace_test_package_selector_project("ql-project-test-package-relative-target");
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["test"]).arg(&fixture.project_root).args([
+        "--package",
+        "app",
+        "--target",
+        "tests/api/extra.ql",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --target --package` workspace package-relative target",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-package-relative-target",
+        "workspace package selector package-relative target tests",
+        &output,
+    )
+    .expect("workspace `ql test --target --package` should accept package-relative targets");
+    expect_empty_stderr(
+        "project-test-package-relative-target",
+        "workspace package selector package-relative target tests",
+        &stderr,
+    )
+    .expect("workspace `ql test --target --package` should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-package-relative-target",
+        &stdout.replace('\\', "/"),
+        &[
+            "test packages/app/tests/api/extra.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("workspace `ql test --target --package` should run only the package-relative target");
+    assert!(
+        !stdout.contains("packages/app/tests/app_only.ql")
+            && !stdout.contains("packages/tool/tests/tool_only.ql"),
+        "workspace `ql test --target --package` should not run unselected tests: {stdout}"
+    );
+    expect_file_exists(
+        "project-test-package-relative-target",
+        &fixture.selected_extra_output,
+        "package-relative target smoke executable",
+        "workspace package selector package-relative target tests",
+    )
+    .expect("workspace `ql test --target --package` should emit the selected target artifact");
+    assert!(
+        !fixture.selected_smoke_output.exists() && !fixture.unselected_smoke_output.exists(),
+        "workspace `ql test --target --package` should not build unselected package tests"
+    );
+}
+
+#[test]
+fn test_workspace_member_directory_package_selector_accepts_package_relative_target() {
     if !toolchain_available("`ql test --target --package` workspace member directory test") {
         return;
     }
@@ -3652,7 +3712,7 @@ fn test_workspace_member_directory_package_selector_selects_requested_target() {
         "--package",
         "app",
         "--target",
-        "packages/app/tests/api/extra.ql",
+        "tests/api/extra.ql",
     ]);
     let output = run_command_capture(
         &mut command,
@@ -3663,7 +3723,9 @@ fn test_workspace_member_directory_package_selector_selects_requested_target() {
         "workspace member directory package selector target tests",
         &output,
     )
-    .expect("workspace member directory `ql test --target --package` should succeed");
+    .expect(
+        "workspace member directory `ql test --target --package` should accept package-relative targets",
+    );
     expect_empty_stderr(
         "project-test-member-dir-package-target",
         "workspace member directory package selector target tests",
