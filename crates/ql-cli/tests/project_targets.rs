@@ -1,10 +1,63 @@
 mod support;
 
+use std::path::PathBuf;
+
 use support::{
     TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_snapshot_matches,
     expect_stderr_contains, expect_stdout_contains_all, expect_success, ql_command,
     read_normalized_file, run_command_capture, workspace_root,
 };
+
+struct WorkspaceTargetsSelectorFixture {
+    _temp: TempDir,
+    project_root: PathBuf,
+    app_manifest: PathBuf,
+}
+
+fn write_workspace_targets_selector_fixture(prefix: &str) -> WorkspaceTargetsSelectorFixture {
+    let temp = TempDir::new(prefix);
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create app package source tree");
+    std::fs::create_dir_all(project_root.join("packages/worker/src"))
+        .expect("create worker package source tree");
+
+    let app_manifest = temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/worker/qlang.toml",
+        r#"
+[package]
+name = "worker"
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/worker"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn run() -> Int { return 0 }\n",
+    );
+    temp.write(
+        "workspace/packages/worker/src/job.ql",
+        "pub fn run() -> Int { return 1 }\n",
+    );
+
+    WorkspaceTargetsSelectorFixture {
+        _temp: temp,
+        project_root,
+        app_manifest,
+    }
+}
 
 #[test]
 fn project_targets_lists_package_targets() {
@@ -708,47 +761,12 @@ members = ["packages/app", "packages/worker"]
 #[test]
 fn project_targets_supports_package_selector_for_workspace_members() {
     let workspace_root = workspace_root();
-    let temp = TempDir::new("ql-project-targets-selector-workspace");
-    let project_root = temp.path().join("workspace");
-    std::fs::create_dir_all(project_root.join("packages/app/src"))
-        .expect("create app package source tree");
-    std::fs::create_dir_all(project_root.join("packages/worker/src"))
-        .expect("create worker package source tree");
-
-    let app_manifest = temp.write(
-        "workspace/packages/app/qlang.toml",
-        r#"
-[package]
-name = "app"
-"#,
-    );
-    temp.write(
-        "workspace/packages/worker/qlang.toml",
-        r#"
-[package]
-name = "worker"
-"#,
-    );
-    temp.write(
-        "workspace/qlang.toml",
-        r#"
-[workspace]
-members = ["packages/app", "packages/worker"]
-"#,
-    );
-    temp.write(
-        "workspace/packages/app/src/lib.ql",
-        "pub fn run() -> Int { return 0 }\n",
-    );
-    temp.write(
-        "workspace/packages/worker/src/job.ql",
-        "pub fn run() -> Int { return 1 }\n",
-    );
+    let fixture = write_workspace_targets_selector_fixture("ql-project-targets-selector-workspace");
 
     let mut command = ql_command(&workspace_root);
     command
         .args(["project", "targets", "--package", "app"])
-        .arg(&project_root);
+        .arg(&fixture.project_root);
     let output = run_command_capture(
         &mut command,
         "`ql project targets --package` workspace selector",
@@ -767,7 +785,7 @@ members = ["packages/app", "packages/worker"]
     .expect("workspace package selector should not print stderr");
 
     let normalized_stdout = stdout.replace('\\', "/");
-    let app_manifest_display = app_manifest.to_string_lossy().replace('\\', "/");
+    let app_manifest_display = fixture.app_manifest.to_string_lossy().replace('\\', "/");
     expect_stdout_contains_all(
         "project-targets-selector-workspace",
         &normalized_stdout,
@@ -782,6 +800,46 @@ members = ["packages/app", "packages/worker"]
         !normalized_stdout.contains("package: worker"),
         "workspace package selector should filter out unselected workspace members, got:\n{stdout}"
     );
+}
+
+#[test]
+fn project_targets_supports_json_package_selector_for_workspace_members() {
+    let workspace_root = workspace_root();
+    let fixture =
+        write_workspace_targets_selector_fixture("ql-project-targets-selector-workspace-json");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "targets", "--package", "app", "--json"])
+        .arg(&fixture.project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project targets --package --json` workspace selector",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-targets-selector-workspace-json",
+        "workspace package selector json",
+        &output,
+    )
+    .expect("workspace package selector json should succeed");
+    expect_empty_stderr(
+        "project-targets-selector-workspace-json",
+        "workspace package selector json",
+        &stderr,
+    )
+    .expect("workspace package selector json should not print stderr");
+
+    let app_manifest_display = fixture.app_manifest.to_string_lossy().replace('\\', "/");
+    let expected = format!(
+        "{{\n  \"schema\": \"ql.project.targets.v1\",\n  \"members\": [\n    {{\n      \"manifest_path\": \"{app_manifest_display}\",\n      \"package_name\": \"app\",\n      \"targets\": [\n        {{\n          \"kind\": \"lib\",\n          \"path\": \"src/lib.ql\"\n        }}\n      ]\n    }}\n  ]\n}}\n"
+    );
+    expect_snapshot_matches(
+        "project-targets-selector-workspace-json",
+        "workspace package selector json stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .expect("workspace package selector json should render only the selected package targets");
 }
 
 #[test]

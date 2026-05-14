@@ -1,10 +1,90 @@
 mod support;
 
+use std::path::PathBuf;
+
 use support::{
     TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_snapshot_matches,
     expect_stderr_contains, expect_stderr_not_contains, expect_stdout_contains_all, expect_success,
     ql_command, run_command_capture, workspace_root,
 };
+
+struct WorkspaceGraphSelectorFixture {
+    _temp: TempDir,
+    project_root: PathBuf,
+    app_manifest_path: PathBuf,
+}
+
+fn write_workspace_graph_selector_fixture(prefix: &str) -> WorkspaceGraphSelectorFixture {
+    let temp = TempDir::new(prefix);
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages").join("app").join("src"))
+        .expect("create workspace app directory");
+    std::fs::create_dir_all(project_root.join("packages").join("tool").join("src"))
+        .expect("create workspace tool directory");
+    std::fs::create_dir_all(project_root.join("dep")).expect("create dependency directory");
+
+    let app_manifest_path = temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/app.qi",
+        r#"
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn run() -> Int
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported() -> Int
+"#,
+    );
+
+    WorkspaceGraphSelectorFixture {
+        _temp: temp,
+        project_root,
+        app_manifest_path,
+    }
+}
 
 #[test]
 fn project_graph_prints_package_workspace_and_references() {
@@ -635,74 +715,13 @@ pub fn exported() -> Int
 #[test]
 fn project_graph_supports_package_selector_for_workspace_root() {
     let workspace_root = workspace_root();
-    let temp = TempDir::new("ql-project-graph-workspace-package-selector");
-    let project_root = temp.path().join("workspace");
-    std::fs::create_dir_all(project_root.join("packages").join("app").join("src"))
-        .expect("create workspace app directory");
-    std::fs::create_dir_all(project_root.join("packages").join("tool").join("src"))
-        .expect("create workspace tool directory");
-    std::fs::create_dir_all(project_root.join("dep")).expect("create dependency directory");
-
-    let app_manifest_path = temp.write(
-        "workspace/packages/app/qlang.toml",
-        r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../../dep"]
-"#,
-    );
-    temp.write(
-        "workspace/qlang.toml",
-        r#"
-[workspace]
-members = ["packages/app", "packages/tool"]
-"#,
-    );
-    temp.write(
-        "workspace/packages/tool/qlang.toml",
-        r#"
-[package]
-name = "tool"
-"#,
-    );
-    temp.write(
-        "workspace/dep/qlang.toml",
-        r#"
-[package]
-name = "dep"
-"#,
-    );
-    temp.write(
-        "workspace/packages/app/app.qi",
-        r#"
-// qlang interface v1
-// package: app
-
-// source: src/lib.ql
-package demo.app
-
-pub fn run() -> Int
-"#,
-    );
-    temp.write(
-        "workspace/dep/dep.qi",
-        r#"
-// qlang interface v1
-// package: dep
-
-// source: src/lib.ql
-package demo.dep
-
-pub fn exported() -> Int
-"#,
-    );
+    let fixture =
+        write_workspace_graph_selector_fixture("ql-project-graph-workspace-package-selector");
 
     let mut command = ql_command(&workspace_root);
     command
         .args(["project", "graph", "--package", "app"])
-        .arg(&project_root);
+        .arg(&fixture.project_root);
     let output = run_command_capture(&mut command, "`ql project graph --package` workspace root");
     let (stdout, stderr) = expect_success(
         "project-graph-workspace-package-selector",
@@ -719,7 +738,10 @@ pub fn exported() -> Int
 
     let expected = format!(
         "manifest: {}\npackage: app\nworkspace_members: []\nreferences:\n  - ../../dep\ninterface:\n  path: app.qi\n  status: valid\nreference_interfaces:\n  - reference: ../../dep\n    manifest: dep/qlang.toml\n    package: dep\n    path: dep/dep.qi\n    status: valid\n",
-        app_manifest_path.to_string_lossy().replace('\\', "/")
+        fixture
+            .app_manifest_path
+            .to_string_lossy()
+            .replace('\\', "/")
     );
     expect_snapshot_matches(
         "project-graph-workspace-package-selector",
@@ -728,6 +750,50 @@ pub fn exported() -> Int
         &stdout.replace('\\', "/"),
     )
     .expect("workspace root package graph selector should render the selected package graph");
+}
+
+#[test]
+fn project_graph_supports_json_package_selector_for_workspace_root() {
+    let workspace_root = workspace_root();
+    let fixture =
+        write_workspace_graph_selector_fixture("ql-project-graph-workspace-package-selector-json");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "graph", "--package", "app"])
+        .arg(&fixture.project_root)
+        .arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql project graph --package --json` workspace root",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-graph-workspace-package-selector-json",
+        "workspace root package graph selector json",
+        &output,
+    )
+    .expect("workspace root package graph selector json should succeed");
+    expect_empty_stderr(
+        "project-graph-workspace-package-selector-json",
+        "workspace root package graph selector json",
+        &stderr,
+    )
+    .expect("workspace root package graph selector json should stay silent on stderr");
+
+    let expected = format!(
+        "{{\n  \"interface\": {{\n    \"detail\": null,\n    \"path\": \"app.qi\",\n    \"stale_reasons\": [],\n    \"status\": \"valid\"\n  }},\n  \"manifest_path\": \"{}\",\n  \"package_name\": \"app\",\n  \"reference_interfaces\": [\n    {{\n      \"detail\": null,\n      \"manifest_path\": \"dep/qlang.toml\",\n      \"package_name\": \"dep\",\n      \"path\": \"dep/dep.qi\",\n      \"reference\": \"../../dep\",\n      \"stale_reasons\": [],\n      \"status\": \"valid\",\n      \"transitive_reference_failures\": {{\n        \"count\": 0,\n        \"first_failure\": null\n      }}\n    }}\n  ],\n  \"references\": [\n    \"../../dep\"\n  ],\n  \"schema\": \"ql.project.graph.v1\",\n  \"workspace_members\": [],\n  \"workspace_packages\": []\n}}\n",
+        fixture
+            .app_manifest_path
+            .to_string_lossy()
+            .replace('\\', "/")
+    );
+    expect_snapshot_matches(
+        "project-graph-workspace-package-selector-json",
+        "workspace root package graph selector json stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .expect("workspace root package graph selector json should render the selected package graph");
 }
 
 #[test]
