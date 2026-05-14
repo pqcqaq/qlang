@@ -53,6 +53,13 @@ struct DependencySmokeProject {
     smoke_output: PathBuf,
 }
 
+struct WorkspaceTestPackageSelectorProject {
+    temp: TempDir,
+    project_root: PathBuf,
+    selected_smoke_output: PathBuf,
+    unselected_smoke_output: PathBuf,
+}
+
 fn write_dependency_smoke_project(
     prefix: &str,
     dependency_source: &str,
@@ -99,6 +106,71 @@ dep = "../dep"
         interface_output,
         dependency_output,
         smoke_output,
+    }
+}
+
+fn write_workspace_test_package_selector_project(
+    prefix: &str,
+) -> WorkspaceTestPackageSelectorProject {
+    let temp = TempDir::new(prefix);
+    let project_root = temp.path().join("workspace");
+    fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create app package source tree");
+    fs::create_dir_all(project_root.join("packages/tool/src"))
+        .expect("create tool package source tree");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn helper() -> Int { return 1 }\n",
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        "pub fn helper() -> Int { return 2 }\n",
+    );
+    temp.write(
+        "workspace/packages/app/tests/app_only.ql",
+        "fn main() -> Int { return 0 }\n",
+    );
+    temp.write(
+        "workspace/packages/tool/tests/tool_only.ql",
+        "fn main() -> Int { return 0 }\n",
+    );
+
+    let selected_smoke_output = executable_output_path(
+        &project_root.join("packages/app/target/ql/debug/tests"),
+        "app_only",
+    );
+    let unselected_smoke_output = executable_output_path(
+        &project_root.join("packages/tool/target/ql/debug/tests"),
+        "tool_only",
+    );
+
+    WorkspaceTestPackageSelectorProject {
+        temp,
+        project_root,
+        selected_smoke_output,
+        unselected_smoke_output,
     }
 }
 
@@ -3045,56 +3117,13 @@ fn test_workspace_path_selects_requested_package_tests() {
         return;
     }
 
+    let fixture = write_workspace_test_package_selector_project("ql-project-test-package-selector");
     let workspace_root = workspace_root();
-    let temp = TempDir::new("ql-project-test-package-selector");
-    let project_root = temp.path().join("workspace");
-    std::fs::create_dir_all(project_root.join("packages/app/src"))
-        .expect("create app package source tree");
-    std::fs::create_dir_all(project_root.join("packages/tool/src"))
-        .expect("create tool package source tree");
-    temp.write(
-        "workspace/qlang.toml",
-        r#"
-[workspace]
-members = ["packages/app", "packages/tool"]
-"#,
-    );
-    temp.write(
-        "workspace/packages/app/qlang.toml",
-        r#"
-[package]
-name = "app"
-"#,
-    );
-    temp.write(
-        "workspace/packages/tool/qlang.toml",
-        r#"
-[package]
-name = "tool"
-"#,
-    );
-    temp.write(
-        "workspace/packages/app/src/lib.ql",
-        "pub fn helper() -> Int { return 1 }\n",
-    );
-    temp.write(
-        "workspace/packages/tool/src/lib.ql",
-        "pub fn helper() -> Int { return 2 }\n",
-    );
-    temp.write(
-        "workspace/packages/app/tests/app_only.ql",
-        "fn main() -> Int { return 0 }\n",
-    );
-    temp.write(
-        "workspace/packages/tool/tests/tool_only.ql",
-        "fn main() -> Int { return 0 }\n",
-    );
-
     let mut command = ql_command(&workspace_root);
-    command.current_dir(temp.path());
+    command.current_dir(fixture.temp.path());
     command
         .args(["test"])
-        .arg(&project_root)
+        .arg(&fixture.project_root)
         .args(["--package", "app"]);
     let output = run_command_capture(&mut command, "`ql test --package` workspace path");
     let (stdout, stderr) = expect_success(
@@ -3121,6 +3150,86 @@ name = "tool"
     assert!(
         !stdout.contains("packages/tool/tests/tool_only.ql"),
         "workspace-path `ql test --package` should not run tests from unselected packages: {stdout}"
+    );
+    expect_file_exists(
+        "project-test-package-selector",
+        &fixture.selected_smoke_output,
+        "selected package smoke executable",
+        "workspace package selector tests",
+    )
+    .expect("workspace-path `ql test --package` should emit selected package test artifacts");
+    assert!(
+        !fixture.unselected_smoke_output.exists(),
+        "workspace-path `ql test --package` should not build tests from unselected packages"
+    );
+}
+
+#[test]
+fn test_workspace_path_package_selector_reports_json_success() {
+    if !toolchain_available("`ql test --json --package` workspace test") {
+        return;
+    }
+
+    let fixture =
+        write_workspace_test_package_selector_project("ql-project-test-package-selector-json");
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--json"])
+        .arg(&fixture.project_root)
+        .args(["--package", "app"]);
+    let output = run_command_capture(&mut command, "`ql test --json --package` workspace path");
+    let (stdout, stderr) = expect_success(
+        "project-test-package-selector-json",
+        "workspace package selector json tests",
+        &output,
+    )
+    .expect("workspace-path `ql test --json --package` should succeed");
+    expect_empty_stderr(
+        "project-test-package-selector-json",
+        "workspace package selector json tests",
+        &stderr,
+    )
+    .expect("workspace-path `ql test --json --package` should not print stderr");
+
+    let actual = parse_json_output("project-test-package-selector-json", &stdout);
+    let expected = serde_json::json!({
+        "schema": "ql.test.v1",
+        "path": fixture.project_root.display().to_string().replace('\\', "/"),
+        "requested_profile": "debug",
+        "profile_overridden": false,
+        "package_name": "app",
+        "filter": JsonValue::Null,
+        "list_only": false,
+        "status": "ok",
+        "discovered_total": 1,
+        "selected_total": 1,
+        "targets": [
+            {
+                "path": "packages/app/tests/app_only.ql",
+                "kind": "smoke",
+                "profile": "debug",
+            }
+        ],
+        "passed": 1,
+        "failed": 0,
+        "failures": [],
+    });
+    assert_eq!(
+        actual, expected,
+        "workspace-path `ql test --json --package` should match the stable selected-package contract"
+    );
+    expect_file_exists(
+        "project-test-package-selector-json",
+        &fixture.selected_smoke_output,
+        "selected package smoke executable",
+        "workspace package selector json tests",
+    )
+    .expect("workspace-path `ql test --json --package` should emit selected package artifacts");
+    assert!(
+        !fixture.unselected_smoke_output.exists(),
+        "workspace-path `ql test --json --package` should not build unselected package tests"
     );
 }
 

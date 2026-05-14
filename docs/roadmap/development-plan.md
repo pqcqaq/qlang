@@ -25,7 +25,7 @@
 ## 当前工作项
 
 - 继续抽 `ql-cli` project pipeline；`build/run/test/check` 的入口 request-context 与 `project emit-interface/graph/dependencies/dependents/add/status` 的 workspace member lookup 已共享，`emit-interface` 普通/check/output selector 已补齐 ambiguous/unresolved 回归；`ql run` 已补 direct dependency generic、`--json` dependency generic、workspace `--package` dependency generic/JSON 和 transitive wrapper/helper smoke。下一步继续扩真实 workspace smoke。
-- 收紧 `ql test`；`--package` 已复用共享 workspace member lookup，并覆盖 missing/invalid/ambiguous/broken member 回归；测试 target 的 dependency/package-under-test/local-generic source override 拼接已收口；direct dependency generic consumer 已覆盖 named/expression args、carrier、result-context、zero-arg context 和 wrapper/helper smoke。下一步继续收口 dependency-aware backend。
+- 收紧 `ql test`；`--package` 已复用共享 workspace member lookup，并覆盖 missing/invalid/ambiguous/broken member 回归和 workspace `--package` JSON smoke；测试 target 的 dependency/package-under-test/local-generic source override 拼接已收口；direct dependency generic consumer 已覆盖 named/expression args、carrier、result-context、zero-arg context 和 wrapper/helper smoke。下一步继续收口 dependency-aware backend。
 - 建立 LSP workspace index，让 diagnostics、references、rename、symbols、semantic tokens 和 rich editor hints 走同一份分析缓存。
 - 收紧 generic backend：继续扩大 package-local tests、downstream smoke 和 dependency consumers 对 generic public functions 的直接覆盖；继续把 direct-call specialization 扩到更宽表达式、类型和 dependency-aware backend 场景；保留未推断调用的显式错误，但不让未使用 import 触发 bridge 失败。
 - 继续把 `project init --stdlib` 的真实模板、stdlib examples 和 downstream smoke 作为同一套可验证入口维护。
