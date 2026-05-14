@@ -12,6 +12,8 @@ struct WorkspaceTargetsSelectorFixture {
     _temp: TempDir,
     project_root: PathBuf,
     app_manifest: PathBuf,
+    app_member_dir: PathBuf,
+    app_source_path: PathBuf,
 }
 
 fn write_workspace_targets_selector_fixture(prefix: &str) -> WorkspaceTargetsSelectorFixture {
@@ -43,7 +45,7 @@ name = "worker"
 members = ["packages/app", "packages/worker"]
 "#,
     );
-    temp.write(
+    let app_source_path = temp.write(
         "workspace/packages/app/src/lib.ql",
         "pub fn run() -> Int { return 0 }\n",
     );
@@ -54,9 +56,18 @@ members = ["packages/app", "packages/worker"]
 
     WorkspaceTargetsSelectorFixture {
         _temp: temp,
+        app_member_dir: project_root.join("packages").join("app"),
+        app_source_path,
         project_root,
         app_manifest,
     }
+}
+
+fn expected_workspace_app_targets_json(fixture: &WorkspaceTargetsSelectorFixture) -> String {
+    let app_manifest_display = fixture.app_manifest.to_string_lossy().replace('\\', "/");
+    format!(
+        "{{\n  \"schema\": \"ql.project.targets.v1\",\n  \"members\": [\n    {{\n      \"manifest_path\": \"{app_manifest_display}\",\n      \"package_name\": \"app\",\n      \"targets\": [\n        {{\n          \"kind\": \"lib\",\n          \"path\": \"src/lib.ql\"\n        }}\n      ]\n    }}\n  ]\n}}\n"
+    )
 }
 
 #[test]
@@ -924,10 +935,7 @@ fn project_targets_supports_json_package_selector_for_workspace_members() {
     )
     .expect("workspace package selector json should not print stderr");
 
-    let app_manifest_display = fixture.app_manifest.to_string_lossy().replace('\\', "/");
-    let expected = format!(
-        "{{\n  \"schema\": \"ql.project.targets.v1\",\n  \"members\": [\n    {{\n      \"manifest_path\": \"{app_manifest_display}\",\n      \"package_name\": \"app\",\n      \"targets\": [\n        {{\n          \"kind\": \"lib\",\n          \"path\": \"src/lib.ql\"\n        }}\n      ]\n    }}\n  ]\n}}\n"
-    );
+    let expected = expected_workspace_app_targets_json(&fixture);
     expect_snapshot_matches(
         "project-targets-selector-workspace-json",
         "workspace package selector json stdout",
@@ -935,6 +943,81 @@ fn project_targets_supports_json_package_selector_for_workspace_members() {
         &stdout.replace('\\', "/"),
     )
     .expect("workspace package selector json should render only the selected package targets");
+}
+
+#[test]
+fn project_targets_json_package_selector_uses_workspace_member_source_context() {
+    let workspace_root = workspace_root();
+    let fixture =
+        write_workspace_targets_selector_fixture("ql-project-targets-member-source-selector-json");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "targets", "--package", "app", "--json"])
+        .arg(&fixture.app_source_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project targets --package --json` workspace member source",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-targets-member-source-selector-json",
+        "workspace member source package selector json",
+        &output,
+    )
+    .expect("workspace member source package selector json should succeed");
+    expect_empty_stderr(
+        "project-targets-member-source-selector-json",
+        "workspace member source package selector json",
+        &stderr,
+    )
+    .expect("workspace member source package selector json should not print stderr");
+
+    let expected = expected_workspace_app_targets_json(&fixture);
+    expect_snapshot_matches(
+        "project-targets-member-source-selector-json",
+        "workspace member source package selector json stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .expect("workspace member source package selector json should render selected targets");
+}
+
+#[test]
+fn project_targets_json_package_selector_uses_workspace_member_directory_context() {
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_targets_selector_fixture(
+        "ql-project-targets-member-directory-selector-json",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "targets", "--package", "app", "--json"])
+        .arg(&fixture.app_member_dir);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project targets --package --json` workspace member directory",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-targets-member-directory-selector-json",
+        "workspace member directory package selector json",
+        &output,
+    )
+    .expect("workspace member directory package selector json should succeed");
+    expect_empty_stderr(
+        "project-targets-member-directory-selector-json",
+        "workspace member directory package selector json",
+        &stderr,
+    )
+    .expect("workspace member directory package selector json should not print stderr");
+
+    let expected = expected_workspace_app_targets_json(&fixture);
+    expect_snapshot_matches(
+        "project-targets-member-directory-selector-json",
+        "workspace member directory package selector json stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .expect("workspace member directory package selector json should render selected targets");
 }
 
 #[test]
