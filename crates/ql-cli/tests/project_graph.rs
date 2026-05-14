@@ -12,6 +12,8 @@ struct WorkspaceGraphSelectorFixture {
     _temp: TempDir,
     project_root: PathBuf,
     app_manifest_path: PathBuf,
+    app_member_dir: PathBuf,
+    app_source_path: PathBuf,
 }
 
 fn write_workspace_graph_selector_fixture(prefix: &str) -> WorkspaceGraphSelectorFixture {
@@ -31,6 +33,14 @@ name = "app"
 
 [references]
 packages = ["../../dep"]
+"#,
+    );
+    let app_source_path = temp.write(
+        "workspace/packages/app/src/lib.ql",
+        r#"
+pub fn run() -> Int {
+    return 0
+}
 "#,
     );
     temp.write(
@@ -81,9 +91,21 @@ pub fn exported() -> Int
 
     WorkspaceGraphSelectorFixture {
         _temp: temp,
+        app_member_dir: project_root.join("packages").join("app"),
+        app_source_path,
         project_root,
         app_manifest_path,
     }
+}
+
+fn expected_workspace_app_package_graph_json(fixture: &WorkspaceGraphSelectorFixture) -> String {
+    format!(
+        "{{\n  \"interface\": {{\n    \"detail\": null,\n    \"path\": \"app.qi\",\n    \"stale_reasons\": [],\n    \"status\": \"valid\"\n  }},\n  \"manifest_path\": \"{}\",\n  \"package_name\": \"app\",\n  \"reference_interfaces\": [\n    {{\n      \"detail\": null,\n      \"manifest_path\": \"dep/qlang.toml\",\n      \"package_name\": \"dep\",\n      \"path\": \"dep/dep.qi\",\n      \"reference\": \"../../dep\",\n      \"stale_reasons\": [],\n      \"status\": \"valid\",\n      \"transitive_reference_failures\": {{\n        \"count\": 0,\n        \"first_failure\": null\n      }}\n    }}\n  ],\n  \"references\": [\n    \"../../dep\"\n  ],\n  \"schema\": \"ql.project.graph.v1\",\n  \"workspace_members\": [],\n  \"workspace_packages\": []\n}}\n",
+        fixture
+            .app_manifest_path
+            .to_string_lossy()
+            .replace('\\', "/")
+    )
 }
 
 #[test]
@@ -780,13 +802,7 @@ fn project_graph_supports_json_package_selector_for_workspace_root() {
     )
     .expect("workspace root package graph selector json should stay silent on stderr");
 
-    let expected = format!(
-        "{{\n  \"interface\": {{\n    \"detail\": null,\n    \"path\": \"app.qi\",\n    \"stale_reasons\": [],\n    \"status\": \"valid\"\n  }},\n  \"manifest_path\": \"{}\",\n  \"package_name\": \"app\",\n  \"reference_interfaces\": [\n    {{\n      \"detail\": null,\n      \"manifest_path\": \"dep/qlang.toml\",\n      \"package_name\": \"dep\",\n      \"path\": \"dep/dep.qi\",\n      \"reference\": \"../../dep\",\n      \"stale_reasons\": [],\n      \"status\": \"valid\",\n      \"transitive_reference_failures\": {{\n        \"count\": 0,\n        \"first_failure\": null\n      }}\n    }}\n  ],\n  \"references\": [\n    \"../../dep\"\n  ],\n  \"schema\": \"ql.project.graph.v1\",\n  \"workspace_members\": [],\n  \"workspace_packages\": []\n}}\n",
-        fixture
-            .app_manifest_path
-            .to_string_lossy()
-            .replace('\\', "/")
-    );
+    let expected = expected_workspace_app_package_graph_json(&fixture);
     expect_snapshot_matches(
         "project-graph-workspace-package-selector-json",
         "workspace root package graph selector json stdout",
@@ -794,6 +810,86 @@ fn project_graph_supports_json_package_selector_for_workspace_root() {
         &stdout.replace('\\', "/"),
     )
     .expect("workspace root package graph selector json should render the selected package graph");
+}
+
+#[test]
+fn project_graph_json_package_selector_uses_workspace_member_source_context() {
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_graph_selector_fixture(
+        "ql-project-graph-member-source-package-selector-json",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "graph", "--package", "app"])
+        .arg(&fixture.app_source_path)
+        .arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql project graph --package --json` workspace member source",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-graph-member-source-package-selector-json",
+        "workspace member source package graph selector json",
+        &output,
+    )
+    .expect("workspace member source package graph selector json should succeed");
+    expect_empty_stderr(
+        "project-graph-member-source-package-selector-json",
+        "workspace member source package graph selector json",
+        &stderr,
+    )
+    .expect("workspace member source package graph selector json should stay silent on stderr");
+
+    let expected = expected_workspace_app_package_graph_json(&fixture);
+    expect_snapshot_matches(
+        "project-graph-member-source-package-selector-json",
+        "workspace member source package graph selector json stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .expect("workspace member source package graph selector json should render selected package");
+}
+
+#[test]
+fn project_graph_json_package_selector_uses_workspace_member_directory_context() {
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_graph_selector_fixture(
+        "ql-project-graph-member-directory-package-selector-json",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "graph", "--package", "app"])
+        .arg(&fixture.app_member_dir)
+        .arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql project graph --package --json` workspace member directory",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-graph-member-directory-package-selector-json",
+        "workspace member directory package graph selector json",
+        &output,
+    )
+    .expect("workspace member directory package graph selector json should succeed");
+    expect_empty_stderr(
+        "project-graph-member-directory-package-selector-json",
+        "workspace member directory package graph selector json",
+        &stderr,
+    )
+    .expect("workspace member directory package graph selector json should stay silent on stderr");
+
+    let expected = expected_workspace_app_package_graph_json(&fixture);
+    expect_snapshot_matches(
+        "project-graph-member-directory-package-selector-json",
+        "workspace member directory package graph selector json stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .expect(
+        "workspace member directory package graph selector json should render selected package",
+    );
 }
 
 #[test]
