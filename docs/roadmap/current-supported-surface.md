@@ -1,6 +1,6 @@
 # 当前支持基线
 
-> 最后同步：2026-05-13
+> 最后同步：2026-05-14
 
 这页记录当前可依赖能力。更细节的行为以代码和回归测试为准。
 
@@ -29,6 +29,7 @@
 - `ql build` 已覆盖 workspace `--package` JSON dependency-closure 输出；`run/test/check` 已覆盖 workspace `--package` JSON 关键路径。
 - `ql project graph/targets/status` 已覆盖 workspace root、workspace member path 和 workspace `--package` selector；`--package --json` 可输出选中 package graph/targets/status 的稳定契约。
 - `ql project dependencies/dependents --json` 已覆盖 workspace member path 派生包名，脚本不必重复传 `--name`。
+- `ql project lock` 已覆盖 workspace root、member source/directory 写入 workspace lockfile，以及 member source `--check --json` 的 up-to-date 检查。
 - `ql run` 已用真实 smoke 覆盖 dependency public functions/values/types/methods/traits、direct dependency generic public functions、workspace `--package` dependency generic、workspace `--package` dependency generic JSON、transitive generic wrapper/helper specialization 和 dependency generic JSON 输出。
 - 单文件 `ql build/run/test file.ql` 可复用本地 generic free function direct-call specialization。
 - `ql project init --stdlib` 从 `stdlib/examples/starter` 复制 starter，生成依赖 `std.core`、`std.option`、`std.result`、`std.array`、`std.test` 的项目，并用 `check/run/test` 直接覆盖 generic option/result assertions、数组 equality/reverse assertions、length-generic array helpers 和重复数组。

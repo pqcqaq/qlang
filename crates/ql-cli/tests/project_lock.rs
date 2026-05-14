@@ -1,5 +1,7 @@
 mod support;
 
+use std::path::PathBuf;
+
 use serde_json::Value as JsonValue;
 use support::{
     TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_snapshot_matches,
@@ -16,19 +18,30 @@ fn parse_json_output(case_name: &str, stdout: &str) -> JsonValue {
         .unwrap_or_else(|error| panic!("[{case_name}] parse json stdout: {error}\n{stdout}"))
 }
 
-#[test]
-fn project_lock_writes_workspace_lockfile_with_external_dependencies() {
-    let workspace_root = workspace_root();
-    let temp = TempDir::new("ql-project-lock-workspace");
-    let project_root = temp.path().join("workspace");
-    std::fs::create_dir_all(project_root.join("packages/app/src/tools"))
-        .expect("create app source tree for workspace lock test");
-    std::fs::create_dir_all(project_root.join("packages/core/src/runtime"))
-        .expect("create core source tree for workspace lock test");
-    std::fs::create_dir_all(project_root.join("vendor/runtime/src"))
-        .expect("create runtime source tree for workspace lock test");
+struct WorkspaceLockFixture {
+    project_root: PathBuf,
+    workspace_manifest: PathBuf,
+    app_member_dir: PathBuf,
+    app_source_path: PathBuf,
+    workspace_lockfile_path: PathBuf,
+    package_lockfile_path: PathBuf,
+}
 
-    temp.write(
+fn write_workspace_lock_fixture(temp: &TempDir) -> WorkspaceLockFixture {
+    let project_root = temp.path().join("workspace");
+    let app_member_dir = project_root.join("packages/app");
+    let app_source_path = app_member_dir.join("src/tools/app.ql");
+    let workspace_lockfile_path = project_root.join("qlang.lock");
+    let package_lockfile_path = app_member_dir.join("qlang.lock");
+
+    std::fs::create_dir_all(app_member_dir.join("src/tools"))
+        .expect("create app source tree for workspace lock fixture");
+    std::fs::create_dir_all(project_root.join("packages/core/src/runtime"))
+        .expect("create core source tree for workspace lock fixture");
+    std::fs::create_dir_all(project_root.join("vendor/runtime/src"))
+        .expect("create runtime source tree for workspace lock fixture");
+
+    let workspace_manifest = temp.write(
         "workspace/qlang.toml",
         r#"
 [workspace]
@@ -85,11 +98,26 @@ default = "debug"
         "pub fn runtime() -> Int { return 2 }\n",
     );
 
-    let lockfile_path = project_root.join("qlang.lock");
+    WorkspaceLockFixture {
+        project_root,
+        workspace_manifest,
+        app_member_dir,
+        app_source_path,
+        workspace_lockfile_path,
+        package_lockfile_path,
+    }
+}
+
+#[test]
+fn project_lock_writes_workspace_lockfile_with_external_dependencies() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-lock-workspace");
+    let fixture = write_workspace_lock_fixture(&temp);
+    let lockfile_path = fixture.workspace_lockfile_path;
     let lockfile_display = lockfile_path.to_string_lossy().replace('\\', "/");
 
     let mut command = ql_command(&workspace_root);
-    command.args(["project", "lock"]).arg(&project_root);
+    command.args(["project", "lock"]).arg(&fixture.project_root);
     let output = run_command_capture(&mut command, "`ql project lock` workspace");
     let (stdout, stderr) = expect_success(
         "project-lock-workspace",
@@ -180,102 +208,10 @@ default = "debug"
 fn project_lock_source_file_uses_workspace_root_context() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-lock-workspace-source");
-    let source_path = temp
-        .path()
-        .join("workspace")
-        .join("packages")
-        .join("app")
-        .join("src")
-        .join("tools")
-        .join("app.ql");
-    std::fs::create_dir_all(
-        source_path
-            .parent()
-            .expect("workspace app source parent should exist"),
-    )
-    .expect("create app source tree for workspace source lock test");
-    std::fs::create_dir_all(
-        temp.path()
-            .join("workspace")
-            .join("packages")
-            .join("core")
-            .join("src")
-            .join("runtime"),
-    )
-    .expect("create core source tree for workspace source lock test");
-    std::fs::create_dir_all(
-        temp.path()
-            .join("workspace")
-            .join("vendor")
-            .join("runtime")
-            .join("src"),
-    )
-    .expect("create runtime source tree for workspace source lock test");
-
-    temp.write(
-        "workspace/qlang.toml",
-        r#"
-[workspace]
-members = ["packages/app", "packages/core"]
-
-[profile]
-default = "release"
-"#,
-    );
-    temp.write(
-        "workspace/packages/core/qlang.toml",
-        r#"
-[package]
-name = "core"
-
-[lib]
-path = "src/runtime/core.ql"
-"#,
-    );
-    temp.write(
-        "workspace/packages/app/qlang.toml",
-        r#"
-[package]
-name = "app"
-
-[dependencies]
-core = { path = "../core" }
-runtime = { path = "../../vendor/runtime" }
-
-[[bin]]
-path = "src/tools/app.ql"
-"#,
-    );
-    temp.write(
-        "workspace/vendor/runtime/qlang.toml",
-        r#"
-[package]
-name = "runtime"
-
-[profile]
-default = "debug"
-"#,
-    );
-    temp.write(
-        "workspace/packages/core/src/runtime/core.ql",
-        "pub fn core() -> Int { return 1 }\n",
-    );
-    temp.write(
-        "workspace/packages/app/src/tools/app.ql",
-        "fn main() -> Int { return 0 }\n",
-    );
-    temp.write(
-        "workspace/vendor/runtime/src/lib.ql",
-        "pub fn runtime() -> Int { return 2 }\n",
-    );
-
-    let workspace_lockfile_path = temp.path().join("workspace").join("qlang.lock");
-    let package_lockfile_path = temp
-        .path()
-        .join("workspace")
-        .join("packages")
-        .join("app")
-        .join("qlang.lock");
+    let fixture = write_workspace_lock_fixture(&temp);
+    let source_path = fixture.app_source_path;
+    let workspace_lockfile_path = fixture.workspace_lockfile_path;
+    let package_lockfile_path = fixture.package_lockfile_path;
     let workspace_lockfile_display = workspace_lockfile_path.to_string_lossy().replace('\\', "/");
 
     let mut command = ql_command(&workspace_root);
@@ -329,79 +265,10 @@ default = "debug"
 fn project_lock_member_directory_uses_workspace_root_context() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-lock-workspace-member-dir");
-    let project_root = temp.path().join("workspace");
-    let member_dir = project_root.join("packages").join("app");
-    std::fs::create_dir_all(member_dir.join("src").join("tools"))
-        .expect("create app source tree for workspace member directory lock test");
-    std::fs::create_dir_all(project_root.join("packages/core/src/runtime"))
-        .expect("create core source tree for workspace member directory lock test");
-    std::fs::create_dir_all(project_root.join("vendor/runtime/src"))
-        .expect("create runtime source tree for workspace member directory lock test");
-
-    temp.write(
-        "workspace/qlang.toml",
-        r#"
-[workspace]
-members = ["packages/app", "packages/core"]
-
-[profile]
-default = "release"
-"#,
-    );
-    temp.write(
-        "workspace/packages/core/qlang.toml",
-        r#"
-[package]
-name = "core"
-
-[lib]
-path = "src/runtime/core.ql"
-"#,
-    );
-    temp.write(
-        "workspace/packages/app/qlang.toml",
-        r#"
-[package]
-name = "app"
-
-[dependencies]
-core = { path = "../core" }
-runtime = { path = "../../vendor/runtime" }
-
-[[bin]]
-path = "src/tools/app.ql"
-"#,
-    );
-    temp.write(
-        "workspace/vendor/runtime/qlang.toml",
-        r#"
-[package]
-name = "runtime"
-
-[profile]
-default = "debug"
-"#,
-    );
-    temp.write(
-        "workspace/packages/core/src/runtime/core.ql",
-        "pub fn core() -> Int { return 1 }\n",
-    );
-    temp.write(
-        "workspace/packages/app/src/tools/app.ql",
-        "fn main() -> Int { return 0 }\n",
-    );
-    temp.write(
-        "workspace/vendor/runtime/src/lib.ql",
-        "pub fn runtime() -> Int { return 2 }\n",
-    );
-
-    let workspace_lockfile_path = temp.path().join("workspace").join("qlang.lock");
-    let package_lockfile_path = temp
-        .path()
-        .join("workspace")
-        .join("packages")
-        .join("app")
-        .join("qlang.lock");
+    let fixture = write_workspace_lock_fixture(&temp);
+    let member_dir = fixture.app_member_dir;
+    let workspace_lockfile_path = fixture.workspace_lockfile_path;
+    let package_lockfile_path = fixture.package_lockfile_path;
     let workspace_lockfile_display = workspace_lockfile_path.to_string_lossy().replace('\\', "/");
 
     let mut command = ql_command(&workspace_root);
@@ -455,69 +322,10 @@ default = "debug"
 fn project_lock_json_writes_workspace_lockfile() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-lock-workspace-json");
-    let project_root = temp.path().join("workspace");
-    std::fs::create_dir_all(project_root.join("packages/app/src/tools"))
-        .expect("create app source tree for workspace json lock test");
-    std::fs::create_dir_all(project_root.join("packages/core/src/runtime"))
-        .expect("create core source tree for workspace json lock test");
-    std::fs::create_dir_all(project_root.join("vendor/runtime/src"))
-        .expect("create runtime source tree for workspace json lock test");
-
-    let workspace_manifest = temp.write(
-        "workspace/qlang.toml",
-        r#"
-[workspace]
-members = ["packages/app", "packages/core"]
-
-[profile]
-default = "release"
-"#,
-    );
-    temp.write(
-        "workspace/packages/core/qlang.toml",
-        r#"
-[package]
-name = "core"
-
-[lib]
-path = "src/runtime/core.ql"
-"#,
-    );
-    temp.write(
-        "workspace/packages/app/qlang.toml",
-        r#"
-[package]
-name = "app"
-
-[dependencies]
-core = { path = "../core" }
-runtime = { path = "../../vendor/runtime" }
-
-[[bin]]
-path = "src/tools/app.ql"
-"#,
-    );
-    temp.write(
-        "workspace/vendor/runtime/qlang.toml",
-        r#"
-[package]
-name = "runtime"
-"#,
-    );
-    temp.write(
-        "workspace/packages/core/src/runtime/core.ql",
-        "pub fn core() -> Int { return 1 }\n",
-    );
-    temp.write(
-        "workspace/packages/app/src/tools/app.ql",
-        "fn main() -> Int { return 0 }\n",
-    );
-    temp.write(
-        "workspace/vendor/runtime/src/lib.ql",
-        "pub fn runtime() -> Int { return 2 }\n",
-    );
-
-    let lockfile_path = project_root.join("qlang.lock");
+    let fixture = write_workspace_lock_fixture(&temp);
+    let project_root = fixture.project_root;
+    let workspace_manifest = fixture.workspace_manifest;
+    let lockfile_path = fixture.workspace_lockfile_path;
 
     let mut command = ql_command(&workspace_root);
     command
@@ -563,6 +371,95 @@ name = "runtime"
     let actual_json: JsonValue =
         serde_json::from_str(&actual).expect("written workspace lockfile should remain valid json");
     assert_eq!(json["lockfile"], actual_json);
+}
+
+#[test]
+fn project_lock_check_json_accepts_workspace_member_source_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-lock-check-json-workspace-source");
+    let fixture = write_workspace_lock_fixture(&temp);
+    let project_root = fixture.project_root;
+    let workspace_manifest = fixture.workspace_manifest;
+    let source_path = fixture.app_source_path;
+    let lockfile_path = fixture.workspace_lockfile_path;
+    let package_lockfile_path = fixture.package_lockfile_path;
+
+    let mut write_command = ql_command(&workspace_root);
+    write_command.args(["project", "lock"]).arg(&project_root);
+    let write_output = run_command_capture(
+        &mut write_command,
+        "`ql project lock` before member source check",
+    );
+    let (_, write_stderr) = expect_success(
+        "project-lock-check-json-workspace-source",
+        "initial workspace lockfile generation",
+        &write_output,
+    )
+    .expect("initial workspace lockfile generation should succeed");
+    expect_empty_stderr(
+        "project-lock-check-json-workspace-source",
+        "initial workspace lockfile generation",
+        &write_stderr,
+    )
+    .expect("initial workspace lockfile generation should not print stderr");
+    let initial_lockfile = read_normalized_file(&lockfile_path, "initial workspace lockfile");
+
+    let mut check_command = ql_command(&workspace_root);
+    check_command
+        .args(["project", "lock", "--check"])
+        .arg(&source_path)
+        .arg("--json");
+    let output = run_command_capture(
+        &mut check_command,
+        "`ql project lock --check --json` workspace member source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-lock-check-json-workspace-source",
+        "workspace member source json lockfile check",
+        &output,
+    )
+    .expect("workspace member source json lockfile check should succeed");
+    expect_empty_stderr(
+        "project-lock-check-json-workspace-source",
+        "workspace member source json lockfile check",
+        &stderr,
+    )
+    .expect("workspace member source json lockfile check should keep stderr empty");
+
+    let json = parse_json_output("project-lock-check-json-workspace-source", &stdout);
+    assert_eq!(json["schema"], "ql.project.lock.result.v1");
+    assert_eq!(
+        json["path"],
+        source_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        json["project_manifest_path"],
+        workspace_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        json["lockfile_path"],
+        lockfile_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["check_only"], true);
+    assert_eq!(json["status"], "up-to-date");
+    assert_eq!(json["failure"], JsonValue::Null);
+    assert_eq!(json["lockfile"]["schema"], "ql.project.lock.v1");
+    assert_eq!(json["lockfile"]["root"]["kind"], "workspace");
+    assert_eq!(json["lockfile"]["root"]["manifest_path"], "qlang.toml");
+
+    let checked_lockfile = read_normalized_file(&lockfile_path, "checked workspace lockfile");
+    expect_snapshot_matches(
+        "project-lock-check-json-workspace-source",
+        "workspace member source json check lockfile contents",
+        &initial_lockfile,
+        &checked_lockfile,
+    )
+    .expect("workspace member source json lockfile check should not rewrite the lockfile");
+    assert!(
+        !package_lockfile_path.exists(),
+        "workspace member source json lockfile check should not create a package-local lockfile at `{}`",
+        package_lockfile_path.display()
+    );
 }
 
 #[test]
