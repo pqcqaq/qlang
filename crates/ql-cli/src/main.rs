@@ -4396,13 +4396,16 @@ fn discover_test_targets(
     command_scope: &ProjectCommandScope,
 ) -> Result<Vec<TestTarget>, u8> {
     match command_scope {
-        ProjectCommandScope::Project => discover_project_test_targets(
-            path,
-            path,
-            options,
-            command_options.package_name.as_deref(),
-            command_options.profile_overridden,
-        ),
+        ProjectCommandScope::Project => {
+            let request_root = resolve_project_workspace_member_command_request_root(path);
+            discover_project_test_targets(
+                path,
+                request_root.as_deref().unwrap_or(path),
+                options,
+                command_options.package_name.as_deref(),
+                command_options.profile_overridden,
+            )
+        }
         ProjectCommandScope::ProjectTestFile(request) => {
             let discovered = discover_project_test_targets(
                 path,

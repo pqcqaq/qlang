@@ -3044,6 +3044,198 @@ name = "app"
     );
 }
 
+struct TestListWorkspaceFixture {
+    temp: TempDir,
+    project_root: PathBuf,
+    app_root: PathBuf,
+    app_smoke_path: PathBuf,
+    tool_ui_path: PathBuf,
+}
+
+fn write_test_list_workspace_fixture(prefix: &str) -> TestListWorkspaceFixture {
+    let temp = TempDir::new(prefix);
+    let project_root = temp.path().join("workspace");
+    let app_root = project_root.join("packages").join("app");
+    let tool_root = project_root.join("packages").join("tool");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app source tree for test list workspace fixture");
+    std::fs::create_dir_all(tool_root.join("src"))
+        .expect("create tool source tree for test list workspace fixture");
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn helper() -> Int { return 1 }\n",
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        "pub fn helper() -> Int { return 2 }\n",
+    );
+    let app_smoke_path = temp.write(
+        "workspace/packages/app/tests/smoke.ql",
+        "fn main() -> Int { return nope }\n",
+    );
+    let tool_ui_path = temp.write(
+        "workspace/packages/tool/tests/ui/type_error.ql",
+        "fn main() -> Int { return nope }\n",
+    );
+
+    TestListWorkspaceFixture {
+        temp,
+        project_root,
+        app_root,
+        app_smoke_path,
+        tool_ui_path,
+    }
+}
+
+fn expected_workspace_test_list_json(
+    request_path: &Path,
+    targets: Vec<JsonValue>,
+    discovered_total: usize,
+) -> JsonValue {
+    serde_json::json!({
+        "schema": "ql.test.v1",
+        "path": request_path.display().to_string().replace('\\', "/"),
+        "requested_profile": "debug",
+        "profile_overridden": false,
+        "package_name": JsonValue::Null,
+        "filter": JsonValue::Null,
+        "list_only": true,
+        "status": "listed",
+        "discovered_total": discovered_total,
+        "selected_total": targets.len(),
+        "targets": targets,
+        "passed": 0,
+        "failed": 0,
+        "failures": [],
+    })
+}
+
+#[test]
+fn test_workspace_member_directory_lists_discovered_tests_as_json() {
+    let workspace_root = workspace_root();
+    let fixture = write_test_list_workspace_fixture("ql-project-test-list-member-dir-json");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--list", "--json"])
+        .arg(&fixture.app_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --list --json` workspace member directory",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-list-member-dir-json",
+        "workspace member directory test json listing",
+        &output,
+    )
+    .expect("workspace member directory `ql test --list --json` should succeed");
+    expect_empty_stderr(
+        "project-test-list-member-dir-json",
+        "workspace member directory test json listing",
+        &stderr,
+    )
+    .expect("workspace member directory `ql test --list --json` should not print stderr");
+
+    let actual = parse_json_output("project-test-list-member-dir-json", &stdout);
+    let expected = expected_workspace_test_list_json(
+        &fixture.app_root,
+        vec![
+            serde_json::json!({
+                "path": "packages/app/tests/smoke.ql",
+                "kind": "smoke",
+                "profile": "debug",
+            }),
+            serde_json::json!({
+                "path": "packages/tool/tests/ui/type_error.ql",
+                "kind": "ui",
+                "profile": JsonValue::Null,
+            }),
+        ],
+        2,
+    );
+    assert_eq!(
+        actual, expected,
+        "workspace member directory `ql test --list --json` should keep the outer workspace context"
+    );
+    assert!(
+        !fixture.project_root.join("packages/app/target").exists(),
+        "`ql test --list --json` workspace member directory should not build listed tests"
+    );
+}
+
+#[test]
+fn test_workspace_member_file_lists_selected_test_as_json() {
+    let workspace_root = workspace_root();
+    let fixture = write_test_list_workspace_fixture("ql-project-test-list-member-file-json");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--list", "--json"])
+        .arg(&fixture.app_smoke_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --list --json` workspace member test file",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-list-member-file-json",
+        "workspace member file test json listing",
+        &output,
+    )
+    .expect("workspace member file `ql test --list --json` should succeed");
+    expect_empty_stderr(
+        "project-test-list-member-file-json",
+        "workspace member file test json listing",
+        &stderr,
+    )
+    .expect("workspace member file `ql test --list --json` should not print stderr");
+
+    let actual = parse_json_output("project-test-list-member-file-json", &stdout);
+    let expected = expected_workspace_test_list_json(
+        &fixture.app_smoke_path,
+        vec![serde_json::json!({
+            "path": "packages/app/tests/smoke.ql",
+            "kind": "smoke",
+            "profile": "debug",
+        })],
+        1,
+    );
+    assert_eq!(
+        actual, expected,
+        "workspace member file `ql test --list --json` should list only the selected test while preserving discovered total"
+    );
+    assert!(
+        !fixture.project_root.join("packages/app/target").exists(),
+        "`ql test --list --json` workspace member file should not build listed tests"
+    );
+    assert!(
+        !fixture.tool_ui_path.with_extension("stderr").exists(),
+        "`ql test --list --json` workspace member file should not evaluate unselected ui tests"
+    );
+}
+
 #[test]
 fn test_workspace_path_runs_member_tests_and_skips_members_without_tests() {
     if !toolchain_available("`ql test` workspace test") {
