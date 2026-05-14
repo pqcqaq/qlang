@@ -2917,6 +2917,132 @@ fn main() -> Int {
 }
 
 #[test]
+fn build_package_path_json_infers_dependency_zero_argument_generic_function_from_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-json-zero-arg-generic-public-function");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src"))
+        .expect("create dep source tree for zero-argument dependency generic function");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create app source tree for zero-argument dependency generic function");
+
+    let dep_manifest = temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        r#"
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+
+pub fn none_option[T]() -> Option[T] {
+    return Option.None
+}
+"#,
+    );
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "app/src/main.ql",
+        r#"
+use dep.Option as Option
+use dep.none_option as option_none
+
+fn make_none() -> Option[Int] {
+    return option_none()
+}
+
+fn none_status(value: Option[Int]) -> Int {
+    return match value {
+        Option.Some(_) => 1,
+        Option.None => 0,
+    }
+}
+
+fn main() -> Int {
+    let value: Option[Int] = option_none()
+    return none_status(value) + none_status(make_none())
+}
+"#,
+    );
+
+    let dep_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let app_output = project_root.join("target/ql/debug/main.ll");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` direct dependency zero-argument generic public function context",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-package-json-zero-arg-generic-public-function",
+        "package build json dependency zero-argument generic public function context",
+        &output,
+    )
+    .expect("package-path `ql build --json` should infer zero-argument generic functions from explicit context");
+    expect_empty_stderr(
+        "project-build-package-json-zero-arg-generic-public-function",
+        "package build json dependency zero-argument generic public function context",
+        &stderr,
+    )
+    .expect("zero-argument generic function json build should not print stderr");
+
+    let json = parse_json_output(
+        "project-build-package-json-zero-arg-generic-public-function",
+        &stdout,
+    );
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(json["status"], "ok");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    let built_targets = json["built_targets"]
+        .as_array()
+        .expect("zero-argument generic function json should expose built_targets");
+    assert_eq!(built_targets.len(), 2);
+    assert_eq!(
+        built_targets[0]["manifest_path"],
+        dep_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        built_targets[1]["artifact_path"],
+        app_output.display().to_string().replace('\\', "/")
+    );
+    expect_file_exists(
+        "project-build-package-json-zero-arg-generic-public-function",
+        &dep_output,
+        "dependency package artifact",
+        "package build json dependency zero-argument generic public function context",
+    )
+    .expect("zero-argument generic function instantiation should preserve the dependency artifact");
+    expect_file_exists(
+        "project-build-package-json-zero-arg-generic-public-function",
+        &app_output,
+        "selected package artifact",
+        "package build json dependency zero-argument generic public function context",
+    )
+    .expect("zero-argument generic function instantiation should emit the selected artifact");
+}
+
+#[test]
 fn build_package_path_json_reports_uninferred_direct_dependency_generic_public_function_import() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-package-json-uninferred-generic-public-function");

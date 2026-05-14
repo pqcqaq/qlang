@@ -1508,6 +1508,56 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_package_path_supports_dependency_zero_arg_generic_context() {
+    if !toolchain_available("`ql test` dependency zero-argument generic function context") {
+        return;
+    }
+
+    let fixture = write_dependency_smoke_project(
+        "ql-project-test-dependency-zero-arg-generic-function-context",
+        r#"
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+
+pub fn none_option[T]() -> Option[T] {
+    return Option.None
+}
+"#,
+        r#"
+use dep.Option as Option
+use dep.none_option as option_none
+
+fn make_none() -> Option[Int] {
+    return option_none()
+}
+
+fn none_status(value: Option[Int]) -> Int {
+    return match value {
+        Option.Some(_) => 1,
+        Option.None => 0,
+    }
+}
+
+fn main() -> Int {
+    let value: Option[Int] = option_none()
+    if none_status(value) + none_status(make_none()) == 0 {
+        return 0
+    }
+    return 1
+}
+"#,
+    );
+    expect_dependency_smoke_project_passes(
+        "project-test-dependency-zero-arg-generic-function-context",
+        "package dependency zero-argument generic function context test",
+        "`ql test` dependency zero-argument generic function context",
+        &fixture,
+    );
+}
+
+#[test]
 fn test_package_path_allows_unused_direct_dependency_generic_public_function_imports() {
     if !toolchain_available("`ql test` unused dependency generic public function import test") {
         return;
