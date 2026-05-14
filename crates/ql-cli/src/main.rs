@@ -6204,6 +6204,21 @@ struct RenderedDependencyBridgeItems {
     source_rewrites: Vec<dependency_generic_bridge::SourceRewrite>,
 }
 
+impl RenderedDependencyBridgeItems {
+    fn append_declarations(&mut self, declarations: &str) {
+        self.declarations = join_dependency_bridge_sections(&self.declarations, declarations);
+    }
+
+    fn append_items(&mut self, items: RenderedDependencyBridgeItems) {
+        self.append_declarations(&items.declarations);
+        self.source_rewrites.extend(items.source_rewrites);
+    }
+
+    fn into_source_override(self, source: &str) -> Option<String> {
+        dependency_bridge_source_override(source, &self.declarations, &self.source_rewrites)
+    }
+}
+
 fn render_local_generic_function_specializations(source: &str) -> RenderedDependencyBridgeItems {
     let module = match parse_source(source) {
         Ok(module) => module,
@@ -6431,27 +6446,17 @@ fn prepare_project_target_build_quiet(
             message: format!("failed to access `{}`: {error}", normalize_path(path)),
         },
     })?;
-    let dependency_bridge_items =
-        render_direct_dependency_bridge_items_quiet(manifest_path, &source)?;
-    let local_generic_items = render_local_generic_function_specializations(&source);
+    let mut bridge_items = render_direct_dependency_bridge_items_quiet(manifest_path, &source)?;
+    bridge_items.append_items(render_local_generic_function_specializations(&source));
     let public_function_exports = if include_public_function_exports {
         render_public_dependency_function_export_wrappers_quiet(manifest_path, &source)?
     } else {
         String::new()
     };
-    let bridge_code = join_dependency_bridge_sections(
-        &dependency_bridge_items.declarations,
-        &local_generic_items.declarations,
-    );
-    let bridge_code = join_dependency_bridge_sections(&bridge_code, &public_function_exports);
-    let mut source_rewrites = dependency_bridge_items.source_rewrites;
-    source_rewrites.extend(local_generic_items.source_rewrites);
-
-    let source_override =
-        dependency_bridge_source_override(&source, &bridge_code, &source_rewrites);
+    bridge_items.append_declarations(&public_function_exports);
 
     Ok(PreparedProjectTargetBuild {
-        source_override,
+        source_override: bridge_items.into_source_override(&source),
         additional_link_inputs,
     })
 }
@@ -6513,7 +6518,7 @@ fn prepare_project_target_build(
         project_dependency_link_inputs(&build_plan, dependency_options, profile_overridden);
     let source =
         read_project_source_for_build(path, Some(options), emit_interface, report_failure)?;
-    let dependency_bridge_items = match render_direct_dependency_bridge_items(
+    let mut bridge_items = match render_direct_dependency_bridge_items(
         command_label,
         manifest_path,
         &source,
@@ -6522,7 +6527,7 @@ fn prepare_project_target_build(
         Ok(items) => items,
         Err(code) => return Err(code),
     };
-    let local_generic_items = render_local_generic_function_specializations(&source);
+    bridge_items.append_items(render_local_generic_function_specializations(&source));
     let public_function_exports = match if include_public_function_exports {
         render_public_dependency_function_export_wrappers(
             command_label,
@@ -6536,19 +6541,10 @@ fn prepare_project_target_build(
         Ok(items) => items,
         Err(code) => return Err(code),
     };
-    let bridge_code = join_dependency_bridge_sections(
-        &dependency_bridge_items.declarations,
-        &local_generic_items.declarations,
-    );
-    let bridge_code = join_dependency_bridge_sections(&bridge_code, &public_function_exports);
-    let mut source_rewrites = dependency_bridge_items.source_rewrites;
-    source_rewrites.extend(local_generic_items.source_rewrites);
-
-    let source_override =
-        dependency_bridge_source_override(&source, &bridge_code, &source_rewrites);
+    bridge_items.append_declarations(&public_function_exports);
 
     Ok(PreparedProjectTargetBuild {
-        source_override,
+        source_override: bridge_items.into_source_override(&source),
         additional_link_inputs,
     })
 }
@@ -6574,7 +6570,7 @@ fn prepare_project_test_target_build(
         profile_overridden,
     ));
     let source = read_project_source_for_build(path, None, false, report_failure)?;
-    let dependency_bridge_items = match render_direct_dependency_bridge_items(
+    let mut bridge_items = match render_direct_dependency_bridge_items(
         command_label,
         manifest_path,
         &source,
@@ -6583,32 +6579,22 @@ fn prepare_project_test_target_build(
         Ok(items) => items,
         Err(code) => return Err(code),
     };
-    let package_bridge_items = match render_package_under_test_bridge_items(
-        command_label,
-        workspace_members,
-        manifest_path,
-        &source,
-        report_failure,
-    ) {
-        Ok(items) => items,
-        Err(code) => return Err(code),
-    };
-    let local_generic_items = render_local_generic_function_specializations(&source);
-    let bridge_code = join_dependency_bridge_sections(
-        &dependency_bridge_items.declarations,
-        &package_bridge_items.declarations,
+    bridge_items.append_items(
+        match render_package_under_test_bridge_items(
+            command_label,
+            workspace_members,
+            manifest_path,
+            &source,
+            report_failure,
+        ) {
+            Ok(items) => items,
+            Err(code) => return Err(code),
+        },
     );
-    let bridge_code =
-        join_dependency_bridge_sections(&bridge_code, &local_generic_items.declarations);
-    let mut source_rewrites = dependency_bridge_items.source_rewrites;
-    source_rewrites.extend(package_bridge_items.source_rewrites);
-    source_rewrites.extend(local_generic_items.source_rewrites);
-
-    let source_override =
-        dependency_bridge_source_override(&source, &bridge_code, &source_rewrites);
+    bridge_items.append_items(render_local_generic_function_specializations(&source));
 
     Ok(PreparedProjectTargetBuild {
-        source_override,
+        source_override: bridge_items.into_source_override(&source),
         additional_link_inputs,
     })
 }

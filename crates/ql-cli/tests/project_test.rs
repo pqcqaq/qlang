@@ -1170,6 +1170,98 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_package_tests_combine_local_generic_and_current_package_public_bridges() {
+    if !toolchain_available("`ql test` local generic plus current package bridge test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-local-generic-current-package-bridge");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source root for combined bridge test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "app/src/lib.ql",
+        r#"
+pub fn score(value: Int) -> Int {
+    return value + 3
+}
+"#,
+    );
+    temp.write(
+        "app/tests/smoke.ql",
+        r#"
+use app.score as score
+
+fn identity[T](value: T) -> T {
+    return value
+}
+
+fn main() -> Int {
+    let value: Int = identity(score(4))
+    if value == 7 {
+        return 0
+    }
+    return 1
+}
+"#,
+    );
+
+    let package_output = static_library_output_path(&project_root.join("target/ql/debug"), "lib");
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test` local generic plus current package bridge",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-local-generic-current-package-bridge",
+        "package test combining local generic specialization and current package bridge",
+        &output,
+    )
+    .expect("package-path `ql test` should compose local generic and package-under-test bridges");
+    expect_empty_stderr(
+        "project-test-local-generic-current-package-bridge",
+        "package test combining local generic specialization and current package bridge",
+        &stderr,
+    )
+    .expect("combined bridge package test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-local-generic-current-package-bridge",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("combined bridge package test should report one passing smoke test");
+    expect_file_exists(
+        "project-test-local-generic-current-package-bridge",
+        &package_output,
+        "current package library",
+        "`ql test` local generic plus current package bridge",
+    )
+    .expect("combined bridge package test should build the current package library");
+    expect_file_exists(
+        "project-test-local-generic-current-package-bridge",
+        &smoke_output,
+        "combined bridge smoke executable",
+        "`ql test` local generic plus current package bridge",
+    )
+    .expect("combined bridge package test should emit the smoke executable");
+}
+
+#[test]
 fn test_package_path_supports_direct_dependency_public_functions() {
     if !toolchain_available("`ql test` dependency public function test") {
         return;
