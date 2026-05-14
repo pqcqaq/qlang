@@ -45,6 +45,30 @@ fn write_workspace_with_core_dependents(temp: &TempDir) -> std::path::PathBuf {
     project_root
 }
 
+fn expected_core_dependents_json(
+    project_root: &std::path::Path,
+    request_path: &std::path::Path,
+) -> JsonValue {
+    json!({
+        "schema": "ql.project.dependents.v1",
+        "path": request_path.to_string_lossy().replace('\\', "/"),
+        "workspace_manifest_path": project_root.join("qlang.toml").to_string_lossy().replace('\\', "/"),
+        "package_name": "core",
+        "dependents": [
+            {
+                "member": "packages/app",
+                "package_name": "app",
+                "manifest_path": project_root.join("packages/app/qlang.toml").to_string_lossy().replace('\\', "/"),
+            },
+            {
+                "member": "packages/tools",
+                "package_name": "tools",
+                "manifest_path": project_root.join("packages/tools/qlang.toml").to_string_lossy().replace('\\', "/"),
+            }
+        ],
+    })
+}
+
 #[test]
 fn project_dependents_lists_workspace_member_dependents_from_member_source_path() {
     let workspace_root = workspace_root();
@@ -207,27 +231,49 @@ fn project_dependents_json_derives_workspace_member_package_name() {
     .unwrap();
 
     let actual = parse_json_output("project-dependents-derived-name-json", &stdout);
-    let expected = json!({
-        "schema": "ql.project.dependents.v1",
-        "path": request_path.to_string_lossy().replace('\\', "/"),
-        "workspace_manifest_path": project_root.join("qlang.toml").to_string_lossy().replace('\\', "/"),
-        "package_name": "core",
-        "dependents": [
-            {
-                "member": "packages/app",
-                "package_name": "app",
-                "manifest_path": project_root.join("packages/app/qlang.toml").to_string_lossy().replace('\\', "/"),
-            },
-            {
-                "member": "packages/tools",
-                "package_name": "tools",
-                "manifest_path": project_root.join("packages/tools/qlang.toml").to_string_lossy().replace('\\', "/"),
-            }
-        ],
-    });
+    let expected = expected_core_dependents_json(&project_root, &request_path);
     assert_eq!(
         actual, expected,
         "project dependents derived-name json stdout"
+    );
+}
+
+#[test]
+fn project_dependents_json_derives_workspace_member_package_name_from_member_directory() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependents-derived-dir-json");
+    let project_root = write_workspace_with_core_dependents(&temp);
+    let request_path = project_root.join("packages/core");
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependents",
+        &request_path.to_string_lossy(),
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependents --json` derived workspace member directory package name",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-dependents-derived-dir-json",
+        "derive workspace member directory package name for dependents json",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependents-derived-dir-json",
+        "derive workspace member directory package name for dependents json",
+        &stderr,
+    )
+    .unwrap();
+
+    let actual = parse_json_output("project-dependents-derived-dir-json", &stdout);
+    let expected = expected_core_dependents_json(&project_root, &request_path);
+    assert_eq!(
+        actual, expected,
+        "project dependents directory-path derived-name json stdout"
     );
 }
 
