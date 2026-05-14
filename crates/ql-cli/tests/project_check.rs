@@ -11,6 +11,7 @@ use support::{
 struct WorkspaceCheckPackageSelectorProject {
     temp: TempDir,
     workspace_manifest: PathBuf,
+    app_root: PathBuf,
     app_source: PathBuf,
     tool_source: PathBuf,
     dep_interface: PathBuf,
@@ -97,10 +98,30 @@ pub fn main() -> Int {
     WorkspaceCheckPackageSelectorProject {
         temp,
         workspace_manifest,
+        app_root,
         app_source,
         tool_source,
         dep_interface,
     }
+}
+
+fn expected_workspace_check_package_selector_json(
+    fixture: &WorkspaceCheckPackageSelectorProject,
+) -> String {
+    format!(
+        "{{\n  \"checked_files\": [\n    \"{}\"\n  ],\n  \"diagnostic_files\": [],\n  \"failing_manifests\": [],\n  \"loaded_interfaces\": [\n    \"{}\"\n  ],\n  \"project_manifest_path\": \"{}\",\n  \"schema\": \"ql.check.v1\",\n  \"scope\": \"workspace\",\n  \"status\": \"ok\",\n  \"sync_interfaces\": false,\n  \"written_interfaces\": []\n}}\n",
+        fixture.app_source.display().to_string().replace('\\', "/"),
+        fixture
+            .dep_interface
+            .display()
+            .to_string()
+            .replace('\\', "/"),
+        fixture
+            .workspace_manifest
+            .display()
+            .to_string()
+            .replace('\\', "/"),
+    )
 }
 
 #[test]
@@ -2709,20 +2730,7 @@ fn check_workspace_root_package_selector_supports_json_output() {
     )
     .expect("workspace-root ql check package selector json should not print stderr");
 
-    let expected = format!(
-        "{{\n  \"checked_files\": [\n    \"{}\"\n  ],\n  \"diagnostic_files\": [],\n  \"failing_manifests\": [],\n  \"loaded_interfaces\": [\n    \"{}\"\n  ],\n  \"project_manifest_path\": \"{}\",\n  \"schema\": \"ql.check.v1\",\n  \"scope\": \"workspace\",\n  \"status\": \"ok\",\n  \"sync_interfaces\": false,\n  \"written_interfaces\": []\n}}\n",
-        fixture.app_source.display().to_string().replace('\\', "/"),
-        fixture
-            .dep_interface
-            .display()
-            .to_string()
-            .replace('\\', "/"),
-        fixture
-            .workspace_manifest
-            .display()
-            .to_string()
-            .replace('\\', "/"),
-    );
+    let expected = expected_workspace_check_package_selector_json(&fixture);
     let normalized_stdout = stdout.replace('\\', "/");
     expect_snapshot_matches(
         "project-check-workspace-package-selector-json",
@@ -2734,6 +2742,98 @@ fn check_workspace_root_package_selector_supports_json_output() {
     assert!(
         !normalized_stdout.contains(&fixture.tool_source.display().to_string().replace('\\', "/")),
         "workspace-root ql check package selector json should skip unselected members, got:\n{normalized_stdout}"
+    );
+}
+
+#[test]
+fn check_workspace_member_source_package_selector_supports_json_output() {
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_check_package_selector_project(
+        "ql-project-check-workspace-member-source-package-selector-json",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["check", "--json"])
+        .arg(&fixture.app_source)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check --json` workspace member source package selector",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-check-workspace-member-source-package-selector-json",
+        "workspace member source ql check package selector json",
+        &output,
+    )
+    .expect("workspace member source ql check package selector json should succeed");
+    expect_empty_stderr(
+        "project-check-workspace-member-source-package-selector-json",
+        "workspace member source ql check package selector json",
+        &stderr,
+    )
+    .expect("workspace member source ql check package selector json should not print stderr");
+
+    let expected = expected_workspace_check_package_selector_json(&fixture);
+    let normalized_stdout = stdout.replace('\\', "/");
+    expect_snapshot_matches(
+        "project-check-workspace-member-source-package-selector-json",
+        "workspace member source package selector check json stdout",
+        &expected,
+        &normalized_stdout,
+    )
+    .expect(
+        "workspace member source ql check package selector json should match the stable contract",
+    );
+    assert!(
+        !normalized_stdout.contains(&fixture.tool_source.display().to_string().replace('\\', "/")),
+        "workspace member source ql check package selector json should skip unselected members, got:\n{normalized_stdout}"
+    );
+}
+
+#[test]
+fn check_workspace_member_directory_package_selector_supports_json_output() {
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_check_package_selector_project(
+        "ql-project-check-workspace-member-directory-package-selector-json",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["check", "--json"])
+        .arg(&fixture.app_root)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check --json` workspace member directory package selector",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-check-workspace-member-directory-package-selector-json",
+        "workspace member directory ql check package selector json",
+        &output,
+    )
+    .expect("workspace member directory ql check package selector json should succeed");
+    expect_empty_stderr(
+        "project-check-workspace-member-directory-package-selector-json",
+        "workspace member directory ql check package selector json",
+        &stderr,
+    )
+    .expect("workspace member directory ql check package selector json should not print stderr");
+
+    let expected = expected_workspace_check_package_selector_json(&fixture);
+    let normalized_stdout = stdout.replace('\\', "/");
+    expect_snapshot_matches(
+        "project-check-workspace-member-directory-package-selector-json",
+        "workspace member directory package selector check json stdout",
+        &expected,
+        &normalized_stdout,
+    )
+    .expect("workspace member directory ql check package selector json should match the stable contract");
+    assert!(
+        !normalized_stdout.contains(&fixture.tool_source.display().to_string().replace('\\', "/")),
+        "workspace member directory ql check package selector json should skip unselected members, got:\n{normalized_stdout}"
     );
 }
 
