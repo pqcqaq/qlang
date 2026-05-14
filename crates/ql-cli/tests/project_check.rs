@@ -124,6 +124,39 @@ fn expected_workspace_check_package_selector_json(
     )
 }
 
+fn expect_workspace_check_missing_package_selector_error(
+    snapshot_name: &str,
+    label: &str,
+    fixture: &WorkspaceCheckPackageSelectorProject,
+    stdout: &str,
+    stderr: &str,
+) {
+    assert!(
+        stdout.trim().is_empty(),
+        "expected {label} stdout to stay empty, got:\n{stdout}"
+    );
+    let normalized_stderr = stderr.replace('\\', "/");
+    let manifest_display = fixture
+        .workspace_manifest
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    expect_stderr_contains(
+        snapshot_name,
+        label,
+        &normalized_stderr,
+        &format!("error: `ql check` package selector matched no workspace members under `{manifest_display}`"),
+    )
+    .expect("ql check package selector should surface the missing-package error");
+    expect_stderr_contains(
+        snapshot_name,
+        label,
+        &normalized_stderr,
+        "note: selector: package `missing`",
+    )
+    .expect("ql check package selector should include the selector note");
+}
+
 #[test]
 fn check_package_dir_loads_referenced_interfaces() {
     let workspace_root = workspace_root();
@@ -2657,6 +2690,54 @@ pub fn main() -> Int {
 }
 
 #[test]
+fn check_workspace_member_directory_supports_package_selectors() {
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_check_package_selector_project(
+        "ql-project-check-workspace-member-directory-selector",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["check"])
+        .arg(&fixture.app_root)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check` workspace member directory package selector",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-check-workspace-member-directory-selector",
+        "workspace member directory ql check package selector",
+        &output,
+    )
+    .expect("workspace member directory ql check package selector should succeed");
+    let normalized_stdout = stdout.replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-check-workspace-member-directory-selector",
+        &normalized_stdout,
+        &[
+            &format!(
+                "ok: {}",
+                fixture.app_source.display().to_string().replace('\\', "/")
+            ),
+            "loaded interface: ",
+            "dep.qi",
+        ],
+    )
+    .expect(
+        "workspace member directory ql check package selector should resolve the enclosing workspace",
+    );
+    assert!(
+        !normalized_stdout.contains(&fixture.tool_source.display().to_string().replace('\\', "/")),
+        "workspace member directory ql check package selector should skip the unselected member, got:\n{normalized_stdout}"
+    );
+    assert!(
+        stderr.trim().is_empty(),
+        "expected workspace member directory ql check package selector stderr to stay empty, got:\n{stderr}"
+    );
+}
+
+#[test]
 fn check_workspace_root_supports_package_selectors() {
     let workspace_root = workspace_root();
     let fixture = write_workspace_check_package_selector_project(
@@ -3016,6 +3097,72 @@ pub fn main() -> Int {
         "note: selector: package `missing`",
     )
     .expect("workspace-root ql check package selector should include the selector note");
+}
+
+#[test]
+fn check_workspace_member_source_package_selector_reports_missing_packages() {
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_check_package_selector_project(
+        "ql-project-check-workspace-member-source-package-selector-missing",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["check"])
+        .arg(&fixture.app_source)
+        .args(["--package", "missing"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check` workspace member source package selector missing package",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-check-workspace-member-source-package-selector-missing",
+        "workspace member source ql check package selector missing package",
+        &output,
+        1,
+    )
+    .expect(
+        "workspace member source ql check package selector should fail when the package is missing",
+    );
+    expect_workspace_check_missing_package_selector_error(
+        "project-check-workspace-member-source-package-selector-missing",
+        "workspace member source ql check package selector missing package",
+        &fixture,
+        &stdout,
+        &stderr,
+    );
+}
+
+#[test]
+fn check_workspace_member_directory_package_selector_reports_missing_packages() {
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_check_package_selector_project(
+        "ql-project-check-workspace-member-directory-package-selector-missing",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["check"])
+        .arg(&fixture.app_root)
+        .args(["--package", "missing"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check` workspace member directory package selector missing package",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-check-workspace-member-directory-package-selector-missing",
+        "workspace member directory ql check package selector missing package",
+        &output,
+        1,
+    )
+    .expect("workspace member directory ql check package selector should fail when the package is missing");
+    expect_workspace_check_missing_package_selector_error(
+        "project-check-workspace-member-directory-package-selector-missing",
+        "workspace member directory ql check package selector missing package",
+        &fixture,
+        &stdout,
+        &stderr,
+    );
 }
 
 #[test]
