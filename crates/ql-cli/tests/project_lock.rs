@@ -18,6 +18,35 @@ fn parse_json_output(case_name: &str, stdout: &str) -> JsonValue {
         .unwrap_or_else(|error| panic!("[{case_name}] parse json stdout: {error}\n{stdout}"))
 }
 
+fn expect_workspace_lock_json_result(
+    json: &JsonValue,
+    request_path: &std::path::Path,
+    workspace_manifest: &std::path::Path,
+    lockfile_path: &std::path::Path,
+    check_only: bool,
+    status: &str,
+) {
+    assert_eq!(json["schema"], "ql.project.lock.result.v1");
+    assert_eq!(
+        json["path"],
+        request_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        json["project_manifest_path"],
+        workspace_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        json["lockfile_path"],
+        lockfile_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["check_only"], check_only);
+    assert_eq!(json["status"], status);
+    assert_eq!(json["failure"], JsonValue::Null);
+    assert_eq!(json["lockfile"]["schema"], "ql.project.lock.v1");
+    assert_eq!(json["lockfile"]["root"]["kind"], "workspace");
+    assert_eq!(json["lockfile"]["root"]["manifest_path"], "qlang.toml");
+}
+
 struct WorkspaceLockFixture {
     project_root: PathBuf,
     workspace_manifest: PathBuf,
@@ -347,27 +376,122 @@ fn project_lock_json_writes_workspace_lockfile() {
     .expect("workspace lockfile json generation should keep stderr empty");
 
     let json = parse_json_output("project-lock-workspace-json", &stdout);
-    assert_eq!(json["schema"], "ql.project.lock.result.v1");
-    assert_eq!(
-        json["path"],
-        project_root.display().to_string().replace('\\', "/")
+    expect_workspace_lock_json_result(
+        &json,
+        &project_root,
+        &workspace_manifest,
+        &lockfile_path,
+        false,
+        "wrote",
     );
-    assert_eq!(
-        json["project_manifest_path"],
-        workspace_manifest.display().to_string().replace('\\', "/")
-    );
-    assert_eq!(
-        json["lockfile_path"],
-        lockfile_path.display().to_string().replace('\\', "/")
-    );
-    assert_eq!(json["check_only"], false);
-    assert_eq!(json["status"], "wrote");
-    assert_eq!(json["failure"], JsonValue::Null);
-    assert_eq!(json["lockfile"]["schema"], "ql.project.lock.v1");
-    assert_eq!(json["lockfile"]["root"]["kind"], "workspace");
-    assert_eq!(json["lockfile"]["root"]["manifest_path"], "qlang.toml");
 
     let actual = read_normalized_file(&lockfile_path, "workspace json lockfile");
+    let actual_json: JsonValue =
+        serde_json::from_str(&actual).expect("written workspace lockfile should remain valid json");
+    assert_eq!(json["lockfile"], actual_json);
+}
+
+#[test]
+fn project_lock_json_accepts_workspace_member_source_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-lock-json-workspace-source");
+    let fixture = write_workspace_lock_fixture(&temp);
+    let workspace_manifest = fixture.workspace_manifest;
+    let source_path = fixture.app_source_path;
+    let lockfile_path = fixture.workspace_lockfile_path;
+    let package_lockfile_path = fixture.package_lockfile_path;
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "lock"])
+        .arg(&source_path)
+        .arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql project lock --json` workspace member source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-lock-json-workspace-source",
+        "workspace member source json lockfile generation",
+        &output,
+    )
+    .expect("workspace member source json lockfile generation should succeed");
+    expect_empty_stderr(
+        "project-lock-json-workspace-source",
+        "workspace member source json lockfile generation",
+        &stderr,
+    )
+    .expect("workspace member source json lockfile generation should keep stderr empty");
+
+    let json = parse_json_output("project-lock-json-workspace-source", &stdout);
+    expect_workspace_lock_json_result(
+        &json,
+        &source_path,
+        &workspace_manifest,
+        &lockfile_path,
+        false,
+        "wrote",
+    );
+    assert!(
+        !package_lockfile_path.exists(),
+        "workspace member source json lockfile generation should not create a package-local lockfile at `{}`",
+        package_lockfile_path.display()
+    );
+
+    let actual = read_normalized_file(&lockfile_path, "workspace member source json lockfile");
+    let actual_json: JsonValue =
+        serde_json::from_str(&actual).expect("written workspace lockfile should remain valid json");
+    assert_eq!(json["lockfile"], actual_json);
+}
+
+#[test]
+fn project_lock_json_accepts_workspace_member_directory() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-lock-json-workspace-member-dir");
+    let fixture = write_workspace_lock_fixture(&temp);
+    let workspace_manifest = fixture.workspace_manifest;
+    let member_dir = fixture.app_member_dir;
+    let lockfile_path = fixture.workspace_lockfile_path;
+    let package_lockfile_path = fixture.package_lockfile_path;
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "lock"])
+        .arg(&member_dir)
+        .arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql project lock --json` workspace member directory",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-lock-json-workspace-member-dir",
+        "workspace member directory json lockfile generation",
+        &output,
+    )
+    .expect("workspace member directory json lockfile generation should succeed");
+    expect_empty_stderr(
+        "project-lock-json-workspace-member-dir",
+        "workspace member directory json lockfile generation",
+        &stderr,
+    )
+    .expect("workspace member directory json lockfile generation should keep stderr empty");
+
+    let json = parse_json_output("project-lock-json-workspace-member-dir", &stdout);
+    expect_workspace_lock_json_result(
+        &json,
+        &member_dir,
+        &workspace_manifest,
+        &lockfile_path,
+        false,
+        "wrote",
+    );
+    assert!(
+        !package_lockfile_path.exists(),
+        "workspace member directory json lockfile generation should not create a package-local lockfile at `{}`",
+        package_lockfile_path.display()
+    );
+
+    let actual = read_normalized_file(&lockfile_path, "workspace member directory json lockfile");
     let actual_json: JsonValue =
         serde_json::from_str(&actual).expect("written workspace lockfile should remain valid json");
     assert_eq!(json["lockfile"], actual_json);
@@ -427,25 +551,14 @@ fn project_lock_check_json_accepts_workspace_member_source_path() {
     .expect("workspace member source json lockfile check should keep stderr empty");
 
     let json = parse_json_output("project-lock-check-json-workspace-source", &stdout);
-    assert_eq!(json["schema"], "ql.project.lock.result.v1");
-    assert_eq!(
-        json["path"],
-        source_path.display().to_string().replace('\\', "/")
+    expect_workspace_lock_json_result(
+        &json,
+        &source_path,
+        &workspace_manifest,
+        &lockfile_path,
+        true,
+        "up-to-date",
     );
-    assert_eq!(
-        json["project_manifest_path"],
-        workspace_manifest.display().to_string().replace('\\', "/")
-    );
-    assert_eq!(
-        json["lockfile_path"],
-        lockfile_path.display().to_string().replace('\\', "/")
-    );
-    assert_eq!(json["check_only"], true);
-    assert_eq!(json["status"], "up-to-date");
-    assert_eq!(json["failure"], JsonValue::Null);
-    assert_eq!(json["lockfile"]["schema"], "ql.project.lock.v1");
-    assert_eq!(json["lockfile"]["root"]["kind"], "workspace");
-    assert_eq!(json["lockfile"]["root"]["manifest_path"], "qlang.toml");
 
     let checked_lockfile = read_normalized_file(&lockfile_path, "checked workspace lockfile");
     expect_snapshot_matches(
@@ -458,6 +571,84 @@ fn project_lock_check_json_accepts_workspace_member_source_path() {
     assert!(
         !package_lockfile_path.exists(),
         "workspace member source json lockfile check should not create a package-local lockfile at `{}`",
+        package_lockfile_path.display()
+    );
+}
+
+#[test]
+fn project_lock_check_json_accepts_workspace_member_directory() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-lock-check-json-workspace-member-dir");
+    let fixture = write_workspace_lock_fixture(&temp);
+    let project_root = fixture.project_root;
+    let workspace_manifest = fixture.workspace_manifest;
+    let member_dir = fixture.app_member_dir;
+    let lockfile_path = fixture.workspace_lockfile_path;
+    let package_lockfile_path = fixture.package_lockfile_path;
+
+    let mut write_command = ql_command(&workspace_root);
+    write_command.args(["project", "lock"]).arg(&project_root);
+    let write_output = run_command_capture(
+        &mut write_command,
+        "`ql project lock` before member directory check",
+    );
+    let (_, write_stderr) = expect_success(
+        "project-lock-check-json-workspace-member-dir",
+        "initial workspace lockfile generation",
+        &write_output,
+    )
+    .expect("initial workspace lockfile generation should succeed");
+    expect_empty_stderr(
+        "project-lock-check-json-workspace-member-dir",
+        "initial workspace lockfile generation",
+        &write_stderr,
+    )
+    .expect("initial workspace lockfile generation should not print stderr");
+    let initial_lockfile = read_normalized_file(&lockfile_path, "initial workspace lockfile");
+
+    let mut check_command = ql_command(&workspace_root);
+    check_command
+        .args(["project", "lock", "--check"])
+        .arg(&member_dir)
+        .arg("--json");
+    let output = run_command_capture(
+        &mut check_command,
+        "`ql project lock --check --json` workspace member directory",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-lock-check-json-workspace-member-dir",
+        "workspace member directory json lockfile check",
+        &output,
+    )
+    .expect("workspace member directory json lockfile check should succeed");
+    expect_empty_stderr(
+        "project-lock-check-json-workspace-member-dir",
+        "workspace member directory json lockfile check",
+        &stderr,
+    )
+    .expect("workspace member directory json lockfile check should keep stderr empty");
+
+    let json = parse_json_output("project-lock-check-json-workspace-member-dir", &stdout);
+    expect_workspace_lock_json_result(
+        &json,
+        &member_dir,
+        &workspace_manifest,
+        &lockfile_path,
+        true,
+        "up-to-date",
+    );
+
+    let checked_lockfile = read_normalized_file(&lockfile_path, "checked workspace lockfile");
+    expect_snapshot_matches(
+        "project-lock-check-json-workspace-member-dir",
+        "workspace member directory json check lockfile contents",
+        &initial_lockfile,
+        &checked_lockfile,
+    )
+    .expect("workspace member directory json lockfile check should not rewrite the lockfile");
+    assert!(
+        !package_lockfile_path.exists(),
+        "workspace member directory json lockfile check should not create a package-local lockfile at `{}`",
         package_lockfile_path.display()
     );
 }

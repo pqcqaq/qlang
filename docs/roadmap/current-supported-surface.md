@@ -29,7 +29,7 @@
 - `ql build` 已覆盖 workspace `--package` JSON dependency-closure 输出；`run/test/check` 已覆盖 workspace `--package` JSON 关键路径。
 - `ql project graph/targets/status` 已覆盖 workspace root、workspace member path 和 workspace `--package` selector；`project graph/targets/status --package --json` 已覆盖 member source/directory 入口；`ql project target add` 支持 workspace root `--package` 和 member directory 入口。
 - `ql project dependencies/dependents --json` 已覆盖 workspace member source/directory 派生包名，脚本不必重复传 `--name`。
-- `ql project lock` 已覆盖 workspace root、member source/directory 写入 workspace lockfile，以及 member source `--check --json` 的 up-to-date 检查。
+- `ql project lock` 已覆盖 workspace root、member source/directory 写入 workspace lockfile，以及 member source/directory `--json` 写入和 `--check --json` up-to-date 检查。
 - `ql project add-dependency/remove-dependency` 已覆盖 workspace member source/directory 和 workspace root `--package` selector。
 - `ql run` 已用真实 smoke 覆盖 dependency public functions/values/types/methods/traits、direct dependency generic public functions、workspace `--package` dependency generic、workspace `--package` dependency generic JSON、transitive generic wrapper/helper specialization 和 dependency generic JSON 输出。
 - 单文件 `ql build/run/test file.ql` 可复用本地 generic free function direct-call specialization。
