@@ -11806,10 +11806,12 @@ fn project_emit_interface_path(
 
     if output.is_some() && manifest.workspace.is_some() {
         if let Some(selected_package_name) = selected_package_name {
-            let (_, package_manifest) = resolve_project_selected_package_manifest(
+            let (_, package_manifest) = resolve_selected_workspace_member_manifest(
+                &manifest,
                 path,
-                Some(selected_package_name),
+                selected_package_name,
                 emit_command_label.as_str(),
+                "--package",
             )?;
             match emit_package_interface_path(
                 &package_manifest.manifest_path,

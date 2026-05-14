@@ -2679,6 +2679,344 @@ pub fn exported() -> Int {
 }
 
 #[test]
+fn project_emit_interface_workspace_package_selector_rejects_duplicate_package_names() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-workspace-package-selector-duplicate");
+    let project_root = temp.path().join("workspace-only");
+    let first_root = project_root.join("packages").join("a");
+    let second_root = project_root.join("packages").join("b");
+    std::fs::create_dir_all(first_root.join("src"))
+        .expect("create first duplicate package source directory");
+    std::fs::create_dir_all(second_root.join("src"))
+        .expect("create second duplicate package source directory");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/a", "packages/b"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/a/qlang.toml",
+        r#"
+[package]
+name = "util"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/a/src/lib.ql",
+        r#"
+package demo.a
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/b/qlang.toml",
+        r#"
+[package]
+name = "util"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/b/src/lib.ql",
+        r#"
+package demo.b
+
+pub fn exported() -> Int {
+    return 2
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&project_root)
+        .args(["--package", "util"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --package` duplicate workspace package",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-workspace-package-selector-duplicate",
+        "workspace interface emission package selector duplicate package",
+        &output,
+        1,
+    )
+    .expect("workspace interface emission package selector should reject duplicate package names");
+    expect_empty_stdout(
+        "project-interface-workspace-package-selector-duplicate",
+        "workspace interface emission package selector duplicate package",
+        &stdout,
+    )
+    .expect("duplicate package selector should not emit interface output");
+    expect_stderr_contains(
+        "project-interface-workspace-package-selector-duplicate",
+        "workspace interface emission package selector duplicate package",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project emit-interface` workspace manifest `{}` contains multiple members for package `util`: packages/a ({}/packages/a/qlang.toml), packages/b ({}/packages/b/qlang.toml)",
+            project_root.join("qlang.toml").to_string_lossy().replace('\\', "/"),
+            project_root.to_string_lossy().replace('\\', "/"),
+            project_root.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .expect("duplicate package selector should list matching workspace members");
+    assert!(
+        !first_root.join("util.qi").exists() && !second_root.join("util.qi").exists(),
+        "duplicate package selector should not write interface artifacts"
+    );
+}
+
+#[test]
+fn project_emit_interface_workspace_package_selector_surfaces_broken_member_metadata() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-workspace-package-selector-broken");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    let broken_root = project_root.join("packages").join("broken");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app package source directory for broken selector test");
+    std::fs::create_dir_all(&broken_root)
+        .expect("create broken package directory for broken selector test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/broken/qlang.toml",
+        r#"
+[package]
+version = "0.1.0"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&project_root)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --package` broken workspace member metadata",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-workspace-package-selector-broken",
+        "workspace interface emission package selector broken member metadata",
+        &output,
+        1,
+    )
+    .expect("workspace interface emission package selector should fail when another member metadata is unresolved");
+    expect_empty_stdout(
+        "project-interface-workspace-package-selector-broken",
+        "workspace interface emission package selector broken member metadata",
+        &stdout,
+    )
+    .expect("broken member selector should not emit interface output");
+    expect_stderr_contains(
+        "project-interface-workspace-package-selector-broken",
+        "workspace interface emission package selector broken member metadata",
+        &stderr.replace('\\', "/"),
+        "error: `ql project emit-interface` failed to inspect workspace member `packages/broken`: manifest",
+    )
+    .expect("broken member selector should surface the broken member error");
+    expect_stderr_contains(
+        "project-interface-workspace-package-selector-broken",
+        "workspace interface emission package selector broken member metadata",
+        &stderr,
+        "does not declare `[package].name`",
+    )
+    .expect("broken member selector should preserve the missing package-name detail");
+    assert!(
+        !app_root.join("app.qi").exists(),
+        "broken member selector should not write a selected member interface before selector resolution completes"
+    );
+}
+
+#[test]
+fn project_emit_interface_check_workspace_package_selector_rejects_duplicate_package_names() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-check-workspace-selector-duplicate");
+    let project_root = temp.path().join("workspace-only");
+    std::fs::create_dir_all(project_root.join("packages").join("a").join("src"))
+        .expect("create first duplicate package source directory for check selector test");
+    std::fs::create_dir_all(project_root.join("packages").join("b").join("src"))
+        .expect("create second duplicate package source directory for check selector test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/a", "packages/b"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/a/qlang.toml",
+        r#"
+[package]
+name = "util"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/b/qlang.toml",
+        r#"
+[package]
+name = "util"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--check"])
+        .arg(&project_root)
+        .args(["--package", "util"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --check --package` duplicate workspace package",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-check-workspace-selector-duplicate",
+        "workspace interface check package selector duplicate package",
+        &output,
+        1,
+    )
+    .expect("workspace interface check package selector should reject duplicate package names");
+    expect_empty_stdout(
+        "project-interface-check-workspace-selector-duplicate",
+        "workspace interface check package selector duplicate package",
+        &stdout,
+    )
+    .expect("duplicate package check selector should not print stdout");
+    expect_stderr_contains(
+        "project-interface-check-workspace-selector-duplicate",
+        "workspace interface check package selector duplicate package",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project emit-interface --check` workspace manifest `{}` contains multiple members for package `util`: packages/a ({}/packages/a/qlang.toml), packages/b ({}/packages/b/qlang.toml)",
+            project_root.join("qlang.toml").to_string_lossy().replace('\\', "/"),
+            project_root.to_string_lossy().replace('\\', "/"),
+            project_root.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .expect("duplicate package check selector should list matching workspace members");
+}
+
+#[test]
+fn project_emit_interface_check_workspace_package_selector_surfaces_broken_member_metadata() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-check-workspace-selector-broken");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    let broken_root = project_root.join("packages").join("broken");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app package source directory for check selector broken test");
+    std::fs::create_dir_all(&broken_root)
+        .expect("create broken package directory for check selector broken test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/app.qi",
+        "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn exported() -> Int
+",
+    );
+    temp.write(
+        "workspace-only/packages/broken/qlang.toml",
+        r#"
+[package]
+version = "0.1.0"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--check"])
+        .arg(&project_root)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --check --package` broken workspace member metadata",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-check-workspace-selector-broken",
+        "workspace interface check package selector broken member metadata",
+        &output,
+        1,
+    )
+    .expect("workspace interface check package selector should fail when another member metadata is unresolved");
+    expect_empty_stdout(
+        "project-interface-check-workspace-selector-broken",
+        "workspace interface check package selector broken member metadata",
+        &stdout,
+    )
+    .expect("broken member check selector should not print stdout");
+    expect_stderr_contains(
+        "project-interface-check-workspace-selector-broken",
+        "workspace interface check package selector broken member metadata",
+        &stderr.replace('\\', "/"),
+        "error: `ql project emit-interface --check` failed to inspect workspace member `packages/broken`: manifest",
+    )
+    .expect("broken member check selector should surface the broken member error");
+    expect_stderr_contains(
+        "project-interface-check-workspace-selector-broken",
+        "workspace interface check package selector broken member metadata",
+        &stderr,
+        "does not declare `[package].name`",
+    )
+    .expect("broken member check selector should preserve the missing package-name detail");
+}
+
+#[test]
 fn project_emit_interface_member_directory_uses_workspace_root_context() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-workspace-member-dir");
@@ -5242,6 +5580,170 @@ pub fn exported() -> Int
         &actual,
     )
     .expect("workspace-only selector output artifact should match the exported interface");
+}
+
+#[test]
+fn project_emit_interface_workspace_package_selector_with_output_rejects_duplicate_package_names() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-workspace-selector-output-duplicate");
+    let project_root = temp.path().join("workspace-only");
+    std::fs::create_dir_all(project_root.join("packages").join("a").join("src"))
+        .expect("create first duplicate package source directory for selector output test");
+    std::fs::create_dir_all(project_root.join("packages").join("b").join("src"))
+        .expect("create second duplicate package source directory for selector output test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/a", "packages/b"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/a/qlang.toml",
+        r#"
+[package]
+name = "util"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/b/qlang.toml",
+        r#"
+[package]
+name = "util"
+"#,
+    );
+    let output_path = project_root.join("artifacts").join("util.qi");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&project_root)
+        .args(["--package", "util", "--output"])
+        .arg(&output_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --package --output` duplicate workspace package",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-workspace-selector-output-duplicate",
+        "workspace selector output duplicate package",
+        &output,
+        1,
+    )
+    .expect("workspace selector output should reject duplicate package names");
+    expect_empty_stdout(
+        "project-interface-workspace-selector-output-duplicate",
+        "workspace selector output duplicate package",
+        &stdout,
+    )
+    .expect("duplicate selector output should not print stdout");
+    expect_stderr_contains(
+        "project-interface-workspace-selector-output-duplicate",
+        "workspace selector output duplicate package",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project emit-interface --output {}` workspace manifest `{}` contains multiple members for package `util`: packages/a ({}/packages/a/qlang.toml), packages/b ({}/packages/b/qlang.toml)",
+            output_path.to_string_lossy().replace('\\', "/"),
+            project_root.join("qlang.toml").to_string_lossy().replace('\\', "/"),
+            project_root.to_string_lossy().replace('\\', "/"),
+            project_root.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .expect("duplicate selector output should list matching workspace members");
+    assert!(
+        !output_path.exists(),
+        "duplicate selector output should not create `{}`",
+        output_path.display()
+    );
+}
+
+#[test]
+fn project_emit_interface_workspace_package_selector_with_output_surfaces_broken_member_metadata() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-workspace-selector-output-broken");
+    let project_root = temp.path().join("workspace-only");
+    std::fs::create_dir_all(project_root.join("packages").join("app").join("src"))
+        .expect("create app package source directory for selector output broken test");
+    std::fs::create_dir_all(project_root.join("packages").join("broken"))
+        .expect("create broken package directory for selector output broken test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/broken/qlang.toml",
+        r#"
+[package]
+version = "0.1.0"
+"#,
+    );
+    let output_path = project_root.join("artifacts").join("app.qi");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&project_root)
+        .args(["--package", "app", "--output"])
+        .arg(&output_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --package --output` broken workspace member metadata",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-workspace-selector-output-broken",
+        "workspace selector output broken member metadata",
+        &output,
+        1,
+    )
+    .expect("workspace selector output should fail when another member metadata is unresolved");
+    expect_empty_stdout(
+        "project-interface-workspace-selector-output-broken",
+        "workspace selector output broken member metadata",
+        &stdout,
+    )
+    .expect("broken selector output should not print stdout");
+    expect_stderr_contains(
+        "project-interface-workspace-selector-output-broken",
+        "workspace selector output broken member metadata",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project emit-interface --output {}` failed to inspect workspace member `packages/broken`: manifest",
+            output_path.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .expect("broken selector output should surface the broken member error");
+    expect_stderr_contains(
+        "project-interface-workspace-selector-output-broken",
+        "workspace selector output broken member metadata",
+        &stderr,
+        "does not declare `[package].name`",
+    )
+    .expect("broken selector output should preserve the missing package-name detail");
+    assert!(
+        !output_path.exists(),
+        "broken selector output should not create `{}`",
+        output_path.display()
+    );
 }
 
 #[test]
