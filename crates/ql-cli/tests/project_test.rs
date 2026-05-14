@@ -58,6 +58,7 @@ struct WorkspaceTestPackageSelectorProject {
     project_root: PathBuf,
     app_root: PathBuf,
     selected_smoke_output: PathBuf,
+    selected_extra_output: PathBuf,
     unselected_smoke_output: PathBuf,
 }
 
@@ -155,10 +156,18 @@ name = "tool"
         "fn main() -> Int { return 0 }\n",
     );
     temp.write(
+        "workspace/packages/app/tests/api/extra.ql",
+        "fn main() -> Int { return 0 }\n",
+    );
+    temp.write(
         "workspace/packages/tool/tests/tool_only.ql",
         "fn main() -> Int { return 0 }\n",
     );
 
+    let selected_extra_output = executable_output_path(
+        &project_root.join("packages/app/target/ql/debug/tests/api"),
+        "extra",
+    );
     let selected_smoke_output = executable_output_path(
         &project_root.join("packages/app/target/ql/debug/tests"),
         "app_only",
@@ -173,6 +182,7 @@ name = "tool"
         project_root,
         app_root,
         selected_smoke_output,
+        selected_extra_output,
         unselected_smoke_output,
     }
 }
@@ -3465,8 +3475,9 @@ fn test_workspace_path_selects_requested_package_tests() {
         "project-test-package-selector",
         &stdout.replace('\\', "/"),
         &[
+            "test packages/app/tests/api/extra.ql ... ok",
             "test packages/app/tests/app_only.ql ... ok",
-            "test result: ok. 1 passed; 0 failed",
+            "test result: ok. 2 passed; 0 failed",
         ],
     )
     .expect("workspace-path `ql test --package` should run only the selected package tests");
@@ -3481,6 +3492,15 @@ fn test_workspace_path_selects_requested_package_tests() {
         "workspace package selector tests",
     )
     .expect("workspace-path `ql test --package` should emit selected package test artifacts");
+    expect_file_exists(
+        "project-test-package-selector",
+        &fixture.selected_extra_output,
+        "selected package nested smoke executable",
+        "workspace package selector tests",
+    )
+    .expect(
+        "workspace-path `ql test --package` should emit selected nested package test artifacts",
+    );
     assert!(
         !fixture.unselected_smoke_output.exists(),
         "workspace-path `ql test --package` should not build tests from unselected packages"
@@ -3523,8 +3543,9 @@ fn test_workspace_member_directory_selects_requested_package_tests() {
         "project-test-member-dir-package-selector",
         &stdout.replace('\\', "/"),
         &[
+            "test packages/app/tests/api/extra.ql ... ok",
             "test packages/app/tests/app_only.ql ... ok",
-            "test result: ok. 1 passed; 0 failed",
+            "test result: ok. 2 passed; 0 failed",
         ],
     )
     .expect(
@@ -3541,9 +3562,140 @@ fn test_workspace_member_directory_selects_requested_package_tests() {
         "workspace member directory package selector tests",
     )
     .expect("workspace member directory `ql test --package` should emit selected package test artifacts");
+    expect_file_exists(
+        "project-test-member-dir-package-selector",
+        &fixture.selected_extra_output,
+        "selected package nested smoke executable",
+        "workspace member directory package selector tests",
+    )
+    .expect(
+        "workspace member directory `ql test --package` should emit selected nested package test artifacts",
+    );
     assert!(
         !fixture.unselected_smoke_output.exists(),
         "workspace member directory `ql test --package` should not build tests from unselected packages"
+    );
+}
+
+#[test]
+fn test_workspace_member_directory_package_selector_filters_selected_package_tests() {
+    if !toolchain_available("`ql test --filter --package` workspace member directory test") {
+        return;
+    }
+
+    let fixture =
+        write_workspace_test_package_selector_project("ql-project-test-member-dir-package-filter");
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--filter", "api/extra"])
+        .arg(&fixture.app_root)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --filter --package` workspace member directory",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-member-dir-package-filter",
+        "workspace member directory package selector filtered tests",
+        &output,
+    )
+    .expect("workspace member directory `ql test --filter --package` should succeed");
+    expect_empty_stderr(
+        "project-test-member-dir-package-filter",
+        "workspace member directory package selector filtered tests",
+        &stderr,
+    )
+    .expect("workspace member directory `ql test --filter --package` should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-member-dir-package-filter",
+        &stdout.replace('\\', "/"),
+        &[
+            "test packages/app/tests/api/extra.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect(
+        "workspace member directory `ql test --filter --package` should run only matching selected-package tests",
+    );
+    assert!(
+        !stdout.contains("packages/app/tests/app_only.ql")
+            && !stdout.contains("packages/tool/tests/tool_only.ql"),
+        "workspace member directory `ql test --filter --package` should not run unselected tests: {stdout}"
+    );
+    expect_file_exists(
+        "project-test-member-dir-package-filter",
+        &fixture.selected_extra_output,
+        "filtered package smoke executable",
+        "workspace member directory package selector filtered tests",
+    )
+    .expect("workspace member directory `ql test --filter --package` should emit the filtered test artifact");
+    assert!(
+        !fixture.selected_smoke_output.exists() && !fixture.unselected_smoke_output.exists(),
+        "workspace member directory `ql test --filter --package` should not build unselected package tests"
+    );
+}
+
+#[test]
+fn test_workspace_member_directory_package_selector_selects_requested_target() {
+    if !toolchain_available("`ql test --target --package` workspace member directory test") {
+        return;
+    }
+
+    let fixture =
+        write_workspace_test_package_selector_project("ql-project-test-member-dir-package-target");
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["test"]).arg(&fixture.app_root).args([
+        "--package",
+        "app",
+        "--target",
+        "packages/app/tests/api/extra.ql",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --target --package` workspace member directory",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-member-dir-package-target",
+        "workspace member directory package selector target tests",
+        &output,
+    )
+    .expect("workspace member directory `ql test --target --package` should succeed");
+    expect_empty_stderr(
+        "project-test-member-dir-package-target",
+        "workspace member directory package selector target tests",
+        &stderr,
+    )
+    .expect("workspace member directory `ql test --target --package` should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-member-dir-package-target",
+        &stdout.replace('\\', "/"),
+        &[
+            "test packages/app/tests/api/extra.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect(
+        "workspace member directory `ql test --target --package` should run only the selected target",
+    );
+    assert!(
+        !stdout.contains("packages/app/tests/app_only.ql")
+            && !stdout.contains("packages/tool/tests/tool_only.ql"),
+        "workspace member directory `ql test --target --package` should not run unselected tests: {stdout}"
+    );
+    expect_file_exists(
+        "project-test-member-dir-package-target",
+        &fixture.selected_extra_output,
+        "target-selected package smoke executable",
+        "workspace member directory package selector target tests",
+    )
+    .expect("workspace member directory `ql test --target --package` should emit the selected target artifact");
+    assert!(
+        !fixture.selected_smoke_output.exists() && !fixture.unselected_smoke_output.exists(),
+        "workspace member directory `ql test --target --package` should not build unselected package tests"
     );
 }
 
@@ -3586,16 +3738,21 @@ fn test_workspace_path_package_selector_reports_json_success() {
         "filter": JsonValue::Null,
         "list_only": false,
         "status": "ok",
-        "discovered_total": 1,
-        "selected_total": 1,
+        "discovered_total": 2,
+        "selected_total": 2,
         "targets": [
+            {
+                "path": "packages/app/tests/api/extra.ql",
+                "kind": "smoke",
+                "profile": "debug",
+            },
             {
                 "path": "packages/app/tests/app_only.ql",
                 "kind": "smoke",
                 "profile": "debug",
             }
         ],
-        "passed": 1,
+        "passed": 2,
         "failed": 0,
         "failures": [],
     });
@@ -3610,6 +3767,15 @@ fn test_workspace_path_package_selector_reports_json_success() {
         "workspace package selector json tests",
     )
     .expect("workspace-path `ql test --json --package` should emit selected package artifacts");
+    expect_file_exists(
+        "project-test-package-selector-json",
+        &fixture.selected_extra_output,
+        "selected package nested smoke executable",
+        "workspace package selector json tests",
+    )
+    .expect(
+        "workspace-path `ql test --json --package` should emit selected nested package artifacts",
+    );
     assert!(
         !fixture.unselected_smoke_output.exists(),
         "workspace-path `ql test --json --package` should not build unselected package tests"
@@ -3659,16 +3825,21 @@ fn test_workspace_member_directory_package_selector_reports_json_success() {
         "filter": JsonValue::Null,
         "list_only": false,
         "status": "ok",
-        "discovered_total": 1,
-        "selected_total": 1,
+        "discovered_total": 2,
+        "selected_total": 2,
         "targets": [
+            {
+                "path": "packages/app/tests/api/extra.ql",
+                "kind": "smoke",
+                "profile": "debug",
+            },
             {
                 "path": "packages/app/tests/app_only.ql",
                 "kind": "smoke",
                 "profile": "debug",
             }
         ],
-        "passed": 1,
+        "passed": 2,
         "failed": 0,
         "failures": [],
     });
@@ -3684,6 +3855,15 @@ fn test_workspace_member_directory_package_selector_reports_json_success() {
     )
     .expect(
         "workspace member directory `ql test --json --package` should emit selected package artifacts",
+    );
+    expect_file_exists(
+        "project-test-member-dir-package-selector-json",
+        &fixture.selected_extra_output,
+        "selected package nested smoke executable",
+        "workspace member directory package selector json tests",
+    )
+    .expect(
+        "workspace member directory `ql test --json --package` should emit selected nested package artifacts",
     );
     assert!(
         !fixture.unselected_smoke_output.exists(),
