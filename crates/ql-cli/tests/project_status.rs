@@ -12,6 +12,11 @@ fn parse_json_output(case_name: &str, stdout: &str) -> JsonValue {
         .unwrap_or_else(|error| panic!("[{case_name}] parse json stdout: {error}\n{stdout}"))
 }
 
+struct WorkspaceStatusSelectorFixture {
+    _temp: TempDir,
+    project_root: std::path::PathBuf,
+}
+
 fn write_status_workspace(temp: &TempDir) -> std::path::PathBuf {
     let project_root = temp.path().join("workspace");
     temp.write(
@@ -39,6 +44,14 @@ fn write_status_workspace(temp: &TempDir) -> std::path::PathBuf {
         "[package]\nname = \"vendor.core\"\n",
     );
     project_root
+}
+
+fn write_status_selector_workspace(temp: TempDir) -> WorkspaceStatusSelectorFixture {
+    let project_root = write_status_workspace(&temp);
+    WorkspaceStatusSelectorFixture {
+        _temp: temp,
+        project_root,
+    }
 }
 
 #[test]
@@ -149,6 +162,74 @@ fn project_status_supports_workspace_package_selector() {
     assert!(
         !stdout.contains("packages/app"),
         "package selector should not include unselected members, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn project_status_supports_json_workspace_package_selector() {
+    let workspace_root = workspace_root();
+    let fixture = write_status_selector_workspace(TempDir::new(
+        "ql-cli-project-status-package-selector-json",
+    ));
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "status",
+        &fixture.project_root.to_string_lossy(),
+        "--package",
+        "core",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project status --package --json` workspace selector",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-status-package-selector-json",
+        "project status package selector json",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-status-package-selector-json",
+        "project status package selector json",
+        &stderr,
+    )
+    .unwrap();
+
+    let actual = parse_json_output("project-status-package-selector-json", &stdout);
+    let expected = serde_json::json!({
+        "schema": "ql.project.status.v1",
+        "path": fixture.project_root.to_string_lossy().replace('\\', "/"),
+        "project_manifest_path": fixture.project_root.join("qlang.toml").to_string_lossy().replace('\\', "/"),
+        "kind": "workspace",
+        "status": "needs-interface-sync",
+        "members": [
+            {
+                "member": "packages/core",
+                "package_name": "core",
+                "manifest_path": fixture.project_root.join("packages/core/qlang.toml").to_string_lossy().replace('\\', "/"),
+                "default_profile": JsonValue::Null,
+                "interface": {
+                    "path": fixture.project_root.join("packages/core/core.qi").to_string_lossy().replace('\\', "/"),
+                    "status": "missing",
+                    "detail": JsonValue::Null,
+                    "stale_reasons": [],
+                },
+                "targets": [
+                    {
+                        "kind": "lib",
+                        "path": "src/lib.ql",
+                    }
+                ],
+                "dependencies": [],
+            }
+        ],
+    });
+    assert_eq!(
+        actual, expected,
+        "workspace root package selector status json should match the stable contract"
     );
 }
 
