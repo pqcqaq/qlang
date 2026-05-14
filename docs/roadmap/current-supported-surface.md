@@ -24,7 +24,7 @@
 
 - `ql check/fmt/mir/ownership/runtime/build/run/test/project/ffi` 已实现。
 - `ql project init/add/remove/status/dependencies/dependents/targets/graph/lock/emit-interface` 已可维护本地 workspace。
-- `ql build/run/test/check` 支持 project-aware 入口和常用 `--json`、`--list`、`--package`、`--target`。
+- `ql build/run/test/check` 支持 project-aware 入口和常用 `--json`、`--list`、`--package`、`--target`；`ql build --list --json` 已覆盖 workspace member source/directory 入口。
 - `ql build/run/test/check` 已共享 project context / request-root resolution；`build/run` 复用 project source target selector，`test` 保留 project-aware test-file 语义，且都有真实 CLI 回归覆盖。
 - `ql build` 已覆盖 workspace `--package` JSON dependency-closure 输出；`run/test/check` 已覆盖 workspace `--package` JSON 关键路径。
 - `ql project graph/targets/status` 已覆盖 workspace root、workspace member path 和 workspace `--package` selector；`project graph/targets/status --package --json` 已覆盖 member source/directory 入口；`ql project target add` 支持 workspace root `--package` 和 member directory 入口。

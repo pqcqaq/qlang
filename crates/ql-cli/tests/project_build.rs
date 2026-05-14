@@ -3846,17 +3846,24 @@ name = "tool"
     );
 }
 
-#[test]
-fn build_project_member_directory_list_json_uses_workspace_context() {
-    let workspace_root = workspace_root();
-    let temp = TempDir::new("ql-project-build-list-member-dir");
+struct BuildListWorkspaceFixture {
+    temp: TempDir,
+    project_root: PathBuf,
+    app_root: PathBuf,
+    app_source_path: PathBuf,
+    app_manifest: PathBuf,
+    tool_manifest: PathBuf,
+}
+
+fn write_build_list_workspace_fixture(prefix: &str) -> BuildListWorkspaceFixture {
+    let temp = TempDir::new(prefix);
     let project_root = temp.path().join("workspace");
     let app_root = project_root.join("packages").join("app");
     let tool_root = project_root.join("packages").join("tool");
     std::fs::create_dir_all(app_root.join("src/bin"))
-        .expect("create app source tree for build list member directory test");
+        .expect("create app source tree for build list member path test");
     std::fs::create_dir_all(tool_root.join("src"))
-        .expect("create tool source tree for build list member directory test");
+        .expect("create tool source tree for build list member path test");
     temp.write(
         "workspace/qlang.toml",
         r#"
@@ -3871,7 +3878,7 @@ members = ["packages/app", "packages/tool"]
 name = "app"
 "#,
     );
-    temp.write(
+    let app_source_path = temp.write(
         "workspace/packages/app/src/lib.ql",
         "pub fn helper() -> Int { return 1 }\n",
     );
@@ -3895,11 +3902,102 @@ name = "tool"
         "pub fn helper() -> Int { return 3 }\n",
     );
 
+    BuildListWorkspaceFixture {
+        temp,
+        project_root,
+        app_root,
+        app_source_path,
+        app_manifest,
+        tool_manifest,
+    }
+}
+
+fn expected_build_list_workspace_json(fixture: &BuildListWorkspaceFixture) -> JsonValue {
+    serde_json::json!({
+        "schema": "ql.project.targets.v1",
+        "members": [
+            {
+                "manifest_path": fixture.app_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "app",
+                "targets": [
+                    {
+                        "kind": "lib",
+                        "path": "src/lib.ql",
+                    },
+                    {
+                        "kind": "bin",
+                        "path": "src/main.ql",
+                    },
+                    {
+                        "kind": "bin",
+                        "path": "src/bin/admin.ql",
+                    }
+                ],
+            },
+            {
+                "manifest_path": fixture.tool_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "tool",
+                "targets": [
+                    {
+                        "kind": "lib",
+                        "path": "src/lib.ql",
+                    }
+                ],
+            }
+        ],
+    })
+}
+
+#[test]
+fn build_project_member_source_list_json_uses_workspace_context() {
+    let workspace_root = workspace_root();
+    let fixture = write_build_list_workspace_fixture("ql-project-build-list-member-source");
+
     let mut command = ql_command(&workspace_root);
-    command.current_dir(temp.path());
+    command.current_dir(fixture.temp.path());
     command
         .args(["build"])
-        .arg(&app_root)
+        .arg(&fixture.app_source_path)
+        .args(["--list", "--json"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --list --json` workspace member source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-list-member-source",
+        "workspace member source build target listing",
+        &output,
+    )
+    .expect("workspace member source `ql build --list --json` should succeed");
+    expect_empty_stderr(
+        "project-build-list-member-source",
+        "workspace member source build target listing",
+        &stderr,
+    )
+    .expect("workspace member source `ql build --list --json` should not print stderr");
+
+    let json = parse_json_output("project-build-list-member-source", &stdout);
+    let expected = expected_build_list_workspace_json(&fixture);
+    assert_eq!(
+        json, expected,
+        "workspace member source `ql build --list --json` should resolve the outer workspace and report all discovered targets"
+    );
+    assert!(
+        !fixture.project_root.join("packages/app/target").exists(),
+        "`ql build --list --json` workspace member source should not create build artifacts"
+    );
+}
+
+#[test]
+fn build_project_member_directory_list_json_uses_workspace_context() {
+    let workspace_root = workspace_root();
+    let fixture = write_build_list_workspace_fixture("ql-project-build-list-member-dir");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["build"])
+        .arg(&fixture.app_root)
         .args(["--list", "--json"]);
     let output = run_command_capture(
         &mut command,
@@ -3919,45 +4017,13 @@ name = "tool"
     .expect("workspace member directory `ql build --list --json` should not print stderr");
 
     let json = parse_json_output("project-build-list-member-dir", &stdout);
-    let expected = serde_json::json!({
-        "schema": "ql.project.targets.v1",
-        "members": [
-            {
-                "manifest_path": app_manifest.display().to_string().replace('\\', "/"),
-                "package_name": "app",
-                "targets": [
-                    {
-                        "kind": "lib",
-                        "path": "src/lib.ql",
-                    },
-                    {
-                        "kind": "bin",
-                        "path": "src/main.ql",
-                    },
-                    {
-                        "kind": "bin",
-                        "path": "src/bin/admin.ql",
-                    }
-                ],
-            },
-            {
-                "manifest_path": tool_manifest.display().to_string().replace('\\', "/"),
-                "package_name": "tool",
-                "targets": [
-                    {
-                        "kind": "lib",
-                        "path": "src/lib.ql",
-                    }
-                ],
-            }
-        ],
-    });
+    let expected = expected_build_list_workspace_json(&fixture);
     assert_eq!(
         json, expected,
         "workspace member directory `ql build --list --json` should resolve the outer workspace and report all discovered targets"
     );
     assert!(
-        !project_root.join("packages/app/target").exists(),
+        !fixture.project_root.join("packages/app/target").exists(),
         "`ql build --list --json` workspace member directory should not create build artifacts"
     );
 }
