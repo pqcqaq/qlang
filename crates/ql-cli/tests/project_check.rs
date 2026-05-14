@@ -1,10 +1,107 @@
 mod support;
 
+use std::path::PathBuf;
+
 use support::{
     TempDir, expect_empty_stderr, expect_exit_code, expect_snapshot_matches,
     expect_stderr_contains, expect_stderr_not_contains, expect_stdout_contains_all, expect_success,
     ql_command, run_command_capture, workspace_root,
 };
+
+struct WorkspaceCheckPackageSelectorProject {
+    temp: TempDir,
+    workspace_manifest: PathBuf,
+    app_source: PathBuf,
+    tool_source: PathBuf,
+    dep_interface: PathBuf,
+}
+
+fn write_workspace_check_package_selector_project(
+    prefix: &str,
+) -> WorkspaceCheckPackageSelectorProject {
+    let temp = TempDir::new(prefix);
+    let dep_root = temp.path().join("workspace").join("dep");
+    let app_root = temp.path().join("workspace").join("packages").join("app");
+    let tool_root = temp.path().join("workspace").join("packages").join("tool");
+    let workspace_manifest = temp.path().join("workspace").join("qlang.toml");
+    let app_source = app_root.join("src").join("lib.ql");
+    let tool_source = tool_root.join("src").join("lib.ql");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source directory");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+    std::fs::create_dir_all(tool_root.join("src")).expect("create tool source directory");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_interface = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported() -> Int
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub fn main() -> Int {
+    return 2
+}
+"#,
+    );
+
+    WorkspaceCheckPackageSelectorProject {
+        temp,
+        workspace_manifest,
+        app_source,
+        tool_source,
+        dep_interface,
+    }
+}
 
 #[test]
 fn check_package_dir_loads_referenced_interfaces() {
@@ -2541,85 +2638,15 @@ pub fn main() -> Int {
 #[test]
 fn check_workspace_root_supports_package_selectors() {
     let workspace_root = workspace_root();
-    let temp = TempDir::new("ql-project-check-workspace-package-selector");
-    let dep_root = temp.path().join("workspace").join("dep");
-    let app_root = temp.path().join("workspace").join("packages").join("app");
-    let tool_root = temp.path().join("workspace").join("packages").join("tool");
-    let workspace_manifest = temp.path().join("workspace").join("qlang.toml");
-    let app_source = app_root.join("src").join("lib.ql");
-    let tool_source = tool_root.join("src").join("lib.ql");
-    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source directory");
-    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
-    std::fs::create_dir_all(tool_root.join("src")).expect("create tool source directory");
-
-    temp.write(
-        "workspace/qlang.toml",
-        r#"
-[workspace]
-members = ["packages/app", "packages/tool"]
-"#,
-    );
-    temp.write(
-        "workspace/dep/qlang.toml",
-        r#"
-[package]
-name = "dep"
-"#,
-    );
-    temp.write(
-        "workspace/dep/dep.qi",
-        r#"
-// qlang interface v1
-// package: dep
-
-// source: src/lib.ql
-package demo.dep
-
-pub fn exported() -> Int
-"#,
-    );
-    temp.write(
-        "workspace/packages/app/qlang.toml",
-        r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../../dep"]
-"#,
-    );
-    temp.write(
-        "workspace/packages/app/src/lib.ql",
-        r#"
-package demo.app
-
-pub fn main() -> Int {
-    return 1
-}
-"#,
-    );
-    temp.write(
-        "workspace/packages/tool/qlang.toml",
-        r#"
-[package]
-name = "tool"
-"#,
-    );
-    temp.write(
-        "workspace/packages/tool/src/lib.ql",
-        r#"
-package demo.tool
-
-pub fn main() -> Int {
-    return 2
-}
-"#,
+    let fixture = write_workspace_check_package_selector_project(
+        "ql-project-check-workspace-package-selector",
     );
 
     let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
     command
         .args(["check"])
-        .arg(&workspace_manifest)
+        .arg(&fixture.workspace_manifest)
         .args(["--package", "app"]);
     let output = run_command_capture(&mut command, "`ql check` workspace root package selector");
     let (stdout, stderr) = expect_success(
@@ -2635,7 +2662,7 @@ pub fn main() -> Int {
         &[
             &format!(
                 "ok: {}",
-                app_source.display().to_string().replace('\\', "/")
+                fixture.app_source.display().to_string().replace('\\', "/")
             ),
             "loaded interface: ",
             "dep.qi",
@@ -2643,12 +2670,70 @@ pub fn main() -> Int {
     )
     .expect("workspace-root ql check package selector should report the selected member");
     assert!(
-        !normalized_stdout.contains(&tool_source.display().to_string().replace('\\', "/")),
+        !normalized_stdout.contains(&fixture.tool_source.display().to_string().replace('\\', "/")),
         "workspace-root ql check package selector should skip unselected members, got:\n{normalized_stdout}"
     );
     assert!(
         stderr.trim().is_empty(),
         "expected workspace-root ql check package selector stderr to stay empty, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn check_workspace_root_package_selector_supports_json_output() {
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_check_package_selector_project(
+        "ql-project-check-workspace-package-selector-json",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["check", "--json"])
+        .arg(&fixture.workspace_manifest)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check --json` workspace root package selector",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-check-workspace-package-selector-json",
+        "workspace-root ql check package selector json",
+        &output,
+    )
+    .expect("workspace-root ql check package selector json should succeed");
+    expect_empty_stderr(
+        "project-check-workspace-package-selector-json",
+        "workspace-root ql check package selector json",
+        &stderr,
+    )
+    .expect("workspace-root ql check package selector json should not print stderr");
+
+    let expected = format!(
+        "{{\n  \"checked_files\": [\n    \"{}\"\n  ],\n  \"diagnostic_files\": [],\n  \"failing_manifests\": [],\n  \"loaded_interfaces\": [\n    \"{}\"\n  ],\n  \"project_manifest_path\": \"{}\",\n  \"schema\": \"ql.check.v1\",\n  \"scope\": \"workspace\",\n  \"status\": \"ok\",\n  \"sync_interfaces\": false,\n  \"written_interfaces\": []\n}}\n",
+        fixture.app_source.display().to_string().replace('\\', "/"),
+        fixture
+            .dep_interface
+            .display()
+            .to_string()
+            .replace('\\', "/"),
+        fixture
+            .workspace_manifest
+            .display()
+            .to_string()
+            .replace('\\', "/"),
+    );
+    let normalized_stdout = stdout.replace('\\', "/");
+    expect_snapshot_matches(
+        "project-check-workspace-package-selector-json",
+        "workspace package selector check json stdout",
+        &expected,
+        &normalized_stdout,
+    )
+    .expect("workspace-root ql check package selector json should match the stable contract");
+    assert!(
+        !normalized_stdout.contains(&fixture.tool_source.display().to_string().replace('\\', "/")),
+        "workspace-root ql check package selector json should skip unselected members, got:\n{normalized_stdout}"
     );
 }
 
