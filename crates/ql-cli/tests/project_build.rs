@@ -1,5 +1,7 @@
 mod support;
 
+use std::path::PathBuf;
+
 use serde_json::Value as JsonValue;
 use support::{
     TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_file_exists,
@@ -39,6 +41,93 @@ fn write_mock_clang_failure_script(temp: &TempDir) -> std::path::PathBuf {
                 .expect("mark mock clang failure script executable");
         }
         script
+    }
+}
+
+struct WorkspaceDependencyClosureFixture {
+    temp: TempDir,
+    project_root: PathBuf,
+    workspace_manifest: PathBuf,
+    app_manifest: PathBuf,
+    core_manifest: PathBuf,
+    app_output: PathBuf,
+    app_interface_output: PathBuf,
+    core_output: PathBuf,
+    tool_output: PathBuf,
+}
+
+fn workspace_dependency_closure_fixture(prefix: &str) -> WorkspaceDependencyClosureFixture {
+    let temp = TempDir::new(prefix);
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create app package source tree");
+    std::fs::create_dir_all(project_root.join("packages/core/src"))
+        .expect("create core package source tree");
+    std::fs::create_dir_all(project_root.join("packages/tool/src"))
+        .expect("create tool package source tree");
+
+    let workspace_manifest = temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core", "packages/tool"]
+"#,
+    );
+    let app_manifest = temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+core = "../core"
+"#,
+    );
+    let core_manifest = temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn app_value() -> Int { return 1 }\n",
+    );
+    temp.write(
+        "workspace/packages/core/src/lib.ql",
+        "pub fn core_value() -> Int { return 2 }\n",
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        "pub fn tool_value() -> Int { return 3 }\n",
+    );
+
+    let app_output =
+        static_library_output_path(&project_root.join("packages/app/target/ql/debug"), "lib");
+    let app_interface_output = project_root.join("packages/app/app.qi");
+    let core_output =
+        static_library_output_path(&project_root.join("packages/core/target/ql/debug"), "lib");
+    let tool_output =
+        static_library_output_path(&project_root.join("packages/tool/target/ql/debug"), "lib");
+
+    WorkspaceDependencyClosureFixture {
+        temp,
+        project_root,
+        workspace_manifest,
+        app_manifest,
+        core_manifest,
+        app_output,
+        app_interface_output,
+        core_output,
+        tool_output,
     }
 }
 
@@ -6315,71 +6404,14 @@ name = "tool"
 #[test]
 fn build_workspace_package_selector_builds_local_dependency_packages_first() {
     let workspace_root = workspace_root();
-    let temp = TempDir::new("ql-project-build-workspace-dependency-closure");
-    let project_root = temp.path().join("workspace");
-    std::fs::create_dir_all(project_root.join("packages/app/src"))
-        .expect("create app package source tree");
-    std::fs::create_dir_all(project_root.join("packages/core/src"))
-        .expect("create core package source tree");
-    std::fs::create_dir_all(project_root.join("packages/tool/src"))
-        .expect("create tool package source tree");
-
-    temp.write(
-        "workspace/qlang.toml",
-        r#"
-[workspace]
-members = ["packages/app", "packages/core", "packages/tool"]
-"#,
-    );
-    temp.write(
-        "workspace/packages/app/qlang.toml",
-        r#"
-[package]
-name = "app"
-
-[dependencies]
-core = "../core"
-"#,
-    );
-    temp.write(
-        "workspace/packages/core/qlang.toml",
-        r#"
-[package]
-name = "core"
-"#,
-    );
-    temp.write(
-        "workspace/packages/tool/qlang.toml",
-        r#"
-[package]
-name = "tool"
-"#,
-    );
-    temp.write(
-        "workspace/packages/app/src/lib.ql",
-        "pub fn app_value() -> Int { return 1 }\n",
-    );
-    temp.write(
-        "workspace/packages/core/src/lib.ql",
-        "pub fn core_value() -> Int { return 2 }\n",
-    );
-    temp.write(
-        "workspace/packages/tool/src/lib.ql",
-        "pub fn tool_value() -> Int { return 3 }\n",
-    );
-
-    let app_output =
-        static_library_output_path(&project_root.join("packages/app/target/ql/debug"), "lib");
-    let core_output =
-        static_library_output_path(&project_root.join("packages/core/target/ql/debug"), "lib");
-    let tool_output =
-        static_library_output_path(&project_root.join("packages/tool/target/ql/debug"), "lib");
+    let fixture =
+        workspace_dependency_closure_fixture("ql-project-build-workspace-dependency-closure");
 
     let mut command = ql_command(&workspace_root);
-    command.current_dir(temp.path());
+    command.current_dir(fixture.temp.path());
     command
         .args(["build"])
-        .arg(&project_root)
+        .arg(&fixture.project_root)
         .args(["--package", "app"]);
     let output = run_command_capture(
         &mut command,
@@ -6399,8 +6431,10 @@ name = "tool"
     .expect("workspace package selector dependency closure build should not print stderr");
 
     let normalized_stdout = stdout.replace('\\', "/");
-    let core_fragment = format!("wrote staticlib: {}", core_output.display()).replace('\\', "/");
-    let app_fragment = format!("wrote staticlib: {}", app_output.display()).replace('\\', "/");
+    let core_fragment =
+        format!("wrote staticlib: {}", fixture.core_output.display()).replace('\\', "/");
+    let app_fragment =
+        format!("wrote staticlib: {}", fixture.app_output.display()).replace('\\', "/");
     expect_stdout_contains_all(
         "project-build-workspace-dependency-closure",
         &normalized_stdout,
@@ -6421,7 +6455,7 @@ name = "tool"
 
     expect_file_exists(
         "project-build-workspace-dependency-closure",
-        &core_output,
+        &fixture.core_output,
         "workspace dependency artifact",
         "workspace package selector dependency closure build",
     )
@@ -6430,14 +6464,124 @@ name = "tool"
     );
     expect_file_exists(
         "project-build-workspace-dependency-closure",
-        &app_output,
+        &fixture.app_output,
         "workspace selected package artifact",
         "workspace package selector dependency closure build",
     )
     .expect("workspace package selector dependency closure build should emit the selected package artifact");
     assert!(
-        !tool_output.exists(),
+        !fixture.tool_output.exists(),
         "workspace package selector dependency closure build should not build unrelated package artifacts"
+    );
+}
+
+#[test]
+fn build_workspace_package_selector_json_reports_dependency_closure() {
+    let workspace_root = workspace_root();
+    let fixture =
+        workspace_dependency_closure_fixture("ql-project-build-workspace-dependency-closure-json");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["build"])
+        .arg(&fixture.project_root)
+        .args(["--package", "app", "--json"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --package --json` workspace dependency closure",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-workspace-dependency-closure-json",
+        "workspace package selector dependency closure build json",
+        &output,
+    )
+    .expect("workspace-path `ql build --package --json` should build local dependencies first");
+    expect_empty_stderr(
+        "project-build-workspace-dependency-closure-json",
+        "workspace package selector dependency closure build json",
+        &stderr,
+    )
+    .expect("workspace package selector dependency closure build json should not print stderr");
+
+    let json = parse_json_output("project-build-workspace-dependency-closure-json", &stdout);
+    let expected = serde_json::json!({
+        "schema": "ql.build.v1",
+        "path": fixture.project_root.display().to_string().replace('\\', "/"),
+        "scope": "project",
+        "project_manifest_path": fixture.workspace_manifest.display().to_string().replace('\\', "/"),
+        "requested_emit": "llvm-ir",
+        "requested_profile": "debug",
+        "profile_overridden": false,
+        "emit_interface": false,
+        "status": "ok",
+        "built_targets": [
+            {
+                "manifest_path": fixture.core_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "core",
+                "selected": false,
+                "dependency_only": true,
+                "kind": "lib",
+                "path": "src/lib.ql",
+                "emit": "staticlib",
+                "profile": "debug",
+                "artifact_path": fixture.core_output.display().to_string().replace('\\', "/"),
+                "c_header_path": JsonValue::Null,
+            },
+            {
+                "manifest_path": fixture.app_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "app",
+                "selected": true,
+                "dependency_only": false,
+                "kind": "lib",
+                "path": "src/lib.ql",
+                "emit": "staticlib",
+                "profile": "debug",
+                "artifact_path": fixture.app_output.display().to_string().replace('\\', "/"),
+                "c_header_path": JsonValue::Null,
+            }
+        ],
+        "interfaces": [
+            {
+                "manifest_path": fixture.app_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "app",
+                "selected": true,
+                "status": "wrote",
+                "path": fixture.app_interface_output.display().to_string().replace('\\', "/"),
+            }
+        ],
+        "failure": JsonValue::Null,
+    });
+    assert_eq!(
+        json, expected,
+        "workspace-path `ql build --package --json` should report dependency closure in build order"
+    );
+    expect_file_exists(
+        "project-build-workspace-dependency-closure-json",
+        &fixture.core_output,
+        "workspace dependency artifact",
+        "workspace package selector dependency closure build json",
+    )
+    .expect(
+        "workspace package selector dependency closure build json should emit dependency artifact",
+    );
+    expect_file_exists(
+        "project-build-workspace-dependency-closure-json",
+        &fixture.app_output,
+        "workspace selected package artifact",
+        "workspace package selector dependency closure build json",
+    )
+    .expect("workspace package selector dependency closure build json should emit selected package artifact");
+    expect_file_exists(
+        "project-build-workspace-dependency-closure-json",
+        &fixture.app_interface_output,
+        "workspace selected package interface",
+        "workspace package selector dependency closure build json",
+    )
+    .expect("workspace package selector dependency closure build json should emit selected package interface");
+    assert!(
+        !fixture.tool_output.exists(),
+        "workspace package selector dependency closure build json should not build unrelated package artifacts"
     );
 }
 
