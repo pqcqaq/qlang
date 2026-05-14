@@ -6467,6 +6467,242 @@ name = "tool"
     );
 }
 
+struct WorkspacePackageRelativeTargetBuildFixture {
+    temp: TempDir,
+    project_root: PathBuf,
+    workspace_manifest: PathBuf,
+    app_manifest: PathBuf,
+    app_admin_output: PathBuf,
+    app_main_output: PathBuf,
+    app_interface_output: PathBuf,
+    tool_output: PathBuf,
+}
+
+fn workspace_package_relative_target_build_fixture(
+    prefix: &str,
+) -> WorkspacePackageRelativeTargetBuildFixture {
+    let temp = TempDir::new(prefix);
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/app/src/bin"))
+        .expect("create app package source tree");
+    std::fs::create_dir_all(project_root.join("packages/tool/src"))
+        .expect("create tool package source tree");
+
+    let workspace_manifest = temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    let app_manifest = temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/main.ql",
+        "fn main() -> Int { return 1 }\n",
+    );
+    temp.write(
+        "workspace/packages/app/src/bin/admin.ql",
+        "fn main() -> Int { return 2 }\n",
+    );
+    temp.write(
+        "workspace/packages/tool/src/main.ql",
+        "fn main() -> Int { return 3 }\n",
+    );
+
+    let app_admin_output = project_root.join("packages/app/target/ql/debug/bin/admin.ll");
+    let app_main_output = project_root.join("packages/app/target/ql/debug/main.ll");
+    let app_interface_output = project_root.join("packages/app/app.qi");
+    let tool_output = project_root.join("packages/tool/target/ql/debug/main.ll");
+
+    WorkspacePackageRelativeTargetBuildFixture {
+        temp,
+        project_root,
+        workspace_manifest,
+        app_manifest,
+        app_admin_output,
+        app_main_output,
+        app_interface_output,
+        tool_output,
+    }
+}
+
+#[test]
+fn build_workspace_package_selector_accepts_package_relative_target_path() {
+    let workspace_root = workspace_root();
+    let fixture =
+        workspace_package_relative_target_build_fixture("ql-project-build-package-relative-target");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["build"]).arg(&fixture.project_root).args([
+        "--package",
+        "app",
+        "--target",
+        "src/bin/admin.ql",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --package --target` package-relative target",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-package-relative-target",
+        "workspace package-relative target selector build",
+        &output,
+    )
+    .expect("workspace-path `ql build --package --target src/bin/admin.ql` should succeed");
+    expect_empty_stderr(
+        "project-build-package-relative-target",
+        "workspace package-relative target selector build",
+        &stderr,
+    )
+    .expect("workspace package-relative target selector build should not print stderr");
+
+    let normalized_stdout = stdout.replace('\\', "/");
+    let admin_fragment =
+        format!("wrote llvm-ir: {}", fixture.app_admin_output.display()).replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-build-package-relative-target",
+        &normalized_stdout,
+        &[&admin_fragment],
+    )
+    .expect("workspace package-relative target selector build should report selected artifact");
+    assert!(
+        !normalized_stdout
+            .contains(&format!("{}", fixture.app_main_output.display()).replace('\\', "/")),
+        "workspace package-relative target selector build should not report unselected app main artifact"
+    );
+    assert!(
+        !normalized_stdout
+            .contains(&format!("{}", fixture.tool_output.display()).replace('\\', "/")),
+        "workspace package-relative target selector build should not report unselected package artifact"
+    );
+    expect_file_exists(
+        "project-build-package-relative-target",
+        &fixture.app_admin_output,
+        "selected package-relative target artifact",
+        "workspace package-relative target selector build",
+    )
+    .expect("workspace package-relative target selector build should emit selected artifact");
+    assert!(
+        !fixture.app_main_output.exists(),
+        "workspace package-relative target selector build should not build unselected app main"
+    );
+    assert!(
+        !fixture.tool_output.exists(),
+        "workspace package-relative target selector build should not build unselected package"
+    );
+}
+
+#[test]
+fn build_workspace_package_selector_json_reports_package_relative_target_path() {
+    let workspace_root = workspace_root();
+    let fixture = workspace_package_relative_target_build_fixture(
+        "ql-project-build-json-package-relative-target",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["build"]).arg(&fixture.project_root).args([
+        "--package",
+        "app",
+        "--target",
+        "src/bin/admin.ql",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --package --target --json` package-relative target",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-json-package-relative-target",
+        "workspace package-relative target selector build json",
+        &output,
+    )
+    .expect("workspace-path `ql build --package --target src/bin/admin.ql --json` should succeed");
+    expect_empty_stderr(
+        "project-build-json-package-relative-target",
+        "workspace package-relative target selector build json",
+        &stderr,
+    )
+    .expect("workspace package-relative target selector build json should not print stderr");
+
+    let json = parse_json_output("project-build-json-package-relative-target", &stdout);
+    let expected = serde_json::json!({
+        "schema": "ql.build.v1",
+        "path": fixture.project_root.display().to_string().replace('\\', "/"),
+        "scope": "project",
+        "project_manifest_path": fixture.workspace_manifest.display().to_string().replace('\\', "/"),
+        "requested_emit": "llvm-ir",
+        "requested_profile": "debug",
+        "profile_overridden": false,
+        "emit_interface": false,
+        "status": "ok",
+        "built_targets": [
+            {
+                "manifest_path": fixture.app_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "app",
+                "selected": true,
+                "dependency_only": false,
+                "kind": "bin",
+                "path": "src/bin/admin.ql",
+                "emit": "llvm-ir",
+                "profile": "debug",
+                "artifact_path": fixture.app_admin_output.display().to_string().replace('\\', "/"),
+                "c_header_path": JsonValue::Null,
+            }
+        ],
+        "interfaces": [
+            {
+                "manifest_path": fixture.app_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "app",
+                "selected": true,
+                "status": "wrote",
+                "path": fixture.app_interface_output.display().to_string().replace('\\', "/"),
+            }
+        ],
+        "failure": JsonValue::Null,
+    });
+    assert_eq!(
+        json, expected,
+        "workspace-path `ql build --package --target --json` should report the selected package-relative target"
+    );
+    expect_file_exists(
+        "project-build-json-package-relative-target",
+        &fixture.app_admin_output,
+        "selected package-relative target artifact",
+        "workspace package-relative target selector build json",
+    )
+    .expect("workspace package-relative target selector build json should emit selected artifact");
+    expect_file_exists(
+        "project-build-json-package-relative-target",
+        &fixture.app_interface_output,
+        "selected package interface",
+        "workspace package-relative target selector build json",
+    )
+    .expect("workspace package-relative target selector build json should emit selected interface");
+    assert!(
+        !fixture.app_main_output.exists(),
+        "workspace package-relative target selector build json should not build unselected app main"
+    );
+    assert!(
+        !fixture.tool_output.exists(),
+        "workspace package-relative target selector build json should not build unselected package"
+    );
+}
+
 #[test]
 fn build_workspace_package_selector_builds_local_dependency_packages_first() {
     let workspace_root = workspace_root();

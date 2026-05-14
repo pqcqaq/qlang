@@ -25,14 +25,14 @@
 - `ql check/fmt/mir/ownership/runtime/build/run/test/project/ffi` 已实现。
 - `ql project init/add/remove/status/dependencies/dependents/targets/graph/lock/emit-interface` 已可维护本地 workspace。
 - `ql build/run/test/check` 支持 project-aware 入口和常用 `--json`、`--list`、`--package`、`--target`；`ql build --list --json` 已覆盖 workspace member source/directory 入口；`ql test --package` 已覆盖 workspace root/member directory/member file 的文本、JSON、`--list --json`、`--filter`、`--target` 和 selector 错误入口；`ql check --package` 已覆盖 workspace root/member source/member directory 的文本、JSON、missing selector 和 `--sync-interfaces` 入口。
-- `ql test --package <name> --target tests/foo.ql` 支持包内相对 target；仍保留 workspace-relative 和 absolute target 匹配。
+- `ql build/run --package <name> --target src/bin/foo.ql` 和 `ql test --package <name> --target tests/foo.ql` 支持包内相对 target；仍保留 workspace-relative 和 absolute target 匹配。
 - `ql build/run/test/check` 已共享 project context / request-root resolution；`build/run` 复用 project source target selector，`test` 保留 project-aware test-file 语义，且都有真实 CLI 回归覆盖。
 - `ql build` 已覆盖 workspace `--package` JSON dependency-closure 输出；`run/test` 已覆盖 workspace `--package` JSON 关键路径。
 - `ql project graph/targets/status` 已覆盖 workspace root、workspace member path 和 workspace `--package` selector；`project graph/targets/status --package --json` 已覆盖 member source/directory 入口；`ql project target add` 支持 workspace root `--package` 和 member directory 入口。
 - `ql project dependencies/dependents --json` 已覆盖 workspace member source/directory 派生包名，脚本不必重复传 `--name`。
 - `ql project lock` 已覆盖 workspace root、member source/directory 写入 workspace lockfile，以及 member source/directory `--json` 写入和 `--check --json` up-to-date 检查。
 - `ql project add-dependency/remove-dependency` 已覆盖 workspace member source/directory 和 workspace root `--package` selector。
-- `ql run` 已用真实 smoke 覆盖 dependency public functions/values/types/methods/traits、direct dependency generic public functions、workspace `--package` dependency generic、workspace `--package` dependency generic JSON、transitive generic wrapper/helper specialization 和 dependency generic JSON 输出。
+- `ql run` 已用真实 smoke 覆盖 dependency public functions/values/types/methods/traits、direct dependency generic public functions、workspace `--package` dependency generic、workspace `--package --target` 包内相对 binary、workspace `--package` dependency generic JSON、transitive generic wrapper/helper specialization 和 dependency generic JSON 输出。
 - 单文件 `ql build/run/test file.ql` 可复用本地 generic free function direct-call specialization。
 - `ql project init --stdlib` 从 `stdlib/examples/starter` 复制 starter，生成依赖 `std.core`、`std.option`、`std.result`、`std.array`、`std.test` 的项目，并用 `check/run/test` 直接覆盖 generic option/result assertions、数组 equality/reverse assertions、length-generic array helpers 和重复数组。
 

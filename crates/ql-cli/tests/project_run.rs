@@ -941,6 +941,237 @@ fn run_workspace_package_selector_executes_dependency_generic_member() {
     );
 }
 
+struct WorkspacePackageRelativeTargetRunFixture {
+    temp: TempDir,
+    project_root: std::path::PathBuf,
+    workspace_manifest: std::path::PathBuf,
+    app_manifest: std::path::PathBuf,
+    app_admin_output: std::path::PathBuf,
+    app_main_output: std::path::PathBuf,
+    tool_output: std::path::PathBuf,
+}
+
+fn workspace_package_relative_target_run_fixture(
+    prefix: &str,
+) -> WorkspacePackageRelativeTargetRunFixture {
+    let temp = TempDir::new(prefix);
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/app/src/bin"))
+        .expect("create app package source tree");
+    std::fs::create_dir_all(project_root.join("packages/tool/src"))
+        .expect("create tool package source tree");
+
+    let workspace_manifest = temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    let app_manifest = temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/main.ql",
+        "fn main() -> Int { return 11 }\n",
+    );
+    temp.write(
+        "workspace/packages/app/src/bin/admin.ql",
+        "fn main() -> Int { return 7 }\n",
+    );
+    temp.write(
+        "workspace/packages/tool/src/main.ql",
+        "fn main() -> Int { return 99 }\n",
+    );
+
+    let app_admin_output = executable_output_path(
+        &project_root.join("packages/app/target/ql/debug/bin"),
+        "admin",
+    );
+    let app_main_output =
+        executable_output_path(&project_root.join("packages/app/target/ql/debug"), "main");
+    let tool_output =
+        executable_output_path(&project_root.join("packages/tool/target/ql/debug"), "main");
+
+    WorkspacePackageRelativeTargetRunFixture {
+        temp,
+        project_root,
+        workspace_manifest,
+        app_manifest,
+        app_admin_output,
+        app_main_output,
+        tool_output,
+    }
+}
+
+#[test]
+fn run_workspace_package_selector_accepts_package_relative_target_path() {
+    if !toolchain_available("`ql run --package --target` package-relative target test") {
+        return;
+    }
+
+    let fixture =
+        workspace_package_relative_target_run_fixture("ql-project-run-package-relative-target");
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["run"]).arg(&fixture.project_root).args([
+        "--package",
+        "app",
+        "--target",
+        "src/bin/admin.ql",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql run --package --target` package-relative target",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-package-relative-target",
+        "workspace package-relative target selector run",
+        &output,
+        7,
+    )
+    .expect(
+        "workspace-path `ql run --package --target src/bin/admin.ql` should run selected target",
+    );
+    expect_silent_output(
+        "project-run-package-relative-target",
+        "workspace package-relative target selector run",
+        &stdout,
+        &stderr,
+    )
+    .expect("workspace package-relative target selector run should leave output to the program");
+    expect_file_exists(
+        "project-run-package-relative-target",
+        &fixture.app_admin_output,
+        "selected package-relative executable",
+        "workspace package-relative target selector run",
+    )
+    .expect("workspace package-relative target selector run should build selected executable");
+    assert!(
+        !fixture.app_main_output.exists(),
+        "workspace package-relative target selector run should not build unselected app main"
+    );
+    assert!(
+        !fixture.tool_output.exists(),
+        "workspace package-relative target selector run should not build unselected package"
+    );
+}
+
+#[test]
+fn run_workspace_package_selector_json_reports_package_relative_target_path() {
+    if !toolchain_available("`ql run --package --target --json` package-relative target test") {
+        return;
+    }
+
+    let fixture = workspace_package_relative_target_run_fixture(
+        "ql-project-run-json-package-relative-target",
+    );
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["run"]).arg(&fixture.project_root).args([
+        "--package",
+        "app",
+        "--target",
+        "src/bin/admin.ql",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql run --package --target --json` package-relative target",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-json-package-relative-target",
+        "workspace package-relative target selector run json",
+        &output,
+        7,
+    )
+    .expect(
+        "workspace-path `ql run --package --target src/bin/admin.ql --json` should preserve selected program status",
+    );
+    expect_empty_stderr(
+        "project-run-json-package-relative-target",
+        "workspace package-relative target selector run json",
+        &stderr,
+    )
+    .expect("workspace package-relative target selector run json should keep stderr empty");
+
+    let json = parse_json_output("project-run-json-package-relative-target", &stdout);
+    assert_eq!(json["schema"], "ql.run.v1");
+    assert_eq!(
+        json["path"],
+        fixture
+            .project_root
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        fixture
+            .workspace_manifest
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    assert_eq!(json["requested_profile"], "debug");
+    assert_eq!(json["profile_overridden"], false);
+    assert_eq!(json["program_args"], serde_json::json!([]));
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["failure"], JsonValue::Null);
+    assert_eq!(
+        json["built_target"],
+        serde_json::json!({
+            "manifest_path": fixture.app_manifest.display().to_string().replace('\\', "/"),
+            "package_name": "app",
+            "selected": true,
+            "dependency_only": false,
+            "kind": "bin",
+            "path": "src/bin/admin.ql",
+            "emit": "exe",
+            "profile": "debug",
+            "artifact_path": fixture.app_admin_output.display().to_string().replace('\\', "/"),
+            "c_header_path": JsonValue::Null,
+        })
+    );
+    assert_eq!(
+        json["execution"],
+        serde_json::json!({
+            "exit_code": 7,
+            "stdout": "",
+            "stderr": "",
+        })
+    );
+    expect_file_exists(
+        "project-run-json-package-relative-target",
+        &fixture.app_admin_output,
+        "selected package-relative executable",
+        "workspace package-relative target selector run json",
+    )
+    .expect("workspace package-relative target selector run json should build selected executable");
+    assert!(
+        !fixture.app_main_output.exists(),
+        "workspace package-relative target selector run json should not build unselected app main"
+    );
+    assert!(
+        !fixture.tool_output.exists(),
+        "workspace package-relative target selector run json should not build unselected package"
+    );
+}
+
 #[test]
 fn run_workspace_package_selector_json_reports_dependency_generic_member() {
     if !toolchain_available("`ql run --json --package` workspace dependency generic test") {
