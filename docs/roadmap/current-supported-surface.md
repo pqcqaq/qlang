@@ -28,6 +28,7 @@
 - `ql build/run/test/check` 已共享 project context / request-root resolution；`build/run` 复用 project source target selector，`test` 保留 project-aware test-file 语义，且都有真实 CLI 回归覆盖。
 - `ql build` 已覆盖 workspace `--package` JSON dependency-closure 输出；`run/test/check` 已覆盖 workspace `--package` JSON 关键路径。
 - `ql project graph/targets/status` 已覆盖 workspace root、workspace member path 和 workspace `--package` selector；`--package --json` 可输出选中 package graph/targets/status 的稳定契约。
+- `ql project dependencies/dependents --json` 已覆盖 workspace member path 派生包名，脚本不必重复传 `--name`。
 - `ql run` 已用真实 smoke 覆盖 dependency public functions/values/types/methods/traits、direct dependency generic public functions、workspace `--package` dependency generic、workspace `--package` dependency generic JSON、transitive generic wrapper/helper specialization 和 dependency generic JSON 输出。
 - 单文件 `ql build/run/test file.ql` 可复用本地 generic free function direct-call specialization。
 - `ql project init --stdlib` 从 `stdlib/examples/starter` 复制 starter，生成依赖 `std.core`、`std.option`、`std.result`、`std.array`、`std.test` 的项目，并用 `check/run/test` 直接覆盖 generic option/result assertions、数组 equality/reverse assertions、length-generic array helpers 和重复数组。

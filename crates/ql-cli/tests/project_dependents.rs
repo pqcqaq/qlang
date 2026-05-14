@@ -176,6 +176,62 @@ fn project_dependents_supports_json_output() {
 }
 
 #[test]
+fn project_dependents_json_derives_workspace_member_package_name() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependents-derived-name-json");
+    let project_root = write_workspace_with_core_dependents(&temp);
+    let request_path = project_root.join("packages/core/src/main.ql");
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependents",
+        &request_path.to_string_lossy(),
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependents --json` derived workspace member package name",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-dependents-derived-name-json",
+        "derive workspace member package name for dependents json",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependents-derived-name-json",
+        "derive workspace member package name for dependents json",
+        &stderr,
+    )
+    .unwrap();
+
+    let actual = parse_json_output("project-dependents-derived-name-json", &stdout);
+    let expected = json!({
+        "schema": "ql.project.dependents.v1",
+        "path": request_path.to_string_lossy().replace('\\', "/"),
+        "workspace_manifest_path": project_root.join("qlang.toml").to_string_lossy().replace('\\', "/"),
+        "package_name": "core",
+        "dependents": [
+            {
+                "member": "packages/app",
+                "package_name": "app",
+                "manifest_path": project_root.join("packages/app/qlang.toml").to_string_lossy().replace('\\', "/"),
+            },
+            {
+                "member": "packages/tools",
+                "package_name": "tools",
+                "manifest_path": project_root.join("packages/tools/qlang.toml").to_string_lossy().replace('\\', "/"),
+            }
+        ],
+    });
+    assert_eq!(
+        actual, expected,
+        "project dependents derived-name json stdout"
+    );
+}
+
+#[test]
 fn project_dependents_requires_name_when_workspace_root_is_ambiguous() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-dependents-derived-name-missing");
