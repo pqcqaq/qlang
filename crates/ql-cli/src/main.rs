@@ -4462,12 +4462,7 @@ fn discover_project_test_targets(
     package_name: Option<&str>,
     profile_overridden: bool,
 ) -> Result<Vec<TestTarget>, u8> {
-    let members = load_workspace_build_targets_for_command_from_request_root(
-        request_path,
-        project_path,
-        "`ql test`",
-    )?;
-    let members = select_workspace_test_members(request_path, members, package_name)?;
+    let members = load_project_test_members(request_path, project_path, package_name)?;
     let request_root = project_request_root(project_path);
     let mut targets = Vec::new();
 
@@ -4505,32 +4500,111 @@ fn discover_project_test_targets(
     Ok(targets)
 }
 
-fn select_workspace_test_members(
-    path: &Path,
-    members: Vec<WorkspaceBuildTargets>,
-    package_name: Option<&str>,
+fn load_project_test_members(
+    request_path: &Path,
+    project_path: &Path,
+    selected_package_name: Option<&str>,
 ) -> Result<Vec<WorkspaceBuildTargets>, u8> {
-    let Some(package_name) = package_name else {
-        return Ok(members);
+    let Some(selected_package_name) = selected_package_name else {
+        return load_workspace_build_targets_for_command_from_request_root(
+            request_path,
+            project_path,
+            "`ql test`",
+        );
     };
 
-    let selected = members
-        .into_iter()
-        .filter(|member| member.package_name == package_name)
-        .collect::<Vec<_>>();
-    if selected.is_empty() {
-        let normalized_path = normalize_path(path);
+    let manifest = load_project_test_manifest(project_path)?;
+
+    if manifest.workspace.is_some() {
+        let (_, member_manifest) = resolve_selected_workspace_member_manifest(
+            &manifest,
+            request_path,
+            selected_package_name,
+            "`ql test`",
+            "--package",
+        )?;
+        return Ok(vec![project_test_build_targets_from_manifest(
+            &member_manifest,
+            Some(&manifest),
+        )?]);
+    }
+
+    if let Err(message) = validate_project_package_name(selected_package_name) {
+        eprintln!("error: `ql test` {message}");
+        return Err(1);
+    }
+    let current_package_name = package_name(&manifest).map_err(|error| {
+        eprintln!("error: `ql test` {error}");
+        1
+    })?;
+    if current_package_name != selected_package_name {
+        let normalized_path = normalize_path(request_path);
         eprintln!(
-            "error: `ql test` package selector matched no packages under `{normalized_path}`"
+            "error: `ql test` package selector matched no workspace members under `{normalized_path}`"
         );
-        eprintln!("note: selector: package `{package_name}`");
+        eprintln!("note: selector: package `{selected_package_name}`");
         eprintln!(
-            "hint: rerun `ql project graph {normalized_path}` to inspect the discovered package/workspace members"
+            "hint: rerun `ql test {normalized_path}` to inspect all workspace members, or adjust `--package`"
         );
         return Err(1);
     }
+    Ok(vec![project_test_build_targets_from_manifest(
+        &manifest, None,
+    )?])
+}
 
-    Ok(selected)
+fn load_project_test_manifest(path: &Path) -> Result<ql_project::ProjectManifest, u8> {
+    load_project_manifest(path).map_err(|error| report_ql_test_project_error(&error))
+}
+
+fn project_test_build_targets_from_manifest(
+    manifest: &ql_project::ProjectManifest,
+    workspace_manifest: Option<&ql_project::ProjectManifest>,
+) -> Result<WorkspaceBuildTargets, u8> {
+    let workspace_default_profile = workspace_manifest
+        .and_then(|manifest| manifest.profile.as_ref().map(|profile| profile.default));
+    Ok(WorkspaceBuildTargets {
+        member_manifest_path: manifest.manifest_path.clone(),
+        package_name: package_name(manifest)
+            .map_err(|error| report_ql_test_project_error(&error))?
+            .to_owned(),
+        default_profile: manifest
+            .profile
+            .as_ref()
+            .map(|profile| profile.default)
+            .or(workspace_default_profile),
+        targets: discover_package_build_targets(manifest)
+            .map_err(|error| report_ql_test_project_error(&error))?,
+    })
+}
+
+fn report_ql_test_project_error(error: &ql_project::ProjectError) -> u8 {
+    if let ql_project::ProjectError::ManifestNotFound { start } = error {
+        eprintln!(
+            "error: `ql test` requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
+            normalize_path(start)
+        );
+    } else if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(error)
+    {
+        eprintln!(
+            "error: `ql test` manifest `{}` does not declare `[package].name`",
+            normalize_path(manifest_path)
+        );
+    } else if let ql_project::ProjectError::PackageSourceRootNotFound { path } = error {
+        eprintln!(
+            "error: `ql test` package source directory `{}` does not exist",
+            normalize_path(path)
+        );
+    } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(error) {
+        eprintln!("error: `ql test` {error}");
+        eprintln!(
+            "note: failing package manifest: {}",
+            normalize_path(manifest_path)
+        );
+    } else {
+        eprintln!("error: `ql test` {error}");
+    }
+    1
 }
 
 fn project_test_target(

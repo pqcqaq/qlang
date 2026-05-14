@@ -53,7 +53,8 @@ ql build workspace --json
 
 - 支持单文件、package 和 workspace 入口
 - 递归执行 `tests/**/*.ql`
-- 支持 project-aware smoke / UI test 语义和 `--target`
+- 支持 project-aware smoke / UI test 语义、`--target` 和 workspace `--package`
+- `--package` 只适用于 package/workspace/project-aware test file 入口；重复包名、非法包名和损坏成员元数据会在执行前报错
 
 ### `ql project`
 

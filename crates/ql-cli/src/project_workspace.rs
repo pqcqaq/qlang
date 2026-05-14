@@ -28,7 +28,7 @@ pub(crate) fn select_workspace_members(
         return Ok(workspace.members.clone());
     };
     if let Err(message) = validate_project_package_name(package_name) {
-        eprintln!("error: `{command_label}` {message}");
+        eprintln!("error: {command_label} {message}");
         return Err(1);
     }
 
