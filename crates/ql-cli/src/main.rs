@@ -4764,6 +4764,36 @@ fn load_project_test_members(
 ) -> Result<Vec<WorkspaceBuildTargets>, u8> {
     let selected_package_name = command_options.package_name.as_deref();
     let Some(selected_package_name) = selected_package_name else {
+        if command_options.json {
+            let manifest = match load_project_manifest(project_path) {
+                Ok(manifest) => manifest,
+                Err(error) => {
+                    print!(
+                        "{}",
+                        render_test_json_preflight_failure_report(
+                            request_path,
+                            command_options,
+                            build_json_project_error(request_path, &error, "manifest-load"),
+                        )
+                    );
+                    return Err(1);
+                }
+            };
+            return match discover_workspace_build_targets(&manifest) {
+                Ok(members) => Ok(members),
+                Err(error) => {
+                    print!(
+                        "{}",
+                        render_test_json_preflight_failure_report(
+                            request_path,
+                            command_options,
+                            build_json_project_error(request_path, &error, "target-discovery"),
+                        )
+                    );
+                    Err(1)
+                }
+            };
+        }
         return load_workspace_build_targets_for_command_from_request_root(
             request_path,
             project_path,
