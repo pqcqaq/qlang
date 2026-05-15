@@ -8,8 +8,10 @@ use common::request::{
     TempDir, code_action_via_request, completion_via_request, did_open_via_request,
     document_highlight_via_request, document_symbol_via_request, folding_range_via_request,
     formatting_via_request, goto_definition_via_request, goto_type_definition_via_request,
-    hover_via_request, initialize_service_with_workspace_roots, inlay_hint_via_request, nth_offset,
-    offset_to_position, prepare_rename_via_request, references_via_request, rename_via_request,
+    hover_via_request, incoming_calls_via_request, initialize_service_with_workspace_roots,
+    inlay_hint_via_request, nth_offset, offset_to_position, outgoing_calls_via_request,
+    prepare_call_hierarchy_via_request, prepare_rename_via_request,
+    prepare_type_hierarchy_via_request, references_via_request, rename_via_request,
     selection_range_via_request, semantic_tokens_full_via_request, signature_help_via_request,
 };
 use common::stdlib_real::{real_stdlib_source_path, write_real_stdlib_workspace};
@@ -19,10 +21,11 @@ use ql_lsp::bridge::{semantic_tokens_legend, span_to_range};
 use tower_lsp::LspService;
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
 use tower_lsp::lsp_types::{
-    CodeActionOrCommand, CompletionResponse, Diagnostic, DocumentHighlight, DocumentSymbolResponse,
-    FoldingRange, GotoDefinitionResponse, HoverContents, InlayHint, InlayHintKind, InlayHintLabel,
-    Location, NumberOrString, PrepareRenameResponse, Range, SelectionRange, SemanticToken,
-    SemanticTokenType, SemanticTokensResult, SymbolKind, TextEdit, Url,
+    CallHierarchyOutgoingCall, CodeActionOrCommand, CompletionResponse, Diagnostic,
+    DocumentHighlight, DocumentSymbolResponse, FoldingRange, GotoDefinitionResponse, HoverContents,
+    InlayHint, InlayHintKind, InlayHintLabel, Location, NumberOrString, PrepareRenameResponse,
+    Range, SelectionRange, SemanticToken, SemanticTokenType, SemanticTokensResult, SymbolKind,
+    TextEdit, Url,
 };
 
 async fn open_real_stdlib_workspace(
@@ -382,6 +385,82 @@ pub fn main(value: Option[Int]) -> Int {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn hierarchy_requests_use_current_real_stdlib_sources() {
+    let temp = TempDir::new("ql-lsp-real-stdlib-hierarchy-requests");
+    let app_source = r#"
+package demo.app
+
+use std.core.clamp_bounds_int as clamp_bounds_int
+use std.option.Option as Option
+
+pub fn main() -> Int {
+    return clamp_bounds_int(42, 0, 100)
+}
+"#;
+    let (mut service, _, stdlib_root) = open_real_stdlib_workspace(&temp, app_source).await;
+    let core_source_path = real_stdlib_source_path(&stdlib_root, "core");
+    let core_source = fs::read_to_string(&core_source_path)
+        .expect("temp std.core source should exist")
+        .replace("\r\n", "\n");
+    let core_uri =
+        Url::from_file_path(&core_source_path).expect("std.core source path should convert to URI");
+    did_open_via_request(&mut service, core_uri.clone(), core_source.clone()).await;
+
+    let clamp_bounds_items = prepare_call_hierarchy_via_request(
+        &mut service,
+        core_uri.clone(),
+        offset_to_position(
+            &core_source,
+            nth_offset(&core_source, "clamp_bounds_int", 1),
+        ),
+    )
+    .await
+    .expect("real std.core prepareCallHierarchy should return clamp_bounds_int");
+    assert_eq!(clamp_bounds_items.len(), 1);
+    assert_eq!(clamp_bounds_items[0].name, "clamp_bounds_int");
+
+    let outgoing = outgoing_calls_via_request(&mut service, clamp_bounds_items[0].clone())
+        .await
+        .expect("real std.core outgoingCalls should return callees");
+    assert_call_hierarchy_targets(&outgoing, &["clamp_int", "max_int", "min_int"]);
+
+    let clamp_int_items = prepare_call_hierarchy_via_request(
+        &mut service,
+        core_uri.clone(),
+        offset_to_position(&core_source, nth_offset(&core_source, "clamp_int", 1)),
+    )
+    .await
+    .expect("real std.core prepareCallHierarchy should return clamp_int");
+    let incoming = incoming_calls_via_request(&mut service, clamp_int_items[0].clone())
+        .await
+        .expect("real std.core incomingCalls should return callers");
+    assert!(
+        incoming
+            .iter()
+            .any(|call| call.from.name == "clamp_bounds_int" && call.from_ranges.len() == 1),
+        "clamp_int incomingCalls should include clamp_bounds_int: {incoming:#?}",
+    );
+
+    let option_source_path = real_stdlib_source_path(&stdlib_root, "option");
+    let option_source = fs::read_to_string(&option_source_path)
+        .expect("temp std.option source should exist")
+        .replace("\r\n", "\n");
+    let option_uri = Url::from_file_path(&option_source_path)
+        .expect("std.option source path should convert to URI");
+    did_open_via_request(&mut service, option_uri.clone(), option_source.clone()).await;
+    let option_items = prepare_type_hierarchy_via_request(
+        &mut service,
+        option_uri,
+        offset_to_position(&option_source, nth_offset(&option_source, "Option", 1)),
+    )
+    .await
+    .expect("real std.option prepareTypeHierarchy should return Option");
+    assert_eq!(option_items.len(), 1);
+    assert_eq!(option_items[0].name, "Option");
+    assert_eq!(option_items[0].kind, SymbolKind::ENUM);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn rename_request_updates_current_real_stdlib_source_roots() {
     let temp = TempDir::new("ql-lsp-real-stdlib-rename-request");
     let app_source = r#"
@@ -546,6 +625,15 @@ fn assert_document_symbol(
             .any(|symbol| symbol.name == name && symbol.kind == expected_kind),
         "document symbols should include {expected_kind:?} `{name}`: {symbols:#?}",
     );
+}
+
+fn assert_call_hierarchy_targets(calls: &[CallHierarchyOutgoingCall], names: &[&str]) {
+    for name in names {
+        assert!(
+            calls.iter().any(|call| call.to.name == *name),
+            "call hierarchy should include outgoing target `{name}`: {calls:#?}",
+        );
+    }
 }
 
 fn assert_parameter_hint(hints: &[InlayHint], expected: &str) {
