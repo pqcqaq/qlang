@@ -4369,6 +4369,35 @@ fn render_test_json_report(
     format!("{rendered}\n")
 }
 
+fn render_test_json_preflight_failure_report(
+    path: &Path,
+    command_options: &TestCommandOptions,
+    failure: JsonValue,
+) -> String {
+    let rendered = serde_json::to_string_pretty(&json!({
+        "schema": "ql.test.v1",
+        "path": normalize_path(path),
+        "requested_profile": command_options.profile.dir_name(),
+        "profile_overridden": command_options.profile_overridden,
+        "package_name": command_options.package_name.as_deref(),
+        "filter": command_options.filter.as_deref(),
+        "list_only": command_options.list_only,
+        "status": "failed",
+        "discovered_total": 0,
+        "selected_total": 0,
+        "targets": [],
+        "passed": 0,
+        "failed": 0,
+        "failures": [],
+        "failure": {
+            "kind": "preflight",
+            "preflight_failure": failure,
+        },
+    }))
+    .expect("test preflight json report should serialize");
+    format!("{rendered}\n")
+}
+
 fn test_json_target(target: &TestTarget) -> JsonValue {
     match &target.kind {
         TestTargetKind::Smoke { build_options, .. } => json!({
@@ -4590,11 +4619,57 @@ fn discover_test_targets(
         }
         ProjectCommandScope::ProjectBuildTarget(_) | ProjectCommandScope::DirectSource => {
             if let Some(package_name) = command_options.package_name.as_deref() {
-                report_test_package_selector_requires_project_context(package_name);
+                if command_options.json {
+                    print!(
+                        "{}",
+                        render_test_json_preflight_failure_report(
+                            path,
+                            command_options,
+                            build_json_preflight_failure(
+                                path,
+                                None,
+                                None,
+                                None,
+                                "selector",
+                                "target-selection",
+                                "`ql test` package selectors require a package or workspace path"
+                                    .to_owned(),
+                                Some(format!("package `{package_name}`")),
+                                None,
+                                None,
+                            ),
+                        )
+                    );
+                } else {
+                    report_test_package_selector_requires_project_context(package_name);
+                }
                 return Err(1);
             }
             if let Some(target_path) = command_options.target_path.as_deref() {
-                report_test_target_selector_requires_project_context(target_path);
+                if command_options.json {
+                    print!(
+                        "{}",
+                        render_test_json_preflight_failure_report(
+                            path,
+                            command_options,
+                            build_json_preflight_failure(
+                                path,
+                                None,
+                                None,
+                                None,
+                                "selector",
+                                "target-selection",
+                                "`ql test` target selectors require a package or workspace path"
+                                    .to_owned(),
+                                Some(format!("target `{target_path}`")),
+                                None,
+                                None,
+                            ),
+                        )
+                    );
+                } else {
+                    report_test_target_selector_requires_project_context(target_path);
+                }
                 return Err(1);
             }
             Ok(vec![direct_test_target(path, options)?])

@@ -4381,6 +4381,120 @@ fn test_direct_source_file_rejects_package_selector_without_project_context() {
 }
 
 #[test]
+fn test_direct_source_file_json_rejects_package_selector_without_project_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-direct-source-package-selector-json");
+    let source_path = temp.write("sample.ql", "fn main() -> Int { return 0 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["test", "--json"])
+        .arg(&source_path)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json` direct source package selector requires project context",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-test-direct-source-package-selector-json",
+        "direct source package selector json preflight failure",
+        &output,
+        1,
+    )
+    .expect("direct source file `ql test --json --package app` should exit with code 1");
+    expect_empty_stderr(
+        "project-test-direct-source-package-selector-json",
+        "direct source package selector json preflight failure",
+        &stderr,
+    )
+    .expect("direct source package selector json preflight failure should stay on stdout");
+
+    let json = parse_json_output("project-test-direct-source-package-selector-json", &stdout);
+    assert_eq!(json["schema"], "ql.test.v1");
+    assert_eq!(
+        json["path"],
+        source_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["package_name"], "app");
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["discovered_total"], 0);
+    assert_eq!(json["selected_total"], 0);
+    assert_eq!(json["targets"], serde_json::json!([]));
+    assert_eq!(json["failures"], serde_json::json!([]));
+    assert_eq!(json["failure"]["kind"], "preflight");
+    let failure = &json["failure"]["preflight_failure"];
+    assert_eq!(failure["error_kind"], "selector");
+    assert_eq!(failure["stage"], "target-selection");
+    assert_eq!(failure["selector"], "package `app`");
+    assert_eq!(failure["target_count"], JsonValue::Null);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("direct source package selector json failure should expose a message")
+            .contains("package selectors require a package or workspace path"),
+        "direct source package selector json failure should explain project context: {json}"
+    );
+}
+
+#[test]
+fn test_direct_source_file_json_rejects_target_selector_without_project_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-direct-source-target-selector-json");
+    let source_path = temp.write("sample.ql", "fn main() -> Int { return 0 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["test", "--json"])
+        .arg(&source_path)
+        .args(["--target", "tests/smoke.ql"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json` direct source target selector requires project context",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-test-direct-source-target-selector-json",
+        "direct source target selector json preflight failure",
+        &output,
+        1,
+    )
+    .expect("direct source file `ql test --json --target tests/smoke.ql` should exit with code 1");
+    expect_empty_stderr(
+        "project-test-direct-source-target-selector-json",
+        "direct source target selector json preflight failure",
+        &stderr,
+    )
+    .expect("direct source target selector json preflight failure should stay on stdout");
+
+    let json = parse_json_output("project-test-direct-source-target-selector-json", &stdout);
+    assert_eq!(json["schema"], "ql.test.v1");
+    assert_eq!(
+        json["path"],
+        source_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["package_name"], JsonValue::Null);
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["discovered_total"], 0);
+    assert_eq!(json["selected_total"], 0);
+    assert_eq!(json["targets"], serde_json::json!([]));
+    assert_eq!(json["failures"], serde_json::json!([]));
+    assert_eq!(json["failure"]["kind"], "preflight");
+    let failure = &json["failure"]["preflight_failure"];
+    assert_eq!(failure["error_kind"], "selector");
+    assert_eq!(failure["stage"], "target-selection");
+    assert_eq!(failure["selector"], "target `tests/smoke.ql`");
+    assert_eq!(failure["target_count"], JsonValue::Null);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("direct source target selector json failure should expose a message")
+            .contains("target selectors require a package or workspace path"),
+        "direct source target selector json failure should explain project context: {json}"
+    );
+}
+
+#[test]
 fn test_package_path_reports_failing_test_process() {
     if !toolchain_available("`ql test` failing-test case") {
         return;
