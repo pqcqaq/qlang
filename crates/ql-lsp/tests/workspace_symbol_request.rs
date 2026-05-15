@@ -6,7 +6,7 @@ use common::request::{
     TempDir, did_open_via_request, initialize_service_with_workspace_roots, offset_to_position,
     workspace_symbol_via_request,
 };
-use common::stdlib_real::repo_stdlib_root;
+use common::stdlib_real::{real_stdlib_source_path, repo_stdlib_root, write_real_stdlib_workspace};
 use ql_lsp::Backend;
 use tower_lsp::LspService;
 use tower_lsp::lsp_types::{SymbolInformation, SymbolKind, Url};
@@ -409,6 +409,55 @@ async fn workspace_symbol_request_indexes_real_stdlib_workspace_root() {
             .iter()
             .all(|symbol| symbol.name != "IntOption"),
         "current real stdlib workspace symbols should not expose legacy IntOption: {legacy_symbols:#?}",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn workspace_symbol_request_prefers_open_real_stdlib_source() {
+    let temp = TempDir::new("ql-lsp-workspace-symbol-request-real-stdlib-open-doc");
+    let app_source = r#"
+package demo.app
+
+use std.core.max_int as largest_int
+
+pub fn main() -> Int {
+    return largest_int(1, 2)
+}
+"#;
+    let workspace = write_real_stdlib_workspace(&temp, app_source);
+    let core_source_path = real_stdlib_source_path(&workspace.stdlib_root, "core");
+    let core_disk_source = std::fs::read_to_string(&core_source_path)
+        .expect("temp std.core source should exist")
+        .replace("\r\n", "\n");
+    let open_core_source =
+        format!("{core_disk_source}\n\npub fn fresh_helper() -> Int {{\n    return 2\n}}\n");
+    let core_source_uri = Url::from_file_path(&core_source_path)
+        .expect("temp std.core source path should convert to URI");
+    let workspace_root_uri = Url::from_file_path(temp.path().join("workspace"))
+        .expect("workspace root path should convert to URI");
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service_with_workspace_roots(&mut service, vec![workspace_root_uri]).await;
+    did_open_via_request(
+        &mut service,
+        core_source_uri.clone(),
+        open_core_source.clone(),
+    )
+    .await;
+
+    let symbols = workspace_symbol_via_request(&mut service, "fresh_helper").await;
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "fresh_helper");
+    assert_eq!(symbols[0].location.uri, core_source_uri);
+    assert_eq!(
+        symbols[0].location.range.start,
+        offset_to_position(
+            &open_core_source,
+            open_core_source
+                .find("fresh_helper")
+                .expect("fresh helper should exist")
+        ),
+        "workspace symbol should use the open real stdlib source",
     );
 }
 

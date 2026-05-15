@@ -52,7 +52,7 @@
 - same-file：hover、keyword hover、definition、declaration、typeDefinition、references、documentHighlight、completion、semantic tokens、formatting、codeAction、codeLens、callHierarchy、typeHierarchy、rename。
 - workspace：`workspace/symbol`、`implementation`、open-doc dependency navigation、依赖调用 signatureHelp、保守 workspace rename；`workspace/symbol` 已用真实 `stdlib/` workspace root 覆盖当前 stdlib public symbols，并在缺失接口等包级预检失败时回退索引源码符号；`codeLens` 也已在真实 workspace consumer 场景下保持可用，包括 open-doc consumer。
 - 第三方旧接口里的 stdlib 兼容 API 会在真实 `textDocument/completion`、`textDocument/hover` 和 `textDocument/semanticTokens/full/range` 请求中提示 deprecated 并带迁移 guidance；当前 stdlib 正式 API 使用 generic carrier 和 length-generic helpers。
-- 真实 stdlib LSP smoke 已按 request family 拆分，覆盖 completion/resolve、hover、definition/declaration/typeDefinition、references/documentHighlight、implementation、documentSymbol、signatureHelp/inlayHint、folding/selection、formatting、codeAction/resolve、call/type hierarchy、semanticTokens full/range、rename；`diagnostics`、`codeLens`、`workspace/symbol` 由独立 smoke 覆盖。
+- 真实 stdlib LSP smoke 已按 request family 拆分，覆盖 completion/resolve、hover、definition/declaration/typeDefinition、references/documentHighlight、implementation、documentSymbol、signatureHelp/inlayHint、folding/selection、formatting、codeAction/resolve、call/type hierarchy、semanticTokens full/range、rename；`diagnostics`、`codeLens`、`workspace/symbol` 由独立 smoke 覆盖，其中 `workspace/symbol` 也有 real stdlib open-doc 优先级回归。
 - semantic tokens 覆盖 parse-error fallback、注释 token 和 `self` keyword token。
 - inlay hints 覆盖 same-file inferred local type，以及 same-file/dependency 调用参数名提示；方法调用会隐藏 receiver `self`。
 - folding range 覆盖代码块、块注释和连续整行 `//` 注释；字符串内注释标记不会生成注释折叠。
