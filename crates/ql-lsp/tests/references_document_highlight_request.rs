@@ -114,6 +114,81 @@ name = "core"
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn references_request_counts_open_workspace_consumers_without_dependency_interface() {
+    let temp = TempDir::new("ql-lsp-references-request-open-consumer-missing-interface");
+    let workspace_root = temp.path().join("workspace");
+    let dep_source = r#"
+package demo.dep
+
+pub fn helper() -> Int {
+    return 1
+}
+"#;
+    let app_source = r#"
+package demo.app
+
+use demo.dep.helper as helper
+
+pub fn main() -> Int {
+    return helper()
+}
+"#;
+    let dep_path = temp.write("workspace/vendor/dep/src/lib.ql", dep_source);
+    let app_path = temp.write("workspace/packages/app/src/main.ql", app_source);
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = { path = "../../vendor/dep" }
+"#,
+    );
+    temp.write(
+        "workspace/vendor/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+
+    let workspace_root_uri =
+        Url::from_file_path(&workspace_root).expect("workspace root path should convert to URI");
+    let dep_uri = Url::from_file_path(&dep_path).expect("dependency path should convert to URI");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service_with_workspace_roots(&mut service, vec![workspace_root_uri]).await;
+    did_open_via_request(&mut service, dep_uri.clone(), dep_source.to_owned()).await;
+    did_open_via_request(&mut service, app_uri.clone(), app_source.to_owned()).await;
+
+    let references = references_via_request(
+        &mut service,
+        dep_uri.clone(),
+        offset_to_position(dep_source, nth_offset(dep_source, "helper", 1)),
+        true,
+    )
+    .await
+    .expect("references request should return open workspace consumers without interface artifact");
+
+    assert_eq!(
+        references.len(),
+        3,
+        "references request should return only the dependency definition, import alias, and call"
+    );
+    assert_has_location(&references, &dep_uri, dep_source, "helper", 1);
+    assert_has_location(&references, &app_uri, app_source, "helper", 2);
+    assert_has_location(&references, &app_uri, app_source, "helper", 3);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn document_highlight_request_keeps_current_file_definition_and_usages() {
     let temp = TempDir::new("ql-lsp-document-highlight-request");
     let source_path = temp.write(
