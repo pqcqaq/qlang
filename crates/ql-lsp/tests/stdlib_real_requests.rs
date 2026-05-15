@@ -5,9 +5,10 @@ use std::path::Path;
 
 use common::request::{
     TempDir, completion_via_request, did_open_via_request, document_highlight_via_request,
-    goto_definition_via_request, goto_type_definition_via_request, hover_via_request,
-    initialize_service_with_workspace_roots, inlay_hint_via_request, nth_offset,
-    offset_to_position, prepare_rename_via_request, references_via_request, rename_via_request,
+    folding_range_via_request, formatting_via_request, goto_definition_via_request,
+    goto_type_definition_via_request, hover_via_request, initialize_service_with_workspace_roots,
+    inlay_hint_via_request, nth_offset, offset_to_position, prepare_rename_via_request,
+    references_via_request, rename_via_request, selection_range_via_request,
     semantic_tokens_full_via_request, signature_help_via_request,
 };
 use common::stdlib_real::{real_stdlib_source_path, write_real_stdlib_workspace};
@@ -16,9 +17,9 @@ use ql_lsp::bridge::{semantic_tokens_legend, span_to_range};
 use tower_lsp::LspService;
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
 use tower_lsp::lsp_types::{
-    CompletionResponse, DocumentHighlight, GotoDefinitionResponse, HoverContents, InlayHint,
-    InlayHintKind, InlayHintLabel, Location, PrepareRenameResponse, Range, SemanticToken,
-    SemanticTokenType, SemanticTokensResult, TextEdit, Url,
+    CompletionResponse, DocumentHighlight, FoldingRange, GotoDefinitionResponse, HoverContents,
+    InlayHint, InlayHintKind, InlayHintLabel, Location, PrepareRenameResponse, Range,
+    SelectionRange, SemanticToken, SemanticTokenType, SemanticTokensResult, TextEdit, Url,
 };
 
 async fn open_real_stdlib_workspace(
@@ -256,6 +257,54 @@ pub fn main() -> Int {
         nth_offset(app_source, "clamp_int", 2),
         "clamp_int".len(),
         SemanticTokenType::FUNCTION,
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn structure_requests_use_current_real_stdlib_sources() {
+    let temp = TempDir::new("ql-lsp-real-stdlib-structure-requests");
+    let app_source = r#"
+package demo.app
+
+use std.option.Option as Option
+
+pub fn main() -> Int {
+    return 0
+}
+"#;
+    let (mut service, _, stdlib_root) = open_real_stdlib_workspace(&temp, app_source).await;
+    let option_source_path = real_stdlib_source_path(&stdlib_root, "option");
+    let option_source = fs::read_to_string(&option_source_path)
+        .expect("temp std.option source should exist")
+        .replace("\r\n", "\n");
+    let option_uri = Url::from_file_path(&option_source_path)
+        .expect("temp std.option source path should convert to URI");
+    did_open_via_request(&mut service, option_uri.clone(), option_source.clone()).await;
+
+    let folds = folding_range_via_request(&mut service, option_uri.clone())
+        .await
+        .expect("real stdlib foldingRange should return source folds");
+    assert_folding_range_starts_at_source_line(&folds, &option_source, "pub enum Option", 1);
+    assert_folding_range_starts_at_source_line(&folds, &option_source, "pub fn unwrap_or", 1);
+    assert_folding_range_starts_at_source_line(&folds, &option_source, "return match value", 1);
+
+    let inner_offset =
+        nth_offset(&option_source, "Option.Some(inner) => inner", 1) + "Option.Some(".len();
+    let selections = selection_range_via_request(
+        &mut service,
+        option_uri.clone(),
+        vec![offset_to_position(&option_source, inner_offset + 1)],
+    )
+    .await
+    .expect("real stdlib selectionRange should return token selection");
+    assert_selection_range_source(&selections, &option_source, "inner", inner_offset);
+
+    let edits = formatting_via_request(&mut service, option_uri)
+        .await
+        .expect("real stdlib formatting should return an edit list for parseable source");
+    assert!(
+        edits.is_empty(),
+        "real stdlib source should already be qfmt-stable: {edits:#?}",
     );
 }
 
@@ -521,6 +570,35 @@ fn assert_document_highlight_source(
             .iter()
             .any(|highlight| highlight.range == expected_range),
         "document highlights should include source occurrence at {expected_range:?}: {highlights:#?}",
+    );
+}
+
+fn assert_folding_range_starts_at_source_line(
+    folds: &[FoldingRange],
+    source: &str,
+    needle: &str,
+    occurrence: usize,
+) {
+    let expected_line = offset_to_position(source, nth_offset(source, needle, occurrence)).line;
+    assert!(
+        folds
+            .iter()
+            .any(|fold| fold.start_line == expected_line && fold.end_line > fold.start_line),
+        "folding ranges should include multiline fold starting at `{needle}`: {folds:#?}",
+    );
+}
+
+fn assert_selection_range_source(
+    selections: &[SelectionRange],
+    source: &str,
+    name: &str,
+    offset: usize,
+) {
+    assert_eq!(selections.len(), 1);
+    assert_eq!(selections[0].range, range_at(source, offset, name.len()));
+    assert!(
+        selections[0].parent.is_some(),
+        "selection range should include parent expansion: {selections:#?}",
     );
 }
 

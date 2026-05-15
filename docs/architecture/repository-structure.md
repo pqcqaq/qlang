@@ -54,7 +54,7 @@
 │  ├─ ql-project              # package/workspace manifest graph、默认 `.qi` 路径/状态与 interface artifact 工具层
 │  ├─ ql-driver               # Phase 4 build orchestration 边界
 │  ├─ ql-codegen-llvm         # Phase 4 文本 LLVM IR 后端地基
-│  ├─ ql-lsp                  # qlsp：same-file query + dependency-backed cross-file hover/definition/references/completion + `workspace/symbol`
+│  ├─ ql-lsp                  # qlsp：diagnostics/query/completion/formatting/rich editor requests + conservative workspace/dependency support
 │  └─ ql-cli                  # `ql check` / `ql build` / `ql project` / `ql ffi` / `ql fmt` / `ql mir` / `ql ownership` / `ql runtime`
 ├─ examples/
 │  ├─ ffi-c                   # 真实 C host + combined header 静态链接 Qlang `staticlib`

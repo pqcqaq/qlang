@@ -786,8 +786,9 @@
 - full-sync text document lifecycle 与 diagnostics
 - hover、declaration、definition、typeDefinition、implementation、callHierarchy、typeHierarchy
 - references、documentHighlight、documentSymbol、workspaceSymbol
-- completion（含 `.` trigger）、codeAction、formatting
-- full document semantic tokens
+- completion（含 `.` trigger）、signatureHelp、inlayHint、codeAction、codeLens
+- document/range/on-type formatting、foldingRange、selectionRange
+- full/range semantic tokens
 - prepareRename 与 rename
 
 当前运行算法：
