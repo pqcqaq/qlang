@@ -4398,6 +4398,33 @@ fn render_test_json_preflight_failure_report(
     format!("{rendered}\n")
 }
 
+fn render_test_json_preflight_message_report(
+    path: &Path,
+    command_options: &TestCommandOptions,
+    error_kind: &str,
+    stage: &str,
+    message: String,
+    selector: Option<String>,
+    target_count: Option<usize>,
+) -> String {
+    render_test_json_preflight_failure_report(
+        path,
+        command_options,
+        build_json_preflight_failure(
+            path,
+            None,
+            None,
+            None,
+            error_kind,
+            stage,
+            message,
+            selector,
+            None,
+            target_count,
+        ),
+    )
+}
+
 fn test_json_target(target: &TestTarget) -> JsonValue {
     match &target.kind {
         TestTargetKind::Smoke { build_options, .. } => json!({
@@ -4599,8 +4626,7 @@ fn discover_test_targets(
                 path,
                 request_root.as_deref().unwrap_or(path),
                 options,
-                command_options.package_name.as_deref(),
-                command_options.profile_overridden,
+                command_options,
             )
         }
         ProjectCommandScope::ProjectTestFile(request) => {
@@ -4608,8 +4634,7 @@ fn discover_test_targets(
                 path,
                 &request.request_root_manifest_path,
                 options,
-                command_options.package_name.as_deref(),
-                command_options.profile_overridden,
+                command_options,
             )?;
             Ok(select_test_targets_by_path(
                 discovered,
@@ -4622,22 +4647,15 @@ fn discover_test_targets(
                 if command_options.json {
                     print!(
                         "{}",
-                        render_test_json_preflight_failure_report(
+                        render_test_json_preflight_message_report(
                             path,
                             command_options,
-                            build_json_preflight_failure(
-                                path,
-                                None,
-                                None,
-                                None,
-                                "selector",
-                                "target-selection",
-                                "`ql test` package selectors require a package or workspace path"
-                                    .to_owned(),
-                                Some(format!("package `{package_name}`")),
-                                None,
-                                None,
-                            ),
+                            "selector",
+                            "target-selection",
+                            "`ql test` package selectors require a package or workspace path"
+                                .to_owned(),
+                            Some(format!("package `{package_name}`")),
+                            None,
                         )
                     );
                 } else {
@@ -4649,22 +4667,15 @@ fn discover_test_targets(
                 if command_options.json {
                     print!(
                         "{}",
-                        render_test_json_preflight_failure_report(
+                        render_test_json_preflight_message_report(
                             path,
                             command_options,
-                            build_json_preflight_failure(
-                                path,
-                                None,
-                                None,
-                                None,
-                                "selector",
-                                "target-selection",
-                                "`ql test` target selectors require a package or workspace path"
-                                    .to_owned(),
-                                Some(format!("target `{target_path}`")),
-                                None,
-                                None,
-                            ),
+                            "selector",
+                            "target-selection",
+                            "`ql test` target selectors require a package or workspace path"
+                                .to_owned(),
+                            Some(format!("target `{target_path}`")),
+                            None,
                         )
                     );
                 } else {
@@ -4706,10 +4717,9 @@ fn discover_project_test_targets(
     request_path: &Path,
     project_path: &Path,
     options: &BuildOptions,
-    package_name: Option<&str>,
-    profile_overridden: bool,
+    command_options: &TestCommandOptions,
 ) -> Result<Vec<TestTarget>, u8> {
-    let members = load_project_test_members(request_path, project_path, package_name)?;
+    let members = load_project_test_members(request_path, project_path, command_options)?;
     let request_root = project_request_root(project_path);
     let mut targets = Vec::new();
 
@@ -4739,7 +4749,7 @@ fn discover_project_test_targets(
                 &package_root,
                 &file,
                 options,
-                profile_overridden,
+                command_options.profile_overridden,
             ));
         }
     }
@@ -4750,8 +4760,9 @@ fn discover_project_test_targets(
 fn load_project_test_members(
     request_path: &Path,
     project_path: &Path,
-    selected_package_name: Option<&str>,
+    command_options: &TestCommandOptions,
 ) -> Result<Vec<WorkspaceBuildTargets>, u8> {
+    let selected_package_name = command_options.package_name.as_deref();
     let Some(selected_package_name) = selected_package_name else {
         return load_workspace_build_targets_for_command_from_request_root(
             request_path,
@@ -4760,16 +4771,104 @@ fn load_project_test_members(
         );
     };
 
-    let manifest = load_project_test_manifest(project_path)?;
+    let manifest = match load_project_manifest(project_path) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            if command_options.json {
+                print!(
+                    "{}",
+                    render_test_json_preflight_failure_report(
+                        request_path,
+                        command_options,
+                        build_json_project_error(request_path, &error, "manifest-load"),
+                    )
+                );
+            } else {
+                report_ql_test_project_error(&error);
+            }
+            return Err(1);
+        }
+    };
 
     if manifest.workspace.is_some() {
-        let (_, member_manifest) = resolve_selected_workspace_member_manifest(
-            &manifest,
-            request_path,
-            selected_package_name,
-            "`ql test`",
-            "--package",
-        )?;
+        if let Err(message) = validate_project_package_name(selected_package_name) {
+            if command_options.json {
+                print!(
+                    "{}",
+                    render_test_json_preflight_message_report(
+                        request_path,
+                        command_options,
+                        "selector",
+                        "package-selection",
+                        format!("`ql test` {message}"),
+                        Some(format!("package `{selected_package_name}`")),
+                        None,
+                    )
+                );
+            } else {
+                eprintln!("error: `ql test` {message}");
+            }
+            return Err(1);
+        }
+
+        let member_manifest = if command_options.json {
+            let (_, member_manifest_path) = match resolve_workspace_member_entry_by_package_name(
+                &manifest,
+                selected_package_name,
+            ) {
+                Ok(member) => member,
+                Err(error) => {
+                    let (error_kind, target_count) = match &error {
+                        WorkspaceMemberLookupError::Missing => ("selector", Some(0)),
+                        WorkspaceMemberLookupError::Ambiguous { matches } => {
+                            ("selector", Some(matches.len()))
+                        }
+                        WorkspaceMemberLookupError::InspectionFailure { .. } => ("manifest", None),
+                    };
+                    print!(
+                        "{}",
+                        render_test_json_preflight_message_report(
+                            request_path,
+                            command_options,
+                            error_kind,
+                            "package-selection",
+                            render_workspace_member_lookup_error(
+                                &manifest,
+                                selected_package_name,
+                                &error,
+                            ),
+                            Some(format!("package `{selected_package_name}`")),
+                            target_count,
+                        )
+                    );
+                    return Err(1);
+                }
+            };
+            match load_project_manifest(&member_manifest_path) {
+                Ok(member_manifest) => member_manifest,
+                Err(error) => {
+                    print!(
+                        "{}",
+                        render_test_json_preflight_failure_report(
+                            request_path,
+                            command_options,
+                            build_json_project_error(request_path, &error, "package-selection"),
+                        )
+                    );
+                    return Err(1);
+                }
+            }
+        } else {
+            let (_, member_manifest) = resolve_selected_workspace_member_manifest(
+                &manifest,
+                request_path,
+                selected_package_name,
+                "`ql test`",
+                "--package",
+            )?;
+            member_manifest
+        };
+
         return Ok(vec![project_test_build_targets_from_manifest(
             &member_manifest,
             Some(&manifest),
@@ -4777,31 +4876,73 @@ fn load_project_test_members(
     }
 
     if let Err(message) = validate_project_package_name(selected_package_name) {
-        eprintln!("error: `ql test` {message}");
+        if command_options.json {
+            print!(
+                "{}",
+                render_test_json_preflight_message_report(
+                    request_path,
+                    command_options,
+                    "selector",
+                    "package-selection",
+                    format!("`ql test` {message}"),
+                    Some(format!("package `{selected_package_name}`")),
+                    None,
+                )
+            );
+        } else {
+            eprintln!("error: `ql test` {message}");
+        }
         return Err(1);
     }
-    let current_package_name = package_name(&manifest).map_err(|error| {
-        eprintln!("error: `ql test` {error}");
-        1
-    })?;
+    let current_package_name = match package_name(&manifest) {
+        Ok(package_name) => package_name,
+        Err(error) => {
+            if command_options.json {
+                print!(
+                    "{}",
+                    render_test_json_preflight_failure_report(
+                        request_path,
+                        command_options,
+                        build_json_project_error(request_path, &error, "package-selection"),
+                    )
+                );
+            } else {
+                eprintln!("error: `ql test` {error}");
+            }
+            return Err(1);
+        }
+    };
     if current_package_name != selected_package_name {
         let normalized_path = normalize_path(request_path);
-        eprintln!(
-            "error: `ql test` package selector matched no workspace members under `{normalized_path}`"
-        );
-        eprintln!("note: selector: package `{selected_package_name}`");
-        eprintln!(
-            "hint: rerun `ql test {normalized_path}` to inspect all workspace members, or adjust `--package`"
-        );
+        if command_options.json {
+            print!(
+                "{}",
+                render_test_json_preflight_message_report(
+                    request_path,
+                    command_options,
+                    "selector",
+                    "package-selection",
+                    format!(
+                        "package selector matched no workspace members under `{normalized_path}`"
+                    ),
+                    Some(format!("package `{selected_package_name}`")),
+                    Some(0),
+                )
+            );
+        } else {
+            eprintln!(
+                "error: `ql test` package selector matched no workspace members under `{normalized_path}`"
+            );
+            eprintln!("note: selector: package `{selected_package_name}`");
+            eprintln!(
+                "hint: rerun `ql test {normalized_path}` to inspect all workspace members, or adjust `--package`"
+            );
+        }
         return Err(1);
     }
     Ok(vec![project_test_build_targets_from_manifest(
         &manifest, None,
     )?])
-}
-
-fn load_project_test_manifest(path: &Path) -> Result<ql_project::ProjectManifest, u8> {
-    load_project_manifest(path).map_err(|error| report_ql_test_project_error(&error))
 }
 
 fn project_test_build_targets_from_manifest(
