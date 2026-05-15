@@ -151,6 +151,83 @@ name = "core"
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn code_lens_request_counts_open_workspace_consumers_without_dependency_interface() {
+    let temp = TempDir::new("ql-lsp-code-lens-request-open-consumer-missing-interface");
+    let workspace_root = temp.path().join("workspace");
+    let dep_source = r#"
+package demo.dep
+
+pub fn helper() -> Int {
+    return 1
+}
+"#;
+    let app_source = r#"
+package demo.app
+
+use demo.dep.helper as helper
+
+pub fn main() -> Int {
+    return helper()
+}
+"#;
+    let dep_path = temp.write("workspace/vendor/dep/src/lib.ql", dep_source);
+    let app_path = temp.write("workspace/packages/app/src/main.ql", app_source);
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = { path = "../../vendor/dep" }
+"#,
+    );
+    temp.write(
+        "workspace/vendor/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+
+    let workspace_root_uri =
+        Url::from_file_path(&workspace_root).expect("workspace root path should convert to URI");
+    let dep_uri = Url::from_file_path(&dep_path).expect("dependency path should convert to URI");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service_with_workspace_roots(&mut service, vec![workspace_root_uri]).await;
+    did_open_via_request(&mut service, dep_uri.clone(), dep_source.to_owned()).await;
+    did_open_via_request(&mut service, app_uri.clone(), app_source.to_owned()).await;
+
+    let lenses = code_lens_via_request(&mut service, dep_uri)
+        .await
+        .expect("workspace codeLens request should return dependency source lenses");
+
+    let helper_position = offset_to_position(dep_source, nth_offset(dep_source, "helper", 1));
+    let helper_lens = reference_lens_at(&lenses, helper_position).unwrap_or_else(|| {
+        panic!("workspace dependency helper reference code lens should exist: {lenses:#?}")
+    });
+    let locations = helper_lens
+        .command
+        .as_ref()
+        .and_then(|command| command.arguments.as_ref())
+        .and_then(|arguments| arguments.get(2).cloned())
+        .and_then(|value| serde_json::from_value::<Vec<Location>>(value).ok())
+        .expect("codeLens command should carry reference locations");
+    assert!(
+        locations.iter().any(|location| location.uri == app_uri),
+        "workspace dependency codeLens should include the open app consumer even without an interface artifact: {locations:#?}",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn code_lens_request_counts_real_stdlib_consumers() {
     let temp = TempDir::new("ql-lsp-code-lens-real-stdlib");
     let app_source = r#"

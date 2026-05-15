@@ -50,7 +50,7 @@
 ### LSP 和 VSCode
 
 - same-file：hover、keyword hover、definition、declaration、typeDefinition、references、documentHighlight、completion、semantic tokens、formatting、codeAction、codeLens、callHierarchy、typeHierarchy、rename。
-- workspace：`workspace/symbol`、`implementation`、open-doc dependency navigation、依赖调用 signatureHelp、保守 workspace rename；`workspace/symbol` 已用真实 `stdlib/` workspace root 覆盖当前 stdlib public symbols，并在缺失接口等包级预检失败时回退索引源码符号；`codeLens` 也已在真实 workspace consumer 场景下保持可用。
+- workspace：`workspace/symbol`、`implementation`、open-doc dependency navigation、依赖调用 signatureHelp、保守 workspace rename；`workspace/symbol` 已用真实 `stdlib/` workspace root 覆盖当前 stdlib public symbols，并在缺失接口等包级预检失败时回退索引源码符号；`codeLens` 也已在真实 workspace consumer 场景下保持可用，包括 open-doc consumer。
 - 第三方旧接口里的 stdlib 兼容 API 会在真实 `textDocument/completion`、`textDocument/hover` 和 `textDocument/semanticTokens/full/range` 请求中提示 deprecated 并带迁移 guidance；当前 stdlib 正式 API 使用 generic carrier 和 length-generic helpers。
 - 真实 stdlib LSP smoke 已按 request family 拆分，覆盖 completion/resolve、hover、definition/declaration/typeDefinition、references/documentHighlight、documentSymbol、signatureHelp/inlayHint、folding/selection、formatting、codeAction/resolve、call/type hierarchy、semanticTokens full/range、rename；另有 diagnostics、codeLens、`workspace/symbol` smoke。
 - semantic tokens 覆盖 parse-error fallback、注释 token 和 `self` keyword token。

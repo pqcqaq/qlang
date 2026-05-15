@@ -660,6 +660,21 @@ fn visible_manifest_paths_for_package_with_open_docs(
     manifests
 }
 
+fn visible_manifest_paths_for_package_and_open_docs(
+    package_manifest_path: &Path,
+    open_docs: &OpenDocuments,
+) -> Vec<PathBuf> {
+    let mut manifests = visible_manifest_paths_for_package(package_manifest_path);
+    manifests.extend(open_document_manifest_paths(open_docs));
+    manifests.sort_by_key(|manifest_path| {
+        canonicalize_or_clone(manifest_path)
+            .to_string_lossy()
+            .into_owned()
+    });
+    manifests.dedup_by(|left, right| canonicalize_or_clone(left) == canonicalize_or_clone(right));
+    manifests
+}
+
 fn append_manifest_and_workspace_symbols(
     manifest: &ql_project::ProjectManifest,
     open_docs: &HashMap<PathBuf, (Url, String)>,
@@ -7043,7 +7058,9 @@ fn workspace_broken_import_reference_locations_for_visible_sources(
     let current_path = current_path.map(canonicalize_or_clone);
     let mut locations = Vec::new();
 
-    for candidate_manifest_path in visible_manifest_paths_for_package(package_manifest_path) {
+    for candidate_manifest_path in
+        visible_manifest_paths_for_package_and_open_docs(package_manifest_path, open_docs)
+    {
         let Some(candidate_package) = package_analysis_for_path(&candidate_manifest_path) else {
             continue;
         };
