@@ -81,6 +81,81 @@ name = "tool"
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn workspace_symbol_request_indexes_member_source_when_dependency_interface_is_missing() {
+    let temp = TempDir::new("ql-lsp-workspace-symbol-request-missing-interface");
+    let workspace_root = temp.path().join("workspace");
+    let app_source_path = temp.write(
+        "workspace/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+use demo.dep.missing_interface_helper as missing_interface_helper
+
+pub fn resilient_symbol() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "workspace/packages/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/packages/dep/src/lib.ql",
+        r#"
+package demo.dep
+
+pub fn missing_interface_helper() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let workspace_root_uri =
+        Url::from_file_path(&workspace_root).expect("workspace root path should convert to URI");
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service_with_workspace_roots(&mut service, vec![workspace_root_uri]).await;
+
+    let symbols = workspace_symbol_via_request(&mut service, "resilient_symbol").await;
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "resilient_symbol");
+    assert_eq!(symbols[0].kind, SymbolKind::FUNCTION);
+    assert_eq!(
+        symbols[0]
+            .location
+            .uri
+            .to_file_path()
+            .expect("workspace symbol path should convert")
+            .canonicalize()
+            .expect("workspace symbol path should canonicalize"),
+        app_source_path
+            .canonicalize()
+            .expect("app source path should canonicalize"),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn workspace_symbol_request_prefers_open_unsaved_dependency_source() {
     let temp = TempDir::new("ql-lsp-workspace-symbol-request-open-doc");
     let workspace_root = temp.path().join("workspace");
