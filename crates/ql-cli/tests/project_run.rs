@@ -627,6 +627,118 @@ name = "app"
 }
 
 #[test]
+fn run_project_path_json_reports_missing_manifest_preflight_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-json-missing-manifest");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(&project_root)
+        .expect("create empty project directory for missing manifest run json test");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(&mut command, "`ql run --json` missing manifest");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-json-missing-manifest",
+        "missing manifest run json preflight failure",
+        &output,
+        1,
+    )
+    .expect("project-path `ql run --json` should exit with code 1 for missing manifest");
+    expect_empty_stderr(
+        "project-run-json-missing-manifest",
+        "missing manifest run json preflight failure",
+        &stderr,
+    )
+    .expect("project-path `ql run --json` missing manifest should stay on stdout");
+
+    let json = parse_json_output("project-run-json-missing-manifest", &stdout);
+    assert_eq!(json["schema"], "ql.run.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(json["project_manifest_path"], JsonValue::Null);
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["built_target"], JsonValue::Null);
+    assert_eq!(json["execution"], JsonValue::Null);
+    assert_eq!(json["failure"]["kind"], "preflight");
+    let failure = &json["failure"]["preflight_failure"];
+    assert_eq!(failure["error_kind"], "manifest");
+    assert_eq!(failure["stage"], "manifest-load");
+    assert_eq!(failure["target_count"], JsonValue::Null);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("missing manifest run json failure should expose message")
+            .contains("could not find `qlang.toml`"),
+        "missing manifest run json failure should describe manifest lookup: {json}"
+    );
+}
+
+#[test]
+fn run_project_path_json_reports_missing_source_root_preflight_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-json-missing-source-root");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(&project_root)
+        .expect("create project directory for missing source root run json test");
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(&mut command, "`ql run --json` missing source root");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-json-missing-source-root",
+        "missing source root run json preflight failure",
+        &output,
+        1,
+    )
+    .expect("project-path `ql run --json` should exit with code 1 for missing source root");
+    expect_empty_stderr(
+        "project-run-json-missing-source-root",
+        "missing source root run json preflight failure",
+        &stderr,
+    )
+    .expect("project-path `ql run --json` missing source root should stay on stdout");
+
+    let json = parse_json_output("project-run-json-missing-source-root", &stdout);
+    assert_eq!(json["schema"], "ql.run.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["built_target"], JsonValue::Null);
+    assert_eq!(json["execution"], JsonValue::Null);
+    assert_eq!(json["failure"]["kind"], "preflight");
+    let failure = &json["failure"]["preflight_failure"];
+    assert_eq!(failure["error_kind"], "manifest");
+    assert_eq!(failure["stage"], "target-discovery");
+    assert_eq!(failure["target_count"], JsonValue::Null);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("missing source root run json failure should expose message")
+            .contains("package source directory"),
+        "missing source root run json failure should describe source root lookup: {json}"
+    );
+}
+
+#[test]
 fn run_package_path_uses_manifest_default_release_profile() {
     if !toolchain_available("`ql run` manifest profile test") {
         return;

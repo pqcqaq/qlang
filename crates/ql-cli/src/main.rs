@@ -3802,11 +3802,17 @@ fn run_project_path_json(
         profile_overridden,
         program_args,
     );
-    let all_members = load_workspace_build_targets_for_command_from_request_root(
+    let all_members = match load_workspace_build_targets_for_build_json_from_request_root(
         path,
         project_request_root,
-        "`ql run`",
-    )?;
+    ) {
+        Ok(members) => members,
+        Err(failure) => {
+            report.record_preflight_failure(failure);
+            print!("{}", report.into_json());
+            return Err(1);
+        }
+    };
     let members = match select_workspace_build_targets_for_build_json(
         path,
         &all_members,
