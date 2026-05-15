@@ -1583,6 +1583,58 @@ fn run_workspace_package_selector_list_json_reports_package_relative_target_path
 }
 
 #[test]
+fn run_project_list_json_reports_selected_non_runnable_target() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-list-json-selected-non-runnable");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source root");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["run", "--list", "--json", "--lib"])
+        .arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql run --list --json --lib` package path");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-list-json-selected-non-runnable",
+        "selected non-runnable target run list json",
+        &output,
+        1,
+    )
+    .expect("package-path `ql run --list --json --lib` should fail with no runnable targets");
+    expect_empty_stderr(
+        "project-run-list-json-selected-non-runnable",
+        "selected non-runnable target run list json",
+        &stderr,
+    )
+    .expect("selected non-runnable target run list json should stay on stdout");
+
+    let json = parse_json_output("project-run-list-json-selected-non-runnable", &stdout);
+    assert_eq!(json["schema"], "ql.project.targets.v1");
+    assert_eq!(json["members"], serde_json::json!([]));
+    assert_eq!(json["failure"]["kind"], "selection");
+    let failure = &json["failure"]["selection_failure"];
+    assert_eq!(failure["stage"], "runnable-selection");
+    assert_eq!(failure["selector"], "library target");
+    assert_eq!(failure["target_count"], 1);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("run list json runnable selection failure should expose a message")
+            .contains("target selector matched no runnable build targets"),
+        "selected non-runnable target run list json should describe runnable selection: {json}"
+    );
+}
+
+#[test]
 fn run_workspace_package_selector_rejects_missing_package_relative_target_path() {
     let fixture = workspace_package_relative_target_run_fixture(
         "ql-project-run-missing-package-relative-target",

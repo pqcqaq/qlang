@@ -6826,6 +6826,72 @@ fn build_workspace_package_selector_list_json_reports_package_relative_target_pa
 }
 
 #[test]
+fn build_workspace_package_selector_list_json_reports_missing_package_relative_target_path() {
+    let workspace_root = workspace_root();
+    let fixture = workspace_package_relative_target_build_fixture(
+        "ql-project-build-list-json-missing-package-relative-target",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["build"]).arg(&fixture.project_root).args([
+        "--list",
+        "--json",
+        "--package",
+        "app",
+        "--target",
+        "src/bin/missing.ql",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --list --json --package --target` missing package-relative target",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-build-list-json-missing-package-relative-target",
+        "workspace missing package-relative target selector build list json",
+        &output,
+        1,
+    )
+    .expect(
+        "workspace-path `ql build --list --json --package app --target src/bin/missing.ql` should fail",
+    );
+    expect_empty_stderr(
+        "project-build-list-json-missing-package-relative-target",
+        "workspace missing package-relative target selector build list json",
+        &stderr,
+    )
+    .expect(
+        "workspace missing package-relative target selector build list json should stay on stdout",
+    );
+
+    let json = parse_json_output(
+        "project-build-list-json-missing-package-relative-target",
+        &stdout,
+    );
+    assert_eq!(json["schema"], "ql.project.targets.v1");
+    assert_eq!(json["members"], serde_json::json!([]));
+    assert_eq!(json["failure"]["kind"], "selection");
+    let failure = &json["failure"]["selection_failure"];
+    assert_eq!(failure["stage"], "target-selection");
+    assert_eq!(
+        failure["selector"],
+        "package `app`, target `src/bin/missing.ql`"
+    );
+    assert_eq!(failure["target_count"], 3);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("build list json selector miss should expose a message")
+            .contains("target selector matched no build targets"),
+        "missing package-relative target selector build list json should describe selector miss: {json}"
+    );
+    assert!(
+        !fixture.app_admin_output.exists(),
+        "workspace missing package-relative target selector build list json should not build artifacts"
+    );
+}
+
+#[test]
 fn build_workspace_package_selector_rejects_missing_package_relative_target_path() {
     let workspace_root = workspace_root();
     let fixture = workspace_package_relative_target_build_fixture(

@@ -2,11 +2,21 @@ mod support;
 
 use std::path::PathBuf;
 
+use serde_json::Value as JsonValue;
 use support::{
     TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_snapshot_matches,
     expect_stderr_contains, expect_stdout_contains_all, expect_success, ql_command,
     read_normalized_file, run_command_capture, workspace_root,
 };
+
+fn normalize_output_text(text: &str) -> String {
+    text.replace("\r\n", "\n")
+}
+
+fn parse_json_output(case_name: &str, stdout: &str) -> JsonValue {
+    serde_json::from_str(&normalize_output_text(stdout))
+        .unwrap_or_else(|error| panic!("[{case_name}] parse json stdout: {error}\n{stdout}"))
+}
 
 struct WorkspaceTargetsSelectorFixture {
     _temp: TempDir,
@@ -1311,6 +1321,50 @@ name = "app"
         "note: selector: binary `missing`",
     )
     .expect("project target selector miss should print the selector description");
+}
+
+#[test]
+fn project_targets_json_reports_selectors_that_match_no_targets() {
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_targets_selector_fixture("ql-project-targets-selector-miss-json");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "targets", "--bin", "missing", "--json"])
+        .arg(&fixture.project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project targets --bin --json` selector miss",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-targets-selector-miss-json",
+        "project target selector miss json",
+        &output,
+        1,
+    )
+    .expect("project target selector miss json should fail");
+    expect_empty_stderr(
+        "project-targets-selector-miss-json",
+        "project target selector miss json",
+        &stderr,
+    )
+    .expect("project target selector miss json should stay on stdout");
+
+    let json = parse_json_output("project-targets-selector-miss-json", &stdout);
+    assert_eq!(json["schema"], "ql.project.targets.v1");
+    assert_eq!(json["members"], serde_json::json!([]));
+    assert_eq!(json["failure"]["kind"], "selection");
+    let failure = &json["failure"]["selection_failure"];
+    assert_eq!(failure["stage"], "target-selection");
+    assert_eq!(failure["selector"], "binary `missing`");
+    assert_eq!(failure["target_count"], 2);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("project targets json selector miss should expose a message")
+            .contains("target selector matched no build targets"),
+        "project targets json selector miss should describe the selector miss: {json}"
+    );
 }
 
 #[test]

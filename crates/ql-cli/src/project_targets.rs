@@ -410,6 +410,20 @@ pub(crate) fn select_workspace_build_targets(
     command_label: &str,
     target_label: &str,
 ) -> Result<Vec<WorkspaceBuildTargets>, u8> {
+    select_workspace_build_targets_with_failure(path, members, selector, target_label).map_err(
+        |failure| {
+            report_project_target_selection_failure(command_label, &failure);
+            1
+        },
+    )
+}
+
+fn select_workspace_build_targets_with_failure(
+    path: &Path,
+    members: &[WorkspaceBuildTargets],
+    selector: &ProjectTargetSelector,
+    target_label: &str,
+) -> Result<Vec<WorkspaceBuildTargets>, ProjectTargetSelectionFailure> {
     if !selector.is_active() {
         return Ok(members.to_vec());
     }
@@ -444,18 +458,42 @@ pub(crate) fn select_workspace_build_targets(
         .sum::<usize>()
         == 0
     {
-        let normalized_path = normalize_path(path);
-        eprintln!(
-            "error: {command_label} target selector matched no {target_label} under `{normalized_path}`"
-        );
-        eprintln!("note: selector: {}", selector.describe());
-        eprintln!(
-            "hint: rerun `ql project targets {normalized_path}` to inspect the discovered build targets"
-        );
-        return Err(1);
+        return Err(ProjectTargetSelectionFailure {
+            stage: "target-selection",
+            path: normalize_path(path),
+            message: format!(
+                "target selector matched no {target_label} under `{}`",
+                normalize_path(path)
+            ),
+            selector: selector.describe(),
+            target_count: members
+                .iter()
+                .map(|member| member.targets.len())
+                .sum::<usize>(),
+        });
     }
 
     Ok(selected)
+}
+
+struct ProjectTargetSelectionFailure {
+    stage: &'static str,
+    path: String,
+    message: String,
+    selector: String,
+    target_count: usize,
+}
+
+fn report_project_target_selection_failure(
+    command_label: &str,
+    failure: &ProjectTargetSelectionFailure,
+) {
+    eprintln!("error: {command_label} {}", failure.message);
+    eprintln!("note: selector: {}", failure.selector);
+    eprintln!(
+        "hint: rerun `ql project targets {}` to inspect the discovered build targets",
+        failure.path
+    );
 }
 
 fn filter_workspace_build_targets(
@@ -504,13 +542,25 @@ pub(crate) fn project_targets_path(
 ) -> Result<(), u8> {
     let members =
         load_project_target_members_for_workspace_member_path(path, "`ql project targets`")?;
-    let members = select_workspace_build_targets(
+    let members = match select_workspace_build_targets_with_failure(
         path,
         &members,
         selector,
-        "`ql project targets`",
         "build targets",
-    )?;
+    ) {
+        Ok(members) => members,
+        Err(failure) => {
+            if json {
+                print!(
+                    "{}",
+                    render_project_targets_selection_failure_json(&failure)
+                );
+            } else {
+                report_project_target_selection_failure("`ql project targets`", &failure);
+            }
+            return Err(1);
+        }
+    };
     render_project_target_members(&members, json);
     Ok(())
 }
@@ -521,13 +571,25 @@ pub(crate) fn list_build_targets_path(
     json: bool,
 ) -> Result<(), u8> {
     let members = load_project_target_members_for_workspace_member_path(path, "`ql build --list`")?;
-    let members = select_workspace_build_targets(
+    let members = match select_workspace_build_targets_with_failure(
         path,
         &members,
         selector,
-        "`ql build --list`",
         "build targets",
-    )?;
+    ) {
+        Ok(members) => members,
+        Err(failure) => {
+            if json {
+                print!(
+                    "{}",
+                    render_project_targets_selection_failure_json(&failure)
+                );
+            } else {
+                report_project_target_selection_failure("`ql build --list`", &failure);
+            }
+            return Err(1);
+        }
+    };
     render_project_target_members(&members, json);
     Ok(())
 }
@@ -560,14 +622,27 @@ pub(crate) fn list_runnable_targets_path(
             .sum::<usize>()
             == 0
     {
-        let normalized_path = normalize_path(path);
-        eprintln!(
-            "error: `ql run --list` target selector matched no runnable build targets under `{normalized_path}`"
-        );
-        eprintln!("note: selector: {}", selector.describe());
-        eprintln!(
-            "hint: rerun `ql project targets {normalized_path}` to inspect the discovered build targets"
-        );
+        let failure = ProjectTargetSelectionFailure {
+            stage: "runnable-selection",
+            path: normalize_path(path),
+            message: format!(
+                "target selector matched no runnable build targets under `{}`",
+                normalize_path(path)
+            ),
+            selector: selector.describe(),
+            target_count: selected
+                .iter()
+                .map(|member| member.targets.len())
+                .sum::<usize>(),
+        };
+        if json {
+            print!(
+                "{}",
+                render_project_targets_selection_failure_json(&failure)
+            );
+        } else {
+            report_project_target_selection_failure("`ql run --list`", &failure);
+        }
         return Err(1);
     }
     render_project_target_members(&runnable_members, json);
@@ -680,6 +755,33 @@ fn render_project_targets_json(members: &[WorkspaceBuildTargets]) -> String {
     }
 
     rendered.push_str("\n  ]\n}\n");
+    rendered
+}
+
+fn render_project_targets_selection_failure_json(
+    failure: &ProjectTargetSelectionFailure,
+) -> String {
+    let mut rendered = String::new();
+    rendered.push_str("{\n");
+    rendered.push_str("  \"schema\": \"ql.project.targets.v1\",\n");
+    rendered.push_str("  \"members\": [],\n");
+    rendered.push_str("  \"failure\": {\n");
+    rendered.push_str("    \"kind\": \"selection\",\n");
+    rendered.push_str("    \"selection_failure\": {\n");
+    rendered.push_str("      \"stage\": ");
+    rendered.push_str(&json_string(failure.stage));
+    rendered.push_str(",\n");
+    rendered.push_str("      \"message\": ");
+    rendered.push_str(&json_string(&failure.message));
+    rendered.push_str(",\n");
+    rendered.push_str("      \"selector\": ");
+    rendered.push_str(&json_string(&failure.selector));
+    rendered.push_str(",\n");
+    rendered.push_str("      \"target_count\": ");
+    rendered.push_str(&failure.target_count.to_string());
+    rendered.push_str("\n    }\n");
+    rendered.push_str("  }\n");
+    rendered.push_str("}\n");
     rendered
 }
 
