@@ -73,6 +73,45 @@ fn expected_app_dependencies_json(
     })
 }
 
+fn assert_dependencies_selection_failure_json(
+    case_name: &str,
+    stdout: &str,
+    project_root: &std::path::Path,
+    request_path: &std::path::Path,
+    package_name: &str,
+    target_count: Option<usize>,
+    message_fragment: &str,
+) {
+    let actual = parse_json_output(case_name, stdout);
+    assert_eq!(actual["schema"], "ql.project.dependencies.v1");
+    assert_eq!(
+        actual["path"],
+        request_path.to_string_lossy().replace('\\', "/")
+    );
+    assert_eq!(
+        actual["workspace_manifest_path"],
+        project_root
+            .join("qlang.toml")
+            .to_string_lossy()
+            .replace('\\', "/")
+    );
+    assert_eq!(actual["package_name"], package_name);
+    assert_eq!(actual["dependencies"], json!([]));
+    assert_eq!(actual["failure"]["kind"], "selection");
+
+    let failure = &actual["failure"]["selection_failure"];
+    assert_eq!(failure["stage"], "package-selection");
+    assert_eq!(failure["selector"], format!("package `{package_name}`"));
+    assert_eq!(failure["target_count"], json!(target_count));
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("dependencies selector failure should include a message")
+            .contains(message_fragment),
+        "dependencies selector failure should describe the failure: {actual}"
+    );
+}
+
 #[test]
 fn project_dependencies_lists_workspace_member_dependencies_from_member_source_path() {
     let workspace_root = workspace_root();
@@ -510,6 +549,50 @@ fn project_dependencies_refuses_missing_workspace_package() {
 }
 
 #[test]
+fn project_dependencies_json_reports_missing_workspace_package() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependencies-missing-json");
+    let project_root = write_workspace_with_app_dependencies(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependencies",
+        &project_root.to_string_lossy(),
+        "--name",
+        "missing",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependencies --json` missing package",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-dependencies-missing-json",
+        "project dependencies missing package json",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependencies-missing-json",
+        "project dependencies missing package json",
+        &stderr,
+    )
+    .unwrap();
+
+    assert_dependencies_selection_failure_json(
+        "project-dependencies-missing-json",
+        &stdout,
+        &project_root,
+        &project_root,
+        "missing",
+        Some(0),
+        "package selector matched no workspace members",
+    );
+}
+
+#[test]
 fn project_dependencies_reject_duplicate_workspace_package_names_for_name_selector() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-dependencies-duplicate");
@@ -564,6 +647,62 @@ fn project_dependencies_reject_duplicate_workspace_package_names_for_name_select
         ),
     )
     .unwrap();
+}
+
+#[test]
+fn project_dependencies_json_reports_duplicate_workspace_package_names() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependencies-duplicate-json");
+    let project_root = temp.path().join("workspace");
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/a\", \"packages/b\"]\n",
+    );
+    temp.write(
+        "workspace/packages/a/qlang.toml",
+        "[package]\nname = \"util\"\n",
+    );
+    temp.write(
+        "workspace/packages/b/qlang.toml",
+        "[package]\nname = \"util\"\n",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependencies",
+        &project_root.to_string_lossy(),
+        "--name",
+        "util",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependencies --json` duplicate workspace package",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-dependencies-duplicate-json",
+        "project dependencies duplicate package json",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependencies-duplicate-json",
+        "project dependencies duplicate package json",
+        &stderr,
+    )
+    .unwrap();
+
+    assert_dependencies_selection_failure_json(
+        "project-dependencies-duplicate-json",
+        &stdout,
+        &project_root,
+        &project_root,
+        "util",
+        Some(2),
+        "contains multiple members for package `util`",
+    );
 }
 
 #[test]
@@ -624,4 +763,61 @@ fn project_dependencies_surface_broken_workspace_member_metadata_for_name_select
         "does not declare `[package].name`",
     )
     .unwrap();
+}
+
+#[test]
+fn project_dependencies_json_reports_broken_workspace_member_metadata() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependencies-broken-member-json");
+    let project_root = temp.path().join("workspace");
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/app\", \"packages/broken\"]\n",
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        "[package]\nname = \"app\"\n",
+    );
+    temp.write(
+        "workspace/packages/app/src/main.ql",
+        "fn main() -> Int {\n    return 0\n}\n",
+    );
+    temp.write("workspace/packages/broken/qlang.toml", "[package]\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependencies",
+        &project_root.to_string_lossy(),
+        "--name",
+        "app",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependencies --json` broken workspace member metadata",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-dependencies-broken-member-json",
+        "project dependencies broken member metadata json",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependencies-broken-member-json",
+        "project dependencies broken member metadata json",
+        &stderr,
+    )
+    .unwrap();
+
+    assert_dependencies_selection_failure_json(
+        "project-dependencies-broken-member-json",
+        &stdout,
+        &project_root,
+        &project_root,
+        "app",
+        None,
+        "failed to inspect workspace member `packages/broken`",
+    );
 }

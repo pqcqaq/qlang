@@ -4,9 +4,14 @@ use std::path::{Path, PathBuf};
 use ql_project::{ProjectManifest, load_project_manifest, load_reference_manifests, package_name};
 use serde_json::{Value as JsonValue, json};
 
+use crate::project_workspace::{
+    WorkspacePackageSelectionFailure, resolve_selected_workspace_member_manifest_for_json,
+};
+
 use super::{
     normalize_path, relative_path_from, resolve_project_workspace_manifest,
     resolve_project_workspace_member_package_name, resolve_selected_workspace_member_manifest,
+    validate_project_package_name,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,18 +29,53 @@ pub(crate) struct ProjectDependencyMember {
     pub(crate) manifest_path: PathBuf,
 }
 
+enum ProjectDependencyQueryContextError {
+    Json {
+        workspace_manifest: ProjectManifest,
+        package_name: String,
+        failure: ProjectDependencySelectionFailure,
+    },
+    Exit(u8),
+}
+
+struct ProjectDependencySelectionFailure {
+    message: String,
+    selector: Option<String>,
+    target_count: Option<usize>,
+}
+
 pub(crate) fn project_dependents_path(
     path: &Path,
     package_name: Option<&str>,
     json: bool,
 ) -> Result<(), u8> {
     let (workspace_manifest, package_name, member_manifest_path) =
-        resolve_project_dependency_query_context(
+        match resolve_project_dependency_query_context(
             path,
             package_name,
             "`ql project dependents`",
             "--name",
-        )?;
+            json,
+        ) {
+            Ok(context) => context,
+            Err(ProjectDependencyQueryContextError::Json {
+                workspace_manifest,
+                package_name,
+                failure,
+            }) => {
+                print!(
+                    "{}",
+                    render_project_dependents_selection_failure_json(
+                        path,
+                        &workspace_manifest,
+                        &package_name,
+                        failure,
+                    )
+                );
+                return Err(1);
+            }
+            Err(ProjectDependencyQueryContextError::Exit(code)) => return Err(code),
+        };
     let dependents = find_workspace_member_dependents(&workspace_manifest, &member_manifest_path)
         .map_err(|message| {
         eprintln!("error: `ql project dependents` {message}");
@@ -56,12 +96,32 @@ pub(crate) fn project_dependencies_path(
     json: bool,
 ) -> Result<(), u8> {
     let (workspace_manifest, package_name, member_manifest_path) =
-        resolve_project_dependency_query_context(
+        match resolve_project_dependency_query_context(
             path,
             package_name,
             "`ql project dependencies`",
             "--name",
-        )?;
+            json,
+        ) {
+            Ok(context) => context,
+            Err(ProjectDependencyQueryContextError::Json {
+                workspace_manifest,
+                package_name,
+                failure,
+            }) => {
+                print!(
+                    "{}",
+                    render_project_dependencies_selection_failure_json(
+                        path,
+                        &workspace_manifest,
+                        &package_name,
+                        failure,
+                    )
+                );
+                return Err(1);
+            }
+            Err(ProjectDependencyQueryContextError::Exit(code)) => return Err(code),
+        };
     let dependencies =
         find_workspace_member_dependencies(&workspace_manifest, &member_manifest_path).map_err(
             |message| {
@@ -83,25 +143,70 @@ fn resolve_project_dependency_query_context(
     package_name: Option<&str>,
     command_label: &str,
     selector_option: &str,
-) -> Result<(ProjectManifest, String, PathBuf), u8> {
+    json: bool,
+) -> Result<(ProjectManifest, String, PathBuf), ProjectDependencyQueryContextError> {
     let workspace_manifest = resolve_project_workspace_manifest(path).map_err(|message| {
         eprintln!("error: {command_label} {message}");
-        1
+        ProjectDependencyQueryContextError::Exit(1)
     })?;
-    let package_name =
-        resolve_project_workspace_member_package_name(path, package_name, command_label)?;
-    let (_, member_manifest) = resolve_selected_workspace_member_manifest(
-        &workspace_manifest,
-        path,
-        &package_name,
-        command_label,
-        selector_option,
-    )?;
+    let package_name = match package_name {
+        Some(package_name) => {
+            if let Err(message) = validate_project_package_name(package_name) {
+                if json {
+                    return Err(ProjectDependencyQueryContextError::Json {
+                        workspace_manifest,
+                        package_name: package_name.to_owned(),
+                        failure: ProjectDependencySelectionFailure {
+                            message: format!("{command_label} {message}"),
+                            selector: Some(format!("package `{package_name}`")),
+                            target_count: None,
+                        },
+                    });
+                }
+                eprintln!("error: {command_label} {message}");
+                return Err(ProjectDependencyQueryContextError::Exit(1));
+            }
+            package_name.to_owned()
+        }
+        None => resolve_project_workspace_member_package_name(path, None, command_label)
+            .map_err(ProjectDependencyQueryContextError::Exit)?,
+    };
+    let (_, member_manifest) = if json {
+        resolve_selected_workspace_member_manifest_for_json(
+            &workspace_manifest,
+            &package_name,
+            command_label,
+        )
+        .map_err(|failure| ProjectDependencyQueryContextError::Json {
+            workspace_manifest: workspace_manifest.clone(),
+            package_name: package_name.clone(),
+            failure: failure.into(),
+        })?
+    } else {
+        resolve_selected_workspace_member_manifest(
+            &workspace_manifest,
+            path,
+            &package_name,
+            command_label,
+            selector_option,
+        )
+        .map_err(ProjectDependencyQueryContextError::Exit)?
+    };
     Ok((
         workspace_manifest,
         package_name,
         member_manifest.manifest_path,
     ))
+}
+
+impl From<WorkspacePackageSelectionFailure> for ProjectDependencySelectionFailure {
+    fn from(failure: WorkspacePackageSelectionFailure) -> Self {
+        Self {
+            message: failure.message,
+            selector: Some(failure.selector),
+            target_count: failure.target_count,
+        }
+    }
 }
 
 pub(crate) fn find_workspace_member_dependents(
@@ -283,6 +388,24 @@ fn render_project_dependents_json(
     format!("{rendered}\n")
 }
 
+fn render_project_dependents_selection_failure_json(
+    path: &Path,
+    workspace_manifest: &ql_project::ProjectManifest,
+    package_name: &str,
+    failure: ProjectDependencySelectionFailure,
+) -> String {
+    let rendered = serde_json::to_string_pretty(&json!({
+        "schema": "ql.project.dependents.v1",
+        "path": normalize_path(path),
+        "workspace_manifest_path": normalize_path(&workspace_manifest.manifest_path),
+        "package_name": package_name,
+        "dependents": [],
+        "failure": project_dependency_selection_failure_json(failure),
+    }))
+    .expect("project dependents selection failure json should serialize");
+    format!("{rendered}\n")
+}
+
 fn render_project_dependencies(
     workspace_manifest: &ql_project::ProjectManifest,
     package_name: &str,
@@ -331,6 +454,38 @@ fn render_project_dependencies_json(
     }))
     .expect("project dependencies json should serialize");
     format!("{rendered}\n")
+}
+
+fn render_project_dependencies_selection_failure_json(
+    path: &Path,
+    workspace_manifest: &ql_project::ProjectManifest,
+    package_name: &str,
+    failure: ProjectDependencySelectionFailure,
+) -> String {
+    let rendered = serde_json::to_string_pretty(&json!({
+        "schema": "ql.project.dependencies.v1",
+        "path": normalize_path(path),
+        "workspace_manifest_path": normalize_path(&workspace_manifest.manifest_path),
+        "package_name": package_name,
+        "dependencies": [],
+        "failure": project_dependency_selection_failure_json(failure),
+    }))
+    .expect("project dependencies selection failure json should serialize");
+    format!("{rendered}\n")
+}
+
+fn project_dependency_selection_failure_json(
+    failure: ProjectDependencySelectionFailure,
+) -> JsonValue {
+    json!({
+        "kind": "selection",
+        "selection_failure": {
+            "stage": "package-selection",
+            "message": failure.message,
+            "selector": failure.selector,
+            "target_count": failure.target_count,
+        },
+    })
 }
 
 pub(crate) fn project_dependency_json(dependency: &ProjectDependencyMember) -> JsonValue {
