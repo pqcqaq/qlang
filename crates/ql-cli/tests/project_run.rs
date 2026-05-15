@@ -739,6 +739,116 @@ name = "app"
 }
 
 #[test]
+fn run_single_file_json_rejects_target_selectors_without_project_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-file-json-selector-context");
+    let source_path = temp.write("sample.ql", "fn main() -> Int { return 0 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["run"])
+        .arg(&source_path)
+        .args(["--json", "--bin", "admin"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql run --json` single file selector requires project context",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-file-json-selector-context",
+        "single-file run json selector preflight failure",
+        &output,
+        1,
+    )
+    .expect("single-file `ql run --json --bin admin` should exit with code 1");
+    expect_empty_stderr(
+        "project-run-file-json-selector-context",
+        "single-file run json selector preflight failure",
+        &stderr,
+    )
+    .expect("single-file `ql run --json --bin admin` should not print stderr");
+
+    let json = parse_json_output("project-run-file-json-selector-context", &stdout);
+    assert_eq!(json["schema"], "ql.run.v1");
+    assert_eq!(json["scope"], "file");
+    assert_eq!(json["project_manifest_path"], JsonValue::Null);
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["built_target"], JsonValue::Null);
+    assert_eq!(json["execution"], JsonValue::Null);
+    assert_eq!(json["failure"]["kind"], "preflight");
+    let failure = &json["failure"]["preflight_failure"];
+    assert_eq!(failure["error_kind"], "selector");
+    assert_eq!(failure["stage"], "project-context");
+    assert_eq!(failure["selector"], "binary `admin`");
+    assert_eq!(
+        failure["message"],
+        "target selectors require a package or workspace path"
+    );
+}
+
+#[test]
+fn run_project_source_path_json_rejects_explicit_target_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-source-json-selector-conflict");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src/bin"))
+        .expect("create package source tree for source selector conflict run json test");
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let main_path = temp.write("app/src/main.ql", "fn main() -> Int { return 1 }\n");
+    temp.write("app/src/bin/admin.ql", "fn main() -> Int { return 2 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["run"])
+        .arg(&main_path)
+        .args(["--json", "--bin", "admin"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql run --json` project source selector conflict",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-source-json-selector-conflict",
+        "project source run json selector preflight failure",
+        &output,
+        1,
+    )
+    .expect("project source `ql run --json --bin admin` should exit with code 1");
+    expect_empty_stderr(
+        "project-run-source-json-selector-conflict",
+        "project source run json selector preflight failure",
+        &stderr,
+    )
+    .expect("project source `ql run --json --bin admin` should not print stderr");
+
+    let json = parse_json_output("project-run-source-json-selector-conflict", &stdout);
+    assert_eq!(json["schema"], "ql.run.v1");
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["built_target"], JsonValue::Null);
+    assert_eq!(json["execution"], JsonValue::Null);
+    assert_eq!(json["failure"]["kind"], "preflight");
+    let failure = &json["failure"]["preflight_failure"];
+    assert_eq!(failure["error_kind"], "selector");
+    assert_eq!(failure["stage"], "project-context");
+    assert_eq!(failure["selector"], "binary `admin`");
+    assert_eq!(
+        failure["message"],
+        "direct project source paths do not support target selectors"
+    );
+}
+
+#[test]
 fn run_package_path_uses_manifest_default_release_profile() {
     if !toolchain_available("`ql run` manifest profile test") {
         return;

@@ -288,6 +288,66 @@ fn build_single_file_json_rejects_target_selectors_without_project_context() {
 }
 
 #[test]
+fn build_project_source_path_json_rejects_explicit_target_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-source-json-selector-conflict");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src/bin"))
+        .expect("create package source tree for source selector conflict build json test");
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let main_path = temp.write("app/src/main.ql", "fn main() -> Int { return 1 }\n");
+    temp.write("app/src/bin/admin.ql", "fn main() -> Int { return 2 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["build"])
+        .arg(&main_path)
+        .args(["--json", "--bin", "admin"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` project source selector conflict",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-build-source-json-selector-conflict",
+        "project source build json selector preflight failure",
+        &output,
+        1,
+    )
+    .expect("project source `ql build --json --bin admin` should exit with code 1");
+    expect_empty_stderr(
+        "project-build-source-json-selector-conflict",
+        "project source build json selector preflight failure",
+        &stderr,
+    )
+    .expect("project source `ql build --json --bin admin` should not print stderr");
+
+    let json = parse_json_output("project-build-source-json-selector-conflict", &stdout);
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["built_targets"], serde_json::json!([]));
+    assert_eq!(json["interfaces"], serde_json::json!([]));
+    assert_eq!(json["failure"]["error_kind"], "selector");
+    assert_eq!(json["failure"]["stage"], "project-context");
+    assert_eq!(json["failure"]["selector"], "binary `admin`");
+    assert_eq!(
+        json["failure"]["message"],
+        "direct project source paths do not support target selectors"
+    );
+}
+
+#[test]
 fn build_single_file_supports_local_receiver_methods() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-file-local-receiver-method");

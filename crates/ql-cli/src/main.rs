@@ -2275,7 +2275,25 @@ fn build_path(
         }
         Ok(ResolvedProjectCommandPath::DirectSource) => {}
         Err(ProjectCommandPathError::SourcePathRejectsSelector) => {
-            report_project_source_path_rejects_target_selector("`ql build`", path, selector);
+            if json {
+                let mut report =
+                    BuildJsonReport::new(path, None, options, profile_overridden, emit_interface);
+                report.record_preflight_failure(build_json_preflight_failure(
+                    path,
+                    None,
+                    None,
+                    None,
+                    "selector",
+                    "project-context",
+                    "direct project source paths do not support target selectors".to_owned(),
+                    Some(selector.describe()),
+                    None,
+                    None,
+                ));
+                print!("{}", report.into_json());
+            } else {
+                report_project_source_path_rejects_target_selector("`ql build`", path, selector);
+            }
             return Err(1);
         }
         Err(ProjectCommandPathError::SelectorRequiresProjectContext) => {
@@ -3750,11 +3768,47 @@ fn run_path(
         }
         Ok(ResolvedProjectCommandPath::DirectSource) => {}
         Err(ProjectCommandPathError::SourcePathRejectsSelector) => {
-            report_project_source_path_rejects_target_selector("`ql run`", path, selector);
+            if json {
+                let mut report =
+                    RunJsonReport::new(path, None, &options, profile_overridden, program_args);
+                report.record_preflight_failure(build_json_preflight_failure(
+                    path,
+                    None,
+                    None,
+                    None,
+                    "selector",
+                    "project-context",
+                    "direct project source paths do not support target selectors".to_owned(),
+                    Some(selector.describe()),
+                    None,
+                    None,
+                ));
+                print!("{}", report.into_json());
+            } else {
+                report_project_source_path_rejects_target_selector("`ql run`", path, selector);
+            }
             return Err(1);
         }
         Err(ProjectCommandPathError::SelectorRequiresProjectContext) => {
-            report_project_target_selector_requires_project_context("`ql run`", selector);
+            if json {
+                let mut report =
+                    RunJsonReport::new(path, None, &options, profile_overridden, program_args);
+                report.record_preflight_failure(build_json_preflight_failure(
+                    path,
+                    None,
+                    None,
+                    None,
+                    "selector",
+                    "project-context",
+                    "target selectors require a package or workspace path".to_owned(),
+                    Some(selector.describe()),
+                    None,
+                    None,
+                ));
+                print!("{}", report.into_json());
+            } else {
+                report_project_target_selector_requires_project_context("`ql run`", selector);
+            }
             return Err(1);
         }
     }
