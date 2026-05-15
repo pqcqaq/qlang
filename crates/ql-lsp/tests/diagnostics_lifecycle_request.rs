@@ -184,3 +184,58 @@ pub fn main() -> Int {
         "current real stdlib API should not publish diagnostics: {diagnostics:#?}",
     );
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn diagnostics_notifications_prefer_open_buffer_in_real_stdlib_workspace() {
+    let temp = TempDir::new("ql-lsp-diagnostics-real-stdlib-open-buffer");
+    let disk_app_source = r#"
+package demo.app
+
+use std.option.Option as Option
+use std.option.some as option_some
+
+pub fn main() -> Int {
+    let option_value: Option[Int] = option_some(42)
+    return 1
+}
+"#;
+    let open_app_source = r#"
+package demo.app
+
+use std.option.Option as Option
+use std.option.some as option_some
+
+pub fn main( {
+    let option_value: Option[Int] = option_some(42)
+    return 1
+}
+"#;
+    let workspace = write_real_stdlib_workspace(&temp, disk_app_source);
+    let workspace_root_uri = Url::from_file_path(temp.path().join("workspace"))
+        .expect("workspace root should convert to URI");
+    let (mut service, mut socket) = LspService::new(Backend::new);
+    initialize_service_with_workspace_roots(&mut service, vec![workspace_root_uri]).await;
+
+    did_open_via_request(
+        &mut service,
+        workspace.app_uri.clone(),
+        open_app_source.to_owned(),
+    )
+    .await;
+    let diagnostics = next_publish_diagnostics(&mut socket);
+    assert_eq!(diagnostics.uri, workspace.app_uri);
+    assert!(
+        diagnostics
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("expected parameter name")),
+        "real stdlib diagnostics should use the open buffer, not the valid disk source: {diagnostics:#?}",
+    );
+    assert!(
+        diagnostics
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { !diagnostic.message.contains("missing interface artifact") }),
+        "real stdlib dependencies should remain resolved while reporting open-buffer diagnostics",
+    );
+}
