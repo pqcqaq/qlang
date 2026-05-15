@@ -739,6 +739,133 @@ name = "app"
 }
 
 #[test]
+fn run_project_path_json_reports_no_runnable_targets_preflight_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-json-no-runnable");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source tree for no-runnable run json test");
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(&mut command, "`ql run --json` no runnable targets");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-json-no-runnable",
+        "no runnable targets run json preflight failure",
+        &output,
+        1,
+    )
+    .expect("project-path `ql run --json` should exit with code 1 without runnable targets");
+    expect_empty_stderr(
+        "project-run-json-no-runnable",
+        "no runnable targets run json preflight failure",
+        &stderr,
+    )
+    .expect("project-path `ql run --json` no-runnable failure should stay on stdout");
+
+    let json = parse_json_output("project-run-json-no-runnable", &stdout);
+    assert_eq!(json["schema"], "ql.run.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["built_target"], JsonValue::Null);
+    assert_eq!(json["execution"], JsonValue::Null);
+    assert_eq!(json["failure"]["kind"], "preflight");
+    let failure = &json["failure"]["preflight_failure"];
+    assert_eq!(failure["error_kind"], "project");
+    assert_eq!(failure["stage"], "target-selection");
+    assert_eq!(failure["selector"], JsonValue::Null);
+    assert_eq!(failure["target_count"], 0);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("no-runnable run json failure should expose message")
+            .contains("found no runnable build targets"),
+        "no-runnable run json failure should describe target selection: {json}"
+    );
+}
+
+#[test]
+fn run_project_path_json_reports_multiple_runnable_targets_preflight_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-json-multiple-runnable");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src/bin"))
+        .expect("create package source tree for multiple-runnable run json test");
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/main.ql", "fn main() -> Int { return 1 }\n");
+    temp.write("app/src/bin/admin.ql", "fn main() -> Int { return 2 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(&mut command, "`ql run --json` multiple runnable targets");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-json-multiple-runnable",
+        "multiple runnable targets run json preflight failure",
+        &output,
+        1,
+    )
+    .expect("project-path `ql run --json` should exit with code 1 for multiple runnable targets");
+    expect_empty_stderr(
+        "project-run-json-multiple-runnable",
+        "multiple runnable targets run json preflight failure",
+        &stderr,
+    )
+    .expect("project-path `ql run --json` multiple-runnable failure should stay on stdout");
+
+    let json = parse_json_output("project-run-json-multiple-runnable", &stdout);
+    assert_eq!(json["schema"], "ql.run.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["built_target"], JsonValue::Null);
+    assert_eq!(json["execution"], JsonValue::Null);
+    assert_eq!(json["failure"]["kind"], "preflight");
+    let failure = &json["failure"]["preflight_failure"];
+    assert_eq!(failure["error_kind"], "project");
+    assert_eq!(failure["stage"], "target-selection");
+    assert_eq!(failure["selector"], JsonValue::Null);
+    assert_eq!(failure["target_count"], 2);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("multiple-runnable run json failure should expose message")
+            .contains("found multiple runnable build targets"),
+        "multiple-runnable run json failure should describe target selection: {json}"
+    );
+}
+
+#[test]
 fn run_single_file_json_rejects_target_selectors_without_project_context() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-run-file-json-selector-context");
