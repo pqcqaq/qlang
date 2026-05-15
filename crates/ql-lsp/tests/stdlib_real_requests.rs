@@ -10,8 +10,9 @@ use common::request::{
     formatting_via_request, goto_declaration_via_request, goto_definition_via_request,
     goto_type_definition_via_request, hover_via_request, incoming_calls_via_request,
     initialize_service_with_workspace_roots, inlay_hint_via_request, nth_offset,
-    offset_to_position, outgoing_calls_via_request, prepare_call_hierarchy_via_request,
-    prepare_rename_via_request, prepare_type_hierarchy_via_request, references_via_request,
+    offset_to_position, on_type_formatting_via_request, outgoing_calls_via_request,
+    prepare_call_hierarchy_via_request, prepare_rename_via_request,
+    prepare_type_hierarchy_via_request, range_formatting_via_request, references_via_request,
     rename_via_request, selection_range_via_request, semantic_tokens_full_via_request,
     semantic_tokens_range_via_request, signature_help_via_request,
 };
@@ -337,12 +338,40 @@ pub fn main() -> Int {
     .expect("real stdlib selectionRange should return token selection");
     assert_selection_range_source(&selections, &option_source, "inner", inner_offset);
 
-    let edits = formatting_via_request(&mut service, option_uri)
+    let edits = formatting_via_request(&mut service, option_uri.clone())
         .await
         .expect("real stdlib formatting should return an edit list for parseable source");
     assert!(
         edits.is_empty(),
         "real stdlib source should already be qfmt-stable: {edits:#?}",
+    );
+
+    let range_edits = range_formatting_via_request(
+        &mut service,
+        option_uri.clone(),
+        range_for(&option_source, "        Option.Some(inner) => inner", 1),
+    )
+    .await
+    .expect("real stdlib rangeFormatting should return source-local edits");
+    assert!(
+        range_edits.is_empty(),
+        "real stdlib selected range should already be qfmt-stable: {range_edits:#?}",
+    );
+
+    let on_type_edits = on_type_formatting_via_request(
+        &mut service,
+        option_uri,
+        offset_to_position(
+            &option_source,
+            nth_offset(&option_source, "        Option.None", 1),
+        ),
+        "\n",
+    )
+    .await
+    .expect("real stdlib onTypeFormatting should return source-local edits");
+    assert!(
+        on_type_edits.is_empty(),
+        "real stdlib trigger line should already be qfmt-stable: {on_type_edits:#?}",
     );
 }
 
