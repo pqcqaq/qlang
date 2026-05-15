@@ -1,19 +1,22 @@
 use crate::common::request::{
-    TempDir, document_highlight_via_request, goto_declaration_via_request,
-    goto_definition_via_request, goto_type_definition_via_request, hover_via_request,
-    inlay_hint_via_request, nth_offset, offset_to_position, references_via_request,
-    semantic_tokens_full_via_request, semantic_tokens_range_via_request,
-    signature_help_via_request,
+    TempDir, did_open_via_request, document_highlight_via_request, folding_range_via_request,
+    formatting_via_request, goto_declaration_via_request, goto_definition_via_request,
+    goto_type_definition_via_request, hover_via_request, inlay_hint_via_request, nth_offset,
+    offset_to_position, on_type_formatting_via_request, range_formatting_via_request,
+    references_via_request, selection_range_via_request, semantic_tokens_full_via_request,
+    semantic_tokens_range_via_request, signature_help_via_request,
 };
 use crate::common::stdlib_real::real_stdlib_source_path;
 use crate::support::{
     assert_declaration_targets_snippet, assert_definition_targets_snippet,
-    assert_document_highlight_source, assert_parameter_hint, assert_reference_targets_snippet,
-    assert_reference_targets_source, assert_semantic_token, assert_type_definition_targets_snippet,
-    full_source_range, hover_markup, open_real_stdlib_workspace,
+    assert_document_highlight_source, assert_folding_range_starts_at_source_line,
+    assert_parameter_hint, assert_reference_targets_snippet, assert_reference_targets_source,
+    assert_selection_range_source, assert_semantic_token, assert_type_definition_targets_snippet,
+    full_source_range, hover_markup, open_real_stdlib_workspace, range_for,
 };
 use tower_lsp::lsp_types::{
-    Range, SemanticTokenType, SemanticTokensRangeResult, SemanticTokensResult,
+    Position, Range, SemanticTokenType, SemanticTokensRangeResult, SemanticTokensResult, TextEdit,
+    Url,
 };
 
 #[tokio::test(flavor = "current_thread")]
@@ -216,5 +219,162 @@ pub fn main() -> Int {
         nth_offset(app_source, "repeat_array", 3),
         "repeat_array".len(),
         SemanticTokenType::FUNCTION,
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn rich_requests_cover_formatting_folding_and_selection_in_real_stdlib_workspace() {
+    let temp = TempDir::new("ql-lsp-real-stdlib-rich-editor-requests");
+    let app_source = r#"package demo.app
+
+use std.core.clamp_int as clamp_int
+
+/* module fold
+   stays foldable
+*/
+fn add(left: Int, right: Int)->Int{
+return left + right
+}
+
+// group fold alpha
+// group fold beta
+pub fn main() -> Int {
+let total= add(1, 2)
+let next = clamp_int(total,0,100)
+let marker: String = "not a comment
+// not a line comment
+/* not a block comment */
+// still not a line comment"
+if total > 0 {
+return next
+}
+return 0
+}
+"#;
+    let formatted_app_source = r#"package demo.app
+
+use std.core.clamp_int as clamp_int
+
+fn add(left: Int, right: Int) -> Int {
+    return left + right
+}
+
+pub fn main() -> Int {
+    let total = add(1, 2)
+    let next = clamp_int(total, 0, 100)
+    let marker: String = "not a comment
+// not a line comment
+/* not a block comment */
+// still not a line comment"
+    if total > 0 {
+        return next
+    }
+    return 0
+}
+"#;
+    let (mut service, app_uri, _) = open_real_stdlib_workspace(&temp, app_source).await;
+
+    let formatting_edits = formatting_via_request(&mut service, app_uri.clone())
+        .await
+        .expect("real stdlib app formatting should return edits");
+    assert_eq!(
+        formatting_edits,
+        vec![TextEdit::new(
+            full_source_range(app_source),
+            formatted_app_source.to_owned(),
+        )],
+        "real stdlib app formatting should normalize the whole file",
+    );
+
+    let formatting_source = r#"package demo.app
+
+fn main()->Int{
+return 1
+}
+"#;
+    let formatting_path = temp.write("workspace/app/src/formatting.ql", formatting_source);
+    let formatting_uri =
+        Url::from_file_path(&formatting_path).expect("formatting path should convert to URI");
+    did_open_via_request(
+        &mut service,
+        formatting_uri.clone(),
+        formatting_source.to_owned(),
+    )
+    .await;
+
+    let add_return_range = range_for(formatting_source, "return 1", 1);
+    let add_return_line = add_return_range.start.line;
+    let range_edits =
+        range_formatting_via_request(&mut service, formatting_uri.clone(), add_return_range)
+            .await
+            .expect("real stdlib app rangeFormatting should return edits");
+    assert_eq!(
+        range_edits,
+        vec![TextEdit::new(
+            Range::new(
+                Position::new(add_return_line, 0),
+                Position::new(add_return_line, 0),
+            ),
+            "    ".to_owned(),
+        )],
+        "real stdlib app rangeFormatting should indent the body line",
+    );
+
+    let on_type_edits = on_type_formatting_via_request(
+        &mut service,
+        formatting_uri,
+        Position::new(add_return_line, 0),
+        "\n",
+    )
+    .await
+    .expect("real stdlib app onTypeFormatting should return edits");
+    assert_eq!(
+        on_type_edits,
+        vec![TextEdit::new(
+            Range::new(
+                Position::new(add_return_line, 0),
+                Position::new(add_return_line, 0),
+            ),
+            "    ".to_owned(),
+        )],
+        "real stdlib app onTypeFormatting should indent the body line",
+    );
+
+    let folds = folding_range_via_request(&mut service, app_uri.clone())
+        .await
+        .expect("real stdlib app foldingRange should return source folds");
+    assert!(
+        folds.iter().any(|range| range.start_line < range.end_line),
+        "foldingRange should include multiline folds: {folds:#?}",
+    );
+    let comment_folds = folds
+        .iter()
+        .filter(|range| {
+            range.kind.as_ref() == Some(&tower_lsp::lsp_types::FoldingRangeKind::Comment)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        comment_folds.len(),
+        2,
+        "foldingRange should include only real comment folds, not string markers: {folds:#?}",
+    );
+    assert_folding_range_starts_at_source_line(&folds, app_source, "/* module fold", 1);
+    assert_folding_range_starts_at_source_line(&folds, app_source, "// group fold alpha", 1);
+
+    let selections = selection_range_via_request(
+        &mut service,
+        app_uri,
+        vec![offset_to_position(
+            app_source,
+            nth_offset(app_source, "next", 1),
+        )],
+    )
+    .await
+    .expect("real stdlib app selectionRange should return token selection");
+    assert_selection_range_source(
+        &selections,
+        app_source,
+        "next",
+        nth_offset(app_source, "next", 1),
     );
 }
