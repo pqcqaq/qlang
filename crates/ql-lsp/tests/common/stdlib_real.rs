@@ -46,6 +46,13 @@ pub fn real_stdlib_interface_path(stdlib_root: &Path, package_dir: &str) -> Path
         .join(format!("std.{package_dir}.qi"))
 }
 
+pub fn repo_stdlib_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../stdlib")
+        .canonicalize()
+        .expect("repository stdlib root should exist")
+}
+
 fn write_real_stdlib_packages(temp: &TempDir) {
     write_package(
         temp,

@@ -6,7 +6,8 @@ use std::path::Path;
 use common::request::{
     TempDir, completion_via_request, did_open_via_request, goto_definition_via_request,
     goto_type_definition_via_request, hover_via_request, initialize_service_with_workspace_roots,
-    nth_offset, offset_to_position, semantic_tokens_full_via_request, signature_help_via_request,
+    nth_offset, offset_to_position, references_via_request, semantic_tokens_full_via_request,
+    signature_help_via_request,
 };
 use common::stdlib_real::{real_stdlib_interface_path, write_real_stdlib_workspace};
 use ql_lsp::Backend;
@@ -134,6 +135,33 @@ pub fn main() -> Int {
         .expect("real std.option function definition should exist"),
         &real_stdlib_interface_path(&stdlib_root, "option"),
         "fn some[T](value: T) -> Option[T]",
+    );
+    let option_references = references_via_request(
+        &mut service,
+        app_uri.clone(),
+        offset_to_position(app_source, nth_offset(app_source, "option_some", 2)),
+        true,
+    )
+    .await
+    .expect("real std.option references should exist");
+    assert_reference_targets_snippet(
+        &option_references,
+        &real_stdlib_interface_path(&stdlib_root, "option"),
+        "fn some[T](value: T) -> Option[T]",
+    );
+    assert_reference_targets_source(
+        &option_references,
+        &app_uri,
+        app_source,
+        "option_some",
+        nth_offset(app_source, "option_some", 1),
+    );
+    assert_reference_targets_source(
+        &option_references,
+        &app_uri,
+        app_source,
+        "option_some",
+        nth_offset(app_source, "option_some", 2),
     );
 
     assert_type_definition_targets_snippet(
@@ -291,6 +319,48 @@ fn assert_location_targets_snippet(
     assert_eq!(
         range,
         span_to_range(&artifact, ql_span::Span::new(start, start + snippet.len())),
+    );
+}
+
+fn assert_reference_targets_snippet(references: &[Location], interface_path: &Path, snippet: &str) {
+    let expected_path = interface_path
+        .canonicalize()
+        .expect("stdlib interface path should canonicalize");
+    let artifact = fs::read_to_string(interface_path)
+        .expect("stdlib interface should read")
+        .replace("\r\n", "\n");
+    let start = artifact
+        .find(snippet)
+        .unwrap_or_else(|| panic!("snippet should exist in stdlib interface: {snippet}"));
+    let expected_range = span_to_range(&artifact, ql_span::Span::new(start, start + snippet.len()));
+    assert!(
+        references.iter().any(|reference| {
+            reference.range == expected_range
+                && reference
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|path| path.canonicalize().ok())
+                    .is_some_and(|path| path == expected_path)
+        }),
+        "references should include stdlib definition `{snippet}` from {}: {references:#?}",
+        expected_path.display(),
+    );
+}
+
+fn assert_reference_targets_source(
+    references: &[Location],
+    uri: &Url,
+    source: &str,
+    name: &str,
+    offset: usize,
+) {
+    let expected_range = span_to_range(source, ql_span::Span::new(offset, offset + name.len()));
+    assert!(
+        references
+            .iter()
+            .any(|reference| reference.uri == *uri && reference.range == expected_range),
+        "references should include source occurrence at {expected_range:?}: {references:#?}",
     );
 }
 

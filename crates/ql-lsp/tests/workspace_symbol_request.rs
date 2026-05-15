@@ -1,12 +1,15 @@
 mod common;
 
+use std::path::Path;
+
 use common::request::{
     TempDir, did_open_via_request, initialize_service_with_workspace_roots, offset_to_position,
     workspace_symbol_via_request,
 };
+use common::stdlib_real::repo_stdlib_root;
 use ql_lsp::Backend;
 use tower_lsp::LspService;
-use tower_lsp::lsp_types::Url;
+use tower_lsp::lsp_types::{SymbolInformation, SymbolKind, Url};
 
 #[tokio::test(flavor = "current_thread")]
 async fn workspace_symbol_request_uses_workspace_root_without_open_documents() {
@@ -289,5 +292,73 @@ pub fn main() -> Int {
         dependency_interface_path
             .canonicalize()
             .expect("dependency interface path should canonicalize"),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn workspace_symbol_request_indexes_real_stdlib_workspace_root() {
+    let stdlib_root = repo_stdlib_root();
+    let workspace_root_uri =
+        Url::from_file_path(&stdlib_root).expect("stdlib root path should convert to URI");
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service_with_workspace_roots(&mut service, vec![workspace_root_uri]).await;
+
+    assert_stdlib_symbol(
+        &workspace_symbol_via_request(&mut service, "max_int").await,
+        "max_int",
+        SymbolKind::FUNCTION,
+        &stdlib_root.join("packages/core/src/lib.ql"),
+    );
+    assert_stdlib_symbol(
+        &workspace_symbol_via_request(&mut service, "Option").await,
+        "Option",
+        SymbolKind::ENUM,
+        &stdlib_root.join("packages/option/src/lib.ql"),
+    );
+    assert_stdlib_symbol(
+        &workspace_symbol_via_request(&mut service, "ok_or").await,
+        "ok_or",
+        SymbolKind::FUNCTION,
+        &stdlib_root.join("packages/result/src/lib.ql"),
+    );
+    assert_stdlib_symbol(
+        &workspace_symbol_via_request(&mut service, "expect_eq").await,
+        "expect_eq",
+        SymbolKind::FUNCTION,
+        &stdlib_root.join("packages/test/src/lib.ql"),
+    );
+
+    let legacy_symbols = workspace_symbol_via_request(&mut service, "IntOption").await;
+    assert!(
+        legacy_symbols
+            .iter()
+            .all(|symbol| symbol.name != "IntOption"),
+        "current real stdlib workspace symbols should not expose legacy IntOption: {legacy_symbols:#?}",
+    );
+}
+
+fn assert_stdlib_symbol(
+    symbols: &[SymbolInformation],
+    name: &str,
+    kind: SymbolKind,
+    expected_path: &Path,
+) {
+    let expected_path = expected_path
+        .canonicalize()
+        .expect("expected stdlib symbol path should canonicalize");
+    assert!(
+        symbols.iter().any(|symbol| {
+            symbol.name == name
+                && symbol.kind == kind
+                && symbol
+                    .location
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|path| path.canonicalize().ok())
+                    .is_some_and(|path| path == expected_path)
+        }),
+        "workspace symbols should include {kind:?} `{name}` from {}: {symbols:#?}",
+        expected_path.display(),
     );
 }
