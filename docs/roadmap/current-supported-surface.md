@@ -43,7 +43,7 @@
 - 数组长度泛型参数可在函数体内作为 `Int` 值读取。
 - dependency generic specialization 能递归处理同依赖模块内 generic helper 直调，以及 dependency generic body 内对直接依赖 generic helper 的导入调用；也能从 named/expression args、generic carrier、返回类型上下文、零参数泛型显式上下文和外层调用参数推断 direct-call specialization。未使用的 direct dependency generic import 不再触发 bridge 合成失败。
 - `ql test` 已用真实 smoke 覆盖 dependency public functions、public values、generic public functions、generic wrapper/helper specialization、public struct/type alias/method/trait bridge。
-- `Option[T]`、`Result[T, E]`、`std.core` / `std.array` length-generic aggregate/order/median helpers、`std.test` 泛型 equality/array/option/result/status assertions 已有真实 smoke。
+- `Option[T]`、`Result[T, E]`、`std.core` scalar/predicate/bool helpers、`std.core` / `std.array` length-generic aggregate/order/median helpers、`std.test` 泛型 equality/array/option/result/status assertions 已有真实 smoke。
 - stdlib package-local smoke 已改用 length-generic 状态数组聚合，不再保留测试内 `sum4` / `sum6` 固定 arity helper。
 - 语言级重复数组字面量 `[value; N]` 已支持整数字面量长度和数组长度泛型；`std.option` / `std.result` concrete carrier API、`std.array` 固定长度 helper 和 `std.test` typed facade 已删除。
 
@@ -51,7 +51,7 @@
 
 - same-file：hover、keyword hover、definition、declaration、typeDefinition、references、documentHighlight、completion、semantic tokens、formatting、codeAction、codeLens、callHierarchy、typeHierarchy、rename。
 - workspace：`workspace/symbol`、`implementation`、open-doc dependency navigation、依赖调用 signatureHelp、保守 workspace rename。
-- stdlib 兼容 API 会在真实 `textDocument/completion`、`textDocument/hover` 和 `textDocument/semanticTokens/full/range` 请求中提示 deprecated 并带迁移 guidance；semantic tokens 覆盖 parse-error fallback、注释 token 和 `self` keyword token。
+- 第三方旧接口里的 stdlib 兼容 API 会在真实 `textDocument/completion`、`textDocument/hover` 和 `textDocument/semanticTokens/full/range` 请求中提示 deprecated 并带迁移 guidance；当前 stdlib 正式 API 使用 generic carrier 和 length-generic helpers。semantic tokens 覆盖 parse-error fallback、注释 token 和 `self` keyword token。
 - inlay hints 覆盖 same-file inferred local type，以及 same-file/dependency 调用参数名提示；方法调用会隐藏 receiver `self`。
 - folding range 覆盖代码块、块注释和连续整行 `//` 注释；字符串内注释标记不会生成注释折叠。
 - codeLens 覆盖同文件引用/实现计数，并能在 workspace package 源文件上统计可见 consumer 的引用/实现。
@@ -72,7 +72,7 @@
 - `ql-cli` 主链路仍过度集中；`build/run/test/check` 的入口 request-context，以及 `project emit-interface/graph/dependencies/dependents/add/status` 的 workspace member lookup 已共享并统一了 unresolved/ambiguous member reporting；`project add-dependency/remove-dependency` 的编辑逻辑已拆出。剩余重点是继续收口 reporting 细节和真实 workspace smoke。
 - `ql test` 仍有 package-under-test bridge/source override 组合路径，需要继续抽成共享 project pipeline，并扩大到更宽 dependency-aware backend 语义。
 - LSP 还不是稳定 workspace service；diagnostics、references、rename、symbols 需要统一 workspace index。
-- stdlib public API 已清掉 concrete carrier、主要固定 arity 包装和 `std.test` typed facade；`std.result` package-local smoke 和 `project init --stdlib` starter 已直接覆盖 generic carrier 语义与 option/result assertions。剩余重点是更完整 generic backend、共享 project pipeline 和更宽 dependency-aware backend。
+- stdlib public API 已清掉 concrete carrier、主要固定 arity 包装和 `std.test` typed facade；`std.core` package-local smoke 已覆盖公开 scalar/predicate/bool helpers，`std.result` package-local smoke 和 `project init --stdlib` starter 已直接覆盖 generic carrier 语义与 option/result assertions。剩余重点是更完整 generic backend、共享 project pipeline 和更宽 dependency-aware backend。
 - `project init --stdlib` starter 已迁到 `stdlib/examples/starter`；后续重点是让更多 stdlib examples/downstream smoke 覆盖更宽 dependency-aware backend。
 
 ## 继续阅读
