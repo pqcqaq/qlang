@@ -630,6 +630,42 @@ fn source_preferred_manifest_paths_for_package(package_manifest_path: &Path) -> 
     manifests
 }
 
+fn open_document_manifest_paths(open_docs: &OpenDocuments) -> Vec<PathBuf> {
+    let mut manifests = open_docs
+        .keys()
+        .filter_map(|path| {
+            load_project_manifest(path)
+                .ok()
+                .map(|manifest| manifest.manifest_path)
+        })
+        .collect::<Vec<_>>();
+    manifests.sort_by_key(|manifest_path| {
+        canonicalize_or_clone(manifest_path)
+            .to_string_lossy()
+            .into_owned()
+    });
+    manifests.dedup_by(|left, right| canonicalize_or_clone(left) == canonicalize_or_clone(right));
+    manifests
+}
+
+fn visible_manifest_paths_for_package_with_open_docs(
+    package_manifest_path: &Path,
+    open_docs: &OpenDocuments,
+) -> Vec<PathBuf> {
+    let current_manifest_canonical = canonicalize_or_clone(package_manifest_path);
+    let mut manifests = visible_manifest_paths_for_package(package_manifest_path);
+    manifests.extend(open_document_manifest_paths(open_docs));
+    manifests
+        .retain(|manifest_path| canonicalize_or_clone(manifest_path) != current_manifest_canonical);
+    manifests.sort_by_key(|manifest_path| {
+        canonicalize_or_clone(manifest_path)
+            .to_string_lossy()
+            .into_owned()
+    });
+    manifests.dedup_by(|left, right| canonicalize_or_clone(left) == canonicalize_or_clone(right));
+    manifests
+}
+
 fn append_manifest_and_workspace_symbols(
     manifest: &ql_project::ProjectManifest,
     open_docs: &HashMap<PathBuf, (Url, String)>,
@@ -8724,9 +8760,10 @@ fn workspace_visible_source_references_for_definition_with_open_docs(
     include_declaration: bool,
 ) -> Vec<Location> {
     let mut locations = Vec::new();
-    for candidate_manifest_path in
-        visible_manifest_paths_for_package(package.manifest().manifest_path.as_path())
-    {
+    for candidate_manifest_path in visible_manifest_paths_for_package_with_open_docs(
+        package.manifest().manifest_path.as_path(),
+        open_docs,
+    ) {
         let Some(candidate_package) = package_analysis_for_path(&candidate_manifest_path) else {
             continue;
         };
