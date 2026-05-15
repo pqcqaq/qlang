@@ -1173,6 +1173,178 @@ fn run_workspace_package_selector_json_reports_package_relative_target_path() {
 }
 
 #[test]
+fn run_workspace_package_selector_list_json_reports_package_relative_target_path() {
+    let fixture = workspace_package_relative_target_run_fixture(
+        "ql-project-run-list-json-package-relative-target",
+    );
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["run"]).arg(&fixture.project_root).args([
+        "--list",
+        "--json",
+        "--package",
+        "app",
+        "--target",
+        "src/bin/admin.ql",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql run --list --json --package --target` package-relative target",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-run-list-json-package-relative-target",
+        "workspace package-relative target selector run list json",
+        &output,
+    )
+    .expect(
+        "workspace-path `ql run --list --json --package app --target src/bin/admin.ql` should succeed",
+    );
+    expect_empty_stderr(
+        "project-run-list-json-package-relative-target",
+        "workspace package-relative target selector run list json",
+        &stderr,
+    )
+    .expect("workspace package-relative target selector run list json should not print stderr");
+
+    let json = parse_json_output("project-run-list-json-package-relative-target", &stdout);
+    let expected = serde_json::json!({
+        "schema": "ql.project.targets.v1",
+        "members": [
+            {
+                "manifest_path": fixture.app_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "app",
+                "targets": [
+                    {
+                        "kind": "bin",
+                        "path": "src/bin/admin.ql",
+                    }
+                ],
+            }
+        ],
+    });
+    assert_eq!(
+        json, expected,
+        "workspace-path `ql run --list --json --package --target` should report the selected runnable package-relative target"
+    );
+    assert!(
+        !fixture.app_admin_output.exists(),
+        "workspace package-relative target selector run list json should not build artifacts"
+    );
+}
+
+#[test]
+fn run_workspace_package_selector_rejects_missing_package_relative_target_path() {
+    let fixture = workspace_package_relative_target_run_fixture(
+        "ql-project-run-missing-package-relative-target",
+    );
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["run"]).arg(&fixture.project_root).args([
+        "--package",
+        "app",
+        "--target",
+        "src/bin/missing.ql",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql run --package --target` missing package-relative target",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-missing-package-relative-target",
+        "workspace missing package-relative target selector run",
+        &output,
+        1,
+    )
+    .expect("workspace-path `ql run --package --target src/bin/missing.ql` should fail");
+    expect_empty_stdout(
+        "project-run-missing-package-relative-target",
+        "workspace missing package-relative target selector run",
+        &stdout,
+    )
+    .expect("workspace missing package-relative target selector run should not print stdout");
+    expect_stderr_contains(
+        "project-run-missing-package-relative-target",
+        "workspace missing package-relative target selector run",
+        &stderr,
+        "error: `ql run` target selector matched no build targets",
+    )
+    .expect("missing package-relative target selector run should describe selector miss");
+    expect_stderr_contains(
+        "project-run-missing-package-relative-target",
+        "workspace missing package-relative target selector run",
+        &stderr,
+        "note: selector: package `app`, target `src/bin/missing.ql`",
+    )
+    .expect("missing package-relative target selector run should print selector note");
+    assert!(
+        !fixture.app_admin_output.exists(),
+        "workspace missing package-relative target selector run should not build artifacts"
+    );
+}
+
+#[test]
+fn run_workspace_package_selector_json_reports_missing_package_relative_target_path() {
+    let fixture = workspace_package_relative_target_run_fixture(
+        "ql-project-run-json-missing-package-relative-target",
+    );
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["run"]).arg(&fixture.project_root).args([
+        "--package",
+        "app",
+        "--target",
+        "src/bin/missing.ql",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql run --package --target --json` missing package-relative target",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-json-missing-package-relative-target",
+        "workspace missing package-relative target selector run json",
+        &output,
+        1,
+    )
+    .expect("workspace-path `ql run --package --target src/bin/missing.ql --json` should fail");
+    expect_empty_stderr(
+        "project-run-json-missing-package-relative-target",
+        "workspace missing package-relative target selector run json",
+        &stderr,
+    )
+    .expect("workspace missing package-relative target selector run json should not print stderr");
+
+    let json = parse_json_output("project-run-json-missing-package-relative-target", &stdout);
+    assert_eq!(json["schema"], "ql.run.v1");
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["built_target"], JsonValue::Null);
+    assert_eq!(json["execution"], JsonValue::Null);
+    assert_eq!(json["failure"]["kind"], "preflight");
+    let failure = &json["failure"]["preflight_failure"];
+    assert_eq!(failure["error_kind"], "selector");
+    assert_eq!(failure["stage"], "target-selection");
+    assert_eq!(
+        failure["selector"],
+        "package `app`, target `src/bin/missing.ql`"
+    );
+    assert_eq!(failure["target_count"], 0);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("missing target run json failure should expose message")
+            .contains("target selector matched no build targets"),
+        "missing package-relative target selector run json should describe selector miss: {json}"
+    );
+    assert!(
+        !fixture.app_admin_output.exists(),
+        "workspace missing package-relative target selector run json should not build artifacts"
+    );
+}
+
+#[test]
 fn run_workspace_package_selector_json_reports_dependency_generic_member() {
     if !toolchain_available("`ql run --json --package` workspace dependency generic test") {
         return;

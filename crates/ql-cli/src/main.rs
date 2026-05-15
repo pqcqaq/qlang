@@ -2614,6 +2614,13 @@ impl RunJsonReport {
         }));
     }
 
+    fn record_preflight_failure(&mut self, failure: JsonValue) {
+        self.failure = Some(json!({
+            "kind": "preflight",
+            "preflight_failure": failure,
+        }));
+    }
+
     fn record_spawn_failure(&mut self, executable_path: &Path, message: String) {
         self.failure = Some(json!({
             "kind": "spawn",
@@ -3800,9 +3807,27 @@ fn run_project_path_json(
         project_request_root,
         "`ql run`",
     )?;
-    let members =
-        select_workspace_build_targets(path, &all_members, selector, "`ql run`", "build targets")?;
-    let runnable = select_runnable_project_target(path, &members, selector)?;
+    let members = match select_workspace_build_targets_for_build_json(
+        path,
+        &all_members,
+        selector,
+        "build targets",
+    ) {
+        Ok(members) => members,
+        Err(failure) => {
+            report.record_preflight_failure(failure);
+            print!("{}", report.into_json());
+            return Err(1);
+        }
+    };
+    let runnable = match select_runnable_project_target_for_run_json(path, &members, selector) {
+        Ok(runnable) => runnable,
+        Err(failure) => {
+            report.record_preflight_failure(failure);
+            print!("{}", report.into_json());
+            return Err(1);
+        }
+    };
     prepare_reference_interfaces_for_manifests(
         std::slice::from_ref(&runnable.member_manifest_path),
         "`ql run`",
@@ -3929,11 +3954,9 @@ fn run_project_path(
     run_built_executable(&artifact.path, program_args)
 }
 
-fn select_runnable_project_target(
-    path: &Path,
+fn collect_runnable_project_targets(
     members: &[WorkspaceBuildTargets],
-    selector: &ProjectTargetSelector,
-) -> Result<RunnableProjectTarget, u8> {
+) -> Vec<RunnableProjectTarget> {
     let mut runnable_targets = Vec::new();
     for member in members {
         for target in &member.targets {
@@ -3947,7 +3970,15 @@ fn select_runnable_project_target(
             }
         }
     }
+    runnable_targets
+}
 
+fn select_runnable_project_target(
+    path: &Path,
+    members: &[WorkspaceBuildTargets],
+    selector: &ProjectTargetSelector,
+) -> Result<RunnableProjectTarget, u8> {
+    let mut runnable_targets = collect_runnable_project_targets(members);
     match runnable_targets.len() {
         0 => {
             let normalized_path = normalize_path(path);
@@ -4011,6 +4042,79 @@ fn select_runnable_project_target(
                 "hint: rerun `ql run <source-file>` for a specific target, or `ql project targets {normalized_path}` to inspect the discovered build targets"
             );
             Err(1)
+        }
+    }
+}
+
+fn select_runnable_project_target_for_run_json(
+    path: &Path,
+    members: &[WorkspaceBuildTargets],
+    selector: &ProjectTargetSelector,
+) -> Result<RunnableProjectTarget, JsonValue> {
+    let mut runnable_targets = collect_runnable_project_targets(members);
+    match runnable_targets.len() {
+        0 => {
+            let normalized_path = normalize_path(path);
+            let (error_kind, message, selector) = if selector.is_active() {
+                (
+                    "selector",
+                    format!(
+                        "target selector matched no runnable build targets under `{normalized_path}`"
+                    ),
+                    Some(selector.describe()),
+                )
+            } else {
+                (
+                    "project",
+                    format!("found no runnable build targets under `{normalized_path}`"),
+                    None,
+                )
+            };
+            Err(build_json_preflight_failure(
+                path,
+                None,
+                None,
+                None,
+                error_kind,
+                "target-selection",
+                message,
+                selector,
+                None,
+                Some(0),
+            ))
+        }
+        1 => Ok(runnable_targets
+            .pop()
+            .expect("runnable target count checked above")),
+        count => {
+            let normalized_path = normalize_path(path);
+            let (error_kind, message, selector) = if selector.is_active() {
+                (
+                    "selector",
+                    format!(
+                        "target selector matched multiple runnable build targets under `{normalized_path}`"
+                    ),
+                    Some(selector.describe()),
+                )
+            } else {
+                (
+                    "project",
+                    format!("found multiple runnable build targets under `{normalized_path}`"),
+                    None,
+                )
+            };
+            Err(build_json_preflight_failure(
+                path,
+                None,
+                None,
+                None,
+                error_kind,
+                "target-selection",
+                message,
+                selector,
+                None,
+                Some(count),
+            ))
         }
     }
 }
