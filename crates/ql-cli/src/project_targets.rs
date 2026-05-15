@@ -601,13 +601,21 @@ pub(crate) fn list_runnable_targets_path(
 ) -> Result<(), u8> {
     let members = load_project_target_members_for_workspace_member_path(path, "`ql run --list`")?;
     let selected = if selector.is_active() {
-        select_workspace_build_targets(
-            path,
-            &members,
-            selector,
-            "`ql run --list`",
-            "build targets",
-        )?
+        match select_workspace_build_targets_with_failure(path, &members, selector, "build targets")
+        {
+            Ok(members) => members,
+            Err(failure) => {
+                if json {
+                    print!(
+                        "{}",
+                        render_project_targets_selection_failure_json(&failure)
+                    );
+                } else {
+                    report_project_target_selection_failure("`ql run --list`", &failure);
+                }
+                return Err(1);
+            }
+        }
     } else {
         members
     };
