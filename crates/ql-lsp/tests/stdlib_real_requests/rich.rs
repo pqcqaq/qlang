@@ -12,7 +12,8 @@ use crate::support::{
     assert_document_highlight_source, assert_folding_range_starts_at_source_line,
     assert_parameter_hint, assert_reference_targets_snippet, assert_reference_targets_source,
     assert_selection_range_source, assert_semantic_token, assert_type_definition_targets_snippet,
-    full_source_range, hover_markup, open_real_stdlib_workspace, range_for,
+    full_source_range, hover_markup, open_real_stdlib_workspace,
+    open_real_stdlib_workspace_with_open_source, range_for,
 };
 use tower_lsp::lsp_types::{
     Position, Range, SemanticTokenType, SemanticTokensRangeResult, SemanticTokensResult, TextEdit,
@@ -218,6 +219,82 @@ pub fn main() -> Int {
         &range_tokens.data,
         nth_offset(app_source, "repeat_array", 3),
         "repeat_array".len(),
+        SemanticTokenType::FUNCTION,
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn rich_requests_prefer_open_app_source_in_real_stdlib_workspace() {
+    let temp = TempDir::new("ql-lsp-real-stdlib-rich-open-app-source");
+    let disk_app_source = r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 0
+}
+"#;
+    let open_app_source = r#"
+package demo.app
+
+use std.core.clamp_int as clamp_int
+use std.test.expect_eq as expect_eq
+
+pub fn main() -> Int {
+    let bounded = clamp_int(42, 0, 100)
+    return expect_eq(bounded, 42)
+}
+"#;
+    let (mut service, app_uri, _) =
+        open_real_stdlib_workspace_with_open_source(&temp, disk_app_source, open_app_source).await;
+
+    let signature = signature_help_via_request(
+        &mut service,
+        app_uri.clone(),
+        offset_to_position(
+            open_app_source,
+            nth_offset(open_app_source, "clamp_int(42, 0, ", 1) + "clamp_int(42, 0, ".len(),
+        ),
+    )
+    .await
+    .expect("real stdlib signatureHelp should use the open app buffer");
+    assert_eq!(signature.active_parameter, Some(2));
+    assert_eq!(
+        signature.signatures[0].label,
+        "fn clamp_int(value: Int, low: Int, high: Int) -> Int"
+    );
+
+    let hints = inlay_hint_via_request(
+        &mut service,
+        app_uri.clone(),
+        full_source_range(open_app_source),
+    )
+    .await
+    .expect("real stdlib inlayHint should use the open app buffer");
+    assert_parameter_hint(&hints, "value:");
+    assert_parameter_hint(&hints, "low:");
+    assert_parameter_hint(&hints, "high:");
+    assert_parameter_hint(&hints, "actual:");
+    assert_parameter_hint(&hints, "expected:");
+
+    let SemanticTokensResult::Tokens(tokens) =
+        semantic_tokens_full_via_request(&mut service, app_uri)
+            .await
+            .expect("real stdlib semantic tokens should use the open app buffer")
+    else {
+        panic!("semantic tokens should use full token payload")
+    };
+    assert_semantic_token(
+        open_app_source,
+        &tokens.data,
+        nth_offset(open_app_source, "clamp_int", 2),
+        "clamp_int".len(),
+        SemanticTokenType::FUNCTION,
+    );
+    assert_semantic_token(
+        open_app_source,
+        &tokens.data,
+        nth_offset(open_app_source, "expect_eq", 2),
+        "expect_eq".len(),
         SemanticTokenType::FUNCTION,
     );
 }

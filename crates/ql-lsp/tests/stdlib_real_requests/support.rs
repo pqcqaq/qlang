@@ -26,7 +26,15 @@ pub async fn open_real_stdlib_workspace(
     temp: &TempDir,
     app_source: &str,
 ) -> (LspService<Backend>, Url, PathBuf) {
-    let workspace = write_real_stdlib_workspace(temp, app_source);
+    open_real_stdlib_workspace_with_open_source(temp, app_source, app_source).await
+}
+
+pub async fn open_real_stdlib_workspace_with_open_source(
+    temp: &TempDir,
+    disk_app_source: &str,
+    open_app_source: &str,
+) -> (LspService<Backend>, Url, PathBuf) {
+    let workspace = write_real_stdlib_workspace(temp, disk_app_source);
     let workspace_root_uri = Url::from_file_path(temp.path().join("workspace"))
         .expect("workspace root path should convert to URI");
     let (mut service, _) = LspService::new(Backend::new);
@@ -34,7 +42,7 @@ pub async fn open_real_stdlib_workspace(
     did_open_via_request(
         &mut service,
         workspace.app_uri.clone(),
-        app_source.to_owned(),
+        open_app_source.to_owned(),
     )
     .await;
     (service, workspace.app_uri, workspace.stdlib_root)
