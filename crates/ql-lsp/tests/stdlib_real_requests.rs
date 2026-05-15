@@ -5,12 +5,13 @@ use std::fs;
 use std::path::Path;
 
 use common::request::{
-    TempDir, code_action_via_request, completion_resolve_via_request, completion_via_request,
-    did_open_via_request, document_highlight_via_request, document_symbol_via_request,
-    folding_range_via_request, formatting_via_request, goto_declaration_via_request,
-    goto_definition_via_request, goto_type_definition_via_request, hover_via_request,
-    incoming_calls_via_request, initialize_service_with_workspace_roots, inlay_hint_via_request,
-    nth_offset, offset_to_position, on_type_formatting_via_request, outgoing_calls_via_request,
+    TempDir, code_action_resolve_via_request, code_action_via_request,
+    completion_resolve_via_request, completion_via_request, did_open_via_request,
+    document_highlight_via_request, document_symbol_via_request, folding_range_via_request,
+    formatting_via_request, goto_declaration_via_request, goto_definition_via_request,
+    goto_type_definition_via_request, hover_via_request, incoming_calls_via_request,
+    initialize_service_with_workspace_roots, inlay_hint_via_request, nth_offset,
+    offset_to_position, on_type_formatting_via_request, outgoing_calls_via_request,
     prepare_call_hierarchy_via_request, prepare_rename_via_request,
     prepare_type_hierarchy_via_request, range_formatting_via_request, references_via_request,
     rename_via_request, selection_range_via_request, semantic_tokens_full_via_request,
@@ -492,6 +493,49 @@ pub fn main(value: Option[Int]) -> Int {
         ),
         "use std.option.Option\n",
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn code_action_resolve_preserves_current_real_stdlib_auto_import_quickfix() {
+    let temp = TempDir::new("ql-lsp-real-stdlib-code-action-resolve");
+    let app_source = r#"
+package demo.app
+
+pub fn main(value: Option[Int]) -> Int {
+    return 0
+}
+"#;
+    let (mut service, app_uri, _) = open_real_stdlib_workspace(&temp, app_source).await;
+    let diagnostic = unresolved_type_diagnostic(app_source, "Option");
+
+    let actions = code_action_via_request(
+        &mut service,
+        app_uri,
+        diagnostic.range,
+        vec![diagnostic.clone()],
+    )
+    .await
+    .expect("real stdlib codeAction should return auto-import quickfixes");
+    let action = actions
+        .iter()
+        .find(|action| {
+            matches!(
+                action,
+                CodeActionOrCommand::CodeAction(action)
+                    if action.title == "Import `std.option.Option`"
+            )
+        })
+        .unwrap_or_else(|| {
+            panic!("real stdlib code actions should include option import: {actions:#?}")
+        })
+        .clone();
+    let CodeActionOrCommand::CodeAction(action) = action else {
+        panic!("real stdlib option import should be a code action")
+    };
+
+    let resolved = code_action_resolve_via_request(&mut service, action.clone()).await;
+
+    assert_eq!(resolved, action);
 }
 
 #[tokio::test(flavor = "current_thread")]
