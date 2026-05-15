@@ -4,11 +4,11 @@ use std::fs;
 use std::path::Path;
 
 use common::request::{
-    TempDir, completion_via_request, did_open_via_request, goto_definition_via_request,
-    goto_type_definition_via_request, hover_via_request, initialize_service_with_workspace_roots,
-    inlay_hint_via_request, nth_offset, offset_to_position, prepare_rename_via_request,
-    references_via_request, rename_via_request, semantic_tokens_full_via_request,
-    signature_help_via_request,
+    TempDir, completion_via_request, did_open_via_request, document_highlight_via_request,
+    goto_definition_via_request, goto_type_definition_via_request, hover_via_request,
+    initialize_service_with_workspace_roots, inlay_hint_via_request, nth_offset,
+    offset_to_position, prepare_rename_via_request, references_via_request, rename_via_request,
+    semantic_tokens_full_via_request, signature_help_via_request,
 };
 use common::stdlib_real::{real_stdlib_source_path, write_real_stdlib_workspace};
 use ql_lsp::Backend;
@@ -16,9 +16,9 @@ use ql_lsp::bridge::{semantic_tokens_legend, span_to_range};
 use tower_lsp::LspService;
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
 use tower_lsp::lsp_types::{
-    CompletionResponse, GotoDefinitionResponse, HoverContents, InlayHint, InlayHintKind,
-    InlayHintLabel, Location, PrepareRenameResponse, Range, SemanticToken, SemanticTokenType,
-    SemanticTokensResult, TextEdit, Url,
+    CompletionResponse, DocumentHighlight, GotoDefinitionResponse, HoverContents, InlayHint,
+    InlayHintKind, InlayHintLabel, Location, PrepareRenameResponse, Range, SemanticToken,
+    SemanticTokenType, SemanticTokensResult, TextEdit, Url,
 };
 
 async fn open_real_stdlib_workspace(
@@ -161,6 +161,26 @@ pub fn main() -> Int {
     assert_reference_targets_source(
         &option_references,
         &app_uri,
+        app_source,
+        "option_some",
+        nth_offset(app_source, "option_some", 2),
+    );
+
+    let option_highlights = document_highlight_via_request(
+        &mut service,
+        app_uri.clone(),
+        offset_to_position(app_source, nth_offset(app_source, "option_some", 2)),
+    )
+    .await
+    .expect("real stdlib documentHighlight should return current-file highlights");
+    assert_document_highlight_source(
+        &option_highlights,
+        app_source,
+        "option_some",
+        nth_offset(app_source, "option_some", 1),
+    );
+    assert_document_highlight_source(
+        &option_highlights,
         app_source,
         "option_some",
         nth_offset(app_source, "option_some", 2),
@@ -486,6 +506,21 @@ fn assert_reference_targets_source(
             .iter()
             .any(|reference| reference.uri == *uri && reference.range == expected_range),
         "references should include source occurrence at {expected_range:?}: {references:#?}",
+    );
+}
+
+fn assert_document_highlight_source(
+    highlights: &[DocumentHighlight],
+    source: &str,
+    name: &str,
+    offset: usize,
+) {
+    let expected_range = span_to_range(source, ql_span::Span::new(offset, offset + name.len()));
+    assert!(
+        highlights
+            .iter()
+            .any(|highlight| highlight.range == expected_range),
+        "document highlights should include source occurrence at {expected_range:?}: {highlights:#?}",
     );
 }
 
