@@ -6,17 +6,17 @@ use std::path::Path;
 use common::request::{
     TempDir, completion_via_request, did_open_via_request, goto_definition_via_request,
     goto_type_definition_via_request, hover_via_request, initialize_service_with_workspace_roots,
-    nth_offset, offset_to_position, references_via_request, semantic_tokens_full_via_request,
-    signature_help_via_request,
+    nth_offset, offset_to_position, prepare_rename_via_request, references_via_request,
+    rename_via_request, semantic_tokens_full_via_request, signature_help_via_request,
 };
-use common::stdlib_real::{real_stdlib_interface_path, write_real_stdlib_workspace};
+use common::stdlib_real::{real_stdlib_source_path, write_real_stdlib_workspace};
 use ql_lsp::Backend;
 use ql_lsp::bridge::{semantic_tokens_legend, span_to_range};
 use tower_lsp::LspService;
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
 use tower_lsp::lsp_types::{
-    CompletionResponse, GotoDefinitionResponse, HoverContents, Location, SemanticToken,
-    SemanticTokenType, SemanticTokensResult, Url,
+    CompletionResponse, GotoDefinitionResponse, HoverContents, Location, PrepareRenameResponse,
+    Range, SemanticToken, SemanticTokenType, SemanticTokensResult, TextEdit, Url,
 };
 
 async fn open_real_stdlib_workspace(
@@ -133,8 +133,8 @@ pub fn main() -> Int {
         )
         .await
         .expect("real std.option function definition should exist"),
-        &real_stdlib_interface_path(&stdlib_root, "option"),
-        "fn some[T](value: T) -> Option[T]",
+        &real_stdlib_source_path(&stdlib_root, "option"),
+        "some",
     );
     let option_references = references_via_request(
         &mut service,
@@ -146,8 +146,8 @@ pub fn main() -> Int {
     .expect("real std.option references should exist");
     assert_reference_targets_snippet(
         &option_references,
-        &real_stdlib_interface_path(&stdlib_root, "option"),
-        "fn some[T](value: T) -> Option[T]",
+        &real_stdlib_source_path(&stdlib_root, "option"),
+        "some",
     );
     assert_reference_targets_source(
         &option_references,
@@ -175,8 +175,8 @@ pub fn main() -> Int {
         )
         .await
         .expect("real std.option type definition should exist"),
-        &real_stdlib_interface_path(&stdlib_root, "option"),
-        "pub enum Option[T] {\n    Some(T),\n    None,\n}",
+        &real_stdlib_source_path(&stdlib_root, "option"),
+        "Option",
     );
 
     let signature = signature_help_via_request(
@@ -226,6 +226,76 @@ pub fn main() -> Int {
     );
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn rename_request_updates_current_real_stdlib_source_roots() {
+    let temp = TempDir::new("ql-lsp-real-stdlib-rename-request");
+    let app_source = r#"
+package demo.app
+
+use std.core.max_int as maximum
+
+pub fn main() -> Int {
+    return maximum(1, 2)
+}
+"#;
+    let (mut service, app_uri, stdlib_root) = open_real_stdlib_workspace(&temp, app_source).await;
+    let core_source_path = real_stdlib_source_path(&stdlib_root, "core");
+    let core_source = fs::read_to_string(&core_source_path)
+        .expect("temp std.core source should exist")
+        .replace("\r\n", "\n");
+    let core_uri = Url::from_file_path(&core_source_path)
+        .expect("temp std.core source path should convert to URI");
+    let import_position = offset_to_position(app_source, nth_offset(app_source, "max_int", 1));
+
+    let prepare = prepare_rename_via_request(&mut service, app_uri.clone(), import_position)
+        .await
+        .expect("real stdlib prepareRename should target imported function");
+    let PrepareRenameResponse::RangeWithPlaceholder { range, placeholder } = prepare else {
+        panic!("prepareRename should return range plus placeholder")
+    };
+    assert_eq!(range, range_for(app_source, "max_int", 1));
+    assert_eq!(placeholder, "max_int");
+
+    let edit = rename_via_request(
+        &mut service,
+        app_uri.clone(),
+        import_position,
+        "largest_int",
+    )
+    .await
+    .expect("real stdlib rename should return workspace edit");
+    let changes = edit
+        .changes
+        .expect("real stdlib rename should use simple workspace changes");
+
+    assert_edit(
+        changes
+            .get(&app_uri)
+            .expect("rename should edit importing app source"),
+        range_for(app_source, "max_int", 1),
+        "largest_int",
+    );
+    assert_edit(
+        changes
+            .get(&core_uri)
+            .expect("rename should edit temp std.core source"),
+        range_for(&core_source, "max_int", 1),
+        "largest_int",
+    );
+    assert_edit(
+        changes
+            .get(&core_uri)
+            .expect("rename should edit std.core call sites"),
+        range_for_in_context(
+            &core_source,
+            "max_int",
+            "max_int(first_bound, second_bound)",
+            1,
+        ),
+        "largest_int",
+    );
+}
+
 async fn completion_at(
     service: &mut LspService<Backend>,
     uri: Url,
@@ -239,6 +309,35 @@ async fn completion_at(
     )
     .await
     .unwrap_or_else(|| panic!("{prefix} completion request should return items"))
+}
+
+fn range_for(source: &str, needle: &str, occurrence: usize) -> Range {
+    let start = nth_offset(source, needle, occurrence);
+    range_at(source, start, needle.len())
+}
+
+fn range_for_in_context(source: &str, needle: &str, context: &str, occurrence: usize) -> Range {
+    let context_start = nth_offset(source, context, occurrence);
+    let needle_start = context
+        .find(needle)
+        .expect("needle should exist inside context");
+    range_at(source, context_start + needle_start, needle.len())
+}
+
+fn range_at(source: &str, start: usize, len: usize) -> Range {
+    Range::new(
+        offset_to_position(source, start),
+        offset_to_position(source, start + len),
+    )
+}
+
+fn assert_edit(edits: &[TextEdit], range: Range, replacement: &str) {
+    assert!(
+        edits
+            .iter()
+            .any(|edit| edit.range == range && edit.new_text == replacement),
+        "edits should include `{replacement}` at {range:?}: {edits:#?}",
+    );
 }
 
 fn completion_labels(completion: CompletionResponse) -> Vec<String> {

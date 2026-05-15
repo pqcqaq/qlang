@@ -2490,6 +2490,35 @@ fn analyzed_import_binding_at(
     })
 }
 
+fn analyzed_import_binding_or_path_segment_at(
+    source: &str,
+    analysis: &Analysis,
+    offset: usize,
+) -> Option<AnalyzedImportOccurrence> {
+    analyzed_import_binding_at(source, analysis, offset)
+        .or_else(|| analyzed_import_path_segment_at(source, offset))
+}
+
+fn analyzed_import_path_segment_at(
+    source: &str,
+    offset: usize,
+) -> Option<AnalyzedImportOccurrence> {
+    let (tokens, _) = lex(source);
+    broken_source_import_bindings_in_tokens(&tokens)
+        .into_iter()
+        .find(|binding| binding.imported_span.contains(offset))
+        .map(|binding| {
+            let mut path_segments = binding.import_prefix;
+            path_segments.push(binding.imported_name);
+            AnalyzedImportOccurrence {
+                path_segments,
+                imported_span: binding.imported_span,
+                definition_span: binding.definition_span,
+                occurrence_span: binding.imported_span,
+            }
+        })
+}
+
 fn extend_workspace_import_reference_locations_with_open_docs(
     package: &ql_analysis::PackageAnalysis,
     current_path: Option<&Path>,
@@ -6994,7 +7023,7 @@ fn workspace_source_references_for_import_with_open_docs(
     include_declaration: bool,
 ) -> Option<Vec<Location>> {
     let offset = position_to_offset(source, position)?;
-    let occurrence = analyzed_import_binding_at(source, analysis, offset)?;
+    let occurrence = analyzed_import_binding_or_path_segment_at(source, analysis, offset)?;
     let (imported_name, import_prefix) = occurrence.path_segments.split_last()?;
     let source_matches = workspace_source_locations_for_import_binding_with_open_docs(
         uri,
@@ -7590,7 +7619,7 @@ fn prepare_rename_for_workspace_source_root_symbol_from_import_with_open_docs(
     position: tower_lsp::lsp_types::Position,
 ) -> Option<PrepareRenameResponse> {
     let offset = position_to_offset(source, position)?;
-    let occurrence = analyzed_import_binding_at(source, analysis, offset)?;
+    let occurrence = analyzed_import_binding_or_path_segment_at(source, analysis, offset)?;
     let (imported_name, import_prefix) = occurrence.path_segments.split_last()?;
     let source_location = workspace_source_location_for_import_binding_with_open_docs(
         uri,
@@ -8350,7 +8379,8 @@ fn rename_for_workspace_source_root_symbol_from_import_with_open_docs(
     let Some(offset) = position_to_offset(source, position) else {
         return Ok(None);
     };
-    let Some(occurrence) = analyzed_import_binding_at(source, analysis, offset) else {
+    let Some(occurrence) = analyzed_import_binding_or_path_segment_at(source, analysis, offset)
+    else {
         return Ok(None);
     };
     let Some((imported_name, import_prefix)) = occurrence.path_segments.split_last() else {
@@ -8391,7 +8421,7 @@ fn rename_for_workspace_source_root_symbol_from_import_with_open_docs(
             (source_uri, source_source, source_analysis)
         };
 
-    rename_for_workspace_source_root_symbol_with_open_docs(
+    let Some(mut edit) = rename_for_workspace_source_root_symbol_with_open_docs(
         &source_uri,
         &source_source,
         &source_analysis,
@@ -8399,7 +8429,41 @@ fn rename_for_workspace_source_root_symbol_from_import_with_open_docs(
         open_docs,
         source_location.range.start,
         new_name,
-    )
+    )?
+    else {
+        return Ok(None);
+    };
+
+    let import_path = occurrence.path_segments.clone();
+    let current_source_edits =
+        workspace_root_import_rename_edits_for_source(source, analysis, &import_path, new_name);
+    let changes = edit.changes.get_or_insert_with(HashMap::new);
+    changes
+        .entry(uri.clone())
+        .or_default()
+        .extend(current_source_edits);
+    let current_path = uri.to_file_path().ok();
+    extend_workspace_root_import_rename_edits_for_visible_sources(
+        package.manifest().manifest_path.as_path(),
+        current_path.as_deref(),
+        &import_path,
+        new_name,
+        open_docs,
+        changes,
+    );
+    for edits in changes.values_mut() {
+        edits.sort_by_key(|edit| {
+            (
+                edit.range.start.line,
+                edit.range.start.character,
+                edit.range.end.line,
+                edit.range.end.character,
+            )
+        });
+        edits.dedup_by(|left, right| left.range == right.range && left.new_text == right.new_text);
+    }
+
+    Ok(Some(edit))
 }
 
 fn local_source_dependency_target_with_analysis(

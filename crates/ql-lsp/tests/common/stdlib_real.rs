@@ -46,6 +46,13 @@ pub fn real_stdlib_interface_path(stdlib_root: &Path, package_dir: &str) -> Path
         .join(format!("std.{package_dir}.qi"))
 }
 
+pub fn real_stdlib_source_path(stdlib_root: &Path, package_dir: &str) -> PathBuf {
+    stdlib_root
+        .join("packages")
+        .join(package_dir)
+        .join("src/lib.ql")
+}
+
 pub fn repo_stdlib_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../stdlib")
@@ -59,6 +66,7 @@ fn write_real_stdlib_packages(temp: &TempDir) {
         "core",
         include_str!("../../../../stdlib/packages/core/qlang.toml"),
         include_str!("../../../../stdlib/packages/core/std.core.qi"),
+        include_str!("../../../../stdlib/packages/core/src/lib.ql"),
         "std.core.qi",
     );
     write_package(
@@ -66,6 +74,7 @@ fn write_real_stdlib_packages(temp: &TempDir) {
         "option",
         include_str!("../../../../stdlib/packages/option/qlang.toml"),
         include_str!("../../../../stdlib/packages/option/std.option.qi"),
+        include_str!("../../../../stdlib/packages/option/src/lib.ql"),
         "std.option.qi",
     );
     write_package(
@@ -73,6 +82,7 @@ fn write_real_stdlib_packages(temp: &TempDir) {
         "result",
         include_str!("../../../../stdlib/packages/result/qlang.toml"),
         include_str!("../../../../stdlib/packages/result/std.result.qi"),
+        include_str!("../../../../stdlib/packages/result/src/lib.ql"),
         "std.result.qi",
     );
     write_package(
@@ -80,6 +90,7 @@ fn write_real_stdlib_packages(temp: &TempDir) {
         "array",
         include_str!("../../../../stdlib/packages/array/qlang.toml"),
         include_str!("../../../../stdlib/packages/array/std.array.qi"),
+        include_str!("../../../../stdlib/packages/array/src/lib.ql"),
         "std.array.qi",
     );
     write_package(
@@ -87,6 +98,7 @@ fn write_real_stdlib_packages(temp: &TempDir) {
         "test",
         include_str!("../../../../stdlib/packages/test/qlang.toml"),
         include_str!("../../../../stdlib/packages/test/std.test.qi"),
+        include_str!("../../../../stdlib/packages/test/src/lib.ql"),
         "std.test.qi",
     );
 }
@@ -96,9 +108,11 @@ fn write_package(
     package_dir: &str,
     manifest: &str,
     interface: &str,
+    source: &str,
     interface_name: &str,
 ) {
     let base = format!("workspace/stdlib/packages/{package_dir}");
     temp.write(&format!("{base}/qlang.toml"), manifest);
     temp.write(&format!("{base}/{interface_name}"), interface);
+    temp.write(&format!("{base}/src/lib.ql"), source);
 }
