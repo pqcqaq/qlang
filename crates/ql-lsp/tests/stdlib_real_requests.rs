@@ -5,12 +5,12 @@ use std::fs;
 use std::path::Path;
 
 use common::request::{
-    TempDir, code_action_via_request, completion_via_request, did_open_via_request,
-    document_highlight_via_request, document_symbol_via_request, folding_range_via_request,
-    formatting_via_request, goto_declaration_via_request, goto_definition_via_request,
-    goto_type_definition_via_request, hover_via_request, incoming_calls_via_request,
-    initialize_service_with_workspace_roots, inlay_hint_via_request, nth_offset,
-    offset_to_position, on_type_formatting_via_request, outgoing_calls_via_request,
+    TempDir, code_action_via_request, completion_resolve_via_request, completion_via_request,
+    did_open_via_request, document_highlight_via_request, document_symbol_via_request,
+    folding_range_via_request, formatting_via_request, goto_declaration_via_request,
+    goto_definition_via_request, goto_type_definition_via_request, hover_via_request,
+    incoming_calls_via_request, initialize_service_with_workspace_roots, inlay_hint_via_request,
+    nth_offset, offset_to_position, on_type_formatting_via_request, outgoing_calls_via_request,
     prepare_call_hierarchy_via_request, prepare_rename_via_request,
     prepare_type_hierarchy_via_request, range_formatting_via_request, references_via_request,
     rename_via_request, selection_range_via_request, semantic_tokens_full_via_request,
@@ -23,11 +23,11 @@ use ql_lsp::bridge::{semantic_tokens_legend, span_to_range};
 use tower_lsp::LspService;
 use tower_lsp::lsp_types::request::{GotoDeclarationResponse, GotoTypeDefinitionResponse};
 use tower_lsp::lsp_types::{
-    CallHierarchyOutgoingCall, CodeActionOrCommand, CompletionResponse, Diagnostic,
-    DocumentHighlight, DocumentSymbolResponse, FoldingRange, GotoDefinitionResponse, HoverContents,
-    InlayHint, InlayHintKind, InlayHintLabel, Location, NumberOrString, PrepareRenameResponse,
-    Range, SelectionRange, SemanticToken, SemanticTokenType, SemanticTokensRangeResult,
-    SemanticTokensResult, SymbolKind, TextEdit, Url,
+    CallHierarchyOutgoingCall, CodeActionOrCommand, CompletionItem as LspCompletionItem,
+    CompletionResponse, Diagnostic, DocumentHighlight, DocumentSymbolResponse, Documentation,
+    FoldingRange, GotoDefinitionResponse, HoverContents, InlayHint, InlayHintKind, InlayHintLabel,
+    Location, NumberOrString, PrepareRenameResponse, Range, SelectionRange, SemanticToken,
+    SemanticTokenType, SemanticTokensRangeResult, SemanticTokensResult, SymbolKind, TextEdit, Url,
 };
 
 async fn open_real_stdlib_workspace(
@@ -93,6 +93,55 @@ pub fn main() -> Int {
     assert_contains_all(
         &test,
         &["expect_eq", "expect_option_some", "expect_result_ok"],
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn completion_resolve_restores_current_real_stdlib_symbol_docs() {
+    let temp = TempDir::new("ql-lsp-real-stdlib-completion-resolve");
+    let app_source = r#"
+package demo.app
+
+use std.option.
+
+pub fn main() -> Int {
+    return 0
+}
+"#;
+    let (mut service, app_uri, _) = open_real_stdlib_workspace(&temp, app_source).await;
+
+    let items =
+        completion_items(completion_at(&mut service, app_uri, app_source, "std.option.").await);
+    let some = items
+        .into_iter()
+        .find(|item| item.label == "some")
+        .expect("real std.option.some completion item should exist");
+    let original_detail = some
+        .detail
+        .clone()
+        .expect("real std.option.some should carry inline detail");
+    let original_documentation = completion_documentation(&some);
+    assert!(
+        original_detail.contains("fn some") && original_detail.contains("Option"),
+        "completion should be for the real std.option.some function: {some:#?}",
+    );
+    assert!(
+        some.data.is_some(),
+        "completion resolve should have source data to restore stripped docs: {some:#?}",
+    );
+
+    let mut stripped_some = some;
+    stripped_some.detail = None;
+    stripped_some.documentation = None;
+
+    let resolved_some = completion_resolve_via_request(&mut service, stripped_some).await;
+    assert_eq!(
+        resolved_some.detail.as_deref(),
+        Some(original_detail.as_str())
+    );
+    assert_eq!(
+        completion_documentation(&resolved_some),
+        original_documentation
     );
 }
 
@@ -707,9 +756,27 @@ fn assert_parameter_hint(hints: &[InlayHint], expected: &str) {
 }
 
 fn completion_labels(completion: CompletionResponse) -> Vec<String> {
+    completion_items(completion)
+        .into_iter()
+        .map(|item| item.label)
+        .collect()
+}
+
+fn completion_items(completion: CompletionResponse) -> Vec<LspCompletionItem> {
     match completion {
-        CompletionResponse::Array(items) => items.into_iter().map(|item| item.label).collect(),
-        CompletionResponse::List(list) => list.items.into_iter().map(|item| item.label).collect(),
+        CompletionResponse::Array(items) => items,
+        CompletionResponse::List(list) => list.items,
+    }
+}
+
+fn completion_documentation(item: &LspCompletionItem) -> String {
+    match item
+        .documentation
+        .as_ref()
+        .expect("completion item should include documentation")
+    {
+        Documentation::String(value) => value.clone(),
+        Documentation::MarkupContent(markup) => markup.value.clone(),
     }
 }
 
