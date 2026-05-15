@@ -6,6 +6,8 @@ mod code_action;
 mod completion;
 #[path = "stdlib_real_requests/hierarchy.rs"]
 mod hierarchy;
+#[path = "stdlib_real_requests/implementation.rs"]
+mod implementation;
 #[path = "stdlib_real_requests/rename.rs"]
 mod rename;
 #[path = "stdlib_real_requests/rich.rs"]
