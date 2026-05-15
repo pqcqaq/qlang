@@ -6,8 +6,9 @@ use std::path::Path;
 use common::request::{
     TempDir, completion_via_request, did_open_via_request, goto_definition_via_request,
     goto_type_definition_via_request, hover_via_request, initialize_service_with_workspace_roots,
-    nth_offset, offset_to_position, prepare_rename_via_request, references_via_request,
-    rename_via_request, semantic_tokens_full_via_request, signature_help_via_request,
+    inlay_hint_via_request, nth_offset, offset_to_position, prepare_rename_via_request,
+    references_via_request, rename_via_request, semantic_tokens_full_via_request,
+    signature_help_via_request,
 };
 use common::stdlib_real::{real_stdlib_source_path, write_real_stdlib_workspace};
 use ql_lsp::Backend;
@@ -15,8 +16,9 @@ use ql_lsp::bridge::{semantic_tokens_legend, span_to_range};
 use tower_lsp::LspService;
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
 use tower_lsp::lsp_types::{
-    CompletionResponse, GotoDefinitionResponse, HoverContents, Location, PrepareRenameResponse,
-    Range, SemanticToken, SemanticTokenType, SemanticTokensResult, TextEdit, Url,
+    CompletionResponse, GotoDefinitionResponse, HoverContents, InlayHint, InlayHintKind,
+    InlayHintLabel, Location, PrepareRenameResponse, Range, SemanticToken, SemanticTokenType,
+    SemanticTokensResult, TextEdit, Url,
 };
 
 async fn open_real_stdlib_workspace(
@@ -196,6 +198,17 @@ pub fn main() -> Int {
         "fn ok_or[T, E](value: Option[T], error: E) -> Result[T, E]"
     );
 
+    let hints =
+        inlay_hint_via_request(&mut service, app_uri.clone(), full_source_range(app_source))
+            .await
+            .expect("real stdlib inlayHint should return parameter hints");
+    assert_parameter_hint(&hints, "value:");
+    assert_parameter_hint(&hints, "error:");
+    assert_parameter_hint(&hints, "low:");
+    assert_parameter_hint(&hints, "high:");
+    assert_parameter_hint(&hints, "actual:");
+    assert_parameter_hint(&hints, "expected:");
+
     let SemanticTokensResult::Tokens(tokens) =
         semantic_tokens_full_via_request(&mut service, app_uri)
             .await
@@ -316,6 +329,10 @@ fn range_for(source: &str, needle: &str, occurrence: usize) -> Range {
     range_at(source, start, needle.len())
 }
 
+fn full_source_range(source: &str) -> Range {
+    range_at(source, 0, source.len())
+}
+
 fn range_for_in_context(source: &str, needle: &str, context: &str, occurrence: usize) -> Range {
     let context_start = nth_offset(source, context, occurrence);
     let needle_start = context
@@ -337,6 +354,15 @@ fn assert_edit(edits: &[TextEdit], range: Range, replacement: &str) {
             .iter()
             .any(|edit| edit.range == range && edit.new_text == replacement),
         "edits should include `{replacement}` at {range:?}: {edits:#?}",
+    );
+}
+
+fn assert_parameter_hint(hints: &[InlayHint], expected: &str) {
+    assert!(
+        hints.iter().any(
+            |hint| matches!((&hint.kind, &hint.label), (Some(InlayHintKind::PARAMETER), InlayHintLabel::String(label)) if label == expected)
+        ),
+        "inlay hints should include real stdlib parameter `{expected}`: {hints:#?}",
     );
 }
 
