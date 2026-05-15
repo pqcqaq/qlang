@@ -2,11 +2,21 @@ mod support;
 
 use std::path::PathBuf;
 
+use serde_json::Value as JsonValue;
 use support::{
     TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_snapshot_matches,
     expect_stderr_contains, expect_stderr_not_contains, expect_stdout_contains_all, expect_success,
     ql_command, run_command_capture, workspace_root,
 };
+
+fn normalize_output_text(text: &str) -> String {
+    text.replace("\r\n", "\n")
+}
+
+fn parse_json_output(case_name: &str, stdout: &str) -> JsonValue {
+    serde_json::from_str(&normalize_output_text(stdout))
+        .unwrap_or_else(|error| panic!("[{case_name}] parse json stdout: {error}\n{stdout}"))
+}
 
 struct WorkspaceGraphSelectorFixture {
     _temp: TempDir,
@@ -965,6 +975,79 @@ name = "app"
         ),
     )
     .expect("workspace root package graph selector missing package should preserve the rerun hint");
+}
+
+#[test]
+fn project_graph_json_reports_missing_workspace_package_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-graph-workspace-package-missing-json");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages").join("app").join("src"))
+        .expect("create workspace app directory");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "graph", "--package", "missing", "--json"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project graph --package --json` missing workspace package",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-graph-workspace-package-missing-json",
+        "workspace root package graph selector missing package json",
+        &output,
+        1,
+    )
+    .expect("workspace root package graph selector json should fail for missing packages");
+    expect_empty_stderr(
+        "project-graph-workspace-package-missing-json",
+        "workspace root package graph selector missing package json",
+        &stderr,
+    )
+    .expect("workspace root package graph selector missing package json should stay on stdout");
+
+    let json = parse_json_output("project-graph-workspace-package-missing-json", &stdout);
+    assert_eq!(json["schema"], "ql.project.graph.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        json["manifest_path"],
+        project_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["kind"], "selection");
+    let failure = &json["failure"]["selection_failure"];
+    assert_eq!(failure["stage"], "package-selection");
+    assert_eq!(failure["selector"], "package `missing`");
+    assert_eq!(failure["target_count"], 0);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("project graph json selector miss should expose a message")
+            .contains("package selector matched no workspace members"),
+        "project graph json selector miss should describe the missing package: {json}"
+    );
 }
 
 #[test]

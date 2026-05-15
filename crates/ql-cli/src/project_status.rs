@@ -8,15 +8,18 @@ use ql_project::{
 };
 use serde_json::{Value as JsonValue, json};
 
+use crate::project_dependencies::{
+    ProjectDependencyMember, find_workspace_member_dependencies, project_dependency_json,
+};
+use crate::project_workspace::{
+    WorkspacePackageSelectionFailure, resolve_selected_workspace_member_manifest_for_json,
+};
+
 use super::{
     normalize_path, package_check_manifest_path_from_project_error,
     package_missing_name_manifest_path_from_project_error, project_target_display_path,
     resolve_project_workspace_member_command_request_root,
     resolve_selected_workspace_member_manifest, validate_project_package_name,
-};
-
-use crate::project_dependencies::{
-    ProjectDependencyMember, find_workspace_member_dependencies, project_dependency_json,
 };
 
 struct ProjectStatusMember {
@@ -38,7 +41,14 @@ struct ProjectStatusInterface {
 
 enum ProjectStatusMemberSelectionError {
     Message(String),
+    Json(ProjectStatusSelectionFailure),
     Exit(u8),
+}
+
+struct ProjectStatusSelectionFailure {
+    message: String,
+    selector: Option<String>,
+    target_count: Option<usize>,
 }
 
 pub(crate) fn project_status_path(
@@ -49,8 +59,15 @@ pub(crate) fn project_status_path(
     let request_root = resolve_project_workspace_member_command_request_root(path);
     let manifest = load_project_manifest(request_root.as_deref().unwrap_or(path))
         .map_err(|error| report_project_status_load_error(path, &error))?;
-    let members = match collect_project_status_members(&manifest, path, package_name) {
+    let members = match collect_project_status_members(&manifest, path, package_name, json) {
         Ok(members) => members,
+        Err(ProjectStatusMemberSelectionError::Json(failure)) => {
+            print!(
+                "{}",
+                render_project_status_selection_failure_json(path, &manifest, failure)
+            );
+            return Err(1);
+        }
         Err(ProjectStatusMemberSelectionError::Message(message)) => {
             eprintln!("error: `ql project status` {message}");
             return Err(1);
@@ -95,24 +112,39 @@ fn collect_project_status_members(
     manifest: &ql_project::ProjectManifest,
     request_path: &Path,
     selected_package_name: Option<&str>,
+    json: bool,
 ) -> Result<Vec<ProjectStatusMember>, ProjectStatusMemberSelectionError> {
     if let Some(selected_package_name) = selected_package_name {
-        validate_project_package_name(selected_package_name)
-            .map_err(ProjectStatusMemberSelectionError::Message)?;
+        if let Err(message) = validate_project_package_name(selected_package_name) {
+            if json {
+                return Err(ProjectStatusMemberSelectionError::Json(
+                    ProjectStatusSelectionFailure {
+                        message: format!("`ql project status` {message}"),
+                        selector: Some(format!("package `{selected_package_name}`")),
+                        target_count: None,
+                    },
+                ));
+            }
+            return Err(ProjectStatusMemberSelectionError::Message(message));
+        }
     }
 
     if let Some(workspace) = manifest.workspace.as_ref() {
         let workspace_root = manifest.manifest_path.parent().unwrap_or(Path::new("."));
         let workspace_profile = manifest.profile.as_ref().map(|profile| profile.default);
         if let Some(selected_package_name) = selected_package_name {
-            let (member, member_manifest) = resolve_selected_workspace_member_manifest(
-                manifest,
-                request_path,
-                selected_package_name,
-                "`ql project status`",
-                "--package",
-            )
-            .map_err(ProjectStatusMemberSelectionError::Exit)?;
+            let (member, member_manifest) = if json {
+                resolve_project_status_workspace_member_json(manifest, selected_package_name)?
+            } else {
+                resolve_selected_workspace_member_manifest(
+                    manifest,
+                    request_path,
+                    selected_package_name,
+                    "`ql project status`",
+                    "--package",
+                )
+                .map_err(ProjectStatusMemberSelectionError::Exit)?
+            };
             let default_profile = member_manifest
                 .profile
                 .as_ref()
@@ -165,6 +197,18 @@ fn collect_project_status_members(
         .map_err(ProjectStatusMemberSelectionError::Message)?;
     if let Some(selected_package_name) = selected_package_name {
         if selected_package_name != actual_package_name {
+            if json {
+                return Err(ProjectStatusMemberSelectionError::Json(
+                    ProjectStatusSelectionFailure {
+                        message: format!(
+                            "`ql project status` package selector expected `{selected_package_name}` but `{}` resolves to package `{actual_package_name}`",
+                            normalize_path(&manifest.manifest_path)
+                        ),
+                        selector: Some(format!("package `{selected_package_name}`")),
+                        target_count: Some(0),
+                    },
+                ));
+            }
             return Err(ProjectStatusMemberSelectionError::Message(format!(
                 "package selector expected `{selected_package_name}` but `{}` resolves to package `{actual_package_name}`",
                 normalize_path(&manifest.manifest_path)
@@ -180,6 +224,28 @@ fn collect_project_status_members(
         )
         .map_err(ProjectStatusMemberSelectionError::Message)?,
     ])
+}
+
+fn resolve_project_status_workspace_member_json(
+    manifest: &ql_project::ProjectManifest,
+    selected_package_name: &str,
+) -> Result<(String, ql_project::ProjectManifest), ProjectStatusMemberSelectionError> {
+    resolve_selected_workspace_member_manifest_for_json(
+        manifest,
+        selected_package_name,
+        "`ql project status`",
+    )
+    .map_err(|failure| ProjectStatusMemberSelectionError::Json(failure.into()))
+}
+
+impl From<WorkspacePackageSelectionFailure> for ProjectStatusSelectionFailure {
+    fn from(failure: WorkspacePackageSelectionFailure) -> Self {
+        Self {
+            message: failure.message,
+            selector: Some(failure.selector),
+            target_count: failure.target_count,
+        }
+    }
 }
 
 fn collect_project_status_member(
@@ -286,6 +352,32 @@ fn render_project_status_json(
             .collect::<Vec<_>>(),
     }))
     .expect("project status json should serialize");
+    format!("{rendered}\n")
+}
+
+fn render_project_status_selection_failure_json(
+    path: &Path,
+    manifest: &ql_project::ProjectManifest,
+    failure: ProjectStatusSelectionFailure,
+) -> String {
+    let rendered = serde_json::to_string_pretty(&json!({
+        "schema": "ql.project.status.v1",
+        "path": normalize_path(path),
+        "project_manifest_path": normalize_path(&manifest.manifest_path),
+        "kind": if manifest.workspace.is_some() { "workspace" } else { "package" },
+        "status": "failed",
+        "members": [],
+        "failure": {
+            "kind": "selection",
+            "selection_failure": {
+                "stage": "package-selection",
+                "message": failure.message,
+                "selector": failure.selector,
+                "target_count": failure.target_count,
+            },
+        },
+    }))
+    .expect("project status selection failure json should serialize");
     format!("{rendered}\n")
 }
 

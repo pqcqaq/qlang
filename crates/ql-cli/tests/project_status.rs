@@ -515,6 +515,58 @@ fn project_status_workspace_root_package_selector_reports_missing_package() {
 }
 
 #[test]
+fn project_status_json_reports_missing_workspace_package_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-status-missing-package-json");
+    let project_root = write_status_workspace(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "status",
+        &project_root.to_string_lossy(),
+        "--package",
+        "missing",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project status --package --json` missing workspace package",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-status-missing-package-json",
+        "project status missing workspace package json",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-status-missing-package-json",
+        "project status missing workspace package json",
+        &stderr,
+    )
+    .unwrap();
+
+    let json = parse_json_output("project-status-missing-package-json", &stdout);
+    assert_eq!(json["schema"], "ql.project.status.v1");
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["kind"], "workspace");
+    assert_eq!(json["members"], serde_json::json!([]));
+    assert_eq!(json["failure"]["kind"], "selection");
+    let failure = &json["failure"]["selection_failure"];
+    assert_eq!(failure["stage"], "package-selection");
+    assert_eq!(failure["selector"], "package `missing`");
+    assert_eq!(failure["target_count"], 0);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("project status json selector miss should expose a message")
+            .contains("package selector matched no workspace members"),
+        "project status json selector miss should describe the missing package: {json}"
+    );
+}
+
+#[test]
 fn project_status_package_selector_rejects_duplicate_package_names() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-status-duplicate-package-selector");
@@ -561,24 +613,27 @@ fn project_status_package_selector_rejects_duplicate_package_names() {
         1,
     )
     .unwrap();
-    expect_empty_stdout(
+    expect_empty_stderr(
         "project-status-duplicate-package-selector",
         "project status duplicate workspace package selector",
-        &stdout,
+        &stderr,
     )
     .unwrap();
-    expect_stderr_contains(
-        "project-status-duplicate-package-selector",
-        "project status duplicate workspace package selector",
-        &stderr.replace('\\', "/"),
-        &format!(
-            "error: `ql project status` workspace manifest `{}` contains multiple members for package `util`: packages/a ({}/packages/a/qlang.toml), packages/b ({}/packages/b/qlang.toml)",
-            project_root.join("qlang.toml").to_string_lossy().replace('\\', "/"),
-            project_root.to_string_lossy().replace('\\', "/"),
-            project_root.to_string_lossy().replace('\\', "/")
-        ),
-    )
-    .unwrap();
+    let json = parse_json_output("project-status-duplicate-package-selector", &stdout);
+    assert_eq!(json["schema"], "ql.project.status.v1");
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["failure"]["kind"], "selection");
+    let failure = &json["failure"]["selection_failure"];
+    assert_eq!(failure["stage"], "package-selection");
+    assert_eq!(failure["selector"], "package `util`");
+    assert_eq!(failure["target_count"], 2);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("project status json duplicate selector should expose a message")
+            .contains("contains multiple members for package `util`"),
+        "project status json duplicate selector should describe ambiguous matches: {json}"
+    );
 }
 
 #[test]
