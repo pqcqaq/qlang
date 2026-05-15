@@ -2,12 +2,14 @@ use std::path::{Path, PathBuf};
 
 use ql_project::{
     BuildTarget, BuildTargetKind, WorkspaceBuildTargets, discover_package_build_targets,
-    load_project_manifest, package_name,
+    discover_workspace_build_targets, load_project_manifest, package_name,
 };
+use serde_json::json;
 
 use super::{
     is_ql_source_file, json_string, load_workspace_build_targets_for_command_from_request_root,
-    normalize_path,
+    normalize_path, package_check_manifest_path_from_project_error,
+    package_missing_name_manifest_path_from_project_error,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -526,13 +528,47 @@ fn filter_workspace_build_targets(
 fn load_project_target_members_for_workspace_member_path(
     path: &Path,
     command_label: &str,
+    json: bool,
 ) -> Result<Vec<WorkspaceBuildTargets>, u8> {
     let request_root = resolve_project_workspace_member_command_request_root(path);
-    load_workspace_build_targets_for_command_from_request_root(
-        path,
-        request_root.as_deref().unwrap_or(path),
-        command_label,
-    )
+    let request_root = request_root.as_deref().unwrap_or(path);
+    if json {
+        return load_project_target_members_for_json(path, request_root, command_label);
+    }
+
+    load_workspace_build_targets_for_command_from_request_root(path, request_root, command_label)
+}
+
+fn load_project_target_members_for_json(
+    path: &Path,
+    request_root: &Path,
+    command_label: &str,
+) -> Result<Vec<WorkspaceBuildTargets>, u8> {
+    let manifest = load_project_manifest(request_root).map_err(|error| {
+        print!(
+            "{}",
+            render_project_targets_preflight_failure_json(
+                path,
+                "manifest-load",
+                project_targets_load_error_message(command_label, &error),
+                project_targets_error_manifest_path(&error),
+            )
+        );
+        1
+    })?;
+
+    discover_workspace_build_targets(&manifest).map_err(|error| {
+        print!(
+            "{}",
+            render_project_targets_preflight_failure_json(
+                path,
+                "target-discovery",
+                project_targets_discovery_error_message(command_label, &error),
+                project_targets_error_manifest_path(&error),
+            )
+        );
+        1
+    })
 }
 
 pub(crate) fn project_targets_path(
@@ -541,7 +577,7 @@ pub(crate) fn project_targets_path(
     json: bool,
 ) -> Result<(), u8> {
     let members =
-        load_project_target_members_for_workspace_member_path(path, "`ql project targets`")?;
+        load_project_target_members_for_workspace_member_path(path, "`ql project targets`", json)?;
     let members = match select_workspace_build_targets_with_failure(
         path,
         &members,
@@ -570,7 +606,8 @@ pub(crate) fn list_build_targets_path(
     selector: &ProjectTargetSelector,
     json: bool,
 ) -> Result<(), u8> {
-    let members = load_project_target_members_for_workspace_member_path(path, "`ql build --list`")?;
+    let members =
+        load_project_target_members_for_workspace_member_path(path, "`ql build --list`", json)?;
     let members = match select_workspace_build_targets_with_failure(
         path,
         &members,
@@ -599,7 +636,8 @@ pub(crate) fn list_runnable_targets_path(
     selector: &ProjectTargetSelector,
     json: bool,
 ) -> Result<(), u8> {
-    let members = load_project_target_members_for_workspace_member_path(path, "`ql run --list`")?;
+    let members =
+        load_project_target_members_for_workspace_member_path(path, "`ql run --list`", json)?;
     let selected = if selector.is_active() {
         match select_workspace_build_targets_with_failure(path, &members, selector, "build targets")
         {
@@ -791,6 +829,72 @@ fn render_project_targets_selection_failure_json(
     rendered.push_str("  }\n");
     rendered.push_str("}\n");
     rendered
+}
+
+fn render_project_targets_preflight_failure_json(
+    path: &Path,
+    stage: &str,
+    message: String,
+    manifest_path: Option<&Path>,
+) -> String {
+    let rendered = serde_json::to_string_pretty(&json!({
+        "schema": "ql.project.targets.v1",
+        "path": normalize_path(path),
+        "members": [],
+        "failure": {
+            "kind": "preflight",
+            "preflight_failure": {
+                "stage": stage,
+                "message": message,
+                "manifest_path": manifest_path.map(normalize_path),
+            },
+        },
+    }))
+    .expect("project targets preflight failure json should serialize");
+    format!("{rendered}\n")
+}
+
+fn project_targets_load_error_message(
+    command_label: &str,
+    error: &ql_project::ProjectError,
+) -> String {
+    if let ql_project::ProjectError::ManifestNotFound { start } = error {
+        return format!(
+            "{command_label} requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
+            normalize_path(start)
+        );
+    }
+    if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(error) {
+        return format!(
+            "{command_label} manifest `{}` does not declare `[package].name`",
+            normalize_path(manifest_path)
+        );
+    }
+    format!("{command_label} {error}")
+}
+
+fn project_targets_discovery_error_message(
+    command_label: &str,
+    error: &ql_project::ProjectError,
+) -> String {
+    if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(error) {
+        return format!(
+            "{command_label} manifest `{}` does not declare `[package].name`",
+            normalize_path(manifest_path)
+        );
+    }
+    if let ql_project::ProjectError::PackageSourceRootNotFound { path } = error {
+        return format!(
+            "{command_label} package source directory `{}` does not exist",
+            normalize_path(path)
+        );
+    }
+    format!("{command_label} {error}")
+}
+
+fn project_targets_error_manifest_path(error: &ql_project::ProjectError) -> Option<&Path> {
+    package_missing_name_manifest_path_from_project_error(error)
+        .or_else(|| package_check_manifest_path_from_project_error(error))
 }
 
 #[cfg(test)]

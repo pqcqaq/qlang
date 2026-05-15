@@ -1368,6 +1368,66 @@ fn project_targets_json_reports_selectors_that_match_no_targets() {
 }
 
 #[test]
+fn project_targets_json_reports_invalid_manifest_load_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-targets-invalid-manifest-json");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(&project_root)
+        .expect("create project directory for invalid manifest targets json test");
+    let manifest_path = temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package
+name = "app"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "targets",
+        &project_root.to_string_lossy(),
+        "--json",
+    ]);
+    let output = run_command_capture(&mut command, "`ql project targets --json` invalid manifest");
+    let (stdout, stderr) = expect_exit_code(
+        "project-targets-invalid-manifest-json",
+        "project targets invalid manifest json",
+        &output,
+        1,
+    )
+    .expect("project targets json should fail when the manifest is syntactically invalid");
+    expect_empty_stderr(
+        "project-targets-invalid-manifest-json",
+        "project targets invalid manifest json",
+        &stderr,
+    )
+    .expect("project targets json invalid manifest should stay on stdout");
+
+    let json = parse_json_output("project-targets-invalid-manifest-json", &stdout);
+    assert_eq!(json["schema"], "ql.project.targets.v1");
+    assert_eq!(
+        json["path"],
+        project_root.to_string_lossy().replace('\\', "/")
+    );
+    assert_eq!(json["members"], serde_json::json!([]));
+    assert_eq!(json["failure"]["kind"], "preflight");
+    let failure = &json["failure"]["preflight_failure"];
+    assert_eq!(failure["stage"], "manifest-load");
+    assert_eq!(
+        failure["manifest_path"],
+        manifest_path.to_string_lossy().replace('\\', "/")
+    );
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("project targets json invalid manifest should expose a message")
+            .contains("invalid manifest"),
+        "project targets json invalid manifest should describe the load failure: {json}"
+    );
+}
+
+#[test]
 fn project_targets_reports_no_discovered_targets() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-targets-empty");

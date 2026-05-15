@@ -115,6 +115,68 @@ fn project_status_reports_workspace_members_targets_dependencies_and_interfaces_
 }
 
 #[test]
+fn project_status_json_reports_invalid_manifest_load_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-status-invalid-manifest-json");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(&project_root)
+        .expect("create project directory for invalid manifest status json test");
+    let manifest_path = temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package
+name = "app"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "status",
+        &project_root.to_string_lossy(),
+        "--json",
+    ]);
+    let output = run_command_capture(&mut command, "`ql project status --json` invalid manifest");
+    let (stdout, stderr) = expect_exit_code(
+        "project-status-invalid-manifest-json",
+        "project status invalid manifest json",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-status-invalid-manifest-json",
+        "project status invalid manifest json",
+        &stderr,
+    )
+    .unwrap();
+
+    let json = parse_json_output("project-status-invalid-manifest-json", &stdout);
+    assert_eq!(json["schema"], "ql.project.status.v1");
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["kind"], JsonValue::Null);
+    assert_eq!(
+        json["project_manifest_path"],
+        manifest_path.to_string_lossy().replace('\\', "/")
+    );
+    assert_eq!(json["members"], serde_json::json!([]));
+    assert_eq!(json["failure"]["kind"], "preflight");
+    let failure = &json["failure"]["preflight_failure"];
+    assert_eq!(failure["stage"], "manifest-load");
+    assert_eq!(
+        failure["manifest_path"],
+        manifest_path.to_string_lossy().replace('\\', "/")
+    );
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("project status json invalid manifest should expose a message")
+            .contains("invalid manifest"),
+        "project status json invalid manifest should describe the load failure: {json}"
+    );
+}
+
+#[test]
 fn project_status_supports_workspace_package_selector() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-status-package-selector");

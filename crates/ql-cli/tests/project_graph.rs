@@ -462,6 +462,66 @@ name = "app"
 }
 
 #[test]
+fn project_graph_json_reports_invalid_manifest_load_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-graph-invalid-manifest-json");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(&project_root)
+        .expect("create project directory for invalid manifest graph json test");
+    let manifest_path = temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package
+name = "app"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "graph", "--json"])
+        .arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql project graph --json` invalid manifest");
+    let (stdout, stderr) = expect_exit_code(
+        "project-graph-invalid-manifest-json",
+        "project graph json invalid manifest",
+        &output,
+        1,
+    )
+    .expect("project graph json should fail when the manifest is syntactically invalid");
+    expect_empty_stderr(
+        "project-graph-invalid-manifest-json",
+        "project graph json invalid manifest",
+        &stderr,
+    )
+    .expect("project graph json invalid manifest should stay on stdout");
+
+    let json = parse_json_output("project-graph-invalid-manifest-json", &stdout);
+    assert_eq!(json["schema"], "ql.project.graph.v1");
+    assert_eq!(
+        json["path"],
+        project_root.to_string_lossy().replace('\\', "/")
+    );
+    assert_eq!(
+        json["manifest_path"],
+        manifest_path.to_string_lossy().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["kind"], "preflight");
+    let failure = &json["failure"]["preflight_failure"];
+    assert_eq!(failure["stage"], "manifest-load");
+    assert_eq!(
+        failure["manifest_path"],
+        manifest_path.to_string_lossy().replace('\\', "/")
+    );
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("project graph json invalid manifest should expose a message")
+            .contains("invalid manifest"),
+        "project graph json invalid manifest should describe the load failure: {json}"
+    );
+}
+
+#[test]
 fn project_graph_preserves_missing_package_name_error_surface() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-graph-missing-package-name");

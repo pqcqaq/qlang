@@ -57,8 +57,20 @@ pub(crate) fn project_status_path(
     json: bool,
 ) -> Result<(), u8> {
     let request_root = resolve_project_workspace_member_command_request_root(path);
-    let manifest = load_project_manifest(request_root.as_deref().unwrap_or(path))
-        .map_err(|error| report_project_status_load_error(path, &error))?;
+    let manifest = match load_project_manifest(request_root.as_deref().unwrap_or(path)) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            if json {
+                print!(
+                    "{}",
+                    render_project_status_preflight_failure_json(path, &error)
+                );
+            } else {
+                report_project_status_load_error(path, &error);
+            }
+            return Err(1);
+        }
+    };
     let members = match collect_project_status_members(&manifest, path, package_name, json) {
         Ok(members) => members,
         Err(ProjectStatusMemberSelectionError::Json(failure)) => {
@@ -106,6 +118,52 @@ fn report_project_status_load_error(path: &Path, error: &ql_project::ProjectErro
     }
     eprintln!("note: requested path: {}", normalize_path(path));
     1
+}
+
+fn render_project_status_preflight_failure_json(
+    path: &Path,
+    error: &ql_project::ProjectError,
+) -> String {
+    let manifest_path = project_status_load_error_manifest_path(error).map(normalize_path);
+    let rendered = serde_json::to_string_pretty(&json!({
+        "schema": "ql.project.status.v1",
+        "path": normalize_path(path),
+        "project_manifest_path": manifest_path,
+        "kind": Option::<String>::None,
+        "status": "failed",
+        "members": [],
+        "failure": {
+            "kind": "preflight",
+            "preflight_failure": {
+                "stage": "manifest-load",
+                "message": project_status_load_error_message(error),
+                "manifest_path": manifest_path,
+            },
+        },
+    }))
+    .expect("project status preflight failure json should serialize");
+    format!("{rendered}\n")
+}
+
+fn project_status_load_error_message(error: &ql_project::ProjectError) -> String {
+    if let ql_project::ProjectError::ManifestNotFound { start } = error {
+        return format!(
+            "`ql project status` requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
+            normalize_path(start)
+        );
+    }
+    if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(error) {
+        return format!(
+            "`ql project status` manifest `{}` does not declare `[package].name`",
+            normalize_path(manifest_path)
+        );
+    }
+    format!("`ql project status` {error}")
+}
+
+fn project_status_load_error_manifest_path(error: &ql_project::ProjectError) -> Option<&Path> {
+    package_missing_name_manifest_path_from_project_error(error)
+        .or_else(|| package_check_manifest_path_from_project_error(error))
 }
 
 fn collect_project_status_members(
