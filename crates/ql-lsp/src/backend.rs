@@ -391,13 +391,7 @@ fn configure_workspace_roots(params: &InitializeParams) -> Vec<PathBuf> {
 fn package_analysis_for_path(path: &Path) -> Option<ql_analysis::PackageAnalysis> {
     match analyze_package(path) {
         Ok(package) => Some(package),
-        Err(PackageAnalysisError::SourceDiagnostics { .. }) => {
-            analyze_package_with_available_dependencies(path).ok()
-        }
-        Err(PackageAnalysisError::Project(_)) => {
-            analyze_package_with_available_dependencies(path).ok()
-        }
-        Err(error) if is_interface_artifact_failure(&error) => {
+        Err(error) if should_fallback_to_manifest_sources(&error) => {
             analyze_package_with_available_dependencies(path).ok()
         }
         Err(_) => None,
