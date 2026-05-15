@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use futures_util::{FutureExt, StreamExt};
 use ql_lsp::Backend;
 use serde_json::json;
 use tower::{Service, ServiceExt};
@@ -25,12 +26,12 @@ use tower_lsp::lsp_types::{
     DocumentRangeFormattingParams, DocumentSymbolParams, DocumentSymbolResponse, FoldingRange,
     FoldingRangeParams, FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, Hover,
     HoverParams, InitializeParams, InitializeResult, InlayHint, InlayHintParams, Location,
-    Position, PrepareRenameResponse, Range, ReferenceContext, ReferenceParams, RenameParams,
-    SelectionRange, SelectionRangeParams, SemanticTokensParams, SemanticTokensRangeParams,
-    SemanticTokensRangeResult, SemanticTokensResult, SignatureHelp, SignatureHelpParams,
-    SymbolInformation, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, TextEdit, TypeHierarchyItem, TypeHierarchyPrepareParams,
-    TypeHierarchySubtypesParams, TypeHierarchySupertypesParams, Url,
+    Position, PrepareRenameResponse, PublishDiagnosticsParams, Range, ReferenceContext,
+    ReferenceParams, RenameParams, SelectionRange, SelectionRangeParams, SemanticTokensParams,
+    SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult, SignatureHelp,
+    SignatureHelpParams, SymbolInformation, TextDocumentContentChangeEvent, TextDocumentIdentifier,
+    TextDocumentItem, TextDocumentPositionParams, TextEdit, TypeHierarchyItem,
+    TypeHierarchyPrepareParams, TypeHierarchySubtypesParams, TypeHierarchySupertypesParams, Url,
     VersionedTextDocumentIdentifier, WorkspaceEdit, WorkspaceFolder,
 };
 
@@ -223,6 +224,25 @@ pub async fn did_close_via_request(service: &mut LspService<Backend>, uri: Url) 
         .await
         .expect("didClose notification should succeed");
     assert_eq!(response, None);
+}
+
+pub fn next_publish_diagnostics(socket: &mut tower_lsp::ClientSocket) -> PublishDiagnosticsParams {
+    loop {
+        let request = socket
+            .next()
+            .now_or_never()
+            .flatten()
+            .expect("server should publish diagnostics synchronously");
+        if request.method() == "textDocument/publishDiagnostics" {
+            return serde_json::from_value(
+                request
+                    .params()
+                    .cloned()
+                    .expect("publishDiagnostics should include params"),
+            )
+            .expect("publishDiagnostics params should deserialize");
+        }
+    }
 }
 
 pub async fn initialized_service_with_open_documents(
