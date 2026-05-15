@@ -4900,6 +4900,8 @@ fn load_project_test_members(
         };
 
         return Ok(vec![project_test_build_targets_from_manifest(
+            request_path,
+            command_options,
             &member_manifest,
             Some(&manifest),
         )?]);
@@ -4971,11 +4973,16 @@ fn load_project_test_members(
         return Err(1);
     }
     Ok(vec![project_test_build_targets_from_manifest(
-        &manifest, None,
+        request_path,
+        command_options,
+        &manifest,
+        None,
     )?])
 }
 
 fn project_test_build_targets_from_manifest(
+    request_path: &Path,
+    command_options: &TestCommandOptions,
     manifest: &ql_project::ProjectManifest,
     workspace_manifest: Option<&ql_project::ProjectManifest>,
 ) -> Result<WorkspaceBuildTargets, u8> {
@@ -4983,17 +4990,55 @@ fn project_test_build_targets_from_manifest(
         .and_then(|manifest| manifest.profile.as_ref().map(|profile| profile.default));
     Ok(WorkspaceBuildTargets {
         member_manifest_path: manifest.manifest_path.clone(),
-        package_name: package_name(manifest)
-            .map_err(|error| report_ql_test_project_error(&error))?
-            .to_owned(),
+        package_name: match package_name(manifest) {
+            Ok(package_name) => package_name.to_owned(),
+            Err(error) => {
+                return Err(report_ql_test_project_preflight_error(
+                    request_path,
+                    command_options,
+                    &error,
+                    "target-discovery",
+                ));
+            }
+        },
         default_profile: manifest
             .profile
             .as_ref()
             .map(|profile| profile.default)
             .or(workspace_default_profile),
-        targets: discover_package_build_targets(manifest)
-            .map_err(|error| report_ql_test_project_error(&error))?,
+        targets: match discover_package_build_targets(manifest) {
+            Ok(targets) => targets,
+            Err(error) => {
+                return Err(report_ql_test_project_preflight_error(
+                    request_path,
+                    command_options,
+                    &error,
+                    "target-discovery",
+                ));
+            }
+        },
     })
+}
+
+fn report_ql_test_project_preflight_error(
+    request_path: &Path,
+    command_options: &TestCommandOptions,
+    error: &ql_project::ProjectError,
+    stage: &str,
+) -> u8 {
+    if command_options.json {
+        print!(
+            "{}",
+            render_test_json_preflight_failure_report(
+                request_path,
+                command_options,
+                build_json_project_error(request_path, error, stage),
+            )
+        );
+        return 1;
+    }
+
+    report_ql_test_project_error(error)
 }
 
 fn report_ql_test_project_error(error: &ql_project::ProjectError) -> u8 {

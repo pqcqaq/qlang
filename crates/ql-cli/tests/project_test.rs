@@ -4045,6 +4045,152 @@ fn test_workspace_member_directory_package_selector_reports_json_success() {
 }
 
 #[test]
+fn test_workspace_path_json_package_selector_reports_missing_source_root_preflight_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-package-selector-missing-source-root-json");
+    let project_root = temp.path().join("workspace");
+    fs::create_dir_all(project_root.join("packages/tool/src")).expect("create tool source root");
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        "pub fn helper() -> Int { return 1 }\n",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["test", "--json"])
+        .arg(&project_root)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json --package` selected workspace package missing source root",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-test-package-selector-missing-source-root-json",
+        "selected workspace package missing source root json",
+        &output,
+        1,
+    )
+    .expect("workspace-path `ql test --json --package app` should fail for missing selected source root");
+    expect_empty_stderr(
+        "project-test-package-selector-missing-source-root-json",
+        "selected workspace package missing source root json",
+        &stderr,
+    )
+    .expect("selected workspace package missing source root json should stay on stdout");
+
+    let json = parse_json_output(
+        "project-test-package-selector-missing-source-root-json",
+        &stdout,
+    );
+    assert_eq!(json["schema"], "ql.test.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["package_name"], "app");
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["failure"]["kind"], "preflight");
+    let failure = &json["failure"]["preflight_failure"];
+    assert_eq!(failure["error_kind"], "manifest");
+    assert_eq!(failure["stage"], "target-discovery");
+    assert_eq!(failure["selector"], JsonValue::Null);
+    assert_eq!(failure["target_count"], JsonValue::Null);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("selected workspace missing source root json failure should expose a message")
+            .contains("package source directory"),
+        "selected workspace missing source root json failure should describe source root lookup: {json}"
+    );
+}
+
+#[test]
+fn test_package_path_json_package_selector_reports_missing_source_root_preflight_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-package-path-selector-missing-source-root-json");
+    let project_root = temp.path().join("app");
+    fs::create_dir_all(&project_root).expect("create package directory");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["test", "--json"])
+        .arg(&project_root)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json --package` package path missing source root",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-test-package-path-selector-missing-source-root-json",
+        "package path selector missing source root json",
+        &output,
+        1,
+    )
+    .expect("package-path `ql test --json --package app` should fail for missing source root");
+    expect_empty_stderr(
+        "project-test-package-path-selector-missing-source-root-json",
+        "package path selector missing source root json",
+        &stderr,
+    )
+    .expect("package path selector missing source root json should stay on stdout");
+
+    let json = parse_json_output(
+        "project-test-package-path-selector-missing-source-root-json",
+        &stdout,
+    );
+    assert_eq!(json["schema"], "ql.test.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["package_name"], "app");
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["failure"]["kind"], "preflight");
+    let failure = &json["failure"]["preflight_failure"];
+    assert_eq!(failure["error_kind"], "manifest");
+    assert_eq!(failure["stage"], "target-discovery");
+    assert_eq!(failure["selector"], JsonValue::Null);
+    assert_eq!(failure["target_count"], JsonValue::Null);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("package path missing source root json failure should expose a message")
+            .contains("package source directory"),
+        "package path missing source root json failure should describe source root lookup: {json}"
+    );
+}
+
+#[test]
 fn test_workspace_path_json_rejects_unknown_package_selector() {
     let fixture = write_workspace_test_package_selector_project(
         "ql-project-test-package-selector-missing-json",
