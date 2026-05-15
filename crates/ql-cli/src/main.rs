@@ -4425,6 +4425,44 @@ fn render_test_json_preflight_message_report(
     )
 }
 
+fn render_test_json_selection_failure_report(
+    path: &Path,
+    command_options: &TestCommandOptions,
+    status: &'static str,
+    discovered_total: usize,
+    stage: &'static str,
+    message: String,
+    selector: Option<String>,
+) -> String {
+    let rendered = serde_json::to_string_pretty(&json!({
+        "schema": "ql.test.v1",
+        "path": normalize_path(path),
+        "requested_profile": command_options.profile.dir_name(),
+        "profile_overridden": command_options.profile_overridden,
+        "package_name": command_options.package_name.as_deref(),
+        "filter": command_options.filter.as_deref(),
+        "list_only": command_options.list_only,
+        "status": status,
+        "discovered_total": discovered_total,
+        "selected_total": 0,
+        "targets": [],
+        "passed": 0,
+        "failed": 0,
+        "failures": [],
+        "failure": {
+            "kind": "selection",
+            "selection_failure": {
+                "stage": stage,
+                "message": message,
+                "selector": selector,
+                "target_count": discovered_total,
+            },
+        },
+    }))
+    .expect("test selection failure json report should serialize");
+    format!("{rendered}\n")
+}
+
 fn test_json_target(target: &TestTarget) -> JsonValue {
     match &target.kind {
         TestTargetKind::Smoke { build_options, .. } => json!({
@@ -4488,13 +4526,17 @@ fn test_path(path: &Path, command_options: &TestCommandOptions) -> Result<(), u8
         if command_options.json {
             print!(
                 "{}",
-                render_test_json_report(
+                render_test_json_selection_failure_report(
                     path,
                     command_options,
                     "no-tests",
                     discovered_total,
-                    &[],
-                    None,
+                    "test-discovery",
+                    test_no_tests_message(path, command_options.package_name.as_deref()),
+                    command_options
+                        .package_name
+                        .as_deref()
+                        .map(|package_name| format!("package `{package_name}`")),
                 )
             );
         } else {
@@ -4513,13 +4555,18 @@ fn test_path(path: &Path, command_options: &TestCommandOptions) -> Result<(), u8
             if command_options.json {
                 print!(
                     "{}",
-                    render_test_json_report(
+                    render_test_json_selection_failure_report(
                         path,
                         command_options,
                         "no-match",
                         discovered_total,
-                        &[],
-                        None,
+                        "target-selection",
+                        test_no_matching_target_message(
+                            path,
+                            target_path,
+                            command_options.package_name.as_deref(),
+                        ),
+                        Some(format!("target `{target_path}`")),
                     )
                 );
             } else {
@@ -4541,13 +4588,21 @@ fn test_path(path: &Path, command_options: &TestCommandOptions) -> Result<(), u8
         if command_options.json {
             print!(
                 "{}",
-                render_test_json_report(
+                render_test_json_selection_failure_report(
                     path,
                     command_options,
                     "no-match",
                     discovered_total,
-                    &[],
-                    None,
+                    "filter-selection",
+                    test_no_matching_filter_message(
+                        path,
+                        command_options.filter.as_deref().unwrap_or_default(),
+                        command_options.package_name.as_deref(),
+                    ),
+                    command_options
+                        .filter
+                        .as_deref()
+                        .map(|filter| format!("filter `{filter}`")),
                 )
             );
         } else {
@@ -5483,18 +5538,53 @@ fn report_test_target_selector_requires_project_context(target_path: &str) {
     eprintln!("note: selector: target `{target_path}`");
 }
 
-fn report_no_tests_discovered(path: &Path, package_name: Option<&str>) {
+fn test_no_tests_message(path: &Path, package_name: Option<&str>) -> String {
     let normalized_path = normalize_path(path);
     if let Some(package_name) = package_name {
-        eprintln!(
-            "error: `ql test` found no `.ql` test files for package `{package_name}` under `{normalized_path}`"
+        return format!(
+            "`ql test` found no `.ql` test files for package `{package_name}` under `{normalized_path}`"
         );
+    }
+    format!("`ql test` found no `.ql` test files under `{normalized_path}`")
+}
+
+fn test_no_matching_filter_message(
+    path: &Path,
+    filter: &str,
+    package_name: Option<&str>,
+) -> String {
+    let normalized_path = normalize_path(path);
+    if let Some(package_name) = package_name {
+        return format!(
+            "`ql test` found no test files matching `{filter}` for package `{package_name}` under `{normalized_path}`"
+        );
+    }
+    format!("`ql test` found no test files matching `{filter}` under `{normalized_path}`")
+}
+
+fn test_no_matching_target_message(
+    path: &Path,
+    target_path: &str,
+    package_name: Option<&str>,
+) -> String {
+    let normalized_path = normalize_path(path);
+    if let Some(package_name) = package_name {
+        return format!(
+            "`ql test` found no test target `{target_path}` for package `{package_name}` under `{normalized_path}`"
+        );
+    }
+    format!("`ql test` found no test target `{target_path}` under `{normalized_path}`")
+}
+
+fn report_no_tests_discovered(path: &Path, package_name: Option<&str>) {
+    let normalized_path = normalize_path(path);
+    eprintln!("error: {}", test_no_tests_message(path, package_name));
+    if let Some(package_name) = package_name {
         eprintln!(
             "hint: add standalone smoke tests under `tests/**/*.ql`, rerun `ql test {normalized_path} --package {package_name} --list`, or adjust `--package`"
         );
         return;
     }
-    eprintln!("error: `ql test` found no `.ql` test files under `{normalized_path}`");
     eprintln!(
         "hint: add standalone smoke tests under `tests/**/*.ql`, or rerun `ql test <file.ql>` for a single file"
     );
@@ -5502,16 +5592,16 @@ fn report_no_tests_discovered(path: &Path, package_name: Option<&str>) {
 
 fn report_no_matching_tests(path: &Path, filter: &str, package_name: Option<&str>) {
     let normalized_path = normalize_path(path);
+    eprintln!(
+        "error: {}",
+        test_no_matching_filter_message(path, filter, package_name)
+    );
     if let Some(package_name) = package_name {
-        eprintln!(
-            "error: `ql test` found no test files matching `{filter}` for package `{package_name}` under `{normalized_path}`"
-        );
         eprintln!(
             "hint: rerun `ql test {normalized_path} --package {package_name} --list` to inspect the discovered tests, or adjust `--filter` / `--package`"
         );
         return;
     }
-    eprintln!("error: `ql test` found no test files matching `{filter}` under `{normalized_path}`");
     eprintln!(
         "hint: rerun `ql test {normalized_path} --list` to inspect the discovered tests, or adjust `--filter`"
     );
@@ -5519,17 +5609,17 @@ fn report_no_matching_tests(path: &Path, filter: &str, package_name: Option<&str
 
 fn report_no_matching_test_target(path: &Path, target_path: &str, package_name: Option<&str>) {
     let normalized_path = normalize_path(path);
+    eprintln!(
+        "error: {}",
+        test_no_matching_target_message(path, target_path, package_name)
+    );
     if let Some(package_name) = package_name {
-        eprintln!(
-            "error: `ql test` found no test target `{target_path}` for package `{package_name}` under `{normalized_path}`"
-        );
         eprintln!(
             "hint: rerun `ql test {normalized_path} --package {package_name} --list` to inspect the discovered tests, or adjust `--target` / `--package`"
         );
         return;
     }
 
-    eprintln!("error: `ql test` found no test target `{target_path}` under `{normalized_path}`");
     eprintln!(
         "hint: rerun `ql test {normalized_path} --list` to inspect the discovered tests, or adjust `--target`"
     );

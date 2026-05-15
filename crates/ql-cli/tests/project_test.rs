@@ -3096,6 +3096,179 @@ name = "app"
 }
 
 #[test]
+fn test_package_path_json_reports_no_tests_selection_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-json-no-tests");
+    let project_root = temp.path().join("app");
+    fs::create_dir_all(project_root.join("src")).expect("create package source root");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test", "--json"]).arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql test --json` no tests");
+    let (stdout, stderr) = expect_exit_code(
+        "project-test-json-no-tests",
+        "no tests selection json failure",
+        &output,
+        1,
+    )
+    .expect("package-path `ql test --json` should exit with code 1 without tests");
+    expect_empty_stderr(
+        "project-test-json-no-tests",
+        "no tests selection json failure",
+        &stderr,
+    )
+    .expect("package-path `ql test --json` no-tests failure should stay on stdout");
+
+    let json = parse_json_output("project-test-json-no-tests", &stdout);
+    assert_eq!(json["schema"], "ql.test.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "no-tests");
+    assert_eq!(json["discovered_total"], 0);
+    assert_eq!(json["selected_total"], 0);
+    assert_eq!(json["targets"], serde_json::json!([]));
+    assert_eq!(json["failures"], serde_json::json!([]));
+    assert_eq!(json["failure"]["kind"], "selection");
+    let failure = &json["failure"]["selection_failure"];
+    assert_eq!(failure["stage"], "test-discovery");
+    assert_eq!(failure["selector"], JsonValue::Null);
+    assert_eq!(failure["target_count"], 0);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("no-tests json failure should expose a message")
+            .contains("found no `.ql` test files"),
+        "no-tests json failure should describe missing tests: {json}"
+    );
+}
+
+#[test]
+fn test_package_path_json_reports_missing_target_selection_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-json-missing-target");
+    let project_root = temp.path().join("app");
+    fs::create_dir_all(project_root.join("src")).expect("create package source root");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    temp.write("app/tests/smoke.ql", "fn main() -> Int { return 0 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["test", "--json"])
+        .arg(&project_root)
+        .args(["--target", "tests/missing.ql"]);
+    let output = run_command_capture(&mut command, "`ql test --json --target` missing target");
+    let (stdout, stderr) = expect_exit_code(
+        "project-test-json-missing-target",
+        "missing target selection json failure",
+        &output,
+        1,
+    )
+    .expect("package-path `ql test --json --target tests/missing.ql` should fail");
+    expect_empty_stderr(
+        "project-test-json-missing-target",
+        "missing target selection json failure",
+        &stderr,
+    )
+    .expect("package-path `ql test --json --target` miss should stay on stdout");
+
+    let json = parse_json_output("project-test-json-missing-target", &stdout);
+    assert_eq!(json["schema"], "ql.test.v1");
+    assert_eq!(json["status"], "no-match");
+    assert_eq!(json["discovered_total"], 1);
+    assert_eq!(json["selected_total"], 0);
+    assert_eq!(json["targets"], serde_json::json!([]));
+    assert_eq!(json["failure"]["kind"], "selection");
+    let failure = &json["failure"]["selection_failure"];
+    assert_eq!(failure["stage"], "target-selection");
+    assert_eq!(failure["selector"], "target `tests/missing.ql`");
+    assert_eq!(failure["target_count"], 1);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("missing target json failure should expose a message")
+            .contains("found no test target `tests/missing.ql`"),
+        "missing target json failure should describe target miss: {json}"
+    );
+}
+
+#[test]
+fn test_package_path_json_reports_missing_filter_selection_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-json-missing-filter");
+    let project_root = temp.path().join("app");
+    fs::create_dir_all(project_root.join("src")).expect("create package source root");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    temp.write("app/tests/smoke.ql", "fn main() -> Int { return 0 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["test", "--json"])
+        .arg(&project_root)
+        .args(["--filter", "missing"]);
+    let output = run_command_capture(&mut command, "`ql test --json --filter` missing filter");
+    let (stdout, stderr) = expect_exit_code(
+        "project-test-json-missing-filter",
+        "missing filter selection json failure",
+        &output,
+        1,
+    )
+    .expect("package-path `ql test --json --filter missing` should fail");
+    expect_empty_stderr(
+        "project-test-json-missing-filter",
+        "missing filter selection json failure",
+        &stderr,
+    )
+    .expect("package-path `ql test --json --filter` miss should stay on stdout");
+
+    let json = parse_json_output("project-test-json-missing-filter", &stdout);
+    assert_eq!(json["schema"], "ql.test.v1");
+    assert_eq!(json["filter"], "missing");
+    assert_eq!(json["status"], "no-match");
+    assert_eq!(json["discovered_total"], 1);
+    assert_eq!(json["selected_total"], 0);
+    assert_eq!(json["targets"], serde_json::json!([]));
+    assert_eq!(json["failure"]["kind"], "selection");
+    let failure = &json["failure"]["selection_failure"];
+    assert_eq!(failure["stage"], "filter-selection");
+    assert_eq!(failure["selector"], "filter `missing`");
+    assert_eq!(failure["target_count"], 1);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("missing filter json failure should expose a message")
+            .contains("found no test files matching `missing`"),
+        "missing filter json failure should describe filter miss: {json}"
+    );
+}
+
+#[test]
 fn test_package_path_lists_discovered_tests_as_json() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-test-list-json");
