@@ -1,25 +1,28 @@
 mod common;
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
 use common::request::{
-    TempDir, completion_via_request, did_open_via_request, document_highlight_via_request,
-    folding_range_via_request, formatting_via_request, goto_definition_via_request,
-    goto_type_definition_via_request, hover_via_request, initialize_service_with_workspace_roots,
-    inlay_hint_via_request, nth_offset, offset_to_position, prepare_rename_via_request,
-    references_via_request, rename_via_request, selection_range_via_request,
-    semantic_tokens_full_via_request, signature_help_via_request,
+    TempDir, code_action_via_request, completion_via_request, did_open_via_request,
+    document_highlight_via_request, document_symbol_via_request, folding_range_via_request,
+    formatting_via_request, goto_definition_via_request, goto_type_definition_via_request,
+    hover_via_request, initialize_service_with_workspace_roots, inlay_hint_via_request, nth_offset,
+    offset_to_position, prepare_rename_via_request, references_via_request, rename_via_request,
+    selection_range_via_request, semantic_tokens_full_via_request, signature_help_via_request,
 };
 use common::stdlib_real::{real_stdlib_source_path, write_real_stdlib_workspace};
+use ql_diagnostics::UNRESOLVED_TYPE_CODE;
 use ql_lsp::Backend;
 use ql_lsp::bridge::{semantic_tokens_legend, span_to_range};
 use tower_lsp::LspService;
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
 use tower_lsp::lsp_types::{
-    CompletionResponse, DocumentHighlight, FoldingRange, GotoDefinitionResponse, HoverContents,
-    InlayHint, InlayHintKind, InlayHintLabel, Location, PrepareRenameResponse, Range,
-    SelectionRange, SemanticToken, SemanticTokenType, SemanticTokensResult, TextEdit, Url,
+    CodeActionOrCommand, CompletionResponse, Diagnostic, DocumentHighlight, DocumentSymbolResponse,
+    FoldingRange, GotoDefinitionResponse, HoverContents, InlayHint, InlayHintKind, InlayHintLabel,
+    Location, NumberOrString, PrepareRenameResponse, Range, SelectionRange, SemanticToken,
+    SemanticTokenType, SemanticTokensResult, SymbolKind, TextEdit, Url,
 };
 
 async fn open_real_stdlib_workspace(
@@ -309,6 +312,76 @@ pub fn main() -> Int {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn document_symbol_request_uses_current_real_stdlib_sources() {
+    let temp = TempDir::new("ql-lsp-real-stdlib-document-symbol-request");
+    let app_source = r#"
+package demo.app
+
+use std.option.Option as Option
+
+pub fn main() -> Int {
+    return 0
+}
+"#;
+    let (mut service, _, stdlib_root) = open_real_stdlib_workspace(&temp, app_source).await;
+    let option_source_path = real_stdlib_source_path(&stdlib_root, "option");
+    let option_source = fs::read_to_string(&option_source_path)
+        .expect("temp std.option source should exist")
+        .replace("\r\n", "\n");
+    let option_uri = Url::from_file_path(&option_source_path)
+        .expect("temp std.option source path should convert to URI");
+    did_open_via_request(&mut service, option_uri.clone(), option_source.clone()).await;
+
+    let symbols = document_symbol_via_request(&mut service, option_uri)
+        .await
+        .expect("real stdlib documentSymbol should return source symbols");
+    assert_document_symbol(&symbols, "Option", SymbolKind::ENUM);
+    assert_document_symbol(&symbols, "some", SymbolKind::FUNCTION);
+    assert_document_symbol(&symbols, "unwrap_or", SymbolKind::FUNCTION);
+    assert_document_symbol(&symbols, "or_option", SymbolKind::FUNCTION);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn code_action_request_auto_imports_current_real_stdlib_types() {
+    let temp = TempDir::new("ql-lsp-real-stdlib-code-action-request");
+    let app_source = r#"
+package demo.app
+
+pub fn main(value: Option[Int]) -> Int {
+    return 0
+}
+"#;
+    let (mut service, app_uri, _) = open_real_stdlib_workspace(&temp, app_source).await;
+    let diagnostic = unresolved_type_diagnostic(app_source, "Option");
+
+    let actions = code_action_via_request(
+        &mut service,
+        app_uri.clone(),
+        diagnostic.range,
+        vec![diagnostic.clone()],
+    )
+    .await
+    .expect("real stdlib codeAction should return auto-import quickfixes");
+
+    let changes = assert_code_action(&actions, "Import `std.option.Option`");
+    assert_eq!(
+        changes.len(),
+        1,
+        "real stdlib import should not edit manifest"
+    );
+    assert_edit(
+        changes
+            .get(&app_uri)
+            .expect("auto-import should edit the importing app source"),
+        Range::new(
+            offset_to_position(app_source, nth_offset(app_source, "\n\npub fn main", 1) + 1),
+            offset_to_position(app_source, nth_offset(app_source, "\n\npub fn main", 1) + 1),
+        ),
+        "use std.option.Option\n",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn rename_request_updates_current_real_stdlib_source_roots() {
     let temp = TempDir::new("ql-lsp-real-stdlib-rename-request");
     let app_source = r#"
@@ -423,6 +496,55 @@ fn assert_edit(edits: &[TextEdit], range: Range, replacement: &str) {
             .iter()
             .any(|edit| edit.range == range && edit.new_text == replacement),
         "edits should include `{replacement}` at {range:?}: {edits:#?}",
+    );
+}
+
+fn unresolved_type_diagnostic(source: &str, name: &str) -> Diagnostic {
+    let start = nth_offset(source, name, 1);
+    Diagnostic {
+        range: range_at(source, start, name.len()),
+        severity: None,
+        code: Some(NumberOrString::String(UNRESOLVED_TYPE_CODE.to_owned())),
+        code_description: None,
+        source: None,
+        message: format!("unresolved type `{name}`"),
+        related_information: None,
+        tags: None,
+        data: None,
+    }
+}
+
+fn assert_code_action<'a>(
+    actions: &'a [CodeActionOrCommand],
+    title: &str,
+) -> &'a HashMap<Url, Vec<TextEdit>> {
+    let action = actions
+        .iter()
+        .find_map(|action| match action {
+            CodeActionOrCommand::CodeAction(action) if action.title == title => Some(action),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("code actions should include `{title}`: {actions:#?}"));
+    action
+        .edit
+        .as_ref()
+        .and_then(|edit| edit.changes.as_ref())
+        .unwrap_or_else(|| panic!("code action `{title}` should contain direct changes"))
+}
+
+fn assert_document_symbol(
+    response: &DocumentSymbolResponse,
+    name: &str,
+    expected_kind: SymbolKind,
+) {
+    let DocumentSymbolResponse::Nested(symbols) = response else {
+        panic!("documentSymbol should return nested symbols")
+    };
+    assert!(
+        symbols
+            .iter()
+            .any(|symbol| symbol.name == name && symbol.kind == expected_kind),
+        "document symbols should include {expected_kind:?} `{name}`: {symbols:#?}",
     );
 }
 
