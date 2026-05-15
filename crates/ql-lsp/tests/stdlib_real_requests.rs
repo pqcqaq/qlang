@@ -7,25 +7,26 @@ use std::path::Path;
 use common::request::{
     TempDir, code_action_via_request, completion_via_request, did_open_via_request,
     document_highlight_via_request, document_symbol_via_request, folding_range_via_request,
-    formatting_via_request, goto_definition_via_request, goto_type_definition_via_request,
-    hover_via_request, incoming_calls_via_request, initialize_service_with_workspace_roots,
-    inlay_hint_via_request, nth_offset, offset_to_position, outgoing_calls_via_request,
-    prepare_call_hierarchy_via_request, prepare_rename_via_request,
-    prepare_type_hierarchy_via_request, references_via_request, rename_via_request,
-    selection_range_via_request, semantic_tokens_full_via_request, signature_help_via_request,
+    formatting_via_request, goto_declaration_via_request, goto_definition_via_request,
+    goto_type_definition_via_request, hover_via_request, incoming_calls_via_request,
+    initialize_service_with_workspace_roots, inlay_hint_via_request, nth_offset,
+    offset_to_position, outgoing_calls_via_request, prepare_call_hierarchy_via_request,
+    prepare_rename_via_request, prepare_type_hierarchy_via_request, references_via_request,
+    rename_via_request, selection_range_via_request, semantic_tokens_full_via_request,
+    semantic_tokens_range_via_request, signature_help_via_request,
 };
 use common::stdlib_real::{real_stdlib_source_path, write_real_stdlib_workspace};
 use ql_diagnostics::UNRESOLVED_TYPE_CODE;
 use ql_lsp::Backend;
 use ql_lsp::bridge::{semantic_tokens_legend, span_to_range};
 use tower_lsp::LspService;
-use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
+use tower_lsp::lsp_types::request::{GotoDeclarationResponse, GotoTypeDefinitionResponse};
 use tower_lsp::lsp_types::{
     CallHierarchyOutgoingCall, CodeActionOrCommand, CompletionResponse, Diagnostic,
     DocumentHighlight, DocumentSymbolResponse, FoldingRange, GotoDefinitionResponse, HoverContents,
     InlayHint, InlayHintKind, InlayHintLabel, Location, NumberOrString, PrepareRenameResponse,
-    Range, SelectionRange, SemanticToken, SemanticTokenType, SemanticTokensResult, SymbolKind,
-    TextEdit, Url,
+    Range, SelectionRange, SemanticToken, SemanticTokenType, SemanticTokensRangeResult,
+    SemanticTokensResult, SymbolKind, TextEdit, Url,
 };
 
 async fn open_real_stdlib_workspace(
@@ -145,6 +146,17 @@ pub fn main() -> Int {
         &real_stdlib_source_path(&stdlib_root, "option"),
         "some",
     );
+    assert_declaration_targets_snippet(
+        goto_declaration_via_request(
+            &mut service,
+            app_uri.clone(),
+            offset_to_position(app_source, nth_offset(app_source, "option_some", 2)),
+        )
+        .await
+        .expect("real std.option function declaration should exist"),
+        &real_stdlib_source_path(&stdlib_root, "option"),
+        "some",
+    );
     let option_references = references_via_request(
         &mut service,
         app_uri.clone(),
@@ -237,7 +249,7 @@ pub fn main() -> Int {
     assert_parameter_hint(&hints, "expected:");
 
     let SemanticTokensResult::Tokens(tokens) =
-        semantic_tokens_full_via_request(&mut service, app_uri)
+        semantic_tokens_full_via_request(&mut service, app_uri.clone())
             .await
             .expect("real stdlib semantic tokens request should return tokens")
     else {
@@ -262,6 +274,26 @@ pub fn main() -> Int {
         &tokens.data,
         nth_offset(app_source, "clamp_int", 2),
         "clamp_int".len(),
+        SemanticTokenType::FUNCTION,
+    );
+
+    let SemanticTokensRangeResult::Tokens(range_tokens) = semantic_tokens_range_via_request(
+        &mut service,
+        app_uri,
+        Range::new(
+            offset_to_position(app_source, nth_offset(app_source, "let option_value", 1)),
+            offset_to_position(app_source, nth_offset(app_source, "return check", 1)),
+        ),
+    )
+    .await
+    .expect("real stdlib semantic tokens range request should return tokens") else {
+        panic!("semantic tokens range should use full token payload")
+    };
+    assert_semantic_token(
+        app_source,
+        &range_tokens.data,
+        nth_offset(app_source, "repeat_array", 3),
+        "repeat_array".len(),
         SemanticTokenType::FUNCTION,
     );
 }
@@ -684,6 +716,17 @@ fn assert_definition_targets_snippet(
 ) {
     let GotoDefinitionResponse::Scalar(Location { uri, range }) = definition else {
         panic!("definition should be one location")
+    };
+    assert_location_targets_snippet(uri, range, interface_path, snippet);
+}
+
+fn assert_declaration_targets_snippet(
+    declaration: GotoDeclarationResponse,
+    interface_path: &Path,
+    snippet: &str,
+) {
+    let GotoDeclarationResponse::Scalar(Location { uri, range }) = declaration else {
+        panic!("declaration should be one location")
     };
     assert_location_targets_snippet(uri, range, interface_path, snippet);
 }
