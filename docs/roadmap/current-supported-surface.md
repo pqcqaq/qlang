@@ -31,7 +31,7 @@
 - `ql project graph/targets/status` 已覆盖 workspace root、workspace member path 和 workspace `--package` selector；`project graph/targets/status --package --json` 已覆盖 member source/directory 入口，且 graph/status package selector failure 已输出 selection failure JSON；`ql project target add` 支持 workspace root `--package` 和 member directory 入口。
 - `ql project dependencies/dependents --json` 已覆盖 workspace member source/directory 派生包名和 package selector failure，脚本不必重复传 `--name`。
 - `ql project lock` 已覆盖 workspace root、member source/directory 写入 workspace lockfile，以及 member source/directory `--json` 写入和 `--check --json` up-to-date 检查。
-- `ql project add-dependency/remove-dependency` 已覆盖 workspace member source/directory 和 workspace root `--package` selector。
+- `ql project add-dependency/remove-dependency` 已覆盖 workspace member source/directory 和 workspace root `--package` selector，依赖编辑逻辑已从 CLI 入口拆出。
 - `ql run` 已用真实 smoke 覆盖 dependency public functions/values/types/methods/traits、direct dependency generic public functions、workspace `--package` dependency generic、workspace `--package --target` 包内相对 binary、workspace `--package` dependency generic JSON、transitive generic wrapper/helper specialization 和 dependency generic JSON 输出。
 - 单文件 `ql build/run/test file.ql` 可复用本地 generic free function direct-call specialization。
 - `ql project init --stdlib` 从 `stdlib/examples/starter` 复制 starter，生成依赖 `std.core`、`std.option`、`std.result`、`std.array`、`std.test` 的项目，并用 `check/run/test` 直接覆盖 generic option/result assertions、数组 equality/reverse assertions、length-generic array helpers 和重复数组。
@@ -69,7 +69,7 @@
 
 ## 主要缺口
 
-- `ql-cli` 主链路仍过度集中；`build/run/test/check` 的入口 request-context，以及 `project emit-interface/graph/dependencies/dependents/add/status` 的 workspace member lookup 已共享并统一了 unresolved/ambiguous member reporting；剩余重点是继续收口 reporting 细节和真实 workspace smoke。
+- `ql-cli` 主链路仍过度集中；`build/run/test/check` 的入口 request-context，以及 `project emit-interface/graph/dependencies/dependents/add/status` 的 workspace member lookup 已共享并统一了 unresolved/ambiguous member reporting；`project add-dependency/remove-dependency` 的编辑逻辑已拆出。剩余重点是继续收口 reporting 细节和真实 workspace smoke。
 - `ql test` 仍有 package-under-test bridge/source override 组合路径，需要继续抽成共享 project pipeline，并扩大到更宽 dependency-aware backend 语义。
 - LSP 还不是稳定 workspace service；diagnostics、references、rename、symbols 需要统一 workspace index。
 - stdlib public API 已清掉 concrete carrier、主要固定 arity 包装和 `std.test` typed facade；`std.result` package-local smoke 和 `project init --stdlib` starter 已直接覆盖 generic carrier 语义与 option/result assertions。剩余重点是更完整 generic backend、共享 project pipeline 和更宽 dependency-aware backend。
