@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use ql_driver::{ToolchainOptions, discover_toolchain};
+use serde_json::Value as JsonValue;
 use support::{
     TempDir, executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
     expect_file_exists, expect_silent_output, expect_stderr_contains, expect_stdout_contains_all,
@@ -18,6 +19,11 @@ fn toolchain_available(context: &str) -> bool {
         return false;
     };
     true
+}
+
+fn parse_json_output(case_name: &str, stdout: &str) -> JsonValue {
+    serde_json::from_str(&stdout.replace("\r\n", "\n"))
+        .unwrap_or_else(|error| panic!("[{case_name}] parse json stdout: {error}\n{stdout}"))
 }
 
 fn write_repo_stdlib_fixture(temp: &TempDir, repo_root: &Path) -> PathBuf {
@@ -914,6 +920,57 @@ fn project_init_with_stdlib_creates_runnable_and_testable_workspace_scaffold() {
         ],
     )
     .unwrap();
+
+    let mut test_json = ql_command(&workspace_root);
+    test_json.current_dir(temp.path());
+    test_json
+        .args(["test", "--json"])
+        .arg(&project_root)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut test_json,
+        "`ql test --json --package app` initialized stdlib workspace",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-workspace-run",
+        "json test initialized stdlib workspace package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-workspace-run",
+        "json test initialized stdlib workspace package",
+        &stderr,
+    )
+    .unwrap();
+
+    let actual = parse_json_output("project-init-stdlib-workspace-run", &stdout);
+    let expected = serde_json::json!({
+        "schema": "ql.test.v1",
+        "path": project_root.display().to_string().replace('\\', "/"),
+        "requested_profile": "debug",
+        "profile_overridden": false,
+        "package_name": "app",
+        "filter": JsonValue::Null,
+        "list_only": false,
+        "status": "ok",
+        "discovered_total": 1,
+        "selected_total": 1,
+        "targets": [
+            {
+                "path": "packages/app/tests/smoke.ql",
+                "kind": "smoke",
+                "profile": "debug",
+            }
+        ],
+        "passed": 1,
+        "failed": 0,
+        "failures": [],
+    });
+    assert_eq!(
+        actual, expected,
+        "initialized stdlib workspace should keep a stable package-selected test json contract"
+    );
 }
 
 #[test]
