@@ -228,6 +228,96 @@ fn project_dependencies_supports_standalone_package_source_path() {
 }
 
 #[test]
+fn project_dependencies_supports_standalone_package_name_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependencies-package-selector");
+    let project_root = write_standalone_package_with_local_dependency(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependencies",
+        &project_root.to_string_lossy(),
+        "--name",
+        "app",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependencies --name` standalone package",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-dependencies-package-selector",
+        "project dependencies standalone package selector",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependencies-package-selector",
+        "project dependencies standalone package selector",
+        &stderr,
+    )
+    .unwrap();
+
+    let expected = format!(
+        "workspace_manifest: {}\npackage: app\ndependencies:\n  - ../vendor/core (vendor.core, local)\n",
+        project_root
+            .join("qlang.toml")
+            .to_string_lossy()
+            .replace('\\', "/")
+    );
+    expect_snapshot_matches(
+        "project-dependencies-package-selector",
+        "project dependencies standalone package selector stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn project_dependencies_refuses_standalone_package_name_selector_mismatch() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependencies-package-selector-mismatch");
+    let project_root = write_standalone_package_with_local_dependency(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependencies",
+        &project_root.to_string_lossy(),
+        "--name",
+        "missing",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependencies --name` standalone package mismatch",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-dependencies-package-selector-mismatch",
+        "project dependencies standalone package selector mismatch",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-dependencies-package-selector-mismatch",
+        "project dependencies standalone package selector mismatch",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-dependencies-package-selector-mismatch",
+        "project dependencies standalone package selector mismatch",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project dependencies` package selector expected `missing` but `{}` resolves to package `app`",
+            project_root.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
 fn project_dependencies_lists_workspace_member_dependencies_from_member_source_path() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-dependencies-success");
@@ -427,6 +517,91 @@ fn project_dependencies_json_supports_standalone_package_source_path() {
     assert_eq!(
         actual, expected,
         "project dependencies standalone package source path json stdout"
+    );
+}
+
+#[test]
+fn project_dependencies_json_supports_standalone_package_name_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependencies-package-selector-json");
+    let project_root = write_standalone_package_with_local_dependency(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependencies",
+        &project_root.to_string_lossy(),
+        "--name",
+        "app",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependencies --name --json` standalone package",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-dependencies-package-selector-json",
+        "project dependencies standalone package selector json",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependencies-package-selector-json",
+        "project dependencies standalone package selector json",
+        &stderr,
+    )
+    .unwrap();
+
+    let actual = parse_json_output("project-dependencies-package-selector-json", &stdout);
+    let expected =
+        expected_standalone_package_dependencies_json(&temp, &project_root, &project_root);
+    assert_eq!(
+        actual, expected,
+        "project dependencies standalone package selector json stdout"
+    );
+}
+
+#[test]
+fn project_dependencies_json_reports_standalone_package_name_selector_mismatch() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependencies-package-selector-mismatch-json");
+    let project_root = write_standalone_package_with_local_dependency(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependencies",
+        &project_root.to_string_lossy(),
+        "--name",
+        "missing",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependencies --name --json` standalone package mismatch",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-dependencies-package-selector-mismatch-json",
+        "project dependencies standalone package selector mismatch json",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependencies-package-selector-mismatch-json",
+        "project dependencies standalone package selector mismatch json",
+        &stderr,
+    )
+    .unwrap();
+
+    assert_dependencies_selection_failure_json(
+        "project-dependencies-package-selector-mismatch-json",
+        &stdout,
+        &project_root,
+        &project_root,
+        "missing",
+        Some(0),
+        "package selector expected `missing`",
     );
 }
 

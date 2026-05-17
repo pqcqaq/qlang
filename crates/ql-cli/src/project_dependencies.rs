@@ -151,23 +151,13 @@ fn resolve_project_dependency_query_context(
     let workspace_manifest = match resolve_project_workspace_manifest(path) {
         Ok(workspace_manifest) => workspace_manifest,
         Err(workspace_error) => {
-            if allow_standalone_package && package_name.is_none() {
-                let package_manifest =
-                    resolve_project_package_manifest(path).map_err(|message| {
-                        eprintln!("error: {command_label} {message}");
-                        ProjectDependencyQueryContextError::Exit(1)
-                    })?;
-                let package_name = ql_project::package_name(&package_manifest)
-                    .map_err(|error| {
-                        eprintln!("error: {command_label} failed to inspect package: {error}");
-                        ProjectDependencyQueryContextError::Exit(1)
-                    })?
-                    .to_owned();
-                return Ok((
-                    package_manifest.clone(),
+            if allow_standalone_package {
+                return resolve_standalone_package_dependency_query_context(
+                    path,
                     package_name,
-                    package_manifest.manifest_path,
-                ));
+                    command_label,
+                    json,
+                );
             }
             eprintln!("error: {command_label} {workspace_error}");
             return Err(ProjectDependencyQueryContextError::Exit(1));
@@ -220,6 +210,69 @@ fn resolve_project_dependency_query_context(
         workspace_manifest,
         package_name,
         member_manifest.manifest_path,
+    ))
+}
+
+fn resolve_standalone_package_dependency_query_context(
+    path: &Path,
+    selected_package_name: Option<&str>,
+    command_label: &str,
+    json: bool,
+) -> Result<(ProjectManifest, String, PathBuf), ProjectDependencyQueryContextError> {
+    let package_manifest = resolve_project_package_manifest(path).map_err(|message| {
+        eprintln!("error: {command_label} {message}");
+        ProjectDependencyQueryContextError::Exit(1)
+    })?;
+    let actual_package_name = ql_project::package_name(&package_manifest)
+        .map_err(|error| {
+            eprintln!("error: {command_label} failed to inspect package: {error}");
+            ProjectDependencyQueryContextError::Exit(1)
+        })?
+        .to_owned();
+
+    if let Some(selected_package_name) = selected_package_name {
+        if let Err(message) = validate_project_package_name(selected_package_name) {
+            if json {
+                return Err(ProjectDependencyQueryContextError::Json {
+                    workspace_manifest: package_manifest,
+                    package_name: selected_package_name.to_owned(),
+                    failure: ProjectDependencySelectionFailure {
+                        message: format!("{command_label} {message}"),
+                        selector: Some(format!("package `{selected_package_name}`")),
+                        target_count: None,
+                    },
+                });
+            }
+            eprintln!("error: {command_label} {message}");
+            return Err(ProjectDependencyQueryContextError::Exit(1));
+        }
+        if selected_package_name != actual_package_name {
+            if json {
+                return Err(ProjectDependencyQueryContextError::Json {
+                    workspace_manifest: package_manifest,
+                    package_name: selected_package_name.to_owned(),
+                    failure: ProjectDependencySelectionFailure {
+                        message: format!(
+                            "{command_label} package selector expected `{selected_package_name}` but `{}` resolves to package `{actual_package_name}`",
+                            normalize_path(path)
+                        ),
+                        selector: Some(format!("package `{selected_package_name}`")),
+                        target_count: Some(0),
+                    },
+                });
+            }
+            eprintln!(
+                "error: {command_label} package selector expected `{selected_package_name}` but `{}` resolves to package `{actual_package_name}`",
+                normalize_path(path)
+            );
+            return Err(ProjectDependencyQueryContextError::Exit(1));
+        }
+    }
+
+    Ok((
+        package_manifest.clone(),
+        actual_package_name,
+        package_manifest.manifest_path,
     ))
 }
 

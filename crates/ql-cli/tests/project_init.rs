@@ -1027,6 +1027,42 @@ fn project_init_with_stdlib_creates_consuming_package_scaffold_and_check_succeed
         "../stdlib/packages",
         &stdlib_root,
     );
+
+    let mut dependencies_selector_json = ql_command(&workspace_root);
+    dependencies_selector_json.args([
+        "project",
+        "dependencies",
+        &project_root.to_string_lossy(),
+        "--name",
+        "demo-package",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut dependencies_selector_json,
+        "`ql project dependencies --json --name demo-package` initialized stdlib package",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-package",
+        "dependencies json selector initialized stdlib package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-package",
+        "dependencies json selector initialized stdlib package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("project-init-stdlib-package", &stdout);
+    assert_stdlib_dependencies_json(
+        "initialized stdlib package dependencies selector json",
+        &actual,
+        &project_root,
+        &project_root.join("qlang.toml"),
+        "demo-package",
+        "../stdlib/packages",
+        &stdlib_root,
+    );
 }
 
 #[test]
