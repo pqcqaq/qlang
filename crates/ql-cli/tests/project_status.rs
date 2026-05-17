@@ -17,6 +17,12 @@ struct WorkspaceStatusSelectorFixture {
     project_root: std::path::PathBuf,
 }
 
+struct StandaloneStatusFixture {
+    project_root: std::path::PathBuf,
+    manifest_path: std::path::PathBuf,
+    source_path: std::path::PathBuf,
+}
+
 fn write_status_workspace(temp: &TempDir) -> std::path::PathBuf {
     let project_root = temp.path().join("workspace");
     temp.write(
@@ -52,6 +58,94 @@ fn write_status_selector_workspace(temp: TempDir) -> WorkspaceStatusSelectorFixt
         _temp: temp,
         project_root,
     }
+}
+
+fn write_standalone_status_package(temp: &TempDir) -> StandaloneStatusFixture {
+    let project_root = temp.path().join("app");
+    let manifest_path = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[profile]
+default = "release"
+
+[dependencies]
+dep = { path = "../dep" }
+
+[lib]
+path = "src/lib.ql"
+"#,
+    );
+    let source_path = temp.write(
+        "app/src/lib.ql",
+        "pub fn app_value() -> Int {\n    return 1\n}\n",
+    );
+    temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+
+[lib]
+path = "src/lib.ql"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        "pub fn dep_value() -> Int {\n    return 2\n}\n",
+    );
+
+    StandaloneStatusFixture {
+        project_root,
+        manifest_path,
+        source_path,
+    }
+}
+
+fn assert_standalone_status_json(
+    case_name: &str,
+    stdout: &str,
+    request_path: &std::path::Path,
+    fixture: &StandaloneStatusFixture,
+) {
+    let actual = parse_json_output(case_name, stdout);
+    assert_eq!(actual["schema"], "ql.project.status.v1");
+    assert_eq!(
+        actual["path"],
+        request_path.to_string_lossy().replace('\\', "/")
+    );
+    assert_eq!(
+        actual["project_manifest_path"],
+        fixture.manifest_path.to_string_lossy().replace('\\', "/")
+    );
+    assert_eq!(actual["kind"], "package");
+    assert_eq!(actual["status"], "needs-interface-sync");
+
+    let members = actual["members"]
+        .as_array()
+        .expect("standalone status members should be an array");
+    assert_eq!(
+        members.len(),
+        1,
+        "standalone package should report one member"
+    );
+    let app = &members[0];
+    assert_eq!(app["member"], JsonValue::Null);
+    assert_eq!(app["package_name"], "app");
+    assert_eq!(
+        app["manifest_path"],
+        fixture.manifest_path.to_string_lossy().replace('\\', "/")
+    );
+    assert_eq!(app["default_profile"], "release");
+    assert_eq!(app["interface"]["status"], "missing");
+    assert_eq!(app["targets"][0]["kind"], "lib");
+    assert_eq!(app["targets"][0]["path"], "src/lib.ql");
+    assert_eq!(app["dependencies"][0]["kind"], "local");
+    assert_eq!(app["dependencies"][0]["member"], JsonValue::Null);
+    assert_eq!(app["dependencies"][0]["package_name"], "dep");
+    assert_eq!(app["dependencies"][0]["dependency_path"], "../dep");
 }
 
 #[test]
@@ -111,6 +205,79 @@ fn project_status_reports_workspace_members_targets_dependencies_and_interfaces_
         core["dependencies"].as_array().map(Vec::len),
         Some(0),
         "core should not report dependencies"
+    );
+}
+
+#[test]
+fn project_status_reports_standalone_package_as_json() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-status-package-json");
+    let fixture = write_standalone_status_package(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "status",
+        &fixture.project_root.to_string_lossy(),
+        "--json",
+    ]);
+    let output = run_command_capture(&mut command, "`ql project status --json` package");
+    let (stdout, stderr) = expect_success(
+        "project-status-package-json",
+        "project status standalone package json",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-status-package-json",
+        "project status standalone package json",
+        &stderr,
+    )
+    .unwrap();
+
+    assert_standalone_status_json(
+        "project-status-package-json",
+        &stdout,
+        &fixture.project_root,
+        &fixture,
+    );
+}
+
+#[test]
+fn project_status_reports_standalone_package_source_path_as_json() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-status-package-source-json");
+    let fixture = write_standalone_status_package(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "status",
+        &fixture.source_path.to_string_lossy(),
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project status --json` package source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-status-package-source-json",
+        "project status standalone package source path json",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-status-package-source-json",
+        "project status standalone package source path json",
+        &stderr,
+    )
+    .unwrap();
+
+    assert_standalone_status_json(
+        "project-status-package-source-json",
+        &stdout,
+        &fixture.source_path,
+        &fixture,
     );
 }
 
