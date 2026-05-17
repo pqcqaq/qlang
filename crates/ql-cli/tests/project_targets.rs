@@ -26,6 +26,12 @@ struct WorkspaceTargetsSelectorFixture {
     app_source_path: PathBuf,
 }
 
+struct StandaloneTargetsFixture {
+    project_root: PathBuf,
+    manifest_path: PathBuf,
+    source_path: PathBuf,
+}
+
 fn write_workspace_targets_selector_fixture(prefix: &str) -> WorkspaceTargetsSelectorFixture {
     let temp = TempDir::new(prefix);
     let project_root = temp.path().join("workspace");
@@ -77,6 +83,50 @@ fn expected_workspace_app_targets_json(fixture: &WorkspaceTargetsSelectorFixture
     let app_manifest_display = fixture.app_manifest.to_string_lossy().replace('\\', "/");
     format!(
         "{{\n  \"schema\": \"ql.project.targets.v1\",\n  \"members\": [\n    {{\n      \"manifest_path\": \"{app_manifest_display}\",\n      \"package_name\": \"app\",\n      \"targets\": [\n        {{\n          \"kind\": \"lib\",\n          \"path\": \"src/lib.ql\"\n        }}\n      ]\n    }}\n  ]\n}}\n"
+    )
+}
+
+fn write_standalone_declared_targets_package(prefix: &str) -> (TempDir, StandaloneTargetsFixture) {
+    let temp = TempDir::new(prefix);
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src/runtime"))
+        .expect("create package runtime source tree");
+    std::fs::create_dir_all(project_root.join("src/tools"))
+        .expect("create package tools source tree");
+
+    let manifest_path = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[lib]
+path = "src/runtime/core.ql"
+
+[[bin]]
+path = "src/tools/repl.ql"
+"#,
+    );
+    let source_path = temp.write(
+        "app/src/runtime/core.ql",
+        "pub fn core() -> Int { return 1 }\n",
+    );
+    temp.write("app/src/tools/repl.ql", "fn main() -> Int { return 0 }\n");
+
+    (
+        temp,
+        StandaloneTargetsFixture {
+            project_root,
+            manifest_path,
+            source_path,
+        },
+    )
+}
+
+fn expected_standalone_declared_targets_json(fixture: &StandaloneTargetsFixture) -> String {
+    let manifest_display = fixture.manifest_path.to_string_lossy().replace('\\', "/");
+    format!(
+        "{{\n  \"schema\": \"ql.project.targets.v1\",\n  \"members\": [\n    {{\n      \"manifest_path\": \"{manifest_display}\",\n      \"package_name\": \"app\",\n      \"targets\": [\n        {{\n          \"kind\": \"lib\",\n          \"path\": \"src/runtime/core.ql\"\n        }},\n        {{\n          \"kind\": \"bin\",\n          \"path\": \"src/tools/repl.ql\"\n        }}\n      ]\n    }}\n  ]\n}}\n"
     )
 }
 
@@ -213,36 +263,13 @@ path = "src/tools/repl.ql"
 #[test]
 fn project_targets_supports_json_output_for_declared_targets() {
     let workspace_root = workspace_root();
-    let temp = TempDir::new("ql-project-targets-json-declared-targets");
-    let project_root = temp.path().join("app");
-    std::fs::create_dir_all(project_root.join("src/runtime"))
-        .expect("create package runtime source tree");
-    std::fs::create_dir_all(project_root.join("src/tools"))
-        .expect("create package tools source tree");
-
-    let manifest_path = temp.write(
-        "app/qlang.toml",
-        r#"
-[package]
-name = "app"
-
-[lib]
-path = "src/runtime/core.ql"
-
-[[bin]]
-path = "src/tools/repl.ql"
-"#,
-    );
-    temp.write(
-        "app/src/runtime/core.ql",
-        "pub fn core() -> Int { return 1 }\n",
-    );
-    temp.write("app/src/tools/repl.ql", "fn main() -> Int { return 0 }\n");
+    let (_temp, fixture) =
+        write_standalone_declared_targets_package("ql-project-targets-json-declared-targets");
 
     let mut command = ql_command(&workspace_root);
     command
         .args(["project", "targets"])
-        .arg(&project_root)
+        .arg(&fixture.project_root)
         .arg("--json");
     let output = run_command_capture(&mut command, "`ql project targets --json` declared targets");
     let (stdout, stderr) = expect_success(
@@ -258,10 +285,7 @@ path = "src/tools/repl.ql"
     )
     .expect("declared target json rendering should not print stderr");
 
-    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
-    let expected = format!(
-        "{{\n  \"schema\": \"ql.project.targets.v1\",\n  \"members\": [\n    {{\n      \"manifest_path\": \"{manifest_display}\",\n      \"package_name\": \"app\",\n      \"targets\": [\n        {{\n          \"kind\": \"lib\",\n          \"path\": \"src/runtime/core.ql\"\n        }},\n        {{\n          \"kind\": \"bin\",\n          \"path\": \"src/tools/repl.ql\"\n        }}\n      ]\n    }}\n  ]\n}}\n"
-    );
+    let expected = expected_standalone_declared_targets_json(&fixture);
     expect_snapshot_matches(
         "project-targets-json-declared-targets",
         "declared target json stdout",
@@ -269,6 +293,44 @@ path = "src/tools/repl.ql"
         &stdout.replace('\\', "/"),
     )
     .expect("declared target json output should match the stable contract");
+}
+
+#[test]
+fn project_targets_supports_json_output_for_package_source_path() {
+    let workspace_root = workspace_root();
+    let (_temp, fixture) =
+        write_standalone_declared_targets_package("ql-project-targets-json-package-source");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "targets"])
+        .arg(&fixture.source_path)
+        .arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql project targets --json` package source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-targets-json-package-source",
+        "package source target json rendering",
+        &output,
+    )
+    .expect("package source target json rendering should succeed");
+    expect_empty_stderr(
+        "project-targets-json-package-source",
+        "package source target json rendering",
+        &stderr,
+    )
+    .expect("package source target json rendering should not print stderr");
+
+    let expected = expected_standalone_declared_targets_json(&fixture);
+    expect_snapshot_matches(
+        "project-targets-json-package-source",
+        "package source target json stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .expect("package source target json output should match package root output");
 }
 
 #[test]
