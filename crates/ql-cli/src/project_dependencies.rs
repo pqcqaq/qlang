@@ -9,9 +9,9 @@ use crate::project_workspace::{
 };
 
 use super::{
-    normalize_path, relative_path_from, resolve_project_workspace_manifest,
-    resolve_project_workspace_member_package_name, resolve_selected_workspace_member_manifest,
-    validate_project_package_name,
+    normalize_path, relative_path_from, resolve_project_package_manifest,
+    resolve_project_workspace_manifest, resolve_project_workspace_member_package_name,
+    resolve_selected_workspace_member_manifest, validate_project_package_name,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,6 +56,7 @@ pub(crate) fn project_dependents_path(
             "`ql project dependents`",
             "--name",
             json,
+            false,
         ) {
             Ok(context) => context,
             Err(ProjectDependencyQueryContextError::Json {
@@ -102,6 +103,7 @@ pub(crate) fn project_dependencies_path(
             "`ql project dependencies`",
             "--name",
             json,
+            true,
         ) {
             Ok(context) => context,
             Err(ProjectDependencyQueryContextError::Json {
@@ -144,11 +146,33 @@ fn resolve_project_dependency_query_context(
     command_label: &str,
     selector_option: &str,
     json: bool,
+    allow_standalone_package: bool,
 ) -> Result<(ProjectManifest, String, PathBuf), ProjectDependencyQueryContextError> {
-    let workspace_manifest = resolve_project_workspace_manifest(path).map_err(|message| {
-        eprintln!("error: {command_label} {message}");
-        ProjectDependencyQueryContextError::Exit(1)
-    })?;
+    let workspace_manifest = match resolve_project_workspace_manifest(path) {
+        Ok(workspace_manifest) => workspace_manifest,
+        Err(workspace_error) => {
+            if allow_standalone_package && package_name.is_none() {
+                let package_manifest =
+                    resolve_project_package_manifest(path).map_err(|message| {
+                        eprintln!("error: {command_label} {message}");
+                        ProjectDependencyQueryContextError::Exit(1)
+                    })?;
+                let package_name = ql_project::package_name(&package_manifest)
+                    .map_err(|error| {
+                        eprintln!("error: {command_label} failed to inspect package: {error}");
+                        ProjectDependencyQueryContextError::Exit(1)
+                    })?
+                    .to_owned();
+                return Ok((
+                    package_manifest.clone(),
+                    package_name,
+                    package_manifest.manifest_path,
+                ));
+            }
+            eprintln!("error: {command_label} {workspace_error}");
+            return Err(ProjectDependencyQueryContextError::Exit(1));
+        }
+    };
     let package_name = match package_name {
         Some(package_name) => {
             if let Err(message) = validate_project_package_name(package_name) {

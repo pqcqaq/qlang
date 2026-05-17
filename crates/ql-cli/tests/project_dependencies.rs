@@ -237,6 +237,66 @@ fn project_dependencies_supports_json_output() {
 }
 
 #[test]
+fn project_dependencies_json_supports_standalone_package() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependencies-package-json");
+    let project_root = temp.path().join("app");
+    temp.write(
+        "app/qlang.toml",
+        "[dependencies]\n\"vendor.core\" = \"../vendor/core\"\n\n[package]\nname = \"app\"\n",
+    );
+    temp.write(
+        "vendor/core/qlang.toml",
+        "[package]\nname = \"vendor.core\"\n",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependencies",
+        &project_root.to_string_lossy(),
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependencies --json` standalone package",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-dependencies-package-json",
+        "project dependencies standalone package json",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependencies-package-json",
+        "project dependencies standalone package json",
+        &stderr,
+    )
+    .unwrap();
+
+    let actual = parse_json_output("project-dependencies-package-json", &stdout);
+    let expected = json!({
+        "schema": "ql.project.dependencies.v1",
+        "path": project_root.to_string_lossy().replace('\\', "/"),
+        "workspace_manifest_path": project_root.join("qlang.toml").to_string_lossy().replace('\\', "/"),
+        "package_name": "app",
+        "dependencies": [
+            {
+                "kind": "local",
+                "member": null,
+                "dependency_path": "../vendor/core",
+                "package_name": "vendor.core",
+                "manifest_path": temp.path().join("vendor/core/qlang.toml").to_string_lossy().replace('\\', "/"),
+            }
+        ],
+    });
+    assert_eq!(
+        actual, expected,
+        "project dependencies standalone package json stdout"
+    );
+}
+
+#[test]
 fn project_dependencies_json_derives_workspace_member_package_name_from_member_directory() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-dependencies-derived-name-json");

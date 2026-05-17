@@ -248,6 +248,50 @@ fn assert_stdlib_package_status_json(context: &str, status_json: &JsonValue, pro
     assert_stdlib_status_member_dependencies(context, member, "../stdlib/packages");
 }
 
+fn assert_stdlib_dependencies_json(
+    context: &str,
+    dependencies_json: &JsonValue,
+    request_path: &Path,
+    manifest_path: &Path,
+    package_name: &str,
+    dependency_prefix: &str,
+    stdlib_root: &Path,
+) {
+    assert_eq!(dependencies_json["schema"], "ql.project.dependencies.v1");
+    assert_eq!(dependencies_json["path"], json_path(request_path));
+    assert_eq!(
+        dependencies_json["workspace_manifest_path"],
+        json_path(manifest_path)
+    );
+    assert_eq!(dependencies_json["package_name"], package_name);
+    let dependencies = dependencies_json["dependencies"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose dependencies: {dependencies_json}"));
+    assert_eq!(
+        dependencies.len(),
+        STDLIB_PACKAGES.len(),
+        "{context} should expose every initialized stdlib dependency: {dependencies_json}"
+    );
+
+    for (package_name, package_dir) in STDLIB_PACKAGES {
+        let dependency_path = format!("{dependency_prefix}/{package_dir}");
+        let dependency_manifest = stdlib_root
+            .join("packages")
+            .join(package_dir)
+            .join("qlang.toml");
+        assert!(
+            dependencies.iter().any(|actual| {
+                actual["kind"] == "local"
+                    && actual["member"] == JsonValue::Null
+                    && actual["package_name"] == package_name
+                    && actual["dependency_path"] == dependency_path
+                    && actual["manifest_path"] == json_path(&dependency_manifest)
+            }),
+            "{context} should expose stdlib dependency `{package_name}`: {dependencies_json}"
+        );
+    }
+}
+
 fn assert_stdlib_status_member_targets(context: &str, member: &JsonValue) {
     for (kind, path) in [("lib", "src/lib.ql"), ("bin", "src/main.ql")] {
         assert!(
@@ -908,6 +952,40 @@ fn project_init_with_stdlib_creates_consuming_package_scaffold_and_check_succeed
         "initialized stdlib package status json",
         &actual,
         &project_root,
+    );
+
+    let mut dependencies_json = ql_command(&workspace_root);
+    dependencies_json.args([
+        "project",
+        "dependencies",
+        &project_root.to_string_lossy(),
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut dependencies_json,
+        "`ql project dependencies --json` initialized stdlib package",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-package",
+        "dependencies json initialized stdlib package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-package",
+        "dependencies json initialized stdlib package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("project-init-stdlib-package", &stdout);
+    assert_stdlib_dependencies_json(
+        "initialized stdlib package dependencies json",
+        &actual,
+        &project_root,
+        &project_root.join("qlang.toml"),
+        "demo-package",
+        "../stdlib/packages",
+        &stdlib_root,
     );
 }
 
@@ -1665,6 +1743,42 @@ fn project_init_with_stdlib_creates_consuming_workspace_scaffold_and_check_succe
         &actual,
         &project_root,
         &member_root,
+    );
+
+    let mut dependencies_json = ql_command(&workspace_root);
+    dependencies_json.args([
+        "project",
+        "dependencies",
+        &project_root.to_string_lossy(),
+        "--name",
+        "app",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut dependencies_json,
+        "`ql project dependencies --json --name app` initialized stdlib workspace",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-workspace",
+        "dependencies json initialized stdlib workspace package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-workspace",
+        "dependencies json initialized stdlib workspace package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("project-init-stdlib-workspace", &stdout);
+    assert_stdlib_dependencies_json(
+        "initialized stdlib workspace dependencies json",
+        &actual,
+        &project_root,
+        &project_root.join("qlang.toml"),
+        "app",
+        "../../../stdlib/packages",
+        &stdlib_root,
     );
 }
 
