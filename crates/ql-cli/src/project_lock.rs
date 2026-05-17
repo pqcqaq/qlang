@@ -106,59 +106,42 @@ pub(crate) fn project_lock_path(path: &Path, check_only: bool, json: bool) -> Re
     };
 
     let request_root = resolve_project_workspace_member_command_request_root(path);
-    let manifest = load_project_manifest(request_root.as_deref().unwrap_or(path)).map_err(|error| {
-        if let ql_project::ProjectError::ManifestNotFound { start } = &error {
-            eprintln!(
-                "error: {command_label} requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
-                normalize_path(start)
-            );
-            report_project_lock_package_context_failure(path, check_only);
-        } else if let Some(manifest_path) =
-            package_missing_name_manifest_path_from_project_error(&error)
-        {
-            eprintln!(
-                "error: {command_label} manifest `{}` does not declare `[package].name`",
-                normalize_path(manifest_path)
-            );
-            report_project_lock_manifest_failure(manifest_path, check_only);
-        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error) {
-            eprintln!("error: {command_label} {error}");
-            report_project_lock_manifest_failure(manifest_path, check_only);
-        } else {
-            eprintln!("error: {command_label} {error}");
+    let manifest = match load_project_manifest(request_root.as_deref().unwrap_or(path)) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            if json {
+                print!(
+                    "{}",
+                    render_project_lock_manifest_failure_json(path, check_only, &error)
+                );
+            } else {
+                report_project_lock_load_error(path, check_only, command_label, &error);
+            }
+            return Err(1);
         }
-        1
-    })?;
+    };
 
     let lockfile_path = project_lockfile_path(&manifest);
-    let rendered = render_project_lockfile(&manifest).map_err(|error| {
-        if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error) {
-            eprintln!(
-                "error: {command_label} manifest `{}` does not declare `[package].name`",
-                normalize_path(manifest_path)
-            );
-            report_project_lock_manifest_failure(manifest_path, check_only);
-        } else if let ql_project::ProjectError::PackageSourceRootNotFound { path } = &error {
-            eprintln!(
-                "error: {command_label} package source directory `{}` does not exist",
-                normalize_path(path)
-            );
-            eprintln!(
-                "hint: rerun `{}` after fixing the package source root",
-                format_project_lock_command(&manifest.manifest_path, check_only)
-            );
-        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error) {
-            eprintln!("error: {command_label} {error}");
-            report_project_lock_manifest_failure(manifest_path, check_only);
-        } else {
-            eprintln!("error: {command_label} {error}");
-            eprintln!(
-                "note: failing package manifest: {}",
-                normalize_path(&manifest.manifest_path)
-            );
+    let rendered = match render_project_lockfile(&manifest) {
+        Ok(rendered) => rendered,
+        Err(error) => {
+            if json {
+                print!(
+                    "{}",
+                    render_project_lock_render_failure_json(
+                        path,
+                        &manifest,
+                        &lockfile_path,
+                        check_only,
+                        &error,
+                    )
+                );
+            } else {
+                report_project_lock_render_error(&manifest, check_only, command_label, &error);
+            }
+            return Err(1);
         }
-        1
-    })?;
+    };
 
     if json {
         let mut report =
@@ -243,6 +226,181 @@ pub(crate) fn project_lock_path(path: &Path, check_only: bool, json: bool) -> Re
 
     println!("wrote lockfile: {}", normalize_path(&lockfile_path));
     Ok(())
+}
+
+fn report_project_lock_load_error(
+    path: &Path,
+    check_only: bool,
+    command_label: &str,
+    error: &ql_project::ProjectError,
+) {
+    if let ql_project::ProjectError::ManifestNotFound { start } = error {
+        eprintln!(
+            "error: {command_label} requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
+            normalize_path(start)
+        );
+        report_project_lock_package_context_failure(path, check_only);
+    } else if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(error)
+    {
+        eprintln!(
+            "error: {command_label} manifest `{}` does not declare `[package].name`",
+            normalize_path(manifest_path)
+        );
+        report_project_lock_manifest_failure(manifest_path, check_only);
+    } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(error) {
+        eprintln!("error: {command_label} {error}");
+        report_project_lock_manifest_failure(manifest_path, check_only);
+    } else {
+        eprintln!("error: {command_label} {error}");
+    }
+}
+
+fn report_project_lock_render_error(
+    manifest: &ql_project::ProjectManifest,
+    check_only: bool,
+    command_label: &str,
+    error: &ql_project::ProjectError,
+) {
+    if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(error) {
+        eprintln!(
+            "error: {command_label} manifest `{}` does not declare `[package].name`",
+            normalize_path(manifest_path)
+        );
+        report_project_lock_manifest_failure(manifest_path, check_only);
+    } else if let ql_project::ProjectError::PackageSourceRootNotFound { path } = error {
+        eprintln!(
+            "error: {command_label} package source directory `{}` does not exist",
+            normalize_path(path)
+        );
+        eprintln!(
+            "hint: rerun `{}` after fixing the package source root",
+            format_project_lock_command(&manifest.manifest_path, check_only)
+        );
+    } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(error) {
+        eprintln!("error: {command_label} {error}");
+        report_project_lock_manifest_failure(manifest_path, check_only);
+    } else {
+        eprintln!("error: {command_label} {error}");
+        eprintln!(
+            "note: failing package manifest: {}",
+            normalize_path(&manifest.manifest_path)
+        );
+    }
+}
+
+fn render_project_lock_manifest_failure_json(
+    path: &Path,
+    check_only: bool,
+    error: &ql_project::ProjectError,
+) -> String {
+    let manifest_path = project_lock_error_manifest_path(error).map(normalize_path);
+    render_project_lock_preflight_failure_json(
+        path,
+        manifest_path.clone(),
+        None,
+        check_only,
+        "manifest-load",
+        project_lock_load_error_message(check_only, error),
+        manifest_path,
+    )
+}
+
+fn render_project_lock_render_failure_json(
+    path: &Path,
+    manifest: &ql_project::ProjectManifest,
+    lockfile_path: &Path,
+    check_only: bool,
+    error: &ql_project::ProjectError,
+) -> String {
+    let failing_manifest_path = project_lock_error_manifest_path(error)
+        .map(normalize_path)
+        .unwrap_or_else(|| normalize_path(&manifest.manifest_path));
+    render_project_lock_preflight_failure_json(
+        path,
+        Some(normalize_path(&manifest.manifest_path)),
+        Some(normalize_path(lockfile_path)),
+        check_only,
+        "lockfile-render",
+        project_lock_render_error_message(check_only, error),
+        Some(failing_manifest_path),
+    )
+}
+
+fn render_project_lock_preflight_failure_json(
+    path: &Path,
+    project_manifest_path: Option<String>,
+    lockfile_path: Option<String>,
+    check_only: bool,
+    stage: &'static str,
+    message: String,
+    failure_manifest_path: Option<String>,
+) -> String {
+    let rendered = serde_json::to_string_pretty(&json!({
+        "schema": "ql.project.lock.result.v1",
+        "path": normalize_path(path),
+        "project_manifest_path": project_manifest_path,
+        "lockfile_path": lockfile_path,
+        "check_only": check_only,
+        "status": "failed",
+        "lockfile": JsonValue::Null,
+        "failure": {
+            "kind": "preflight",
+            "preflight_failure": {
+                "stage": stage,
+                "message": message,
+                "manifest_path": failure_manifest_path,
+            },
+        },
+    }))
+    .expect("project lock preflight failure json should serialize");
+    format!("{rendered}\n")
+}
+
+fn project_lock_load_error_message(check_only: bool, error: &ql_project::ProjectError) -> String {
+    let command_label = if check_only {
+        "`ql project lock --check`"
+    } else {
+        "`ql project lock`"
+    };
+    if let ql_project::ProjectError::ManifestNotFound { start } = error {
+        return format!(
+            "{command_label} requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
+            normalize_path(start)
+        );
+    }
+    if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(error) {
+        return format!(
+            "{command_label} manifest `{}` does not declare `[package].name`",
+            normalize_path(manifest_path)
+        );
+    }
+    format!("{command_label} {error}")
+}
+
+fn project_lock_render_error_message(check_only: bool, error: &ql_project::ProjectError) -> String {
+    let command_label = if check_only {
+        "`ql project lock --check`"
+    } else {
+        "`ql project lock`"
+    };
+    if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(error) {
+        return format!(
+            "{command_label} manifest `{}` does not declare `[package].name`",
+            normalize_path(manifest_path)
+        );
+    }
+    if let ql_project::ProjectError::PackageSourceRootNotFound { path } = error {
+        return format!(
+            "{command_label} package source directory `{}` does not exist",
+            normalize_path(path)
+        );
+    }
+    format!("{command_label} {error}")
+}
+
+fn project_lock_error_manifest_path(error: &ql_project::ProjectError) -> Option<&Path> {
+    package_missing_name_manifest_path_from_project_error(error)
+        .or_else(|| package_check_manifest_path_from_project_error(error))
 }
 
 fn check_project_lockfile(

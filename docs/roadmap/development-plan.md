@@ -24,12 +24,13 @@
 
 ## 当前工作项
 
-- 继续收口 `ql-cli` project pipeline，优先扩真实 workspace smoke，而不是堆只测内部函数的单元测试。
+- 继续收口 `ql-cli` project pipeline，优先扩真实 workspace/package smoke，而不是堆只测内部函数的单元测试。
 - `project init --stdlib` starter 已覆盖 package/workspace 的 `check/build/run/test`、`emit-interface`、`emit-interface --check`、package `graph/status --json`、package `dependencies` 文本、JSON 和 `--name` JSON、package `dependents --name --json`、workspace `graph/status --json --package`、workspace `dependencies --name` 文本和 JSON、以及关键 JSON 输出。下一步继续把它作为 downstream 可用性入口维护。
 - 继续收紧 `ql test` 的 dependency/package-under-test/local-generic source override 组合路径，并纳入共享 project pipeline。
 - 继续扩大 stdlib package-local smoke、stdlib examples 和 downstream consumers 对 generic public API 的覆盖。
 - LSP 下一步重点是把 diagnostics、formatting、folding/selection、signatureHelp/inlayHint、codeLens 等请求收敛到统一 workspace analysis/cache 边界。
 - README、roadmap、stdlib、VSCode 文档必须跟实现同步；实现未落地时文档写成未支持。
+- JSON 输出要覆盖成功和 preflight/render/selection failure，保证 CLI 能被工具链稳定消费。
 
 ## 明确后置
 
