@@ -847,6 +847,8 @@ fn project_init_with_stdlib_creates_runnable_and_testable_workspace_scaffold() {
     let temp = TempDir::new("ql-cli-project-init-stdlib-workspace-run");
     let stdlib_root = write_repo_stdlib_fixture(&temp, &workspace_root);
     let project_root = temp.path().join("demo-workspace");
+    let member_root = project_root.join("packages/app");
+    let app_output = executable_output_path(&member_root.join("target/ql/debug"), "main");
 
     let mut init = ql_command(&workspace_root);
     init.args([
@@ -892,6 +894,80 @@ fn project_init_with_stdlib_creates_runnable_and_testable_workspace_scaffold() {
         "run initialized stdlib workspace",
         &stdout,
         &stderr,
+    )
+    .unwrap();
+
+    let mut run_json = ql_command(&workspace_root);
+    run_json.current_dir(temp.path());
+    run_json
+        .args(["run"])
+        .arg(&project_root)
+        .args(["--package", "app", "--json"]);
+    let output = run_command_capture(
+        &mut run_json,
+        "`ql run --json --package app` initialized stdlib workspace",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-init-stdlib-workspace-run",
+        "json run initialized stdlib workspace package",
+        &output,
+        0,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-workspace-run",
+        "json run initialized stdlib workspace package",
+        &stderr,
+    )
+    .unwrap();
+    let run_json = parse_json_output("project-init-stdlib-workspace-run", &stdout);
+    assert_eq!(run_json["schema"], "ql.run.v1");
+    assert_eq!(
+        run_json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(run_json["scope"], "project");
+    assert_eq!(
+        run_json["project_manifest_path"],
+        project_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    assert_eq!(run_json["requested_profile"], "debug");
+    assert_eq!(run_json["profile_overridden"], false);
+    assert_eq!(run_json["program_args"], serde_json::json!([]));
+    assert_eq!(run_json["status"], "completed");
+    assert_eq!(run_json["failure"], JsonValue::Null);
+    assert_eq!(
+        run_json["built_target"],
+        serde_json::json!({
+            "manifest_path": member_root.join("qlang.toml").display().to_string().replace('\\', "/"),
+            "package_name": "app",
+            "selected": true,
+            "dependency_only": false,
+            "kind": "bin",
+            "path": "src/main.ql",
+            "emit": "exe",
+            "profile": "debug",
+            "artifact_path": app_output.display().to_string().replace('\\', "/"),
+            "c_header_path": JsonValue::Null,
+        })
+    );
+    assert_eq!(
+        run_json["execution"],
+        serde_json::json!({
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+        })
+    );
+    expect_file_exists(
+        "project-init-stdlib-workspace-run",
+        &app_output,
+        "initialized stdlib workspace executable",
+        "json run initialized stdlib workspace package",
     )
     .unwrap();
 
