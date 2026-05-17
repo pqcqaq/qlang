@@ -106,6 +106,123 @@ fn assert_build_json_includes_target(context: &str, build_json: &JsonValue, expe
     );
 }
 
+fn assert_stdlib_workspace_graph_json(
+    context: &str,
+    graph_json: &JsonValue,
+    member_manifest: &Path,
+) {
+    assert_eq!(graph_json["schema"], "ql.project.graph.v1");
+    assert_eq!(graph_json["package_name"], "app");
+    assert_eq!(graph_json["manifest_path"], json_path(member_manifest));
+    assert_eq!(graph_json["interface"]["path"], "app.qi");
+    assert_eq!(graph_json["interface"]["status"], "valid");
+    assert_eq!(graph_json["interface"]["detail"], JsonValue::Null);
+    assert_eq!(
+        graph_json["interface"]["stale_reasons"],
+        serde_json::json!([])
+    );
+    assert_eq!(graph_json["workspace_members"], serde_json::json!([]));
+    assert_eq!(graph_json["workspace_packages"], serde_json::json!([]));
+
+    for (package_name, reference) in [
+        ("std.array", "../../../stdlib/packages/array"),
+        ("std.core", "../../../stdlib/packages/core"),
+        ("std.option", "../../../stdlib/packages/option"),
+        ("std.result", "../../../stdlib/packages/result"),
+        ("std.test", "../../../stdlib/packages/test"),
+    ] {
+        assert!(
+            graph_json["references"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{context} should expose references: {graph_json}"))
+                .iter()
+                .any(|actual| actual == reference),
+            "{context} should expose reference `{reference}`: {graph_json}"
+        );
+        assert!(
+            graph_json["reference_interfaces"]
+                .as_array()
+                .unwrap_or_else(|| {
+                    panic!("{context} should expose reference interfaces: {graph_json}")
+                })
+                .iter()
+                .any(|actual| {
+                    actual["package_name"] == package_name
+                        && actual["reference"] == reference
+                        && actual["status"] == "valid"
+                        && actual["detail"] == JsonValue::Null
+                        && actual["stale_reasons"] == serde_json::json!([])
+                }),
+            "{context} should expose valid interface for `{package_name}`: {graph_json}"
+        );
+    }
+}
+
+fn assert_stdlib_workspace_status_json(
+    context: &str,
+    status_json: &JsonValue,
+    project_root: &Path,
+    member_root: &Path,
+) {
+    assert_eq!(status_json["schema"], "ql.project.status.v1");
+    assert_eq!(status_json["path"], json_path(project_root));
+    assert_eq!(
+        status_json["project_manifest_path"],
+        json_path(&project_root.join("qlang.toml"))
+    );
+    assert_eq!(status_json["kind"], "workspace");
+    assert_eq!(status_json["status"], "ok");
+    let members = status_json["members"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose members: {status_json}"));
+    assert_eq!(members.len(), 1, "{context} should select only app member");
+    let member = &members[0];
+    assert_eq!(member["member"], "packages/app");
+    assert_eq!(member["package_name"], "app");
+    assert_eq!(
+        member["manifest_path"],
+        json_path(&member_root.join("qlang.toml"))
+    );
+    assert_eq!(
+        member["interface"]["path"],
+        json_path(&member_root.join("app.qi"))
+    );
+    assert_eq!(member["interface"]["status"], "valid");
+    assert_eq!(member["interface"]["detail"], JsonValue::Null);
+    assert_eq!(member["interface"]["stale_reasons"], serde_json::json!([]));
+
+    for (kind, path) in [("lib", "src/lib.ql"), ("bin", "src/main.ql")] {
+        assert!(
+            member["targets"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{context} should expose targets: {status_json}"))
+                .iter()
+                .any(|actual| actual["kind"] == kind && actual["path"] == path),
+            "{context} should expose `{kind}` target `{path}`: {status_json}"
+        );
+    }
+    for (package_name, dependency_path) in [
+        ("std.array", "../../../stdlib/packages/array"),
+        ("std.core", "../../../stdlib/packages/core"),
+        ("std.option", "../../../stdlib/packages/option"),
+        ("std.result", "../../../stdlib/packages/result"),
+        ("std.test", "../../../stdlib/packages/test"),
+    ] {
+        assert!(
+            member["dependencies"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{context} should expose dependencies: {status_json}"))
+                .iter()
+                .any(|actual| {
+                    actual["kind"] == "local"
+                        && actual["package_name"] == package_name
+                        && actual["dependency_path"] == dependency_path
+                }),
+            "{context} should expose local dependency `{package_name}`: {status_json}"
+        );
+    }
+}
+
 fn write_repo_stdlib_fixture(temp: &TempDir, repo_root: &Path) -> PathBuf {
     let source_root = repo_root.join("stdlib");
     for relative in [
@@ -1360,6 +1477,71 @@ fn project_init_with_stdlib_creates_consuming_workspace_scaffold_and_check_succe
         Some("app"),
         &member_interface,
         "`ql project emit-interface --check --package app` initialized stdlib workspace",
+    );
+
+    let mut graph_json = ql_command(&workspace_root);
+    graph_json.args([
+        "project",
+        "graph",
+        &project_root.to_string_lossy(),
+        "--package",
+        "app",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut graph_json,
+        "`ql project graph --json --package app` initialized stdlib workspace",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-workspace",
+        "graph json initialized stdlib workspace package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-workspace",
+        "graph json initialized stdlib workspace package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("project-init-stdlib-workspace", &stdout);
+    assert_stdlib_workspace_graph_json(
+        "initialized stdlib workspace graph json",
+        &actual,
+        &member_root.join("qlang.toml"),
+    );
+
+    let mut status_json = ql_command(&workspace_root);
+    status_json.args([
+        "project",
+        "status",
+        &project_root.to_string_lossy(),
+        "--package",
+        "app",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut status_json,
+        "`ql project status --json --package app` initialized stdlib workspace",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-workspace",
+        "status json initialized stdlib workspace package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-workspace",
+        "status json initialized stdlib workspace package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("project-init-stdlib-workspace", &stdout);
+    assert_stdlib_workspace_status_json(
+        "initialized stdlib workspace status json",
+        &actual,
+        &project_root,
+        &member_root,
     );
 }
 
