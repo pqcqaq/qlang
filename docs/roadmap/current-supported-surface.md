@@ -34,7 +34,7 @@
 - `ql project add-dependency/remove-dependency` 已覆盖 workspace member source/directory 和 workspace root `--package` selector，依赖编辑逻辑已从 CLI 入口拆出。
 - `ql run` 已用真实 smoke 覆盖 dependency public functions/values/types/methods/traits、direct dependency generic public functions、workspace `--package` dependency generic、workspace `--package --target` 包内相对 binary、workspace `--package` dependency generic JSON、transitive generic wrapper/helper specialization 和 dependency generic JSON 输出。
 - 单文件 `ql build/run/test file.ql` 可复用本地 generic free function direct-call specialization。
-- `ql project init --stdlib` 从 `stdlib/examples/starter` 复制 starter，生成依赖 `std.core`、`std.option`、`std.result`、`std.array`、`std.test` 的项目，并用 `check/run/test`、workspace `ql run --json --package` 和 `ql test --json --package` 直接覆盖 generic option/result assertions、数组 equality/reverse assertions、length-generic array helpers 和重复数组。
+- `ql project init --stdlib` 从 `stdlib/examples/starter` 复制 starter，生成依赖 `std.core`、`std.option`、`std.result`、`std.array`、`std.test` 的项目，并用 `check/run/test`、workspace `ql build/run/test --json --package` 直接覆盖 generic option/result assertions、数组 equality/reverse assertions、length-generic array helpers 和重复数组。
 
 ### stdlib 和依赖桥接
 

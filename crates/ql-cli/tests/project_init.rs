@@ -848,6 +848,7 @@ fn project_init_with_stdlib_creates_runnable_and_testable_workspace_scaffold() {
     let stdlib_root = write_repo_stdlib_fixture(&temp, &workspace_root);
     let project_root = temp.path().join("demo-workspace");
     let member_root = project_root.join("packages/app");
+    let app_build_output = member_root.join("target/ql/debug/main.ll");
     let app_output = executable_output_path(&member_root.join("target/ql/debug"), "main");
 
     let mut init = ql_command(&workspace_root);
@@ -875,6 +876,90 @@ fn project_init_with_stdlib_creates_runnable_and_testable_workspace_scaffold() {
         "project-init-stdlib-workspace-run",
         "stdlib workspace init for runnable scaffold",
         &stderr,
+    )
+    .unwrap();
+
+    let mut build_json = ql_command(&workspace_root);
+    build_json.current_dir(temp.path());
+    build_json
+        .args(["build"])
+        .arg(&project_root)
+        .args(["--package", "app", "--json"]);
+    let output = run_command_capture(
+        &mut build_json,
+        "`ql build --json --package app` initialized stdlib workspace",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-workspace-run",
+        "json build initialized stdlib workspace package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-workspace-run",
+        "json build initialized stdlib workspace package",
+        &stderr,
+    )
+    .unwrap();
+
+    let build_json = parse_json_output("project-init-stdlib-workspace-run", &stdout);
+    assert_eq!(build_json["schema"], "ql.build.v1");
+    assert_eq!(
+        build_json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(build_json["scope"], "project");
+    assert_eq!(
+        build_json["project_manifest_path"],
+        project_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    assert_eq!(build_json["requested_emit"], "llvm-ir");
+    assert_eq!(build_json["requested_profile"], "debug");
+    assert_eq!(build_json["profile_overridden"], false);
+    assert_eq!(build_json["emit_interface"], false);
+    assert_eq!(build_json["status"], "ok");
+    assert_eq!(build_json["failure"], JsonValue::Null);
+    let built_targets = build_json["built_targets"]
+        .as_array()
+        .expect("initialized stdlib workspace build json should expose built targets");
+    let selected_app_bin = built_targets
+        .iter()
+        .find(|target| {
+            target["package_name"] == "app"
+                && target["selected"] == true
+                && target["dependency_only"] == false
+                && target["kind"] == "bin"
+                && target["path"] == "src/main.ql"
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "initialized stdlib workspace build json should include selected app binary target: {build_json}"
+            )
+        });
+    assert_eq!(
+        selected_app_bin,
+        &serde_json::json!({
+            "manifest_path": member_root.join("qlang.toml").display().to_string().replace('\\', "/"),
+            "package_name": "app",
+            "selected": true,
+            "dependency_only": false,
+            "kind": "bin",
+            "path": "src/main.ql",
+            "emit": "llvm-ir",
+            "profile": "debug",
+            "artifact_path": app_build_output.display().to_string().replace('\\', "/"),
+            "c_header_path": JsonValue::Null,
+        })
+    );
+    expect_file_exists(
+        "project-init-stdlib-workspace-run",
+        &app_build_output,
+        "initialized stdlib workspace build artifact",
+        "json build initialized stdlib workspace package",
     )
     .unwrap();
 
