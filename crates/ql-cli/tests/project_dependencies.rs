@@ -73,6 +73,19 @@ fn expected_app_dependencies_json(
     })
 }
 
+fn write_standalone_package_with_local_dependency(temp: &TempDir) -> std::path::PathBuf {
+    let project_root = temp.path().join("app");
+    temp.write(
+        "app/qlang.toml",
+        "[dependencies]\n\"vendor.core\" = \"../vendor/core\"\n\n[package]\nname = \"app\"\n",
+    );
+    temp.write(
+        "vendor/core/qlang.toml",
+        "[package]\nname = \"vendor.core\"\n",
+    );
+    project_root
+}
+
 fn assert_dependencies_selection_failure_json(
     case_name: &str,
     stdout: &str,
@@ -110,6 +123,44 @@ fn assert_dependencies_selection_failure_json(
             .contains(message_fragment),
         "dependencies selector failure should describe the failure: {actual}"
     );
+}
+
+#[test]
+fn project_dependencies_supports_standalone_package() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependencies-package");
+    let project_root = write_standalone_package_with_local_dependency(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "dependencies", &project_root.to_string_lossy()]);
+    let output = run_command_capture(&mut command, "`ql project dependencies` standalone package");
+    let (stdout, stderr) = expect_success(
+        "project-dependencies-package",
+        "project dependencies standalone package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependencies-package",
+        "project dependencies standalone package",
+        &stderr,
+    )
+    .unwrap();
+
+    let expected = format!(
+        "workspace_manifest: {}\npackage: app\ndependencies:\n  - ../vendor/core (vendor.core, local)\n",
+        project_root
+            .join("qlang.toml")
+            .to_string_lossy()
+            .replace('\\', "/")
+    );
+    expect_snapshot_matches(
+        "project-dependencies-package",
+        "project dependencies standalone package stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -240,15 +291,7 @@ fn project_dependencies_supports_json_output() {
 fn project_dependencies_json_supports_standalone_package() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-dependencies-package-json");
-    let project_root = temp.path().join("app");
-    temp.write(
-        "app/qlang.toml",
-        "[dependencies]\n\"vendor.core\" = \"../vendor/core\"\n\n[package]\nname = \"app\"\n",
-    );
-    temp.write(
-        "vendor/core/qlang.toml",
-        "[package]\nname = \"vendor.core\"\n",
-    );
+    let project_root = write_standalone_package_with_local_dependency(&temp);
 
     let mut command = ql_command(&workspace_root);
     command.args([
