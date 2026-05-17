@@ -26,6 +26,11 @@ struct WorkspaceGraphSelectorFixture {
     app_source_path: PathBuf,
 }
 
+struct StandaloneGraphFixture {
+    manifest_path: PathBuf,
+    source_path: PathBuf,
+}
+
 fn write_workspace_graph_selector_fixture(prefix: &str) -> WorkspaceGraphSelectorFixture {
     let temp = TempDir::new(prefix);
     let project_root = temp.path().join("workspace");
@@ -115,6 +120,81 @@ fn expected_workspace_app_package_graph_json(fixture: &WorkspaceGraphSelectorFix
             .app_manifest_path
             .to_string_lossy()
             .replace('\\', "/")
+    )
+}
+
+fn write_standalone_graph_fixture(prefix: &str) -> (TempDir, StandaloneGraphFixture) {
+    let temp = TempDir::new(prefix);
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create app source directory for standalone graph fixture");
+    std::fs::create_dir_all(temp.path().join("workspace").join("dep").join("src"))
+        .expect("create dependency source directory for standalone graph fixture");
+
+    let manifest_path = temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+pub fn run() -> Int {
+    return 0
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/app.qi",
+        r#"
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn run() -> Int
+"#,
+    );
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/src/lib.ql",
+        r#"
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported() -> Int
+"#,
+    );
+
+    (
+        temp,
+        StandaloneGraphFixture {
+            manifest_path,
+            source_path,
+        },
     )
 }
 
@@ -275,6 +355,57 @@ pub fn run() -> Int
         &stdout.replace('\\', "/"),
     )
     .expect("project graph json stdout should match the resolved manifest graph");
+}
+
+#[test]
+fn project_graph_supports_json_output_for_standalone_package_source_path() {
+    let workspace_root = workspace_root();
+    let (_temp, fixture) = write_standalone_graph_fixture("ql-project-graph-package-source-json");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "graph", "--json"])
+        .arg(&fixture.source_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project graph --json` standalone package source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-graph-package-source-json",
+        "standalone package source graph json rendering",
+        &output,
+    )
+    .expect("standalone package source graph json rendering should succeed");
+    expect_empty_stderr(
+        "project-graph-package-source-json",
+        "standalone package source graph json rendering",
+        &stderr,
+    )
+    .expect("standalone package source graph json rendering should stay silent on stderr");
+
+    let actual = parse_json_output("project-graph-package-source-json", &stdout);
+    assert_eq!(actual["schema"], "ql.project.graph.v1");
+    assert_eq!(
+        actual["manifest_path"],
+        fixture.manifest_path.to_string_lossy().replace('\\', "/")
+    );
+    assert_eq!(actual["package_name"], "app");
+    assert_eq!(actual["workspace_members"], serde_json::json!([]));
+    assert_eq!(actual["workspace_packages"], serde_json::json!([]));
+    assert_eq!(actual["references"], serde_json::json!(["../dep"]));
+    assert_eq!(actual["interface"]["path"], "app.qi");
+    assert_eq!(actual["interface"]["status"], "valid");
+
+    let reference = actual["reference_interfaces"]
+        .as_array()
+        .expect("reference interfaces should be an array")
+        .first()
+        .expect("standalone package graph should expose dependency interface");
+    assert_eq!(reference["reference"], "../dep");
+    assert_eq!(reference["package_name"], "dep");
+    assert_eq!(reference["path"], "../dep/dep.qi");
+    assert_eq!(reference["status"], "valid");
+    assert_eq!(reference["manifest_path"], "../dep/qlang.toml");
 }
 
 #[test]
