@@ -27,6 +27,52 @@ fn parse_json_output(case_name: &str, stdout: &str) -> JsonValue {
         .unwrap_or_else(|error| panic!("[{case_name}] parse json stdout: {error}\n{stdout}"))
 }
 
+fn json_path(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
+fn assert_stdlib_check_json(
+    context: &str,
+    check_json: &JsonValue,
+    scope: &str,
+    project_manifest: &Path,
+    checked_files: &[PathBuf],
+    stdlib_root: &Path,
+) {
+    assert_eq!(check_json["schema"], "ql.check.v1");
+    assert_eq!(check_json["scope"], scope);
+    assert_eq!(check_json["status"], "ok");
+    assert_eq!(
+        check_json["project_manifest_path"],
+        json_path(project_manifest)
+    );
+    assert_eq!(check_json["diagnostic_files"], serde_json::json!([]));
+    assert_eq!(check_json["failing_manifests"], serde_json::json!([]));
+    assert_eq!(check_json["sync_interfaces"], false);
+    assert_eq!(check_json["written_interfaces"], serde_json::json!([]));
+    assert_eq!(
+        check_json["checked_files"],
+        serde_json::json!(
+            checked_files
+                .iter()
+                .map(|path| json_path(path))
+                .collect::<Vec<_>>()
+        ),
+        "{context} should report the initialized package sources"
+    );
+    assert_eq!(
+        check_json["loaded_interfaces"],
+        serde_json::json!([
+            json_path(&stdlib_root.join("packages/array/std.array.qi")),
+            json_path(&stdlib_root.join("packages/core/std.core.qi")),
+            json_path(&stdlib_root.join("packages/option/std.option.qi")),
+            json_path(&stdlib_root.join("packages/result/std.result.qi")),
+            json_path(&stdlib_root.join("packages/test/std.test.qi")),
+        ]),
+        "{context} should load every initialized stdlib dependency interface"
+    );
+}
+
 fn assert_stdlib_dependency_build_targets(context: &str, build_json: &JsonValue) {
     let built_targets = build_json["built_targets"]
         .as_array()
@@ -483,6 +529,37 @@ fn project_init_with_stdlib_creates_consuming_package_scaffold_and_check_succeed
         ],
     )
     .unwrap();
+
+    let mut check_json = ql_command(&workspace_root);
+    check_json.args(["check", &project_root.to_string_lossy(), "--json"]);
+    let output = run_command_capture(
+        &mut check_json,
+        "`ql check --json` initialized stdlib package",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-package",
+        "json check initialized stdlib package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-package",
+        "json check initialized stdlib package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("project-init-stdlib-package", &stdout);
+    assert_stdlib_check_json(
+        "initialized stdlib package check json",
+        &actual,
+        "package",
+        &project_root.join("qlang.toml"),
+        &[
+            project_root.join("src/lib.ql"),
+            project_root.join("src/main.ql"),
+        ],
+        &stdlib_root,
+    );
 }
 
 #[test]
@@ -1092,6 +1169,37 @@ fn project_init_with_stdlib_creates_consuming_workspace_scaffold_and_check_succe
         ],
     )
     .unwrap();
+
+    let mut check_json = ql_command(&workspace_root);
+    check_json.args(["check", &project_root.to_string_lossy(), "--json"]);
+    let output = run_command_capture(
+        &mut check_json,
+        "`ql check --json` initialized stdlib workspace",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-workspace",
+        "json check initialized stdlib workspace",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-workspace",
+        "json check initialized stdlib workspace",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("project-init-stdlib-workspace", &stdout);
+    assert_stdlib_check_json(
+        "initialized stdlib workspace check json",
+        &actual,
+        "workspace",
+        &project_root.join("qlang.toml"),
+        &[
+            member_root.join("src/lib.ql"),
+            member_root.join("src/main.ql"),
+        ],
+        &stdlib_root,
+    );
 }
 
 #[test]
