@@ -224,6 +224,30 @@ fn expect_stdlib_starter_smoke_source(source: &str, context: &str) {
     }
 }
 
+fn expect_stdlib_starter_interface(source: &str, package_name: &str, context: &str) {
+    for needle in &[
+        "// qlang interface v1".to_owned(),
+        format!("// package: {package_name}"),
+        "// source: src/lib.ql".to_owned(),
+        "use std.array.repeat_array as repeat_array".to_owned(),
+        "use std.option.Option as Option".to_owned(),
+        "use std.result.Result as Result".to_owned(),
+        "use std.result.ok_or as result_ok_or".to_owned(),
+        "pub fn run() -> Int".to_owned(),
+    ] {
+        assert!(
+            source.contains(needle),
+            "{context} should contain `{needle}`\n{source}"
+        );
+    }
+    for legacy in ["repeat3_array", "reverse3_array", "some_int", "ok_int"] {
+        assert!(
+            !source.contains(legacy),
+            "{context} should not contain legacy API `{legacy}`\n{source}"
+        );
+    }
+}
+
 struct AppCoreWorkspaceFixture {
     app_manifest_path: PathBuf,
     app_member_dir: PathBuf,
@@ -559,6 +583,44 @@ fn project_init_with_stdlib_creates_consuming_package_scaffold_and_check_succeed
             project_root.join("src/main.ql"),
         ],
         &stdlib_root,
+    );
+
+    let package_interface = project_root.join("demo-package.qi");
+    let mut emit_interface = ql_command(&workspace_root);
+    emit_interface.args(["project", "emit-interface", &project_root.to_string_lossy()]);
+    let output = run_command_capture(
+        &mut emit_interface,
+        "`ql project emit-interface` initialized stdlib package",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-package",
+        "emit interface initialized stdlib package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-package",
+        "emit interface initialized stdlib package",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "project-init-stdlib-package",
+        &stdout.replace('\\', "/"),
+        &[&format!(
+            "wrote interface: {}",
+            package_interface.display().to_string().replace('\\', "/")
+        )],
+    )
+    .unwrap();
+    let interface_source = read_normalized_file(
+        &package_interface,
+        "initialized stdlib package interface artifact",
+    );
+    expect_stdlib_starter_interface(
+        &interface_source,
+        "demo-package",
+        "initialized stdlib package interface artifact",
     );
 }
 
@@ -1199,6 +1261,50 @@ fn project_init_with_stdlib_creates_consuming_workspace_scaffold_and_check_succe
             member_root.join("src/main.ql"),
         ],
         &stdlib_root,
+    );
+
+    let member_interface = member_root.join("app.qi");
+    let mut emit_interface = ql_command(&workspace_root);
+    emit_interface.args([
+        "project",
+        "emit-interface",
+        &project_root.to_string_lossy(),
+        "--package",
+        "app",
+    ]);
+    let output = run_command_capture(
+        &mut emit_interface,
+        "`ql project emit-interface --package app` initialized stdlib workspace",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-workspace",
+        "emit interface initialized stdlib workspace package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-workspace",
+        "emit interface initialized stdlib workspace package",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "project-init-stdlib-workspace",
+        &stdout.replace('\\', "/"),
+        &[&format!(
+            "wrote interface: {}",
+            member_interface.display().to_string().replace('\\', "/")
+        )],
+    )
+    .unwrap();
+    let interface_source = read_normalized_file(
+        &member_interface,
+        "initialized stdlib workspace member interface artifact",
+    );
+    expect_stdlib_starter_interface(
+        &interface_source,
+        "app",
+        "initialized stdlib workspace member interface artifact",
     );
 }
 
