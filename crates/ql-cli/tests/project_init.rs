@@ -248,6 +248,45 @@ fn expect_stdlib_starter_interface(source: &str, package_name: &str, context: &s
     }
 }
 
+fn expect_emit_interface_check_ok(
+    case_name: &str,
+    workspace_root: &Path,
+    project_root: &Path,
+    package_name: Option<&str>,
+    interface_path: &Path,
+    description: &str,
+) {
+    let mut command = ql_command(workspace_root);
+    command
+        .args(["project", "emit-interface", "--check"])
+        .arg(project_root);
+    if let Some(package_name) = package_name {
+        command.args(["--package", package_name]);
+    }
+    let output = run_command_capture(&mut command, description);
+    let (stdout, stderr) = expect_success(
+        case_name,
+        "emit interface check initialized scaffold",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        case_name,
+        "emit interface check initialized scaffold",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        case_name,
+        &stdout.replace('\\', "/"),
+        &[&format!(
+            "ok interface: {}",
+            interface_path.display().to_string().replace('\\', "/")
+        )],
+    )
+    .unwrap();
+}
+
 struct AppCoreWorkspaceFixture {
     app_manifest_path: PathBuf,
     app_member_dir: PathBuf,
@@ -621,6 +660,14 @@ fn project_init_with_stdlib_creates_consuming_package_scaffold_and_check_succeed
         &interface_source,
         "demo-package",
         "initialized stdlib package interface artifact",
+    );
+    expect_emit_interface_check_ok(
+        "project-init-stdlib-package",
+        &workspace_root,
+        &project_root,
+        None,
+        &package_interface,
+        "`ql project emit-interface --check` initialized stdlib package",
     );
 }
 
@@ -1305,6 +1352,14 @@ fn project_init_with_stdlib_creates_consuming_workspace_scaffold_and_check_succe
         &interface_source,
         "app",
         "initialized stdlib workspace member interface artifact",
+    );
+    expect_emit_interface_check_ok(
+        "project-init-stdlib-workspace",
+        &workspace_root,
+        &project_root,
+        Some("app"),
+        &member_interface,
+        "`ql project emit-interface --check --package app` initialized stdlib workspace",
     );
 }
 
