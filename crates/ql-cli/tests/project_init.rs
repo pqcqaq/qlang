@@ -1785,6 +1785,52 @@ fn project_init_with_stdlib_creates_consuming_workspace_scaffold_and_check_succe
         &member_root,
     );
 
+    let mut dependencies = ql_command(&workspace_root);
+    dependencies.args([
+        "project",
+        "dependencies",
+        &project_root.to_string_lossy(),
+        "--name",
+        "app",
+    ]);
+    let output = run_command_capture(
+        &mut dependencies,
+        "`ql project dependencies --name app` initialized stdlib workspace",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-workspace",
+        "dependencies initialized stdlib workspace package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-workspace",
+        "dependencies initialized stdlib workspace package",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "project-init-stdlib-workspace",
+        &stdout.replace('\\', "/"),
+        &[
+            &format!(
+                "workspace_manifest: {}",
+                project_root
+                    .join("qlang.toml")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+            "package: app",
+            "dependencies:",
+            "  - ../../../stdlib/packages/core (std.core, local)",
+            "  - ../../../stdlib/packages/option (std.option, local)",
+            "  - ../../../stdlib/packages/result (std.result, local)",
+            "  - ../../../stdlib/packages/array (std.array, local)",
+            "  - ../../../stdlib/packages/test (std.test, local)",
+        ],
+    )
+    .unwrap();
+
     let mut dependencies_json = ql_command(&workspace_root);
     dependencies_json.args([
         "project",
