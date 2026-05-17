@@ -31,6 +31,14 @@ fn json_path(path: &Path) -> String {
     path.display().to_string().replace('\\', "/")
 }
 
+const STDLIB_PACKAGES: [(&str, &str); 5] = [
+    ("std.array", "array"),
+    ("std.core", "core"),
+    ("std.option", "option"),
+    ("std.result", "result"),
+    ("std.test", "test"),
+];
+
 fn assert_stdlib_check_json(
     context: &str,
     check_json: &JsonValue,
@@ -111,10 +119,28 @@ fn assert_stdlib_workspace_graph_json(
     graph_json: &JsonValue,
     member_manifest: &Path,
 ) {
+    assert_stdlib_graph_json(
+        context,
+        graph_json,
+        "app",
+        member_manifest,
+        "app.qi",
+        "../../../stdlib/packages",
+    );
+}
+
+fn assert_stdlib_graph_json(
+    context: &str,
+    graph_json: &JsonValue,
+    package_name: &str,
+    manifest_path: &Path,
+    interface_path: &str,
+    reference_prefix: &str,
+) {
     assert_eq!(graph_json["schema"], "ql.project.graph.v1");
-    assert_eq!(graph_json["package_name"], "app");
-    assert_eq!(graph_json["manifest_path"], json_path(member_manifest));
-    assert_eq!(graph_json["interface"]["path"], "app.qi");
+    assert_eq!(graph_json["package_name"], package_name);
+    assert_eq!(graph_json["manifest_path"], json_path(manifest_path));
+    assert_eq!(graph_json["interface"]["path"], interface_path);
     assert_eq!(graph_json["interface"]["status"], "valid");
     assert_eq!(graph_json["interface"]["detail"], JsonValue::Null);
     assert_eq!(
@@ -124,19 +150,14 @@ fn assert_stdlib_workspace_graph_json(
     assert_eq!(graph_json["workspace_members"], serde_json::json!([]));
     assert_eq!(graph_json["workspace_packages"], serde_json::json!([]));
 
-    for (package_name, reference) in [
-        ("std.array", "../../../stdlib/packages/array"),
-        ("std.core", "../../../stdlib/packages/core"),
-        ("std.option", "../../../stdlib/packages/option"),
-        ("std.result", "../../../stdlib/packages/result"),
-        ("std.test", "../../../stdlib/packages/test"),
-    ] {
+    for (package_name, package_dir) in STDLIB_PACKAGES {
+        let reference = format!("{reference_prefix}/{package_dir}");
         assert!(
             graph_json["references"]
                 .as_array()
                 .unwrap_or_else(|| panic!("{context} should expose references: {graph_json}"))
                 .iter()
-                .any(|actual| actual == reference),
+                .any(|actual| actual == reference.as_str()),
             "{context} should expose reference `{reference}`: {graph_json}"
         );
         assert!(
@@ -191,34 +212,73 @@ fn assert_stdlib_workspace_status_json(
     assert_eq!(member["interface"]["detail"], JsonValue::Null);
     assert_eq!(member["interface"]["stale_reasons"], serde_json::json!([]));
 
+    assert_stdlib_status_member_targets(context, member);
+    assert_stdlib_status_member_dependencies(context, member, "../../../stdlib/packages");
+}
+
+fn assert_stdlib_package_status_json(context: &str, status_json: &JsonValue, project_root: &Path) {
+    assert_eq!(status_json["schema"], "ql.project.status.v1");
+    assert_eq!(status_json["path"], json_path(project_root));
+    assert_eq!(
+        status_json["project_manifest_path"],
+        json_path(&project_root.join("qlang.toml"))
+    );
+    assert_eq!(status_json["kind"], "package");
+    assert_eq!(status_json["status"], "ok");
+    let members = status_json["members"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose members: {status_json}"));
+    assert_eq!(members.len(), 1, "{context} should expose package member");
+    let member = &members[0];
+    assert_eq!(member["member"], JsonValue::Null);
+    assert_eq!(member["package_name"], "demo-package");
+    assert_eq!(
+        member["manifest_path"],
+        json_path(&project_root.join("qlang.toml"))
+    );
+    assert_eq!(
+        member["interface"]["path"],
+        json_path(&project_root.join("demo-package.qi"))
+    );
+    assert_eq!(member["interface"]["status"], "valid");
+    assert_eq!(member["interface"]["detail"], JsonValue::Null);
+    assert_eq!(member["interface"]["stale_reasons"], serde_json::json!([]));
+
+    assert_stdlib_status_member_targets(context, member);
+    assert_stdlib_status_member_dependencies(context, member, "../stdlib/packages");
+}
+
+fn assert_stdlib_status_member_targets(context: &str, member: &JsonValue) {
     for (kind, path) in [("lib", "src/lib.ql"), ("bin", "src/main.ql")] {
         assert!(
             member["targets"]
                 .as_array()
-                .unwrap_or_else(|| panic!("{context} should expose targets: {status_json}"))
+                .unwrap_or_else(|| panic!("{context} should expose targets: {member}"))
                 .iter()
                 .any(|actual| actual["kind"] == kind && actual["path"] == path),
-            "{context} should expose `{kind}` target `{path}`: {status_json}"
+            "{context} should expose `{kind}` target `{path}`: {member}"
         );
     }
-    for (package_name, dependency_path) in [
-        ("std.array", "../../../stdlib/packages/array"),
-        ("std.core", "../../../stdlib/packages/core"),
-        ("std.option", "../../../stdlib/packages/option"),
-        ("std.result", "../../../stdlib/packages/result"),
-        ("std.test", "../../../stdlib/packages/test"),
-    ] {
+}
+
+fn assert_stdlib_status_member_dependencies(
+    context: &str,
+    member: &JsonValue,
+    dependency_prefix: &str,
+) {
+    for (package_name, package_dir) in STDLIB_PACKAGES {
+        let dependency_path = format!("{dependency_prefix}/{package_dir}");
         assert!(
             member["dependencies"]
                 .as_array()
-                .unwrap_or_else(|| panic!("{context} should expose dependencies: {status_json}"))
+                .unwrap_or_else(|| panic!("{context} should expose dependencies: {member}"))
                 .iter()
                 .any(|actual| {
                     actual["kind"] == "local"
                         && actual["package_name"] == package_name
                         && actual["dependency_path"] == dependency_path
                 }),
-            "{context} should expose local dependency `{package_name}`: {status_json}"
+            "{context} should expose local dependency `{package_name}`: {member}"
         );
     }
 }
@@ -785,6 +845,69 @@ fn project_init_with_stdlib_creates_consuming_package_scaffold_and_check_succeed
         None,
         &package_interface,
         "`ql project emit-interface --check` initialized stdlib package",
+    );
+
+    let mut graph_json = ql_command(&workspace_root);
+    graph_json.args([
+        "project",
+        "graph",
+        &project_root.to_string_lossy(),
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut graph_json,
+        "`ql project graph --json` initialized stdlib package",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-package",
+        "graph json initialized stdlib package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-package",
+        "graph json initialized stdlib package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("project-init-stdlib-package", &stdout);
+    assert_stdlib_graph_json(
+        "initialized stdlib package graph json",
+        &actual,
+        "demo-package",
+        &project_root.join("qlang.toml"),
+        "demo-package.qi",
+        "../stdlib/packages",
+    );
+
+    let mut status_json = ql_command(&workspace_root);
+    status_json.args([
+        "project",
+        "status",
+        &project_root.to_string_lossy(),
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut status_json,
+        "`ql project status --json` initialized stdlib package",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-package",
+        "status json initialized stdlib package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-package",
+        "status json initialized stdlib package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("project-init-stdlib-package", &stdout);
+    assert_stdlib_package_status_json(
+        "initialized stdlib package status json",
+        &actual,
+        &project_root,
     );
 }
 
