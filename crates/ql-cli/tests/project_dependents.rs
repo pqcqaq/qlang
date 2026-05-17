@@ -69,6 +69,25 @@ fn expected_core_dependents_json(
     })
 }
 
+fn write_standalone_package(temp: &TempDir) -> std::path::PathBuf {
+    let project_root = temp.path().join("app");
+    temp.write("app/qlang.toml", "[package]\nname = \"app\"\n");
+    project_root
+}
+
+fn expected_standalone_package_dependents_json(
+    project_root: &std::path::Path,
+    request_path: &std::path::Path,
+) -> JsonValue {
+    json!({
+        "schema": "ql.project.dependents.v1",
+        "path": request_path.to_string_lossy().replace('\\', "/"),
+        "workspace_manifest_path": project_root.join("qlang.toml").to_string_lossy().replace('\\', "/"),
+        "package_name": "app",
+        "dependents": [],
+    })
+}
+
 fn assert_dependents_selection_failure_json(
     case_name: &str,
     stdout: &str,
@@ -106,6 +125,86 @@ fn assert_dependents_selection_failure_json(
             .contains(message_fragment),
         "dependents selector failure should describe the failure: {actual}"
     );
+}
+
+#[test]
+fn project_dependents_supports_standalone_package() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependents-package");
+    let project_root = write_standalone_package(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "dependents", &project_root.to_string_lossy()]);
+    let output = run_command_capture(&mut command, "`ql project dependents` standalone package");
+    let (stdout, stderr) = expect_success(
+        "project-dependents-package",
+        "project dependents standalone package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependents-package",
+        "project dependents standalone package",
+        &stderr,
+    )
+    .unwrap();
+
+    let expected = format!(
+        "workspace_manifest: {}\npackage: app\ndependents: []\n",
+        project_root
+            .join("qlang.toml")
+            .to_string_lossy()
+            .replace('\\', "/")
+    );
+    expect_snapshot_matches(
+        "project-dependents-package",
+        "project dependents standalone package stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn project_dependents_supports_standalone_package_source_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependents-package-source");
+    let project_root = write_standalone_package(&temp);
+    let request_path = temp.write("app/src/main.ql", "fn main() -> Int {\n    return 0\n}\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "dependents", &request_path.to_string_lossy()]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependents` standalone package source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-dependents-package-source",
+        "project dependents standalone package source path",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependents-package-source",
+        "project dependents standalone package source path",
+        &stderr,
+    )
+    .unwrap();
+
+    let expected = format!(
+        "workspace_manifest: {}\npackage: app\ndependents: []\n",
+        project_root
+            .join("qlang.toml")
+            .to_string_lossy()
+            .replace('\\', "/")
+    );
+    expect_snapshot_matches(
+        "project-dependents-package-source",
+        "project dependents standalone source path stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -236,6 +335,90 @@ fn project_dependents_supports_json_output() {
         "dependents": [],
     });
     assert_eq!(actual, expected, "project dependents json stdout");
+}
+
+#[test]
+fn project_dependents_json_supports_standalone_package_name_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependents-package-selector-json");
+    let project_root = write_standalone_package(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependents",
+        &project_root.to_string_lossy(),
+        "--name",
+        "app",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependents --name --json` standalone package",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-dependents-package-selector-json",
+        "project dependents standalone package selector json",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependents-package-selector-json",
+        "project dependents standalone package selector json",
+        &stderr,
+    )
+    .unwrap();
+
+    let actual = parse_json_output("project-dependents-package-selector-json", &stdout);
+    let expected = expected_standalone_package_dependents_json(&project_root, &project_root);
+    assert_eq!(
+        actual, expected,
+        "project dependents standalone package selector json stdout"
+    );
+}
+
+#[test]
+fn project_dependents_json_reports_standalone_package_name_selector_mismatch() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependents-package-selector-mismatch-json");
+    let project_root = write_standalone_package(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependents",
+        &project_root.to_string_lossy(),
+        "--name",
+        "missing",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependents --name --json` standalone package mismatch",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-dependents-package-selector-mismatch-json",
+        "project dependents standalone package selector mismatch json",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependents-package-selector-mismatch-json",
+        "project dependents standalone package selector mismatch json",
+        &stderr,
+    )
+    .unwrap();
+
+    assert_dependents_selection_failure_json(
+        "project-dependents-package-selector-mismatch-json",
+        &stdout,
+        &project_root,
+        &project_root,
+        "missing",
+        Some(0),
+        "package selector expected `missing`",
+    );
 }
 
 #[test]

@@ -56,7 +56,7 @@ pub(crate) fn project_dependents_path(
             "`ql project dependents`",
             "--name",
             json,
-            false,
+            true,
         ) {
             Ok(context) => context,
             Err(ProjectDependencyQueryContextError::Json {
@@ -152,7 +152,7 @@ fn resolve_project_dependency_query_context(
         Ok(workspace_manifest) => workspace_manifest,
         Err(workspace_error) => {
             if allow_standalone_package {
-                return resolve_standalone_package_dependency_query_context(
+                return resolve_standalone_package_query_context(
                     path,
                     package_name,
                     command_label,
@@ -213,7 +213,7 @@ fn resolve_project_dependency_query_context(
     ))
 }
 
-fn resolve_standalone_package_dependency_query_context(
+fn resolve_standalone_package_query_context(
     path: &Path,
     selected_package_name: Option<&str>,
     command_label: &str,

@@ -1063,6 +1063,41 @@ fn project_init_with_stdlib_creates_consuming_package_scaffold_and_check_succeed
         "../stdlib/packages",
         &stdlib_root,
     );
+
+    let mut dependents_selector_json = ql_command(&workspace_root);
+    dependents_selector_json.args([
+        "project",
+        "dependents",
+        &project_root.to_string_lossy(),
+        "--name",
+        "demo-package",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut dependents_selector_json,
+        "`ql project dependents --json --name demo-package` initialized stdlib package",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-init-stdlib-package",
+        "dependents json selector initialized stdlib package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-stdlib-package",
+        "dependents json selector initialized stdlib package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("project-init-stdlib-package", &stdout);
+    assert_eq!(actual["schema"], "ql.project.dependents.v1");
+    assert_eq!(actual["path"], json_path(&project_root));
+    assert_eq!(
+        actual["workspace_manifest_path"],
+        json_path(&project_root.join("qlang.toml"))
+    );
+    assert_eq!(actual["package_name"], "demo-package");
+    assert_eq!(actual["dependents"], serde_json::json!([]));
 }
 
 #[test]
