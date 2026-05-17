@@ -47,6 +47,50 @@ fn expect_workspace_lock_json_result(
     assert_eq!(json["lockfile"]["root"]["manifest_path"], "qlang.toml");
 }
 
+fn expect_package_lock_json_result(
+    json: &JsonValue,
+    request_path: &std::path::Path,
+    package_manifest: &std::path::Path,
+    lockfile_path: &std::path::Path,
+    check_only: bool,
+    status: &str,
+) {
+    assert_eq!(json["schema"], "ql.project.lock.result.v1");
+    assert_eq!(
+        json["path"],
+        request_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        json["project_manifest_path"],
+        package_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        json["lockfile_path"],
+        lockfile_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["check_only"], check_only);
+    assert_eq!(json["status"], status);
+    assert_eq!(json["failure"], JsonValue::Null);
+    assert_eq!(json["lockfile"]["schema"], "ql.project.lock.v1");
+    assert_eq!(json["lockfile"]["root"]["kind"], "package");
+    assert_eq!(json["lockfile"]["root"]["manifest_path"], "qlang.toml");
+
+    let package_names: Vec<&str> = json["lockfile"]["packages"]
+        .as_array()
+        .expect("package lockfile should expose package entries")
+        .iter()
+        .map(|package| {
+            package["package_name"]
+                .as_str()
+                .expect("package entry should expose package_name")
+        })
+        .collect();
+    assert!(
+        package_names.contains(&"app") && package_names.contains(&"dep"),
+        "package lockfile should include the package and local dependency: {json}"
+    );
+}
+
 struct WorkspaceLockFixture {
     project_root: PathBuf,
     workspace_manifest: PathBuf,
@@ -138,6 +182,7 @@ default = "debug"
 }
 
 struct PackageLockFixture {
+    project_root: PathBuf,
     manifest_path: PathBuf,
     source_path: PathBuf,
     lockfile_path: PathBuf,
@@ -180,6 +225,7 @@ path = "src/lib.ql"
     temp.write("dep/src/lib.ql", "pub fn dep() -> Int { return 1 }\n");
 
     PackageLockFixture {
+        project_root,
         manifest_path,
         source_path,
         lockfile_path,
@@ -731,47 +777,13 @@ fn project_lock_json_writes_and_checks_package_lockfile_from_source_path() {
     .expect("package source json lockfile generation should keep stderr empty");
 
     let json = parse_json_output("project-lock-package-source-json", &stdout);
-    assert_eq!(json["schema"], "ql.project.lock.result.v1");
-    assert_eq!(
-        json["path"],
-        fixture.source_path.display().to_string().replace('\\', "/")
-    );
-    assert_eq!(
-        json["project_manifest_path"],
-        fixture
-            .manifest_path
-            .display()
-            .to_string()
-            .replace('\\', "/")
-    );
-    assert_eq!(
-        json["lockfile_path"],
-        fixture
-            .lockfile_path
-            .display()
-            .to_string()
-            .replace('\\', "/")
-    );
-    assert_eq!(json["check_only"], false);
-    assert_eq!(json["status"], "wrote");
-    assert_eq!(json["failure"], JsonValue::Null);
-    assert_eq!(json["lockfile"]["schema"], "ql.project.lock.v1");
-    assert_eq!(json["lockfile"]["root"]["kind"], "package");
-    assert_eq!(json["lockfile"]["root"]["manifest_path"], "qlang.toml");
-
-    let package_names: Vec<&str> = json["lockfile"]["packages"]
-        .as_array()
-        .expect("package lockfile should expose package entries")
-        .iter()
-        .map(|package| {
-            package["package_name"]
-                .as_str()
-                .expect("package entry should expose package_name")
-        })
-        .collect();
-    assert!(
-        package_names.contains(&"app") && package_names.contains(&"dep"),
-        "package lockfile should include the package and local dependency: {json}"
+    expect_package_lock_json_result(
+        &json,
+        &fixture.source_path,
+        &fixture.manifest_path,
+        &fixture.lockfile_path,
+        false,
+        "wrote",
     );
 
     let initial_lockfile =
@@ -803,10 +815,14 @@ fn project_lock_json_writes_and_checks_package_lockfile_from_source_path() {
     .expect("package source json lockfile check should keep stderr empty");
 
     let json = parse_json_output("project-lock-package-source-json-check", &stdout);
-    assert_eq!(json["schema"], "ql.project.lock.result.v1");
-    assert_eq!(json["check_only"], true);
-    assert_eq!(json["status"], "up-to-date");
-    assert_eq!(json["failure"], JsonValue::Null);
+    expect_package_lock_json_result(
+        &json,
+        &fixture.source_path,
+        &fixture.manifest_path,
+        &fixture.lockfile_path,
+        true,
+        "up-to-date",
+    );
     assert_eq!(json["lockfile"], written_lockfile);
 
     let checked_lockfile = read_normalized_file(
@@ -820,6 +836,94 @@ fn project_lock_json_writes_and_checks_package_lockfile_from_source_path() {
         &checked_lockfile,
     )
     .expect("package source json lockfile check should not rewrite the lockfile");
+}
+
+#[test]
+fn project_lock_json_writes_and_checks_package_lockfile_from_root_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-lock-package-root-json");
+    let fixture = write_package_lock_fixture(&temp);
+
+    let mut write_command = ql_command(&workspace_root);
+    write_command
+        .args(["project", "lock"])
+        .arg(&fixture.project_root)
+        .arg("--json");
+    let output = run_command_capture(
+        &mut write_command,
+        "`ql project lock --json` package root path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-lock-package-root-json",
+        "package root json lockfile generation",
+        &output,
+    )
+    .expect("package root json lockfile generation should succeed");
+    expect_empty_stderr(
+        "project-lock-package-root-json",
+        "package root json lockfile generation",
+        &stderr,
+    )
+    .expect("package root json lockfile generation should keep stderr empty");
+
+    let json = parse_json_output("project-lock-package-root-json", &stdout);
+    expect_package_lock_json_result(
+        &json,
+        &fixture.project_root,
+        &fixture.manifest_path,
+        &fixture.lockfile_path,
+        false,
+        "wrote",
+    );
+
+    let initial_lockfile =
+        read_normalized_file(&fixture.lockfile_path, "package root json lockfile");
+    let written_lockfile: JsonValue = serde_json::from_str(&initial_lockfile)
+        .expect("written package root lockfile should remain valid json");
+    assert_eq!(json["lockfile"], written_lockfile);
+
+    let mut check_command = ql_command(&workspace_root);
+    check_command
+        .args(["project", "lock", "--check"])
+        .arg(&fixture.project_root)
+        .arg("--json");
+    let output = run_command_capture(
+        &mut check_command,
+        "`ql project lock --check --json` package root path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-lock-package-root-json",
+        "package root json lockfile check",
+        &output,
+    )
+    .expect("package root json lockfile check should succeed");
+    expect_empty_stderr(
+        "project-lock-package-root-json",
+        "package root json lockfile check",
+        &stderr,
+    )
+    .expect("package root json lockfile check should keep stderr empty");
+
+    let json = parse_json_output("project-lock-package-root-json-check", &stdout);
+    expect_package_lock_json_result(
+        &json,
+        &fixture.project_root,
+        &fixture.manifest_path,
+        &fixture.lockfile_path,
+        true,
+        "up-to-date",
+    );
+    assert_eq!(json["lockfile"], written_lockfile);
+
+    let checked_lockfile =
+        read_normalized_file(&fixture.lockfile_path, "checked package root json lockfile");
+    expect_snapshot_matches(
+        "project-lock-package-root-json",
+        "checked package root json lockfile contents",
+        &initial_lockfile,
+        &checked_lockfile,
+    )
+    .expect("package root json lockfile check should not rewrite the lockfile");
 }
 
 #[test]

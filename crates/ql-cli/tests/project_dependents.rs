@@ -378,6 +378,45 @@ fn project_dependents_json_supports_standalone_package_name_selector() {
 }
 
 #[test]
+fn project_dependents_json_supports_standalone_package_source_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependents-package-source-json");
+    let project_root = write_standalone_package(&temp);
+    let request_path = temp.write("app/src/main.ql", "fn main() -> Int {\n    return 0\n}\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependents",
+        &request_path.to_string_lossy(),
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependents --json` standalone package source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-dependents-package-source-json",
+        "project dependents standalone package source path json",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependents-package-source-json",
+        "project dependents standalone package source path json",
+        &stderr,
+    )
+    .unwrap();
+
+    let actual = parse_json_output("project-dependents-package-source-json", &stdout);
+    let expected = expected_standalone_package_dependents_json(&project_root, &request_path);
+    assert_eq!(
+        actual, expected,
+        "project dependents standalone package source path json stdout"
+    );
+}
+
+#[test]
 fn project_dependents_json_reports_standalone_package_name_selector_mismatch() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-dependents-package-selector-mismatch-json");
