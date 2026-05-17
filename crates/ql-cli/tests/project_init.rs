@@ -27,6 +27,39 @@ fn parse_json_output(case_name: &str, stdout: &str) -> JsonValue {
         .unwrap_or_else(|error| panic!("[{case_name}] parse json stdout: {error}\n{stdout}"))
 }
 
+fn assert_stdlib_dependency_build_targets(context: &str, build_json: &JsonValue) {
+    let built_targets = build_json["built_targets"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose built targets: {build_json}"));
+    for package_name in [
+        "std.array",
+        "std.core",
+        "std.option",
+        "std.result",
+        "std.test",
+    ] {
+        assert!(
+            built_targets.iter().any(|target| {
+                target["package_name"] == package_name
+                    && target["dependency_only"] == true
+                    && target["kind"] == "lib"
+                    && target["selected"] == false
+            }),
+            "{context} should include dependency target `{package_name}`: {build_json}"
+        );
+    }
+}
+
+fn assert_build_json_includes_target(context: &str, build_json: &JsonValue, expected: JsonValue) {
+    let built_targets = build_json["built_targets"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose built targets: {build_json}"));
+    assert!(
+        built_targets.iter().any(|target| target == &expected),
+        "{context} should include target {expected}: {build_json}"
+    );
+}
+
 fn write_repo_stdlib_fixture(temp: &TempDir, repo_root: &Path) -> PathBuf {
     let source_root = repo_root.join("stdlib");
     for relative in [
@@ -594,61 +627,38 @@ fn project_init_with_stdlib_creates_runnable_and_testable_package_scaffold() {
             }
         ])
     );
-    let built_targets = build_json["built_targets"]
-        .as_array()
-        .expect("initialized stdlib package build json should expose built targets");
-    for package_name in [
-        "std.array",
-        "std.core",
-        "std.option",
-        "std.result",
-        "std.test",
-    ] {
-        assert!(
-            built_targets.iter().any(|target| {
-                target["package_name"] == package_name
-                    && target["dependency_only"] == true
-                    && target["kind"] == "lib"
-                    && target["selected"] == false
-            }),
-            "initialized stdlib package build json should include dependency target `{package_name}`: {build_json}"
-        );
-    }
-    assert!(
-        built_targets.iter().any(|target| {
-            target
-                == &serde_json::json!({
-                    "manifest_path": package_manifest.display().to_string().replace('\\', "/"),
-                    "package_name": "demo-package",
-                    "selected": true,
-                    "dependency_only": false,
-                    "kind": "lib",
-                    "path": "src/lib.ql",
-                    "emit": "staticlib",
-                    "profile": "debug",
-                    "artifact_path": package_library_output.display().to_string().replace('\\', "/"),
-                    "c_header_path": JsonValue::Null,
-                })
+    assert_stdlib_dependency_build_targets("initialized stdlib package build json", &build_json);
+    assert_build_json_includes_target(
+        "initialized stdlib package build json",
+        &build_json,
+        serde_json::json!({
+            "manifest_path": package_manifest.display().to_string().replace('\\', "/"),
+            "package_name": "demo-package",
+            "selected": true,
+            "dependency_only": false,
+            "kind": "lib",
+            "path": "src/lib.ql",
+            "emit": "staticlib",
+            "profile": "debug",
+            "artifact_path": package_library_output.display().to_string().replace('\\', "/"),
+            "c_header_path": JsonValue::Null,
         }),
-        "initialized stdlib package build json should include selected package library target: {build_json}"
     );
-    assert!(
-        built_targets.iter().any(|target| {
-            target
-                == &serde_json::json!({
-                    "manifest_path": package_manifest.display().to_string().replace('\\', "/"),
-                    "package_name": "demo-package",
-                    "selected": true,
-                    "dependency_only": false,
-                    "kind": "bin",
-                    "path": "src/main.ql",
-                    "emit": "llvm-ir",
-                    "profile": "debug",
-                    "artifact_path": package_build_output.display().to_string().replace('\\', "/"),
-                    "c_header_path": JsonValue::Null,
-                })
+    assert_build_json_includes_target(
+        "initialized stdlib package build json",
+        &build_json,
+        serde_json::json!({
+            "manifest_path": package_manifest.display().to_string().replace('\\', "/"),
+            "package_name": "demo-package",
+            "selected": true,
+            "dependency_only": false,
+            "kind": "bin",
+            "path": "src/main.ql",
+            "emit": "llvm-ir",
+            "profile": "debug",
+            "artifact_path": package_build_output.display().to_string().replace('\\', "/"),
+            "c_header_path": JsonValue::Null,
         }),
-        "initialized stdlib package build json should include selected package binary target: {build_json}"
     );
     expect_file_exists(
         "project-init-stdlib-package-run",
@@ -1095,8 +1105,12 @@ fn project_init_with_stdlib_creates_runnable_and_testable_workspace_scaffold() {
     let stdlib_root = write_repo_stdlib_fixture(&temp, &workspace_root);
     let project_root = temp.path().join("demo-workspace");
     let member_root = project_root.join("packages/app");
+    let app_manifest = member_root.join("qlang.toml");
+    let app_library_output =
+        static_library_output_path(&member_root.join("target/ql/debug"), "lib");
     let app_build_output = member_root.join("target/ql/debug/main.ll");
     let app_output = executable_output_path(&member_root.join("target/ql/debug"), "main");
+    let app_interface_output = member_root.join("app.qi");
 
     let mut init = ql_command(&workspace_root);
     init.args([
@@ -1170,27 +1184,40 @@ fn project_init_with_stdlib_creates_runnable_and_testable_workspace_scaffold() {
     assert_eq!(build_json["emit_interface"], false);
     assert_eq!(build_json["status"], "ok");
     assert_eq!(build_json["failure"], JsonValue::Null);
-    let built_targets = build_json["built_targets"]
-        .as_array()
-        .expect("initialized stdlib workspace build json should expose built targets");
-    let selected_app_bin = built_targets
-        .iter()
-        .find(|target| {
-            target["package_name"] == "app"
-                && target["selected"] == true
-                && target["dependency_only"] == false
-                && target["kind"] == "bin"
-                && target["path"] == "src/main.ql"
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "initialized stdlib workspace build json should include selected app binary target: {build_json}"
-            )
-        });
     assert_eq!(
-        selected_app_bin,
-        &serde_json::json!({
-            "manifest_path": member_root.join("qlang.toml").display().to_string().replace('\\', "/"),
+        build_json["interfaces"],
+        serde_json::json!([
+            {
+                "manifest_path": app_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "app",
+                "selected": true,
+                "status": "wrote",
+                "path": app_interface_output.display().to_string().replace('\\', "/"),
+            }
+        ])
+    );
+    assert_stdlib_dependency_build_targets("initialized stdlib workspace build json", &build_json);
+    assert_build_json_includes_target(
+        "initialized stdlib workspace build json",
+        &build_json,
+        serde_json::json!({
+            "manifest_path": app_manifest.display().to_string().replace('\\', "/"),
+            "package_name": "app",
+            "selected": true,
+            "dependency_only": false,
+            "kind": "lib",
+            "path": "src/lib.ql",
+            "emit": "staticlib",
+            "profile": "debug",
+            "artifact_path": app_library_output.display().to_string().replace('\\', "/"),
+            "c_header_path": JsonValue::Null,
+        }),
+    );
+    assert_build_json_includes_target(
+        "initialized stdlib workspace build json",
+        &build_json,
+        serde_json::json!({
+            "manifest_path": app_manifest.display().to_string().replace('\\', "/"),
             "package_name": "app",
             "selected": true,
             "dependency_only": false,
@@ -1200,12 +1227,26 @@ fn project_init_with_stdlib_creates_runnable_and_testable_workspace_scaffold() {
             "profile": "debug",
             "artifact_path": app_build_output.display().to_string().replace('\\', "/"),
             "c_header_path": JsonValue::Null,
-        })
+        }),
     );
+    expect_file_exists(
+        "project-init-stdlib-workspace-run",
+        &app_library_output,
+        "initialized stdlib workspace library artifact",
+        "json build initialized stdlib workspace package",
+    )
+    .unwrap();
     expect_file_exists(
         "project-init-stdlib-workspace-run",
         &app_build_output,
         "initialized stdlib workspace build artifact",
+        "json build initialized stdlib workspace package",
+    )
+    .unwrap();
+    expect_file_exists(
+        "project-init-stdlib-workspace-run",
+        &app_interface_output,
+        "initialized stdlib workspace interface artifact",
         "json build initialized stdlib workspace package",
     )
     .unwrap();
