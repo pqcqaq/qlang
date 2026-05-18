@@ -2703,6 +2703,56 @@ fn test_package_path_uses_manifest_default_release_profile() {
     .expect("manifest default profile test should emit smoke test artifacts under release");
 }
 
+#[test]
+fn test_package_path_profile_override_keeps_debug_profile() {
+    if !toolchain_available("`ql test --profile debug` manifest profile override test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture = write_package_default_release_profile_fixture("ql-project-test-profile-override");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test"])
+        .arg(&fixture.project_root)
+        .args(["--profile", "debug"]);
+    let output = run_command_capture(&mut command, "`ql test --profile debug` manifest override");
+    let (stdout, stderr) = expect_success(
+        "project-test-profile-override",
+        "manifest profile override test",
+        &output,
+    )
+    .expect("package-path `ql test --profile debug` should override manifest default profile");
+    expect_empty_stderr(
+        "project-test-profile-override",
+        "manifest profile override test",
+        &stderr,
+    )
+    .expect("manifest profile override test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-profile-override",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("manifest profile override test should still run discovered smoke tests");
+    expect_file_exists(
+        "project-test-profile-override",
+        &fixture.debug_smoke_output,
+        "manifest profile override smoke executable",
+        "manifest profile override test",
+    )
+    .expect("manifest profile override test should emit smoke test artifacts under debug");
+    assert!(
+        !fixture.release_smoke_output.exists(),
+        "manifest profile override test should not emit release artifacts"
+    );
+}
+
 struct PackageDefaultReleaseProfileFixture {
     temp: TempDir,
     project_root: PathBuf,
@@ -2945,6 +2995,58 @@ fn test_workspace_path_uses_workspace_default_profile() {
 }
 
 #[test]
+fn test_workspace_path_profile_override_keeps_debug_profile() {
+    if !toolchain_available("`ql test --profile debug` workspace profile override test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_default_release_profile_fixture(
+        "ql-project-test-workspace-profile-override",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test"])
+        .arg(&fixture.project_root)
+        .args(["--profile", "debug"]);
+    let output = run_command_capture(&mut command, "`ql test --profile debug` workspace override");
+    let (stdout, stderr) = expect_success(
+        "project-test-workspace-profile-override",
+        "workspace profile override test",
+        &output,
+    )
+    .expect("workspace-path `ql test --profile debug` should override workspace default profile");
+    expect_empty_stderr(
+        "project-test-workspace-profile-override",
+        "workspace profile override test",
+        &stderr,
+    )
+    .expect("workspace profile override test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-workspace-profile-override",
+        &stdout.replace('\\', "/"),
+        &[
+            "test packages/app/tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("workspace profile override test should still run discovered smoke tests");
+    expect_file_exists(
+        "project-test-workspace-profile-override",
+        &fixture.debug_smoke_output,
+        "workspace profile override smoke executable",
+        "workspace profile override test",
+    )
+    .expect("workspace profile override test should emit smoke test artifacts under debug");
+    assert!(
+        !fixture.release_smoke_output.exists(),
+        "workspace profile override test should not emit release artifacts"
+    );
+}
+
+#[test]
 fn test_workspace_member_file_uses_workspace_default_profile() {
     if !toolchain_available("`ql test` workspace member file profile test") {
         return;
@@ -3045,6 +3147,61 @@ name = "app"
     assert!(
         !debug_smoke_output.exists(),
         "workspace member file profile test should not silently fall back to the debug profile"
+    );
+}
+
+#[test]
+fn test_workspace_member_file_profile_override_keeps_debug_profile() {
+    if !toolchain_available("`ql test --profile debug` workspace member file override test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_default_release_profile_fixture(
+        "ql-project-test-workspace-member-file-profile-override",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test"])
+        .arg(&fixture.smoke_path)
+        .args(["--profile", "debug"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --profile debug` workspace member file override",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-workspace-member-file-profile-override",
+        "workspace member file profile override test",
+        &output,
+    )
+    .expect("workspace member file `ql test --profile debug` should override workspace default");
+    expect_empty_stderr(
+        "project-test-workspace-member-file-profile-override",
+        "workspace member file profile override test",
+        &stderr,
+    )
+    .expect("workspace member file profile override test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-workspace-member-file-profile-override",
+        &stdout.replace('\\', "/"),
+        &[
+            "test packages/app/tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("workspace member file profile override should run the selected smoke test");
+    expect_file_exists(
+        "project-test-workspace-member-file-profile-override",
+        &fixture.debug_smoke_output,
+        "workspace member file profile override smoke executable",
+        "workspace member file profile override test",
+    )
+    .expect("workspace member file profile override test should emit debug artifact");
+    assert!(
+        !fixture.release_smoke_output.exists(),
+        "workspace member file profile override test should not emit release artifact"
     );
 }
 
