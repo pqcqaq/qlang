@@ -5929,28 +5929,11 @@ name = "app"
 #[test]
 fn test_package_path_runs_ui_snapshot_tests() {
     let workspace_root = workspace_root();
-    let temp = TempDir::new("ql-project-test-ui");
-    let project_root = temp.path().join("app");
-    std::fs::create_dir_all(project_root.join("src")).expect("create package source root");
-    temp.write(
-        "app/qlang.toml",
-        r#"
-[package]
-name = "app"
-"#,
-    );
-    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
-    let source = "fn main() -> Int { return nope }\n";
-    let fixture_path = temp.write("app/tests/ui/type_error.ql", source);
-    fs::write(
-        fixture_path.with_extension("stderr"),
-        ui_snapshot("tests/ui/type_error.ql", source),
-    )
-    .expect("write expected ui stderr snapshot");
+    let fixture = write_direct_project_ui_fixture("ql-project-test-ui", true);
 
     let mut command = ql_command(&workspace_root);
-    command.current_dir(temp.path());
-    command.args(["test"]).arg(&project_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["test"]).arg(&fixture.project_root);
     let output = run_command_capture(&mut command, "`ql test` package ui tests");
     let (stdout, stderr) = expect_success("project-test-ui", "package ui tests", &output)
         .expect("package-path `ql test` should run ui snapshot tests");
@@ -5965,6 +5948,29 @@ name = "app"
         ],
     )
     .expect("package-path `ql test` should pass matching ui snapshot tests");
+}
+
+#[test]
+fn test_package_path_reports_ui_snapshot_json_success() {
+    let workspace_root = workspace_root();
+    let fixture = write_direct_project_ui_fixture("ql-project-test-ui-json", true);
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["test", "--json"]).arg(&fixture.project_root);
+    let output = run_command_capture(&mut command, "`ql test --json` package ui tests");
+    let (stdout, stderr) =
+        expect_success("project-test-ui-json", "package ui json success", &output)
+            .expect("package-path `ql test --json` should run ui snapshot tests");
+    expect_empty_stderr("project-test-ui-json", "package ui json success", &stderr)
+        .expect("package ui json success should not print stderr");
+
+    let actual = parse_json_output("project-test-ui-json", &stdout);
+    let expected = expected_project_ui_json_success(&fixture.project_root, None, None);
+    assert_eq!(
+        actual, expected,
+        "package-path `ql test --json` should report ui snapshot success via the stable json contract"
+    );
 }
 
 #[test]
@@ -6323,7 +6329,7 @@ fn test_direct_project_ui_file_reports_json_success() {
     .expect("direct project ui file json success should not print stderr");
 
     let actual = parse_json_output("project-test-ui-direct-file-json", &stdout);
-    let expected = expected_direct_project_ui_json_success(&fixture.ui_path, None, None);
+    let expected = expected_project_ui_json_success(&fixture.ui_path, None, None);
     assert_eq!(
         actual, expected,
         "direct project ui file json success should preserve the stable json contract"
@@ -6368,7 +6374,7 @@ fn test_direct_project_ui_file_json_runs_with_package_target_and_filter_selector
 
     let actual = parse_json_output("project-test-ui-direct-file-all-selectors-json", &stdout);
     let expected =
-        expected_direct_project_ui_json_success(&fixture.ui_path, Some("app"), Some("type_error"));
+        expected_project_ui_json_success(&fixture.ui_path, Some("app"), Some("type_error"));
     assert_eq!(
         actual, expected,
         "direct project ui file selector execution should preserve the stable json contract"
@@ -6449,34 +6455,16 @@ fn test_direct_project_ui_file_json_reports_snapshot_mismatch() {
     )
     .expect("direct project ui file mismatch json should stay on stdout");
 
-    let json = parse_json_output("project-test-ui-direct-file-mismatch-json", &stdout);
-    assert_eq!(json["schema"], "ql.test.v1");
-    assert_eq!(
-        json["path"],
-        fixture.ui_path.display().to_string().replace('\\', "/")
-    );
-    assert_eq!(json["status"], "failed");
-    assert_eq!(json["discovered_total"], 1);
-    assert_eq!(json["selected_total"], 1);
-    assert_eq!(
-        json["targets"],
-        serde_json::json!([direct_project_ui_json_target()])
-    );
-    assert_eq!(json["passed"], 0);
-    assert_eq!(json["failed"], 1);
-    assert_eq!(json["failures"][0]["path"], "tests/ui/type_error.ql");
-    assert_eq!(json["failures"][0]["kind"], "ui");
-    assert!(
-        json["failures"][0]["detail"]
-            .as_str()
-            .expect("direct project ui mismatch json should expose detail")
-            .contains("ui stderr snapshot mismatch"),
-        "direct project ui mismatch json should describe snapshot mismatch: {json}"
+    assert_project_ui_snapshot_mismatch_json(
+        "project-test-ui-direct-file-mismatch-json",
+        &stdout,
+        &fixture.ui_path,
     );
 }
 
 struct DirectProjectUiFixture {
     temp: TempDir,
+    project_root: PathBuf,
     ui_path: PathBuf,
 }
 
@@ -6505,7 +6493,11 @@ name = "app"
     fs::write(ui_path.with_extension("stderr"), snapshot)
         .expect("write expected ui stderr snapshot");
 
-    DirectProjectUiFixture { temp, ui_path }
+    DirectProjectUiFixture {
+        temp,
+        project_root,
+        ui_path,
+    }
 }
 
 fn direct_project_ui_json_target() -> JsonValue {
@@ -6516,7 +6508,7 @@ fn direct_project_ui_json_target() -> JsonValue {
     })
 }
 
-fn expected_direct_project_ui_json_success(
+fn expected_project_ui_json_success(
     request_path: &Path,
     package_name: Option<&str>,
     filter: Option<&str>,
@@ -6539,6 +6531,33 @@ fn expected_direct_project_ui_json_success(
         "failed": 0,
         "failures": [],
     })
+}
+
+fn assert_project_ui_snapshot_mismatch_json(case_name: &str, stdout: &str, request_path: &Path) {
+    let json = parse_json_output(case_name, stdout);
+    assert_eq!(json["schema"], "ql.test.v1");
+    assert_eq!(
+        json["path"],
+        request_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["discovered_total"], 1);
+    assert_eq!(json["selected_total"], 1);
+    assert_eq!(
+        json["targets"],
+        serde_json::json!([direct_project_ui_json_target()])
+    );
+    assert_eq!(json["passed"], 0);
+    assert_eq!(json["failed"], 1);
+    assert_eq!(json["failures"][0]["path"], "tests/ui/type_error.ql");
+    assert_eq!(json["failures"][0]["kind"], "ui");
+    assert!(
+        json["failures"][0]["detail"]
+            .as_str()
+            .expect("project ui mismatch json should expose detail")
+            .contains("ui stderr snapshot mismatch"),
+        "project ui mismatch json should describe snapshot mismatch: {json}"
+    );
 }
 
 fn expected_direct_project_ui_json_listing(
@@ -6564,6 +6583,36 @@ fn expected_direct_project_ui_json_listing(
         "failed": 0,
         "failures": [],
     })
+}
+
+#[test]
+fn test_package_path_reports_ui_snapshot_json_mismatch() {
+    let workspace_root = workspace_root();
+    let fixture = write_direct_project_ui_fixture("ql-project-test-ui-mismatch-json", false);
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["test", "--json"]).arg(&fixture.project_root);
+    let output = run_command_capture(&mut command, "`ql test --json` ui snapshot mismatch");
+    let (stdout, stderr) = expect_exit_code(
+        "project-test-ui-mismatch-json",
+        "ui snapshot mismatch json tests",
+        &output,
+        1,
+    )
+    .expect("package-path `ql test --json` should fail on ui snapshot mismatches");
+    expect_empty_stderr(
+        "project-test-ui-mismatch-json",
+        "ui snapshot mismatch json tests",
+        &stderr,
+    )
+    .expect("package-path ui snapshot mismatch json should stay on stdout");
+
+    assert_project_ui_snapshot_mismatch_json(
+        "project-test-ui-mismatch-json",
+        &stdout,
+        &fixture.project_root,
+    );
 }
 
 #[test]
