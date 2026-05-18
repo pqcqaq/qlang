@@ -810,6 +810,93 @@ dep = "../dep"
 }
 
 #[test]
+fn build_project_source_file_json_release_flag_overrides_manifest_default_profile() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-source-file-json-release-override");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source tree for direct project source release test");
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[profile]
+default = "debug"
+"#,
+    );
+    let app_main = temp.write("app/src/main.ql", "fn main() -> Int { return 0 }\n");
+    let app_output = project_root.join("target/ql/release/main.ll");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["build"])
+        .arg(&app_main)
+        .args(["--json", "--release"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json --release` direct project source file",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-source-file-json-release-override",
+        "direct project source file release alias json build",
+        &output,
+    )
+    .expect("direct project source file `ql build --json --release` should succeed");
+    expect_empty_stderr(
+        "project-build-source-file-json-release-override",
+        "direct project source file release alias json build",
+        &stderr,
+    )
+    .expect("direct project source file release alias json build should not print stderr");
+
+    let json = parse_json_output("project-build-source-file-json-release-override", &stdout);
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["path"],
+        app_main.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["requested_profile"], "release");
+    assert_eq!(json["profile_overridden"], true);
+    assert_eq!(json["status"], "ok");
+    assert_eq!(
+        json["built_targets"],
+        serde_json::json!([
+            {
+                "manifest_path": app_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "app",
+                "selected": true,
+                "dependency_only": false,
+                "kind": "bin",
+                "path": "src/main.ql",
+                "emit": "llvm-ir",
+                "profile": "release",
+                "artifact_path": app_output.display().to_string().replace('\\', "/"),
+                "c_header_path": JsonValue::Null,
+            }
+        ])
+    );
+    expect_file_exists(
+        "project-build-source-file-json-release-override",
+        &app_output,
+        "direct project source release alias artifact",
+        "direct project source file release alias json build",
+    )
+    .expect("direct project source release alias json build should emit release artifact");
+    assert!(
+        !project_root.join("target/ql/debug/main.ll").exists(),
+        "direct project source release alias json build should not emit debug artifact"
+    );
+}
+
+#[test]
 fn build_project_source_file_supports_direct_dependency_public_functions() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-source-file-public-function");

@@ -3885,6 +3885,67 @@ fn test_direct_project_test_file_json_profile_override_keeps_debug_profile() {
 }
 
 #[test]
+fn test_direct_project_test_file_json_release_flag_overrides_manifest_default_profile() {
+    if !toolchain_available(
+        "`ql test --json --release` direct project file manifest profile override test",
+    ) {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture = write_package_default_debug_profile_fixture(
+        "ql-project-test-direct-file-json-release-override",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--json", "--release"])
+        .arg(&fixture.smoke_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json --release` direct project file manifest profile override",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-direct-file-json-release-override",
+        "direct project file manifest release alias override json success",
+        &output,
+    )
+    .expect(
+        "direct project test file `ql test --json --release` should override manifest default profile",
+    );
+    expect_empty_stderr(
+        "project-test-direct-file-json-release-override",
+        "direct project file manifest release alias override json success",
+        &stderr,
+    )
+    .expect(
+        "direct project file manifest release alias override json success should not print stderr",
+    );
+
+    let actual = parse_json_output("project-test-direct-file-json-release-override", &stdout);
+    let expected =
+        expected_package_profile_test_json(&fixture.smoke_path, "release", true, "release");
+    assert_eq!(
+        actual, expected,
+        "direct project test file json should expose the explicit release profile"
+    );
+    expect_file_exists(
+        "project-test-direct-file-json-release-override",
+        &fixture.release_smoke_output,
+        "direct project file manifest release alias override smoke executable",
+        "direct project file manifest release alias override json success",
+    )
+    .expect(
+        "direct project file manifest release alias override json success should emit release artifact",
+    );
+    assert!(
+        !fixture.debug_smoke_output.exists(),
+        "direct project file manifest release alias override json success should not emit debug artifact"
+    );
+}
+
+#[test]
 fn test_direct_project_test_file_list_json_uses_manifest_default_release_profile() {
     let workspace_root = workspace_root();
     let fixture = write_package_default_release_profile_fixture(

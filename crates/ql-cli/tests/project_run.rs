@@ -552,6 +552,77 @@ default = "release"
 }
 
 #[test]
+fn run_project_source_file_json_release_flag_overrides_manifest_default_profile() {
+    if !toolchain_available("`ql run --json --release` direct project source file test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-source-file-json-release-override");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source tree for direct project source release run test");
+    let manifest_path = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[profile]
+default = "debug"
+"#,
+    );
+    let main_path = temp.write("app/src/main.ql", "fn main() -> Int { return 13 }\n");
+    let release_output = executable_output_path(&project_root.join("target/ql/release"), "main");
+    let debug_output = executable_output_path(&project_root.join("target/ql/debug"), "main");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run", "--json", "--release"]).arg(&main_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql run --json --release` direct project source file",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-source-file-json-release-override",
+        "direct project source file release alias run json",
+        &output,
+        13,
+    )
+    .expect("direct project source file `ql run --json --release` should execute");
+    expect_empty_stderr(
+        "project-run-source-file-json-release-override",
+        "direct project source file release alias run json",
+        &stderr,
+    )
+    .expect("direct project source file release alias run json should not print stderr");
+
+    let json = parse_json_output("project-run-source-file-json-release-override", &stdout);
+    expect_default_release_run_profile_json(
+        "project-run-source-file-json-release-override",
+        &json,
+        &main_path,
+        &manifest_path,
+        &manifest_path,
+        "release",
+        true,
+        "release",
+        &release_output,
+    );
+    expect_file_exists(
+        "project-run-source-file-json-release-override",
+        &release_output,
+        "direct project source release alias executable",
+        "direct project source file release alias run json",
+    )
+    .expect("direct project source release alias run json should emit release executable");
+    assert!(
+        !debug_output.exists(),
+        "direct project source release alias run json should not emit debug executable"
+    );
+}
+
+#[test]
 fn run_project_path_json_reports_build_failure() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-run-project-json-build-failure");
