@@ -20,11 +20,11 @@
 - `std.option.Option[T]`
 - `std.result.Result[T, E]`
 - `std.array` 的 length-generic helpers，例如 `first_array`、`last_array`、`at_array_or`、`contains_array`、`count_array`、`len_array`、`reverse_array`、`repeat_array`、`average_int_array`
-- `std.test` 的泛型 `expect_eq` / `expect_ne`、泛型数组 equality/access/query/reverse 断言、泛型 `expect_option_*` / `expect_result_*` 断言、Int/Bool 专用行为断言和 `merge_statuses` 状态合并 helper
+- `std.test` 的泛型 `expect_eq` / `expect_ne`、泛型数组 equality/access/query/reverse 断言、泛型 `expect_option_*` / `expect_result_*` 断言、Int/Bool 专用行为断言和 `merge_statuses[N]`
 
 `std.array` 不再导出 `first3_array`、`reverse3_array`、`repeat3_array` 这类固定长度 helper；新代码只使用 length-generic API。重复数组使用语言级 `[value; N]`，标准库暴露 `repeat_array[T, N](value) -> [T; N]`。
 `std.core` 的聚合、布尔聚合、顺序判断和中位数使用数组 API；固定 arity 的 `sum3_int`、`max4_int`、`median3_int`、`all5_bool`、`is_ascending4_int` 等历史包装已删除。
-`std.test` 的 equality/array/option/result 断言统一走泛型 API，例如 `expect_eq[T]`、`expect_array_eq[T, N]`、`expect_array_contains[T, N]`、`expect_array_reverse[T, N]`、`expect_option_*`、`expect_result_*`；`expect_array_reverse` 会比较完整反转结果。历史 typed facade 与固定 arity 的 `expect_*3/4/5`、`merge_status3/4/5/6` 已删除。
+`std.test` 的 equality/array/option/result 断言统一走泛型 API，例如 `expect_eq[T]`、`expect_array_eq[T, N]`、`expect_array_contains[T, N]`、`expect_array_reverse[T, N]`、`expect_option_*`、`expect_result_*`；`expect_array_reverse` 会比较完整反转结果。历史 typed facade、固定 arity 的 `expect_*3/4/5` / `merge_status3/4/5/6`、以及 `is_status_*` / `expect_status_*` / `merge_status` 薄封装已删除。
 当前 `Option.None`、`Result.Ok(...)`、`Result.Err(...)` 这类不能从调用点直接闭合类型参数的值，仍建议先绑定到显式类型局部变量，再传给泛型断言。
 
 ## 本地依赖

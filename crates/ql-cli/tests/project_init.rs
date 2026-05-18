@@ -427,6 +427,7 @@ fn expect_stdlib_starter_smoke_source(source: &str, context: &str) {
         "let failed: Result[Int, Int] = result_ok_or(missing, 4)",
         "let option_check = expect_option_some(option_value, 6) + expect_option_none(missing)",
         "let result_check = expect_result_ok(result_value, 6) + expect_result_err(failed, 4)",
+        "return expect_eq(total_check + length_check + contains_check + repeated_check + array_check + option_check + result_check, 0)",
     ] {
         assert!(
             source.contains(needle),
@@ -437,7 +438,13 @@ fn expect_stdlib_starter_smoke_source(source: &str, context: &str) {
         !source.contains("result_error_to_option"),
         "{context} should not use conversion-only result assertions\n{source}"
     );
-    for legacy in ["repeat3_array", "reverse3_array", "some_int", "ok_int"] {
+    for legacy in [
+        "repeat3_array",
+        "reverse3_array",
+        "some_int",
+        "ok_int",
+        "expect_status_ok",
+    ] {
         assert!(
             !source.contains(legacy),
             "{context} should not contain legacy API `{legacy}`\n{source}"

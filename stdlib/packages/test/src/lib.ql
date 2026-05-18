@@ -422,38 +422,12 @@ pub fn expect_int_factor_of(factor: Int, value: Int) -> Int {
     return 1
 }
 
-pub fn is_status_ok(status: Int) -> Bool {
-    return status == 0
-}
-
-pub fn is_status_failed(status: Int) -> Bool {
-    return status != 0
-}
-
 pub fn merge_statuses[N](statuses: [Int; N]) -> Int {
     var total = 0
     for status in statuses {
         total = total + status
     }
     return total
-}
-
-pub fn merge_status(left: Int, right: Int) -> Int {
-    return merge_statuses([left, right])
-}
-
-pub fn expect_status_ok(status: Int) -> Int {
-    if is_status_ok(status) {
-        return 0
-    }
-    return 1
-}
-
-pub fn expect_status_failed(status: Int) -> Int {
-    if is_status_failed(status) {
-        return 0
-    }
-    return 1
 }
 
 pub fn expect_int_between(actual: Int, low: Int, high: Int) -> Int {

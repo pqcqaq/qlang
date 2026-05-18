@@ -79,13 +79,8 @@ use std.test.expect_result_ok as expect_result_ok
 use std.test.expect_result_or as expect_result_or
 use std.test.expect_result_to_option_none as expect_result_to_option_none
 use std.test.expect_result_to_option_some as expect_result_to_option_some
-use std.test.expect_status_failed as expect_status_failed
-use std.test.expect_status_ok as expect_status_ok
 use std.test.expect_true as expect_true
 use std.test.expect_zero as expect_zero
-use std.test.is_status_failed as is_status_failed
-use std.test.is_status_ok as is_status_ok
-use std.test.merge_status as merge_status
 use std.test.merge_statuses as merge_statuses
 use std.option.Option as Option
 use std.result.Result as Result
@@ -174,10 +169,10 @@ fn main() -> Int {
     let sign_pass = sum_statuses([check_int(expect_int_not_within(12, 10, 1), 0), check_int(expect_int_positive(1), 0), check_int(expect_int_negative(0 - 1), 0), check_int(expect_int_nonnegative(0), 0)])
     let number_failure = sum_statuses([check_int(expect_int_even(9), 1), check_int(expect_int_odd(8), 1), check_int(expect_int_divisible_by(21, 0), 1), check_int(expect_int_within(12, 10, 1), 1)])
     let sign_failure = sum_statuses([check_int(expect_int_not_within(10, 10, 0), 1), check_int(expect_int_positive(0), 1), check_int(expect_int_negative(0), 1), check_int(expect_int_nonnegative(0 - 1), 1)])
-    let status_bool = sum_statuses([check_bool(is_status_ok(0), true), check_bool(is_status_ok(1), false), check_bool(is_status_failed(1), true), check_bool(is_status_failed(0), false)])
-    let status_merge = sum_statuses([check_int(merge_status(1, 2), 3), check_int(merge_statuses([1, 2, 3]), 6), check_int(merge_statuses([1, 2, 3, 4]), 10), check_int(merge_statuses([1, 2, 3, 4, 5]), 15)])
+    let status_bool = sum_statuses([check_bool(0 == 0, true), check_bool(1 == 0, false), check_bool(1 != 0, true), check_bool(0 != 0, false)])
+    let status_merge = sum_statuses([check_int(merge_statuses([1, 2]), 3), check_int(merge_statuses([1, 2, 3]), 6), check_int(merge_statuses([1, 2, 3, 4]), 10), check_int(merge_statuses([1, 2, 3, 4, 5]), 15)])
     let status_merge_large = sum_statuses([check_int(merge_statuses([1, 2, 3, 4, 5, 6]), 21), check_int(merge_statuses([1, 2, 3, 4, 5, 6, 7]), 28), check_int(expect_bool_implies(false, false), 0), 0])
-    let status_expect = sum_statuses([check_int(expect_status_ok(0), 0), check_int(expect_status_ok(1), 1), check_int(expect_status_failed(1), 0), check_int(expect_status_failed(0), 1)])
+    let status_expect = sum_statuses([check_int(expect_eq(0, 0), 0), check_int(expect_eq(1, 0), 1), check_int(expect_ne(1, 0), 0), check_int(expect_ne(0, 0), 1)])
     let sign_boundary = sum_statuses([check_int(expect_int_nonpositive(0), 0), check_int(expect_int_nonpositive(1), 1), check_int(expect_bool_implies(true, false), 1), 0])
     let some_string_option: Option[String] = Option.Some("ready")
     let none_string_option: Option[String] = Option.None

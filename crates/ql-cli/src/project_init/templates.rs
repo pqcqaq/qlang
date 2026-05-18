@@ -118,7 +118,7 @@ mod tests {
         assert!(smoke.contains("use std.test.expect_option_some as expect_option_some"));
         assert!(smoke.contains("use std.test.expect_result_err as expect_result_err"));
         assert!(smoke.contains("use std.test.expect_result_ok as expect_result_ok"));
-        assert!(smoke.contains("use std.test.expect_status_ok as expect_status_ok"));
+        assert!(!smoke.contains("expect_status_ok"));
         assert!(smoke.contains("let numbers: [Int; 3] = [1, 2, 3]"));
         assert!(smoke.contains("let repeated: [Int; 3] = repeat_array(2)"));
         assert!(smoke.contains(
@@ -137,6 +137,7 @@ mod tests {
         assert!(smoke.contains(
             "let result_check = expect_result_ok(result_value, 6) + expect_result_err(failed, 4)"
         ));
+        assert!(smoke.contains("return expect_eq(total_check + length_check + contains_check + repeated_check + array_check + option_check + result_check, 0)"));
         assert!(!smoke.contains("result_error_to_option"));
     }
 }

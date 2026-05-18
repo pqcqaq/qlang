@@ -16,7 +16,6 @@ use std.test.expect_option_none as expect_option_none
 use std.test.expect_option_some as expect_option_some
 use std.test.expect_result_err as expect_result_err
 use std.test.expect_result_ok as expect_result_ok
-use std.test.expect_status_ok as expect_status_ok
 
 fn main() -> Int {
     let numbers: [Int; 3] = [1, 2, 3]
@@ -33,5 +32,5 @@ fn main() -> Int {
     let array_check = expect_array_eq(repeated, [2, 2, 2]) + expect_array_reverse(numbers, [3, 2, 1])
     let option_check = expect_option_some(option_value, 6) + expect_option_none(missing)
     let result_check = expect_result_ok(result_value, 6) + expect_result_err(failed, 4)
-    return expect_status_ok(total_check + length_check + contains_check + repeated_check + array_check + option_check + result_check)
+    return expect_eq(total_check + length_check + contains_check + repeated_check + array_check + option_check + result_check, 0)
 }
