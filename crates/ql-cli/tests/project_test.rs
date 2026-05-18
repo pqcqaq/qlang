@@ -5488,6 +5488,84 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_direct_project_smoke_file_combines_local_generic_and_direct_dependency_bridge() {
+    if !toolchain_available(
+        "`ql test` direct project smoke file with local generic plus direct dependency bridge",
+    ) {
+        return;
+    }
+
+    let fixture = write_dependency_smoke_project(
+        "ql-project-test-direct-file-local-generic-dependency-bridge",
+        "pub fn add(left: Int, right: Int) -> Int { return left + right }\n",
+        r#"
+use dep.add as sum
+
+fn identity[T](value: T) -> T {
+    return value
+}
+
+fn main() -> Int {
+    let value: Int = identity(sum(9, 4))
+    return value - 13
+}
+"#,
+    );
+    let workspace_root = workspace_root();
+    let smoke_path = fixture.project_root.join("tests/smoke.ql");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["test"]).arg(&smoke_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test` direct project smoke file with local generic plus direct dependency bridge",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-direct-file-local-generic-dependency-bridge",
+        "direct project smoke file combining local generic specialization and direct dependency bridge",
+        &output,
+    )
+    .expect("direct project smoke files should compose local generic and direct dependency bridges");
+    expect_empty_stderr(
+        "project-test-direct-file-local-generic-dependency-bridge",
+        "direct project smoke file combining local generic specialization and direct dependency bridge",
+        &stderr,
+    )
+    .expect("direct dependency bridge smoke file should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-direct-file-local-generic-dependency-bridge",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("direct dependency bridge smoke file should report one passing smoke test");
+    expect_file_exists(
+        "project-test-direct-file-local-generic-dependency-bridge",
+        &fixture.interface_output,
+        "synced dependency interface",
+        "`ql test` direct project smoke file with local generic plus direct dependency bridge",
+    )
+    .expect("direct dependency bridge smoke file should emit the dependency interface");
+    expect_file_exists(
+        "project-test-direct-file-local-generic-dependency-bridge",
+        &fixture.dependency_output,
+        "dependency package artifact",
+        "`ql test` direct project smoke file with local generic plus direct dependency bridge",
+    )
+    .expect("direct dependency bridge smoke file should build the dependency package artifact");
+    expect_file_exists(
+        "project-test-direct-file-local-generic-dependency-bridge",
+        &fixture.smoke_output,
+        "direct dependency bridge smoke executable",
+        "`ql test` direct project smoke file with local generic plus direct dependency bridge",
+    )
+    .expect("direct dependency bridge smoke file should emit the smoke executable");
+}
+
+#[test]
 fn test_direct_project_ui_file_uses_ui_snapshot_semantics() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-test-ui-direct-file");
