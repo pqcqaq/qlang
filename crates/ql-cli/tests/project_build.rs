@@ -897,6 +897,101 @@ default = "debug"
 }
 
 #[test]
+fn build_project_source_file_release_flag_overrides_manifest_default_profile() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-source-file-release-override");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source tree");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+
+    let _dep_manifest = temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        "extern \"c\" pub fn q_add(left: Int, right: Int) -> Int { return left + right }\n",
+    );
+    let _app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    let app_main = temp.write(
+        "app/src/main.ql",
+        "use dep.q_add as add\n\nfn main() -> Int { return add(6, 7) }\n",
+    );
+
+    let dep_output = static_library_output_path(&dep_root.join("target/ql/release"), "lib");
+    let dep_stdout_output = project_root.join("../dep/target/ql/release");
+    let app_output = project_root.join("target/ql/release/main.ll");
+    let interface_output = dep_root.join("dep.qi");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&app_main).arg("--release");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --release` direct project source file",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-source-file-release-override",
+        "direct project source file release alias build",
+        &output,
+    )
+    .expect("direct project source file `ql build --release` should succeed");
+    expect_empty_stderr(
+        "project-build-source-file-release-override",
+        "direct project source file release alias build",
+        &stderr,
+    )
+    .expect("direct project source file release alias build should not print stderr");
+    expect_stdout_contains_all(
+        "project-build-source-file-release-override",
+        &stdout.replace('\\', "/"),
+        &[
+            &format!("wrote staticlib: {}", dep_stdout_output.display()).replace('\\', "/"),
+            &format!("wrote llvm-ir: {}", app_output.display()).replace('\\', "/"),
+        ],
+    )
+    .expect("direct project source file release alias build should report release artifacts");
+    expect_file_exists(
+        "project-build-source-file-release-override",
+        &dep_output,
+        "dependency package release artifact",
+        "direct project source file release alias build",
+    )
+    .expect("direct project source file release alias build should emit dependency artifact");
+    expect_file_exists(
+        "project-build-source-file-release-override",
+        &app_output,
+        "selected package release artifact",
+        "direct project source file release alias build",
+    )
+    .expect("direct project source file release alias build should emit selected artifact");
+    expect_file_exists(
+        "project-build-source-file-release-override",
+        &interface_output,
+        "synced dependency interface",
+        "direct project source file release alias build",
+    )
+    .expect("direct project source file release alias build should keep dependency interface sync");
+    assert!(
+        !project_root.join("target/ql/debug/main.ll").exists(),
+        "direct project source file release alias build should not emit debug main artifact"
+    );
+}
+
+#[test]
 fn build_project_source_file_supports_direct_dependency_public_functions() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-source-file-public-function");

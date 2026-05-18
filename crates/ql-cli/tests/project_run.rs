@@ -623,6 +623,65 @@ default = "debug"
 }
 
 #[test]
+fn run_project_source_file_release_flag_overrides_manifest_default_profile() {
+    if !toolchain_available("`ql run --release` direct project source file test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-source-file-release-override");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src/bin"))
+        .expect("create package source tree for direct project source release run test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let main_path = temp.write("app/src/main.ql", "fn main() -> Int { return 13 }\n");
+    temp.write("app/src/bin/admin.ql", "fn main() -> Int { return 2 }\n");
+    let release_output = executable_output_path(&project_root.join("target/ql/release"), "main");
+    let debug_output = executable_output_path(&project_root.join("target/ql/debug"), "main");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&main_path).arg("--release");
+    let output = run_command_capture(
+        &mut command,
+        "`ql run --release` direct project source file",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-source-file-release-override",
+        "direct project source file release alias run",
+        &output,
+        13,
+    )
+    .expect("direct project source file `ql run --release` should execute");
+    expect_silent_output(
+        "project-run-source-file-release-override",
+        "direct project source file release alias run",
+        &stdout,
+        &stderr,
+    )
+    .expect(
+        "direct project source file release alias run should leave stdout/stderr to the program",
+    );
+    expect_file_exists(
+        "project-run-source-file-release-override",
+        &release_output,
+        "direct project source release alias executable",
+        "direct project source file release alias run",
+    )
+    .expect("direct project source file release alias run should emit the executable under the release target dir");
+    assert!(
+        !debug_output.exists(),
+        "direct project source file release alias run should not emit the debug executable"
+    );
+}
+
+#[test]
 fn run_project_path_json_reports_build_failure() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-run-project-json-build-failure");

@@ -3946,6 +3946,62 @@ fn test_direct_project_test_file_json_release_flag_overrides_manifest_default_pr
 }
 
 #[test]
+fn test_direct_project_test_file_release_flag_overrides_manifest_default_profile() {
+    if !toolchain_available(
+        "`ql test --release` direct project file manifest profile override test",
+    ) {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture = write_package_default_debug_profile_fixture("ql-project-test-release-override");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test"])
+        .arg(&fixture.smoke_path)
+        .arg("--release");
+    let output = run_command_capture(&mut command, "`ql test --release` direct project file");
+    let (stdout, stderr) = expect_success(
+        "project-test-release-override",
+        "direct project file release alias test",
+        &output,
+    )
+    .expect(
+        "direct project test file `ql test --release` should override manifest default profile",
+    );
+    expect_empty_stderr(
+        "project-test-release-override",
+        "direct project file release alias test",
+        &stderr,
+    )
+    .expect("direct project file release alias test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-release-override",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("direct project file release alias test should still run discovered smoke tests");
+    expect_file_exists(
+        "project-test-release-override",
+        &fixture.release_smoke_output,
+        "direct project file release alias smoke executable",
+        "direct project file release alias test",
+    )
+    .expect(
+        "direct project file release alias test should emit smoke test artifacts under release",
+    );
+    assert!(
+        !fixture.debug_smoke_output.exists(),
+        "direct project file release alias test should not emit debug artifacts"
+    );
+}
+
+#[test]
 fn test_direct_project_test_file_list_json_uses_manifest_default_release_profile() {
     let workspace_root = workspace_root();
     let fixture = write_package_default_release_profile_fixture(
