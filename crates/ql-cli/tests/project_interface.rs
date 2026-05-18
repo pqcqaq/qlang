@@ -1,10 +1,10 @@
 mod support;
 
 use support::{
-    TempDir, dynamic_library_output_path, expect_empty_stdout, expect_exit_code,
-    expect_file_exists, expect_snapshot_matches, expect_stderr_contains,
-    expect_stderr_not_contains, expect_stdout_contains_all, expect_success, ql_command,
-    read_normalized_file, run_command_capture, static_library_output_path, workspace_root,
+    dynamic_library_output_path, expect_empty_stdout, expect_exit_code, expect_file_exists,
+    expect_snapshot_matches, expect_stderr_contains, expect_stderr_not_contains,
+    expect_stdout_contains_all, expect_success, ql_command, read_normalized_file,
+    run_command_capture, static_library_output_path, workspace_root, TempDir,
 };
 
 #[cfg(windows)]
@@ -503,6 +503,227 @@ pub fn exported() -> Int
         &actual,
     )
     .expect("package source interface emission should match the public interface snapshot");
+}
+
+#[test]
+fn project_emit_interface_check_supports_package_source_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-package-source-check");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for package source emit-interface check test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.api
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let interface_path = project_root.join("app.qi");
+    let expected = "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.api
+
+pub fn exported() -> Int
+";
+    temp.write("workspace/app/app.qi", expected);
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--check"])
+        .arg(&source_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --check` package source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-interface-package-source-check",
+        "package source interface check",
+        &output,
+    )
+    .expect("package source interface check should succeed");
+    let normalized_stdout = stdout.replace('\\', "/");
+    expect_snapshot_matches(
+        "project-interface-package-source-check",
+        "package source interface check stdout",
+        &format!(
+            "ok interface: {}\n",
+            interface_path.display().to_string().replace('\\', "/")
+        ),
+        &normalized_stdout,
+    )
+    .expect("package source interface check should report the validated artifact path");
+    expect_snapshot_matches(
+        "project-interface-package-source-check",
+        "package source interface check stderr",
+        "",
+        &stderr,
+    )
+    .expect("package source interface check should stay silent on stderr");
+}
+
+#[test]
+fn project_emit_interface_changed_only_supports_package_source_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-package-source-changed-only");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for package source changed-only emit test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.api
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let interface_path = project_root.join("app.qi");
+    let expected = "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.api
+
+pub fn exported() -> Int
+";
+    temp.write("workspace/app/app.qi", expected);
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--changed-only"])
+        .arg(&source_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --changed-only` package source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-interface-package-source-changed-only",
+        "changed-only package source interface emission",
+        &output,
+    )
+    .expect("changed-only package source interface emission should succeed");
+    let normalized_stdout = stdout.replace('\\', "/");
+    expect_snapshot_matches(
+        "project-interface-package-source-changed-only",
+        "changed-only package source interface stdout",
+        &format!(
+            "up-to-date interface: {}\n",
+            interface_path.display().to_string().replace('\\', "/")
+        ),
+        &normalized_stdout,
+    )
+    .expect("changed-only package source interface emission should skip up-to-date artifact");
+    expect_snapshot_matches(
+        "project-interface-package-source-changed-only",
+        "changed-only package source interface stderr",
+        "",
+        &stderr,
+    )
+    .expect("changed-only package source interface emission should stay silent on stderr");
+    let actual = read_normalized_file(
+        &interface_path,
+        "changed-only package source interface artifact",
+    );
+    expect_snapshot_matches(
+        "project-interface-package-source-changed-only",
+        "changed-only package source qi artifact",
+        expected,
+        &actual,
+    )
+    .expect("changed-only package source interface emission should leave artifact unchanged");
+}
+
+#[test]
+fn project_emit_interface_check_changed_only_supports_package_source_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-package-source-check-changed-only");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for package source changed-only check test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.api
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let interface_path = project_root.join("app.qi");
+    let expected = "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.api
+
+pub fn exported() -> Int
+";
+    temp.write("workspace/app/app.qi", expected);
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--changed-only", "--check"])
+        .arg(&source_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --changed-only --check` package source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-interface-package-source-check-changed-only",
+        "changed-only package source interface check",
+        &output,
+    )
+    .expect("changed-only package source interface check should succeed");
+    let normalized_stdout = stdout.replace('\\', "/");
+    expect_snapshot_matches(
+        "project-interface-package-source-check-changed-only",
+        "changed-only package source interface check stdout",
+        &format!(
+            "up-to-date interface: {}\n",
+            interface_path.display().to_string().replace('\\', "/")
+        ),
+        &normalized_stdout,
+    )
+    .expect("changed-only package source interface check should report up-to-date artifact");
+    expect_snapshot_matches(
+        "project-interface-package-source-check-changed-only",
+        "changed-only package source interface check stderr",
+        "",
+        &stderr,
+    )
+    .expect("changed-only package source interface check should stay silent on stderr");
 }
 
 #[test]
@@ -4681,8 +4902,8 @@ name = "tool"
 }
 
 #[test]
-fn project_emit_interface_check_keeps_checking_other_workspace_members_when_one_member_manifest_is_invalid()
- {
+fn project_emit_interface_check_keeps_checking_other_workspace_members_when_one_member_manifest_is_invalid(
+) {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-check-workspace-invalid-member");
     let project_root = temp.path().join("workspace-only");
