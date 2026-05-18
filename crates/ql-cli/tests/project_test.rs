@@ -62,6 +62,15 @@ struct WorkspaceTestPackageSelectorProject {
     unselected_smoke_output: PathBuf,
 }
 
+struct WorkspacePackageUnderTestGenericBridgeProject {
+    temp: TempDir,
+    project_root: PathBuf,
+    app_library_output: PathBuf,
+    tool_library_output: PathBuf,
+    app_smoke_output: PathBuf,
+    tool_smoke_output: PathBuf,
+}
+
 struct WorkspacePackageUiFixture {
     temp: TempDir,
     project_root: PathBuf,
@@ -190,6 +199,115 @@ name = "tool"
         selected_smoke_output,
         selected_extra_output,
         unselected_smoke_output,
+    }
+}
+
+fn write_workspace_package_under_test_generic_bridge_project(
+    prefix: &str,
+) -> WorkspacePackageUnderTestGenericBridgeProject {
+    let temp = TempDir::new(prefix);
+    let project_root = temp.path().join("workspace");
+    fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create app package source tree");
+    fs::create_dir_all(project_root.join("packages/tool/src"))
+        .expect("create tool package source tree");
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        r#"
+pub fn identity[T](value: T) -> T {
+    return value
+}
+
+pub fn first[T, N](values: [T; N]) -> T {
+    return values[0]
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        r#"
+pub fn identity[T](value: T) -> T {
+    return value
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/tests/smoke.ql",
+        r#"
+use app.identity as identity
+use app.first as first
+
+fn echo[T](value: T) -> T {
+    return value
+}
+
+fn main() -> Int {
+    let value: Int = echo(identity(7))
+    let picked: Int = first([3, 4, 5])
+    return value + picked - 10
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/tests/smoke.ql",
+        r#"
+use tool.identity as identity
+
+fn echo[T](value: T) -> T {
+    return value
+}
+
+fn main() -> Int {
+    let enabled: Bool = echo(identity(true))
+    if enabled {
+        return 0
+    }
+    return 1
+}
+"#,
+    );
+
+    let app_library_output =
+        static_library_output_path(&project_root.join("packages/app/target/ql/debug"), "lib");
+    let tool_library_output =
+        static_library_output_path(&project_root.join("packages/tool/target/ql/debug"), "lib");
+    let app_smoke_output = executable_output_path(
+        &project_root.join("packages/app/target/ql/debug/tests"),
+        "smoke",
+    );
+    let tool_smoke_output = executable_output_path(
+        &project_root.join("packages/tool/target/ql/debug/tests"),
+        "smoke",
+    );
+
+    WorkspacePackageUnderTestGenericBridgeProject {
+        temp,
+        project_root,
+        app_library_output,
+        tool_library_output,
+        app_smoke_output,
+        tool_smoke_output,
     }
 }
 
@@ -5826,105 +5944,13 @@ fn test_workspace_path_runs_package_under_test_generic_bridges_for_all_members()
     }
 
     let workspace_root = workspace_root();
-    let temp = TempDir::new("ql-project-test-workspace-all-member-current-package-generic-bridge");
-    let project_root = temp.path().join("workspace");
-    fs::create_dir_all(project_root.join("packages/app/src"))
-        .expect("create app package source tree");
-    fs::create_dir_all(project_root.join("packages/tool/src"))
-        .expect("create tool package source tree");
-    temp.write(
-        "workspace/qlang.toml",
-        r#"
-[workspace]
-members = ["packages/app", "packages/tool"]
-"#,
-    );
-    temp.write(
-        "workspace/packages/app/qlang.toml",
-        r#"
-[package]
-name = "app"
-"#,
-    );
-    temp.write(
-        "workspace/packages/tool/qlang.toml",
-        r#"
-[package]
-name = "tool"
-"#,
-    );
-    temp.write(
-        "workspace/packages/app/src/lib.ql",
-        r#"
-pub fn identity[T](value: T) -> T {
-    return value
-}
-
-pub fn first[T, N](values: [T; N]) -> T {
-    return values[0]
-}
-"#,
-    );
-    temp.write(
-        "workspace/packages/tool/src/lib.ql",
-        r#"
-pub fn identity[T](value: T) -> T {
-    return value
-}
-"#,
-    );
-    temp.write(
-        "workspace/packages/app/tests/smoke.ql",
-        r#"
-use app.identity as identity
-use app.first as first
-
-fn echo[T](value: T) -> T {
-    return value
-}
-
-fn main() -> Int {
-    let value: Int = echo(identity(7))
-    let picked: Int = first([3, 4, 5])
-    return value + picked - 10
-}
-"#,
-    );
-    temp.write(
-        "workspace/packages/tool/tests/smoke.ql",
-        r#"
-use tool.identity as identity
-
-fn echo[T](value: T) -> T {
-    return value
-}
-
-fn main() -> Int {
-    let enabled: Bool = echo(identity(true))
-    if enabled {
-        return 0
-    }
-    return 1
-}
-"#,
-    );
-
-    let app_library_output =
-        static_library_output_path(&project_root.join("packages/app/target/ql/debug"), "lib");
-    let tool_library_output =
-        static_library_output_path(&project_root.join("packages/tool/target/ql/debug"), "lib");
-    let app_smoke_output = executable_output_path(
-        &project_root.join("packages/app/target/ql/debug/tests"),
-        "smoke",
-    );
-    let tool_smoke_output = executable_output_path(
-        &project_root.join("packages/tool/target/ql/debug/tests"),
-        "smoke",
+    let fixture = write_workspace_package_under_test_generic_bridge_project(
+        "ql-project-test-workspace-all-member-current-package-generic-bridge",
     );
 
     let mut command = ql_command(&workspace_root);
-    command.current_dir(temp.path());
-    command.args(["test"]).arg(&project_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["test"]).arg(&fixture.project_root);
     let output = run_command_capture(
         &mut command,
         "`ql test` workspace all-member package-under-test generic bridge",
@@ -5953,32 +5979,115 @@ fn main() -> Int {
     .expect("workspace all-member bridge test should report both passing smoke tests");
     expect_file_exists(
         "project-test-workspace-all-member-current-package-generic-bridge",
-        &app_library_output,
+        &fixture.app_library_output,
         "app package-under-test library",
         "`ql test` workspace all-member package-under-test generic bridge",
     )
     .expect("workspace all-member bridge test should build the app library");
     expect_file_exists(
         "project-test-workspace-all-member-current-package-generic-bridge",
-        &tool_library_output,
+        &fixture.tool_library_output,
         "tool package-under-test library",
         "`ql test` workspace all-member package-under-test generic bridge",
     )
     .expect("workspace all-member bridge test should build the tool library");
     expect_file_exists(
         "project-test-workspace-all-member-current-package-generic-bridge",
-        &app_smoke_output,
+        &fixture.app_smoke_output,
         "app smoke executable",
         "`ql test` workspace all-member package-under-test generic bridge",
     )
     .expect("workspace all-member bridge test should emit the app smoke executable");
     expect_file_exists(
         "project-test-workspace-all-member-current-package-generic-bridge",
-        &tool_smoke_output,
+        &fixture.tool_smoke_output,
         "tool smoke executable",
         "`ql test` workspace all-member package-under-test generic bridge",
     )
     .expect("workspace all-member bridge test should emit the tool smoke executable");
+}
+
+#[test]
+fn test_workspace_path_package_under_test_generic_bridges_report_json_success() {
+    if !toolchain_available(
+        "`ql test --json` workspace all-member package-under-test generic bridge",
+    ) {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_package_under_test_generic_bridge_project(
+        "ql-project-test-workspace-all-member-current-package-generic-bridge-json",
+    );
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["test", "--json"]).arg(&fixture.project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json` workspace all-member package-under-test generic bridge",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-workspace-all-member-current-package-generic-bridge-json",
+        "workspace all-member package-under-test generic bridge json",
+        &output,
+    )
+    .expect("workspace-path `ql test --json` should bridge every selected package under test");
+    expect_empty_stderr(
+        "project-test-workspace-all-member-current-package-generic-bridge-json",
+        "workspace all-member package-under-test generic bridge json",
+        &stderr,
+    )
+    .expect("workspace all-member bridge json test should not print stderr");
+
+    let actual = parse_json_output(
+        "project-test-workspace-all-member-current-package-generic-bridge-json",
+        &stdout,
+    );
+    let expected = serde_json::json!({
+        "schema": "ql.test.v1",
+        "path": fixture.project_root.display().to_string().replace('\\', "/"),
+        "requested_profile": "debug",
+        "profile_overridden": false,
+        "package_name": JsonValue::Null,
+        "filter": JsonValue::Null,
+        "list_only": false,
+        "status": "ok",
+        "discovered_total": 2,
+        "selected_total": 2,
+        "targets": [
+            {
+                "path": "packages/app/tests/smoke.ql",
+                "kind": "smoke",
+                "profile": "debug",
+            },
+            {
+                "path": "packages/tool/tests/smoke.ql",
+                "kind": "smoke",
+                "profile": "debug",
+            },
+        ],
+        "passed": 2,
+        "failed": 0,
+        "failures": [],
+    });
+    assert_eq!(
+        actual, expected,
+        "workspace full-member bridge json test should preserve the stable ql.test.v1 contract",
+    );
+    expect_file_exists(
+        "project-test-workspace-all-member-current-package-generic-bridge-json",
+        &fixture.app_smoke_output,
+        "app smoke executable",
+        "`ql test --json` workspace all-member package-under-test generic bridge",
+    )
+    .expect("workspace all-member bridge json test should emit the app smoke executable");
+    expect_file_exists(
+        "project-test-workspace-all-member-current-package-generic-bridge-json",
+        &fixture.tool_smoke_output,
+        "tool smoke executable",
+        "`ql test --json` workspace all-member package-under-test generic bridge",
+    )
+    .expect("workspace all-member bridge json test should emit the tool smoke executable");
 }
 
 #[test]
