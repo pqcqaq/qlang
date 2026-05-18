@@ -2749,6 +2749,40 @@ fn expected_package_profile_test_json(
     profile_overridden: bool,
     target_profile: &str,
 ) -> JsonValue {
+    expected_profile_test_json(
+        request_path,
+        "tests/smoke.ql",
+        requested_profile,
+        profile_overridden,
+        target_profile,
+        false,
+    )
+}
+
+fn expected_package_profile_test_listing_json(
+    request_path: &Path,
+    requested_profile: &str,
+    profile_overridden: bool,
+    target_profile: &str,
+) -> JsonValue {
+    expected_profile_test_json(
+        request_path,
+        "tests/smoke.ql",
+        requested_profile,
+        profile_overridden,
+        target_profile,
+        true,
+    )
+}
+
+fn expected_profile_test_json(
+    request_path: &Path,
+    target_path: &str,
+    requested_profile: &str,
+    profile_overridden: bool,
+    target_profile: &str,
+    list_only: bool,
+) -> JsonValue {
     serde_json::json!({
         "schema": "ql.test.v1",
         "path": request_path.display().to_string().replace('\\', "/"),
@@ -2756,18 +2790,18 @@ fn expected_package_profile_test_json(
         "profile_overridden": profile_overridden,
         "package_name": JsonValue::Null,
         "filter": JsonValue::Null,
-        "list_only": false,
-        "status": "ok",
+        "list_only": list_only,
+        "status": if list_only { "listed" } else { "ok" },
         "discovered_total": 1,
         "selected_total": 1,
         "targets": [
             {
-                "path": "tests/smoke.ql",
+                "path": target_path,
                 "kind": "smoke",
                 "profile": target_profile,
             }
         ],
-        "passed": 1,
+        "passed": if list_only { 0 } else { 1 },
         "failed": 0,
         "failures": [],
     })
@@ -2836,28 +2870,30 @@ fn expected_workspace_profile_test_json(
     profile_overridden: bool,
     target_profile: &str,
 ) -> JsonValue {
-    serde_json::json!({
-        "schema": "ql.test.v1",
-        "path": request_path.display().to_string().replace('\\', "/"),
-        "requested_profile": requested_profile,
-        "profile_overridden": profile_overridden,
-        "package_name": JsonValue::Null,
-        "filter": JsonValue::Null,
-        "list_only": false,
-        "status": "ok",
-        "discovered_total": 1,
-        "selected_total": 1,
-        "targets": [
-            {
-                "path": "packages/app/tests/smoke.ql",
-                "kind": "smoke",
-                "profile": target_profile,
-            }
-        ],
-        "passed": 1,
-        "failed": 0,
-        "failures": [],
-    })
+    expected_profile_test_json(
+        request_path,
+        "packages/app/tests/smoke.ql",
+        requested_profile,
+        profile_overridden,
+        target_profile,
+        false,
+    )
+}
+
+fn expected_workspace_profile_test_listing_json(
+    request_path: &Path,
+    requested_profile: &str,
+    profile_overridden: bool,
+    target_profile: &str,
+) -> JsonValue {
+    expected_profile_test_json(
+        request_path,
+        "packages/app/tests/smoke.ql",
+        requested_profile,
+        profile_overridden,
+        target_profile,
+        true,
+    )
 }
 
 #[test]
@@ -3315,6 +3351,93 @@ fn test_package_path_json_profile_override_keeps_debug_profile() {
 }
 
 #[test]
+fn test_package_path_list_json_uses_manifest_default_release_profile() {
+    let workspace_root = workspace_root();
+    let fixture = write_package_default_release_profile_fixture(
+        "ql-project-test-list-json-manifest-default-profile",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--list", "--json"])
+        .arg(&fixture.project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --list --json` manifest default profile",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-list-json-manifest-default-profile",
+        "manifest default profile test list json",
+        &output,
+    )
+    .expect("package-path `ql test --list --json` should honor manifest default profile");
+    expect_empty_stderr(
+        "project-test-list-json-manifest-default-profile",
+        "manifest default profile test list json",
+        &stderr,
+    )
+    .expect("manifest default profile test list json should not print stderr");
+
+    let actual = parse_json_output("project-test-list-json-manifest-default-profile", &stdout);
+    let expected = expected_package_profile_test_listing_json(
+        &fixture.project_root,
+        "debug",
+        false,
+        "release",
+    );
+    assert_eq!(
+        actual, expected,
+        "package-path `ql test --list --json` should expose the effective release profile"
+    );
+    assert!(
+        !fixture.debug_smoke_output.exists() && !fixture.release_smoke_output.exists(),
+        "manifest default profile list json should not emit test artifacts"
+    );
+}
+
+#[test]
+fn test_package_path_list_json_profile_override_keeps_debug_profile() {
+    let workspace_root = workspace_root();
+    let fixture =
+        write_package_default_release_profile_fixture("ql-project-test-list-json-profile-override");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--list", "--json", "--profile", "debug"])
+        .arg(&fixture.project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --list --json --profile debug` manifest profile override",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-list-json-profile-override",
+        "manifest profile override test list json",
+        &output,
+    )
+    .expect("package-path `ql test --list --json --profile debug` should keep debug profile");
+    expect_empty_stderr(
+        "project-test-list-json-profile-override",
+        "manifest profile override test list json",
+        &stderr,
+    )
+    .expect("manifest profile override test list json should not print stderr");
+
+    let actual = parse_json_output("project-test-list-json-profile-override", &stdout);
+    let expected =
+        expected_package_profile_test_listing_json(&fixture.project_root, "debug", true, "debug");
+    assert_eq!(
+        actual, expected,
+        "package-path `ql test --list --json --profile debug` should expose the explicit debug profile"
+    );
+    assert!(
+        !fixture.debug_smoke_output.exists() && !fixture.release_smoke_output.exists(),
+        "manifest profile override list json should not emit test artifacts"
+    );
+}
+
+#[test]
 fn test_workspace_path_json_uses_workspace_default_release_profile() {
     if !toolchain_available("`ql test --json` workspace default profile test") {
         return;
@@ -3414,6 +3537,94 @@ fn test_workspace_path_json_profile_override_keeps_debug_profile() {
     assert!(
         !fixture.release_smoke_output.exists(),
         "workspace profile override test json success should not emit release artifacts"
+    );
+}
+
+#[test]
+fn test_workspace_path_list_json_uses_workspace_default_release_profile() {
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_default_release_profile_fixture(
+        "ql-project-test-list-json-workspace-default-profile",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--list", "--json"])
+        .arg(&fixture.project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --list --json` workspace default profile",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-list-json-workspace-default-profile",
+        "workspace default profile test list json",
+        &output,
+    )
+    .expect("workspace-path `ql test --list --json` should honor workspace default profile");
+    expect_empty_stderr(
+        "project-test-list-json-workspace-default-profile",
+        "workspace default profile test list json",
+        &stderr,
+    )
+    .expect("workspace default profile test list json should not print stderr");
+
+    let actual = parse_json_output("project-test-list-json-workspace-default-profile", &stdout);
+    let expected = expected_workspace_profile_test_listing_json(
+        &fixture.project_root,
+        "debug",
+        false,
+        "release",
+    );
+    assert_eq!(
+        actual, expected,
+        "workspace-path `ql test --list --json` should expose the effective release profile"
+    );
+    assert!(
+        !fixture.debug_smoke_output.exists() && !fixture.release_smoke_output.exists(),
+        "workspace default profile list json should not emit test artifacts"
+    );
+}
+
+#[test]
+fn test_workspace_path_list_json_profile_override_keeps_debug_profile() {
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_default_release_profile_fixture(
+        "ql-project-test-list-json-workspace-profile-override",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--list", "--json", "--profile", "debug"])
+        .arg(&fixture.project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --list --json --profile debug` workspace profile override",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-list-json-workspace-profile-override",
+        "workspace profile override test list json",
+        &output,
+    )
+    .expect("workspace-path `ql test --list --json --profile debug` should keep debug profile");
+    expect_empty_stderr(
+        "project-test-list-json-workspace-profile-override",
+        "workspace profile override test list json",
+        &stderr,
+    )
+    .expect("workspace profile override test list json should not print stderr");
+
+    let actual = parse_json_output("project-test-list-json-workspace-profile-override", &stdout);
+    let expected =
+        expected_workspace_profile_test_listing_json(&fixture.project_root, "debug", true, "debug");
+    assert_eq!(
+        actual, expected,
+        "workspace-path `ql test --list --json --profile debug` should expose the explicit debug profile"
+    );
+    assert!(
+        !fixture.debug_smoke_output.exists() && !fixture.release_smoke_output.exists(),
+        "workspace profile override list json should not emit test artifacts"
     );
 }
 

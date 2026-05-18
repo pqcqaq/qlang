@@ -31,7 +31,7 @@
 - 继续扩大 stdlib package-local smoke、stdlib examples 和 downstream consumers 对 generic public API 的覆盖。
 - LSP 下一步重点是把 diagnostics、formatting、folding/selection、signatureHelp/inlayHint、codeLens 等请求收敛到统一 workspace analysis/cache 边界。
 - README、roadmap、stdlib、VSCode 文档必须跟实现同步；实现未落地时文档写成未支持。
-- JSON 输出要继续覆盖成功和 preflight/render/selection failure；`ql test --json` 已覆盖 workspace/package/direct UI success/failure、workspace package UI selector 成功、package/workspace default profile 与显式 profile override、直接 project test file 的 dependency generic bridge 成功报告、smoke/UI 组合 selector 成功、package selector mismatch、target selector miss 和 filter miss，`ql test --list --json` 已覆盖 workspace package UI listing、workspace package UI selector miss、direct project smoke/UI file listing 和组合 selector listing。
+- JSON 输出要继续覆盖成功和 preflight/render/selection failure；`ql test --json` 已覆盖 workspace/package/direct UI success/failure、workspace package UI selector 成功、package/workspace default profile 与显式 profile override、直接 project test file 的 dependency generic bridge 成功报告、smoke/UI 组合 selector 成功、package selector mismatch、target selector miss 和 filter miss，`ql test --list --json` 已覆盖 workspace package UI listing、workspace package UI selector miss、package/workspace default profile 与显式 profile override、direct project smoke/UI file listing 和组合 selector listing。
 
 ## 明确后置
 
