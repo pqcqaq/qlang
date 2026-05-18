@@ -42,7 +42,7 @@
 - public/local generic free function 支持 direct-call 多实例 specialization。
 - 数组长度泛型参数可在函数体内作为 `Int` 值读取。
 - dependency generic specialization 能递归处理同依赖模块内 generic helper 直调，以及 dependency generic body 内对直接依赖 generic helper 的导入调用；也能从 named/expression args、generic carrier、返回类型上下文、零参数泛型显式上下文和外层调用参数推断 direct-call specialization。未使用的 direct dependency generic import 不再触发 bridge 合成失败。
-- `ql test` 已用真实 smoke 覆盖 dependency public functions、public values、generic public functions、generic wrapper/helper specialization、public struct/type alias/method/trait bridge。
+- `ql test` 已用真实 smoke 覆盖 dependency public functions、public values、generic public functions、generic wrapper/helper specialization、public struct/type alias/method/trait bridge；直接 project test 文件也覆盖 local generic specialization 与 package-under-test public bridge 的组合路径。
 - `Option[T]`、`Result[T, E]`、`std.core` scalar/predicate/bool helpers、`std.core` / `std.array` length-generic aggregate/order/median helpers、`std.test` 泛型 equality/array/option/result/status assertions 已有真实 smoke。
 - stdlib package-local smoke 已改用 length-generic 状态数组聚合，不再保留测试内 `sum4` / `sum6` 固定 arity helper。
 - 语言级重复数组字面量 `[value; N]` 已支持整数字面量长度和数组长度泛型；`std.option` / `std.result` concrete carrier API、`std.array` 固定长度 helper 和 `std.test` typed facade 已删除。
@@ -72,7 +72,7 @@
 ## 主要缺口
 
 - `ql-cli` 主链路仍过度集中；`build/run/test/check` 的入口 request-context，以及 `project emit-interface/graph/dependencies/dependents/add/status` 的 workspace member lookup 已共享并统一了 unresolved/ambiguous member reporting；`project add-dependency/remove-dependency` 的编辑逻辑已拆出。剩余重点是继续收口 reporting 细节和真实 workspace smoke。
-- `ql test` 仍有 package-under-test bridge/source override 组合路径，需要继续抽成共享 project pipeline，并扩大到更宽 dependency-aware backend 语义。
+- `ql test` 的 package-under-test bridge/source override 已覆盖 package path 和直接 project test file 的 local generic 组合；剩余重点是继续抽成共享 project pipeline，并扩大到更宽 dependency-aware backend 语义。
 - LSP 还不是稳定 workspace service；diagnostics、references、rename、symbols 和 rich editor hints 需要统一 workspace index。
 - stdlib public API 已清掉 concrete carrier、主要固定 arity 包装和 `std.test` typed facade；`std.core` package-local smoke 已覆盖公开 scalar/predicate/bool helpers，`std.result` package-local smoke 和 `project init --stdlib` starter 已直接覆盖 generic carrier 语义与 option/result assertions。剩余重点是更完整 generic backend、共享 project pipeline 和更宽 dependency-aware backend。
 - `project init --stdlib` starter 已迁到 `stdlib/examples/starter`；后续重点是让更多 stdlib examples/downstream smoke 覆盖更宽 dependency-aware backend。

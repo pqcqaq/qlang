@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf};
 
 use ql_analysis::analyze_source;
 use ql_diagnostics::render_diagnostics;
-use ql_driver::{ToolchainOptions, discover_toolchain};
+use ql_driver::{discover_toolchain, ToolchainOptions};
 use serde_json::Value as JsonValue;
 use support::{
-    TempDir, executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
+    executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
     expect_file_exists, expect_stderr_contains, expect_stdout_contains_all, expect_success,
-    ql_command, run_command_capture, static_library_output_path, workspace_root,
+    ql_command, run_command_capture, static_library_output_path, workspace_root, TempDir,
 };
 
 fn toolchain_available(context: &str) -> bool {
@@ -5389,6 +5389,102 @@ name = "app"
         ],
     )
     .expect("package-path `ql test` should pass matching ui snapshot tests");
+}
+
+#[test]
+fn test_direct_project_smoke_file_combines_local_generic_and_package_under_test_bridge() {
+    if !toolchain_available(
+        "`ql test` direct project smoke file with local generic plus current package bridge",
+    ) {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-direct-file-local-generic-current-package-bridge");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source root for direct project smoke file bridge test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "app/src/lib.ql",
+        r#"
+pub fn score(value: Int) -> Int {
+    return value + 3
+}
+"#,
+    );
+    let smoke_path = temp.write(
+        "app/tests/smoke.ql",
+        r#"
+use app.score as score
+
+fn identity[T](value: T) -> T {
+    return value
+}
+
+fn main() -> Int {
+    let value: Int = identity(score(4))
+    if value == 7 {
+        return 0
+    }
+    return 1
+}
+"#,
+    );
+
+    let package_output = static_library_output_path(&project_root.join("target/ql/debug"), "lib");
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&smoke_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test` direct project smoke file with local generic plus current package bridge",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-direct-file-local-generic-current-package-bridge",
+        "direct project smoke file combining local generic specialization and current package bridge",
+        &output,
+    )
+    .expect(
+        "direct project smoke files should compose local generic and package-under-test bridges",
+    );
+    expect_empty_stderr(
+        "project-test-direct-file-local-generic-current-package-bridge",
+        "direct project smoke file combining local generic specialization and current package bridge",
+        &stderr,
+    )
+    .expect("direct project bridge smoke file should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-direct-file-local-generic-current-package-bridge",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("direct project bridge smoke file should report one passing smoke test");
+    expect_file_exists(
+        "project-test-direct-file-local-generic-current-package-bridge",
+        &package_output,
+        "current package library",
+        "`ql test` direct project smoke file with local generic plus current package bridge",
+    )
+    .expect("direct project bridge smoke file should build the current package library");
+    expect_file_exists(
+        "project-test-direct-file-local-generic-current-package-bridge",
+        &smoke_output,
+        "direct project bridge smoke executable",
+        "`ql test` direct project smoke file with local generic plus current package bridge",
+    )
+    .expect("direct project bridge smoke file should emit the smoke executable");
 }
 
 #[test]
