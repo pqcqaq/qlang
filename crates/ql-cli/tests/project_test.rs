@@ -6271,28 +6271,11 @@ fn main() -> Int {
 #[test]
 fn test_direct_project_ui_file_uses_ui_snapshot_semantics() {
     let workspace_root = workspace_root();
-    let temp = TempDir::new("ql-project-test-ui-direct-file");
-    let project_root = temp.path().join("app");
-    std::fs::create_dir_all(project_root.join("src")).expect("create package source root");
-    temp.write(
-        "app/qlang.toml",
-        r#"
-[package]
-name = "app"
-"#,
-    );
-    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
-    let source = "fn main() -> Int { return nope }\n";
-    let fixture_path = temp.write("app/tests/ui/type_error.ql", source);
-    fs::write(
-        fixture_path.with_extension("stderr"),
-        ui_snapshot("tests/ui/type_error.ql", source),
-    )
-    .expect("write expected ui stderr snapshot");
+    let fixture = write_direct_project_ui_fixture("ql-project-test-ui-direct-file", true);
 
     let mut command = ql_command(&workspace_root);
-    command.current_dir(temp.path());
-    command.args(["test"]).arg(&fixture_path);
+    command.current_dir(fixture.temp.path());
+    command.args(["test"]).arg(&fixture.ui_path);
     let output = run_command_capture(&mut command, "`ql test` direct project ui file");
     let (stdout, stderr) = expect_success(
         "project-test-ui-direct-file",
@@ -6315,6 +6298,147 @@ name = "app"
         ],
     )
     .expect("direct project ui file test should execute the ui snapshot workflow");
+}
+
+#[test]
+fn test_direct_project_ui_file_reports_json_success() {
+    let workspace_root = workspace_root();
+    let fixture = write_direct_project_ui_fixture("ql-project-test-ui-direct-file-json", true);
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["test", "--json"]).arg(&fixture.ui_path);
+    let output = run_command_capture(&mut command, "`ql test --json` direct project ui file");
+    let (stdout, stderr) = expect_success(
+        "project-test-ui-direct-file-json",
+        "direct project ui file json success",
+        &output,
+    )
+    .expect("direct project ui file `ql test --json` should pass");
+    expect_empty_stderr(
+        "project-test-ui-direct-file-json",
+        "direct project ui file json success",
+        &stderr,
+    )
+    .expect("direct project ui file json success should not print stderr");
+
+    let actual = parse_json_output("project-test-ui-direct-file-json", &stdout);
+    let expected = serde_json::json!({
+        "schema": "ql.test.v1",
+        "path": fixture.ui_path.display().to_string().replace('\\', "/"),
+        "requested_profile": "debug",
+        "profile_overridden": false,
+        "package_name": JsonValue::Null,
+        "filter": JsonValue::Null,
+        "list_only": false,
+        "status": "ok",
+        "discovered_total": 1,
+        "selected_total": 1,
+        "targets": [
+            direct_project_ui_json_target(),
+        ],
+        "passed": 1,
+        "failed": 0,
+        "failures": [],
+    });
+    assert_eq!(
+        actual, expected,
+        "direct project ui file json success should preserve the stable json contract"
+    );
+}
+
+#[test]
+fn test_direct_project_ui_file_json_reports_snapshot_mismatch() {
+    let workspace_root = workspace_root();
+    let fixture =
+        write_direct_project_ui_fixture("ql-project-test-ui-direct-file-mismatch-json", false);
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["test", "--json"]).arg(&fixture.ui_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json` direct project ui file mismatch",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-test-ui-direct-file-mismatch-json",
+        "direct project ui file mismatch json",
+        &output,
+        1,
+    )
+    .expect("direct project ui file `ql test --json` should fail on snapshot mismatch");
+    expect_empty_stderr(
+        "project-test-ui-direct-file-mismatch-json",
+        "direct project ui file mismatch json",
+        &stderr,
+    )
+    .expect("direct project ui file mismatch json should stay on stdout");
+
+    let json = parse_json_output("project-test-ui-direct-file-mismatch-json", &stdout);
+    assert_eq!(json["schema"], "ql.test.v1");
+    assert_eq!(
+        json["path"],
+        fixture.ui_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["discovered_total"], 1);
+    assert_eq!(json["selected_total"], 1);
+    assert_eq!(
+        json["targets"],
+        serde_json::json!([direct_project_ui_json_target()])
+    );
+    assert_eq!(json["passed"], 0);
+    assert_eq!(json["failed"], 1);
+    assert_eq!(json["failures"][0]["path"], "tests/ui/type_error.ql");
+    assert_eq!(json["failures"][0]["kind"], "ui");
+    assert!(
+        json["failures"][0]["detail"]
+            .as_str()
+            .expect("direct project ui mismatch json should expose detail")
+            .contains("ui stderr snapshot mismatch"),
+        "direct project ui mismatch json should describe snapshot mismatch: {json}"
+    );
+}
+
+struct DirectProjectUiFixture {
+    temp: TempDir,
+    ui_path: PathBuf,
+}
+
+fn write_direct_project_ui_fixture(
+    prefix: &str,
+    matching_snapshot: bool,
+) -> DirectProjectUiFixture {
+    let temp = TempDir::new(prefix);
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source root");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    let source = "fn main() -> Int { return nope }\n";
+    let ui_path = temp.write("app/tests/ui/type_error.ql", source);
+    let snapshot = if matching_snapshot {
+        ui_snapshot("tests/ui/type_error.ql", source)
+    } else {
+        "error: wrong snapshot\n".to_owned()
+    };
+    fs::write(ui_path.with_extension("stderr"), snapshot)
+        .expect("write expected ui stderr snapshot");
+
+    DirectProjectUiFixture { temp, ui_path }
+}
+
+fn direct_project_ui_json_target() -> JsonValue {
+    serde_json::json!({
+        "path": "tests/ui/type_error.ql",
+        "kind": "ui",
+        "profile": JsonValue::Null,
+    })
 }
 
 #[test]
