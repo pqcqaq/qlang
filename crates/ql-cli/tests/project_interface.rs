@@ -423,6 +423,89 @@ pub type Pair = (Int, Int)
 }
 
 #[test]
+fn project_emit_interface_supports_package_source_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-package-source");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for package source emit-interface test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.api
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let interface_path = project_root.join("app.qi");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&source_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface` package source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-interface-package-source",
+        "package source interface emission",
+        &output,
+    )
+    .expect("package source interface emission should succeed");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_interface_path = interface_path.to_string_lossy().replace('\\', "/");
+    expect_snapshot_matches(
+        "project-interface-package-source",
+        "project interface source stdout",
+        &format!("wrote interface: {normalized_interface_path}\n"),
+        &normalized_stdout,
+    )
+    .expect("package source interface emission should report the written artifact path");
+    expect_snapshot_matches(
+        "project-interface-package-source",
+        "project interface source stderr",
+        "",
+        &stderr,
+    )
+    .expect("package source interface emission should stay silent on stderr");
+    expect_file_exists(
+        "project-interface-package-source",
+        &interface_path,
+        "generated interface",
+        "project interface emission from source path",
+    )
+    .expect("package source interface emission should create the default package qi artifact");
+
+    let expected = "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.api
+
+pub fn exported() -> Int
+";
+    let actual = read_normalized_file(&interface_path, "generated qi artifact from source path");
+    expect_snapshot_matches(
+        "project-interface-package-source",
+        "generated qi artifact from source path",
+        expected,
+        &actual,
+    )
+    .expect("package source interface emission should match the public interface snapshot");
+}
+
+#[test]
 fn project_emit_interface_reports_all_failing_package_sources() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-package-source-failures");
