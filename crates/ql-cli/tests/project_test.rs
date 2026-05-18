@@ -234,6 +234,54 @@ fn expect_dependency_smoke_project_passes(
     .expect("dependency smoke project should emit the smoke test executable");
 }
 
+fn expect_direct_dependency_smoke_file_passes(
+    case_name: &str,
+    action: &str,
+    command_description: &str,
+    fixture: &DependencySmokeProject,
+) {
+    let workspace_root = workspace_root();
+    let smoke_path = fixture.project_root.join("tests/smoke.ql");
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["test"]).arg(&smoke_path);
+    let output = run_command_capture(&mut command, command_description);
+    let (stdout, stderr) = expect_success(case_name, action, &output)
+        .expect("direct dependency smoke file should pass `ql test`");
+    expect_empty_stderr(case_name, action, &stderr)
+        .expect("direct dependency smoke file should not print stderr");
+    expect_stdout_contains_all(
+        case_name,
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("direct dependency smoke file should report one passing smoke test");
+    expect_file_exists(
+        case_name,
+        &fixture.interface_output,
+        "synced dependency interface",
+        action,
+    )
+    .expect("direct dependency smoke file should emit the dependency interface");
+    expect_file_exists(
+        case_name,
+        &fixture.dependency_output,
+        "dependency package artifact",
+        action,
+    )
+    .expect("direct dependency smoke file should build the dependency package artifact");
+    expect_file_exists(
+        case_name,
+        &fixture.smoke_output,
+        "direct dependency smoke executable",
+        action,
+    )
+    .expect("direct dependency smoke file should emit the smoke executable");
+}
+
 #[test]
 fn test_single_file_runs_as_smoke_test() {
     if !toolchain_available("`ql test` single-file test") {
@@ -5511,58 +5559,12 @@ fn main() -> Int {
 }
 "#,
     );
-    let workspace_root = workspace_root();
-    let smoke_path = fixture.project_root.join("tests/smoke.ql");
-
-    let mut command = ql_command(&workspace_root);
-    command.current_dir(fixture.temp.path());
-    command.args(["test"]).arg(&smoke_path);
-    let output = run_command_capture(
-        &mut command,
+    expect_direct_dependency_smoke_file_passes(
+        "project-test-direct-file-local-generic-dependency-bridge",
+        "direct project smoke file combining local generic specialization and direct dependency bridge",
         "`ql test` direct project smoke file with local generic plus direct dependency bridge",
+        &fixture,
     );
-    let (stdout, stderr) = expect_success(
-        "project-test-direct-file-local-generic-dependency-bridge",
-        "direct project smoke file combining local generic specialization and direct dependency bridge",
-        &output,
-    )
-    .expect("direct project smoke files should compose local generic and direct dependency bridges");
-    expect_empty_stderr(
-        "project-test-direct-file-local-generic-dependency-bridge",
-        "direct project smoke file combining local generic specialization and direct dependency bridge",
-        &stderr,
-    )
-    .expect("direct dependency bridge smoke file should not print stderr");
-    expect_stdout_contains_all(
-        "project-test-direct-file-local-generic-dependency-bridge",
-        &stdout.replace('\\', "/"),
-        &[
-            "test tests/smoke.ql ... ok",
-            "test result: ok. 1 passed; 0 failed",
-        ],
-    )
-    .expect("direct dependency bridge smoke file should report one passing smoke test");
-    expect_file_exists(
-        "project-test-direct-file-local-generic-dependency-bridge",
-        &fixture.interface_output,
-        "synced dependency interface",
-        "`ql test` direct project smoke file with local generic plus direct dependency bridge",
-    )
-    .expect("direct dependency bridge smoke file should emit the dependency interface");
-    expect_file_exists(
-        "project-test-direct-file-local-generic-dependency-bridge",
-        &fixture.dependency_output,
-        "dependency package artifact",
-        "`ql test` direct project smoke file with local generic plus direct dependency bridge",
-    )
-    .expect("direct dependency bridge smoke file should build the dependency package artifact");
-    expect_file_exists(
-        "project-test-direct-file-local-generic-dependency-bridge",
-        &fixture.smoke_output,
-        "direct dependency bridge smoke executable",
-        "`ql test` direct project smoke file with local generic plus direct dependency bridge",
-    )
-    .expect("direct dependency bridge smoke file should emit the smoke executable");
 }
 
 #[test]
@@ -5593,58 +5595,47 @@ fn main() -> Int {
 }
 "#,
     );
-    let workspace_root = workspace_root();
-    let smoke_path = fixture.project_root.join("tests/smoke.ql");
-
-    let mut command = ql_command(&workspace_root);
-    command.current_dir(fixture.temp.path());
-    command.args(["test"]).arg(&smoke_path);
-    let output = run_command_capture(
-        &mut command,
+    expect_direct_dependency_smoke_file_passes(
+        "project-test-direct-file-dependency-generic-bridge",
+        "direct project smoke file dependency generic bridge",
         "`ql test` direct project smoke file dependency generic bridge",
+        &fixture,
     );
-    let (stdout, stderr) = expect_success(
-        "project-test-direct-file-dependency-generic-bridge",
-        "direct project smoke file dependency generic bridge",
-        &output,
-    )
-    .expect("direct project smoke files should keep dependency generic bridge specialization");
-    expect_empty_stderr(
-        "project-test-direct-file-dependency-generic-bridge",
-        "direct project smoke file dependency generic bridge",
-        &stderr,
-    )
-    .expect("direct project dependency generic bridge should not print stderr");
-    expect_stdout_contains_all(
-        "project-test-direct-file-dependency-generic-bridge",
-        &stdout.replace('\\', "/"),
-        &[
-            "test tests/smoke.ql ... ok",
-            "test result: ok. 1 passed; 0 failed",
-        ],
-    )
-    .expect("direct project dependency generic bridge should report one passing smoke test");
-    expect_file_exists(
-        "project-test-direct-file-dependency-generic-bridge",
-        &fixture.interface_output,
-        "synced dependency interface",
-        "`ql test` direct project smoke file dependency generic bridge",
-    )
-    .expect("direct project dependency generic bridge should emit the dependency interface");
-    expect_file_exists(
-        "project-test-direct-file-dependency-generic-bridge",
-        &fixture.dependency_output,
-        "dependency package artifact",
-        "`ql test` direct project smoke file dependency generic bridge",
-    )
-    .expect("direct project dependency generic bridge should build the dependency artifact");
-    expect_file_exists(
-        "project-test-direct-file-dependency-generic-bridge",
-        &fixture.smoke_output,
-        "direct project dependency generic smoke executable",
-        "`ql test` direct project smoke file dependency generic bridge",
-    )
-    .expect("direct project dependency generic bridge should emit the smoke executable");
+}
+
+#[test]
+fn test_direct_project_smoke_file_supports_dependency_generic_wrapper_helper_bridge() {
+    if !toolchain_available(
+        "`ql test` direct project smoke file dependency generic wrapper helper bridge",
+    ) {
+        return;
+    }
+
+    let fixture = write_dependency_smoke_project(
+        "ql-project-test-direct-file-dependency-generic-wrapper-helper",
+        r#"
+pub fn first[T, N](values: [T; N]) -> T {
+    return values[0]
+}
+
+pub fn first_wrapped[T, N](values: [T; N]) -> T {
+    return first(values)
+}
+"#,
+        r#"
+use dep.first_wrapped as first_wrapped
+
+fn main() -> Int {
+    return first_wrapped([7, 8, 9]) - 7
+}
+"#,
+    );
+    expect_direct_dependency_smoke_file_passes(
+        "project-test-direct-file-dependency-generic-wrapper-helper",
+        "direct project smoke file dependency generic wrapper helper bridge",
+        "`ql test` direct project smoke file dependency generic wrapper helper bridge",
+        &fixture,
+    );
 }
 
 #[test]
