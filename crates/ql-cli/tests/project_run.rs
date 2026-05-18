@@ -1,11 +1,11 @@
 mod support;
 
-use ql_driver::{discover_toolchain, ToolchainOptions};
+use ql_driver::{ToolchainOptions, discover_toolchain};
 use serde_json::Value as JsonValue;
 use support::{
-    executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
+    TempDir, executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
     expect_file_exists, expect_silent_output, expect_stderr_contains, expect_success, ql_command,
-    run_command_capture, static_library_output_path, workspace_root, TempDir,
+    run_command_capture, static_library_output_path, workspace_root,
 };
 
 fn toolchain_available(context: &str) -> bool {
@@ -975,7 +975,7 @@ name = "app"
     );
 }
 
-struct PackageDefaultReleaseRunFixture {
+struct PackageRunProfileFixture {
     temp: TempDir,
     project_root: std::path::PathBuf,
     manifest_path: std::path::PathBuf,
@@ -983,33 +983,44 @@ struct PackageDefaultReleaseRunFixture {
     release_output: std::path::PathBuf,
 }
 
-fn write_package_default_release_run_fixture(prefix: &str) -> PackageDefaultReleaseRunFixture {
+fn write_package_run_profile_fixture(
+    prefix: &str,
+    default_profile: &str,
+) -> PackageRunProfileFixture {
     let temp = TempDir::new(prefix);
     let project_root = temp.path().join("app");
     std::fs::create_dir_all(project_root.join("src"))
-        .expect("create package source tree for default release profile run test");
-    let manifest_path = temp.write(
-        "app/qlang.toml",
+        .expect("create package source tree for profile run test");
+    let manifest = format!(
         r#"
 [package]
 name = "app"
 
 [profile]
-default = "release"
+default = "{default_profile}"
 "#,
     );
+    let manifest_path = temp.write("app/qlang.toml", &manifest);
     temp.write("app/src/main.ql", "fn main() -> Int { return 13 }\n");
 
     let debug_output = executable_output_path(&project_root.join("target/ql/debug"), "main");
     let release_output = executable_output_path(&project_root.join("target/ql/release"), "main");
 
-    PackageDefaultReleaseRunFixture {
+    PackageRunProfileFixture {
         temp,
         project_root,
         manifest_path,
         debug_output,
         release_output,
     }
+}
+
+fn write_package_default_release_run_fixture(prefix: &str) -> PackageRunProfileFixture {
+    write_package_run_profile_fixture(prefix, "release")
+}
+
+fn write_package_default_debug_run_fixture(prefix: &str) -> PackageRunProfileFixture {
+    write_package_run_profile_fixture(prefix, "debug")
 }
 
 struct WorkspaceDefaultReleaseRunFixture {
@@ -1069,6 +1080,7 @@ fn expect_default_release_run_profile_json(
     command_path: &std::path::PathBuf,
     project_manifest_path: &std::path::PathBuf,
     target_manifest_path: &std::path::PathBuf,
+    requested_profile: &str,
     profile_overridden: bool,
     target_profile: &str,
     artifact_path: &std::path::PathBuf,
@@ -1086,7 +1098,7 @@ fn expect_default_release_run_profile_json(
             .to_string()
             .replace('\\', "/")
     );
-    assert_eq!(json["requested_profile"], "debug");
+    assert_eq!(json["requested_profile"], requested_profile);
     assert_eq!(json["profile_overridden"], profile_overridden);
     assert_eq!(json["program_args"], serde_json::json!([]));
     assert_eq!(json["status"], "completed");
@@ -1197,6 +1209,49 @@ fn run_package_path_profile_flag_overrides_manifest_default_profile() {
 }
 
 #[test]
+fn run_package_path_release_flag_overrides_manifest_default_profile() {
+    if !toolchain_available("`ql run --release` manifest profile test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture = write_package_default_debug_run_fixture("ql-project-run-release-override");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["run"])
+        .arg(&fixture.project_root)
+        .arg("--release");
+    let output = run_command_capture(&mut command, "`ql run --release` manifest override");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-release-override",
+        "manifest release alias override run",
+        &output,
+        13,
+    )
+    .expect("package-path `ql run --release` should override manifest default");
+    expect_silent_output(
+        "project-run-release-override",
+        "manifest release alias override run",
+        &stdout,
+        &stderr,
+    )
+    .expect("manifest release alias override run should leave stdout/stderr to the program");
+    expect_file_exists(
+        "project-run-release-override",
+        &fixture.release_output,
+        "manifest release alias override executable",
+        "manifest release alias override run",
+    )
+    .expect("manifest release alias override run should emit release executable");
+    assert!(
+        !fixture.debug_output.exists(),
+        "manifest release alias override run should not emit debug executable"
+    );
+}
+
+#[test]
 fn run_package_path_json_uses_manifest_default_release_profile() {
     if !toolchain_available("`ql run --json` manifest profile test") {
         return;
@@ -1234,6 +1289,7 @@ fn run_package_path_json_uses_manifest_default_release_profile() {
         &fixture.project_root,
         &fixture.manifest_path,
         &fixture.manifest_path,
+        "debug",
         false,
         "release",
         &fixture.release_output,
@@ -1291,6 +1347,7 @@ fn run_package_path_json_profile_flag_overrides_manifest_default_profile() {
         &fixture.project_root,
         &fixture.manifest_path,
         &fixture.manifest_path,
+        "debug",
         true,
         "debug",
         &fixture.debug_output,
@@ -1305,6 +1362,61 @@ fn run_package_path_json_profile_flag_overrides_manifest_default_profile() {
     assert!(
         !fixture.release_output.exists(),
         "manifest profile override run json should not emit release executable"
+    );
+}
+
+#[test]
+fn run_package_path_json_release_flag_overrides_manifest_default_profile() {
+    if !toolchain_available("`ql run --json --release` manifest profile test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture = write_package_default_debug_run_fixture("ql-project-run-json-release-override");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["run"])
+        .arg(&fixture.project_root)
+        .args(["--json", "--release"]);
+    let output = run_command_capture(&mut command, "`ql run --json --release` manifest override");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-json-release-override",
+        "manifest release alias override run json",
+        &output,
+        13,
+    )
+    .expect("package-path `ql run --json --release` should override manifest default");
+    expect_empty_stderr(
+        "project-run-json-release-override",
+        "manifest release alias override run json",
+        &stderr,
+    )
+    .expect("manifest release alias override run json should not print stderr");
+
+    let json = parse_json_output("project-run-json-release-override", &stdout);
+    expect_default_release_run_profile_json(
+        "project-run-json-release-override",
+        &json,
+        &fixture.project_root,
+        &fixture.manifest_path,
+        &fixture.manifest_path,
+        "release",
+        true,
+        "release",
+        &fixture.release_output,
+    );
+    expect_file_exists(
+        "project-run-json-release-override",
+        &fixture.release_output,
+        "manifest release alias override run json executable",
+        "manifest release alias override run json",
+    )
+    .expect("manifest release alias override run json should emit release executable");
+    assert!(
+        !fixture.debug_output.exists(),
+        "manifest release alias override run json should not emit debug executable"
     );
 }
 
@@ -1427,6 +1539,7 @@ fn run_workspace_path_json_uses_workspace_default_release_profile() {
         &fixture.project_root,
         &fixture.workspace_manifest,
         &fixture.app_manifest,
+        "debug",
         false,
         "release",
         &fixture.release_output,
@@ -1486,6 +1599,7 @@ fn run_workspace_path_json_profile_flag_overrides_workspace_default_profile() {
         &fixture.project_root,
         &fixture.workspace_manifest,
         &fixture.app_manifest,
+        "debug",
         true,
         "debug",
         &fixture.debug_output,

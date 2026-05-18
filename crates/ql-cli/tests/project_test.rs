@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf};
 
 use ql_analysis::analyze_source;
 use ql_diagnostics::render_diagnostics;
-use ql_driver::{discover_toolchain, ToolchainOptions};
+use ql_driver::{ToolchainOptions, discover_toolchain};
 use serde_json::Value as JsonValue;
 use support::{
-    executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
+    TempDir, executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
     expect_file_exists, expect_stderr_contains, expect_stdout_contains_all, expect_success,
-    ql_command, run_command_capture, static_library_output_path, workspace_root, TempDir,
+    ql_command, run_command_capture, static_library_output_path, workspace_root,
 };
 
 fn toolchain_available(context: &str) -> bool {
@@ -2753,6 +2753,56 @@ fn test_package_path_profile_override_keeps_debug_profile() {
     );
 }
 
+#[test]
+fn test_package_path_release_flag_overrides_manifest_default_profile() {
+    if !toolchain_available("`ql test --release` manifest profile override test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture = write_package_default_debug_profile_fixture("ql-project-test-release-override");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test"])
+        .arg(&fixture.project_root)
+        .arg("--release");
+    let output = run_command_capture(&mut command, "`ql test --release` manifest override");
+    let (stdout, stderr) = expect_success(
+        "project-test-release-override",
+        "manifest release alias override test",
+        &output,
+    )
+    .expect("package-path `ql test --release` should override manifest default profile");
+    expect_empty_stderr(
+        "project-test-release-override",
+        "manifest release alias override test",
+        &stderr,
+    )
+    .expect("manifest release alias override test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-release-override",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("manifest release alias override test should still run discovered smoke tests");
+    expect_file_exists(
+        "project-test-release-override",
+        &fixture.release_smoke_output,
+        "manifest release alias override smoke executable",
+        "manifest release alias override test",
+    )
+    .expect("manifest release alias override test should emit smoke test artifacts under release");
+    assert!(
+        !fixture.debug_smoke_output.exists(),
+        "manifest release alias override test should not emit debug artifacts"
+    );
+}
+
 struct PackageDefaultReleaseProfileFixture {
     temp: TempDir,
     project_root: PathBuf,
@@ -2761,23 +2811,24 @@ struct PackageDefaultReleaseProfileFixture {
     release_smoke_output: PathBuf,
 }
 
-fn write_package_default_release_profile_fixture(
+fn write_package_profile_fixture(
     prefix: &str,
+    default_profile: &str,
 ) -> PackageDefaultReleaseProfileFixture {
     let temp = TempDir::new(prefix);
     let project_root = temp.path().join("app");
     std::fs::create_dir_all(project_root.join("src"))
-        .expect("create package source root for default release profile test");
-    temp.write(
-        "app/qlang.toml",
+        .expect("create package source root for profile test");
+    let manifest = format!(
         r#"
 [package]
 name = "app"
 
 [profile]
-default = "release"
+default = "{default_profile}"
 "#,
     );
+    temp.write("app/qlang.toml", &manifest);
     temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
     let smoke_path = temp.write("app/tests/smoke.ql", "fn main() -> Int { return 0 }\n");
 
@@ -2793,6 +2844,18 @@ default = "release"
         debug_smoke_output,
         release_smoke_output,
     }
+}
+
+fn write_package_default_release_profile_fixture(
+    prefix: &str,
+) -> PackageDefaultReleaseProfileFixture {
+    write_package_profile_fixture(prefix, "release")
+}
+
+fn write_package_default_debug_profile_fixture(
+    prefix: &str,
+) -> PackageDefaultReleaseProfileFixture {
+    write_package_profile_fixture(prefix, "debug")
 }
 
 fn expected_package_profile_test_json(
@@ -3508,6 +3571,58 @@ fn test_package_path_json_profile_override_keeps_debug_profile() {
     assert!(
         !fixture.release_smoke_output.exists(),
         "manifest profile override test json success should not emit release artifacts"
+    );
+}
+
+#[test]
+fn test_package_path_json_release_flag_overrides_manifest_default_profile() {
+    if !toolchain_available("`ql test --json --release` manifest profile override test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture =
+        write_package_default_debug_profile_fixture("ql-project-test-json-release-override");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--json", "--release"])
+        .arg(&fixture.project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json --release` manifest profile override",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-json-release-override",
+        "manifest release alias override test json success",
+        &output,
+    )
+    .expect("package-path `ql test --json --release` should override manifest default profile");
+    expect_empty_stderr(
+        "project-test-json-release-override",
+        "manifest release alias override test json success",
+        &stderr,
+    )
+    .expect("manifest release alias override test json success should not print stderr");
+
+    let actual = parse_json_output("project-test-json-release-override", &stdout);
+    let expected =
+        expected_package_profile_test_json(&fixture.project_root, "release", true, "release");
+    assert_eq!(
+        actual, expected,
+        "package-path `ql test --json --release` should report explicit release profile override"
+    );
+    expect_file_exists(
+        "project-test-json-release-override",
+        &fixture.release_smoke_output,
+        "manifest release alias override json smoke executable",
+        "manifest release alias override test json success",
+    )
+    .expect("manifest release alias override test json success should emit release artifact");
+    assert!(
+        !fixture.debug_smoke_output.exists(),
+        "manifest release alias override test json success should not emit debug artifact"
     );
 }
 

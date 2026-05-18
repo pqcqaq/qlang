@@ -4,9 +4,9 @@ use std::path::PathBuf;
 
 use serde_json::Value as JsonValue;
 use support::{
-    expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_file_exists,
+    TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_file_exists,
     expect_stdout_contains_all, expect_success, ql_command, read_normalized_file,
-    run_command_capture, static_library_output_path, workspace_root, TempDir,
+    run_command_capture, static_library_output_path, workspace_root,
 };
 
 fn normalize_output_text(text: &str) -> String {
@@ -6076,7 +6076,7 @@ name = "app"
     );
 }
 
-struct PackageDefaultReleaseBuildFixture {
+struct PackageBuildProfileFixture {
     temp: TempDir,
     project_root: PathBuf,
     manifest_path: PathBuf,
@@ -6085,28 +6085,31 @@ struct PackageDefaultReleaseBuildFixture {
     interface_output: PathBuf,
 }
 
-fn write_package_default_release_build_fixture(prefix: &str) -> PackageDefaultReleaseBuildFixture {
+fn write_package_build_profile_fixture(
+    prefix: &str,
+    default_profile: &str,
+) -> PackageBuildProfileFixture {
     let temp = TempDir::new(prefix);
     let project_root = temp.path().join("app");
     std::fs::create_dir_all(project_root.join("src"))
-        .expect("create package source tree for default release profile build test");
-    let manifest_path = temp.write(
-        "app/qlang.toml",
+        .expect("create package source tree for profile build test");
+    let manifest = format!(
         r#"
 [package]
 name = "app"
 
 [profile]
-default = "release"
+default = "{default_profile}"
 "#,
     );
+    let manifest_path = temp.write("app/qlang.toml", &manifest);
     temp.write("app/src/lib.ql", "pub fn util() -> Int { return 1 }\n");
 
     let debug_output = static_library_output_path(&project_root.join("target/ql/debug"), "lib");
     let release_output = static_library_output_path(&project_root.join("target/ql/release"), "lib");
     let interface_output = project_root.join("app.qi");
 
-    PackageDefaultReleaseBuildFixture {
+    PackageBuildProfileFixture {
         temp,
         project_root,
         manifest_path,
@@ -6173,12 +6176,21 @@ name = "app"
     }
 }
 
-fn expect_default_release_build_profile_json(
+fn write_package_default_release_build_fixture(prefix: &str) -> PackageBuildProfileFixture {
+    write_package_build_profile_fixture(prefix, "release")
+}
+
+fn write_package_default_debug_build_fixture(prefix: &str) -> PackageBuildProfileFixture {
+    write_package_build_profile_fixture(prefix, "debug")
+}
+
+fn expect_build_profile_json(
     case_name: &str,
     json: &JsonValue,
     command_path: &PathBuf,
     project_manifest_path: &PathBuf,
     target_manifest_path: &PathBuf,
+    requested_profile: &str,
     profile_overridden: bool,
     target_profile: &str,
     artifact_path: &PathBuf,
@@ -6198,7 +6210,7 @@ fn expect_default_release_build_profile_json(
             .replace('\\', "/")
     );
     assert_eq!(json["requested_emit"], "llvm-ir");
-    assert_eq!(json["requested_profile"], "debug");
+    assert_eq!(json["requested_profile"], requested_profile);
     assert_eq!(json["profile_overridden"], profile_overridden);
     assert_eq!(json["emit_interface"], false);
     assert_eq!(json["status"], "ok");
@@ -6319,6 +6331,49 @@ fn build_package_path_profile_flag_overrides_manifest_default_profile() {
 }
 
 #[test]
+fn build_package_path_release_flag_overrides_manifest_default_profile() {
+    let workspace_root = workspace_root();
+    let fixture = write_package_default_debug_build_fixture("ql-project-build-release-override");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["build"])
+        .arg(&fixture.project_root)
+        .arg("--release");
+    let output = run_command_capture(&mut command, "`ql build --release` manifest override");
+    let (stdout, stderr) = expect_success(
+        "project-build-release-override",
+        "manifest release alias override build",
+        &output,
+    )
+    .expect("package-path `ql build --release` should override the manifest default");
+    expect_empty_stderr(
+        "project-build-release-override",
+        "manifest release alias override build",
+        &stderr,
+    )
+    .expect("manifest release alias override build should not print stderr");
+    expect_stdout_contains_all(
+        "project-build-release-override",
+        &stdout.replace('\\', "/"),
+        &[&format!("wrote staticlib: {}", fixture.release_output.display()).replace('\\', "/")],
+    )
+    .expect("`--release` should write artifacts under the release profile");
+    expect_file_exists(
+        "project-build-release-override",
+        &fixture.release_output,
+        "manifest release alias override artifact",
+        "manifest release alias override build",
+    )
+    .expect("release alias override build should emit the release artifact");
+    assert!(
+        !fixture.debug_output.exists(),
+        "`ql build --release` should not silently fall back to the manifest-selected debug profile"
+    );
+}
+
+#[test]
 fn build_package_path_json_uses_manifest_default_release_profile() {
     let workspace_root = workspace_root();
     let fixture = write_package_default_release_build_fixture(
@@ -6346,12 +6401,13 @@ fn build_package_path_json_uses_manifest_default_release_profile() {
     .expect("manifest default profile build json should not print stderr");
 
     let json = parse_json_output("project-build-json-manifest-default-profile", &stdout);
-    expect_default_release_build_profile_json(
+    expect_build_profile_json(
         "project-build-json-manifest-default-profile",
         &json,
         &fixture.project_root,
         &fixture.manifest_path,
         &fixture.manifest_path,
+        "debug",
         false,
         "release",
         &fixture.release_output,
@@ -6400,12 +6456,13 @@ fn build_package_path_json_profile_flag_overrides_manifest_default_profile() {
     .expect("manifest profile override build json should not print stderr");
 
     let json = parse_json_output("project-build-json-profile-override", &stdout);
-    expect_default_release_build_profile_json(
+    expect_build_profile_json(
         "project-build-json-profile-override",
         &json,
         &fixture.project_root,
         &fixture.manifest_path,
         &fixture.manifest_path,
+        "debug",
         true,
         "debug",
         &fixture.debug_output,
@@ -6421,6 +6478,61 @@ fn build_package_path_json_profile_flag_overrides_manifest_default_profile() {
     assert!(
         !fixture.release_output.exists(),
         "manifest profile override build json should not emit release artifact"
+    );
+}
+
+#[test]
+fn build_package_path_json_release_flag_overrides_manifest_default_profile() {
+    let workspace_root = workspace_root();
+    let fixture =
+        write_package_default_debug_build_fixture("ql-project-build-json-release-override");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["build"])
+        .arg(&fixture.project_root)
+        .args(["--json", "--release"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json --release` manifest override",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-json-release-override",
+        "manifest release alias override build json",
+        &output,
+    )
+    .expect("package-path `ql build --json --release` should override manifest default");
+    expect_empty_stderr(
+        "project-build-json-release-override",
+        "manifest release alias override build json",
+        &stderr,
+    )
+    .expect("manifest release alias override build json should not print stderr");
+
+    let json = parse_json_output("project-build-json-release-override", &stdout);
+    expect_build_profile_json(
+        "project-build-json-release-override",
+        &json,
+        &fixture.project_root,
+        &fixture.manifest_path,
+        &fixture.manifest_path,
+        "release",
+        true,
+        "release",
+        &fixture.release_output,
+        Some(&fixture.interface_output),
+    );
+    expect_file_exists(
+        "project-build-json-release-override",
+        &fixture.release_output,
+        "manifest release alias override json artifact",
+        "manifest release alias override build json",
+    )
+    .expect("manifest release alias override build json should emit release artifact");
+    assert!(
+        !fixture.debug_output.exists(),
+        "manifest release alias override build json should not emit debug artifact"
     );
 }
 
@@ -6539,12 +6651,13 @@ fn build_workspace_path_json_uses_workspace_default_release_profile() {
     .expect("workspace default profile build json should not print stderr");
 
     let json = parse_json_output("project-build-json-workspace-default-profile", &stdout);
-    expect_default_release_build_profile_json(
+    expect_build_profile_json(
         "project-build-json-workspace-default-profile",
         &json,
         &fixture.project_root,
         &fixture.workspace_manifest,
         &fixture.app_manifest,
+        "debug",
         false,
         "release",
         &fixture.release_output,
@@ -6594,12 +6707,13 @@ fn build_workspace_path_json_profile_flag_overrides_workspace_default_profile() 
     .expect("workspace profile override build json should not print stderr");
 
     let json = parse_json_output("project-build-json-workspace-profile-override", &stdout);
-    expect_default_release_build_profile_json(
+    expect_build_profile_json(
         "project-build-json-workspace-profile-override",
         &json,
         &fixture.project_root,
         &fixture.workspace_manifest,
         &fixture.app_manifest,
+        "debug",
         true,
         "debug",
         &fixture.debug_output,
