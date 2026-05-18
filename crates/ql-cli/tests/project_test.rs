@@ -3341,33 +3341,12 @@ fn test_package_path_lists_discovered_tests_as_json() {
     .expect("package-path `ql test --list --json` should not print stderr");
 
     let actual = parse_json_output("project-test-list-json", &stdout);
-    let expected = serde_json::json!({
-        "schema": "ql.test.v1",
-        "path": fixture.project_root.display().to_string().replace('\\', "/"),
-        "requested_profile": "debug",
-        "profile_overridden": false,
-        "package_name": JsonValue::Null,
-        "filter": JsonValue::Null,
-        "list_only": true,
-        "status": "listed",
-        "discovered_total": 2,
-        "selected_total": 2,
-        "targets": [
-            {
-                "path": "tests/smoke.ql",
-                "kind": "smoke",
-                "profile": "debug",
-            },
-            {
-                "path": "tests/ui/type_error.ql",
-                "kind": "ui",
-                "profile": JsonValue::Null,
-            }
-        ],
-        "passed": 0,
-        "failed": 0,
-        "failures": [],
-    });
+    let expected = expected_standalone_test_list_json(
+        &fixture.project_root,
+        None,
+        vec![smoke_test_list_target(), ui_test_list_target()],
+        2,
+    );
     assert_eq!(
         actual, expected,
         "package-path `ql test --list --json` should match the stable listing contract"
@@ -3410,28 +3389,12 @@ fn test_direct_project_test_file_lists_selected_test_as_json() {
     .expect("direct project test file `ql test --list --json` should not print stderr");
 
     let actual = parse_json_output("project-test-list-direct-file-json", &stdout);
-    let expected = serde_json::json!({
-        "schema": "ql.test.v1",
-        "path": fixture.smoke_path.display().to_string().replace('\\', "/"),
-        "requested_profile": "debug",
-        "profile_overridden": false,
-        "package_name": JsonValue::Null,
-        "filter": JsonValue::Null,
-        "list_only": true,
-        "status": "listed",
-        "discovered_total": 1,
-        "selected_total": 1,
-        "targets": [
-            {
-                "path": "tests/smoke.ql",
-                "kind": "smoke",
-                "profile": "debug",
-            }
-        ],
-        "passed": 0,
-        "failed": 0,
-        "failures": [],
-    });
+    let expected = expected_standalone_test_list_json(
+        &fixture.smoke_path,
+        None,
+        vec![smoke_test_list_target()],
+        1,
+    );
     assert_eq!(
         actual, expected,
         "direct project test file `ql test --list --json` should match the stable listing contract"
@@ -3444,6 +3407,155 @@ fn test_direct_project_test_file_lists_selected_test_as_json() {
         !fixture.ui_path.with_extension("stderr").exists(),
         "`ql test --list --json` direct project test file should not evaluate unselected ui tests"
     );
+}
+
+#[test]
+fn test_direct_project_test_file_package_selector_lists_selected_test_as_json() {
+    let workspace_root = workspace_root();
+    let fixture =
+        write_standalone_test_list_fixture("ql-project-test-list-direct-file-package-json");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--list", "--json"])
+        .arg(&fixture.smoke_path)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --list --json --package` direct project test file",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-list-direct-file-package-json",
+        "direct project test file package selector json listing",
+        &output,
+    )
+    .expect("direct project test file `ql test --list --json --package app` should succeed");
+    expect_empty_stderr(
+        "project-test-list-direct-file-package-json",
+        "direct project test file package selector json listing",
+        &stderr,
+    )
+    .expect(
+        "direct project test file `ql test --list --json --package app` should not print stderr",
+    );
+
+    let actual = parse_json_output("project-test-list-direct-file-package-json", &stdout);
+    let expected = expected_standalone_test_list_json(
+        &fixture.smoke_path,
+        Some("app"),
+        vec![smoke_test_list_target()],
+        1,
+    );
+    assert_eq!(
+        actual, expected,
+        "direct project test file `ql test --list --json --package app` should keep project-aware package context"
+    );
+    assert!(
+        !fixture.project_root.join("target").exists(),
+        "`ql test --list --json --package app` direct project test file should not build listed tests"
+    );
+    assert!(
+        !fixture.ui_path.with_extension("stderr").exists(),
+        "`ql test --list --json --package app` direct project test file should not evaluate unselected ui tests"
+    );
+}
+
+#[test]
+fn test_direct_project_test_file_json_rejects_mismatched_package_selector() {
+    let workspace_root = workspace_root();
+    let fixture =
+        write_standalone_test_list_fixture("ql-project-test-direct-file-package-mismatch-json");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--json"])
+        .arg(&fixture.smoke_path)
+        .args(["--package", "missing"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json --package` direct project test file package mismatch",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-test-direct-file-package-mismatch-json",
+        "direct project test file package selector mismatch json",
+        &output,
+        1,
+    )
+    .expect("direct project test file `ql test --json --package missing` should reject package mismatch");
+    expect_empty_stderr(
+        "project-test-direct-file-package-mismatch-json",
+        "direct project test file package selector mismatch json",
+        &stderr,
+    )
+    .expect("direct project test file package mismatch json should stay on stdout");
+
+    let json = parse_json_output("project-test-direct-file-package-mismatch-json", &stdout);
+    assert_eq!(json["schema"], "ql.test.v1");
+    assert_eq!(
+        json["path"],
+        fixture.smoke_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["package_name"], "missing");
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["discovered_total"], 0);
+    assert_eq!(json["selected_total"], 0);
+    assert_eq!(json["targets"], serde_json::json!([]));
+    assert_eq!(json["failures"], serde_json::json!([]));
+    assert_eq!(json["failure"]["kind"], "preflight");
+    let failure = &json["failure"]["preflight_failure"];
+    assert_eq!(failure["error_kind"], "selector");
+    assert_eq!(failure["stage"], "package-selection");
+    assert_eq!(failure["selector"], "package `missing`");
+    assert_eq!(failure["target_count"], 0);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("direct project test file package mismatch json should expose a message")
+            .contains("matched no workspace members"),
+        "direct project test file package mismatch json should describe package mismatch: {json}"
+    );
+}
+
+fn expected_standalone_test_list_json(
+    request_path: &Path,
+    package_name: Option<&str>,
+    targets: Vec<JsonValue>,
+    discovered_total: usize,
+) -> JsonValue {
+    serde_json::json!({
+        "schema": "ql.test.v1",
+        "path": request_path.display().to_string().replace('\\', "/"),
+        "requested_profile": "debug",
+        "profile_overridden": false,
+        "package_name": package_name.map(JsonValue::from).unwrap_or(JsonValue::Null),
+        "filter": JsonValue::Null,
+        "list_only": true,
+        "status": "listed",
+        "discovered_total": discovered_total,
+        "selected_total": targets.len(),
+        "targets": targets,
+        "passed": 0,
+        "failed": 0,
+        "failures": [],
+    })
+}
+
+fn smoke_test_list_target() -> JsonValue {
+    serde_json::json!({
+        "path": "tests/smoke.ql",
+        "kind": "smoke",
+        "profile": "debug",
+    })
+}
+
+fn ui_test_list_target() -> JsonValue {
+    serde_json::json!({
+        "path": "tests/ui/type_error.ql",
+        "kind": "ui",
+        "profile": JsonValue::Null,
+    })
 }
 
 struct StandaloneTestListFixture {
