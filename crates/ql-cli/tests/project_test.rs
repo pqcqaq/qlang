@@ -2667,28 +2667,11 @@ fn test_package_path_uses_manifest_default_release_profile() {
     }
 
     let workspace_root = workspace_root();
-    let temp = TempDir::new("ql-project-test-manifest-profile");
-    let project_root = temp.path().join("app");
-    std::fs::create_dir_all(project_root.join("src")).expect("create package source root");
-    temp.write(
-        "app/qlang.toml",
-        r#"
-[package]
-name = "app"
-
-[profile]
-default = "release"
-"#,
-    );
-    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
-    temp.write("app/tests/smoke.ql", "fn main() -> Int { return 0 }\n");
-
-    let smoke_output =
-        executable_output_path(&project_root.join("target/ql/release/tests"), "smoke");
+    let fixture = write_package_default_release_profile_fixture("ql-project-test-manifest-profile");
 
     let mut command = ql_command(&workspace_root);
-    command.current_dir(temp.path());
-    command.args(["test"]).arg(&project_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["test"]).arg(&fixture.project_root);
     let output = run_command_capture(&mut command, "`ql test` manifest default profile");
     let (stdout, stderr) = expect_success(
         "project-test-manifest-profile",
@@ -2713,11 +2696,81 @@ default = "release"
     .expect("manifest default profile test should still run discovered smoke tests");
     expect_file_exists(
         "project-test-manifest-profile",
-        &smoke_output,
+        &fixture.release_smoke_output,
         "manifest default profile smoke executable",
         "manifest default profile test",
     )
     .expect("manifest default profile test should emit smoke test artifacts under release");
+}
+
+struct PackageDefaultReleaseProfileFixture {
+    temp: TempDir,
+    project_root: PathBuf,
+    debug_smoke_output: PathBuf,
+    release_smoke_output: PathBuf,
+}
+
+fn write_package_default_release_profile_fixture(
+    prefix: &str,
+) -> PackageDefaultReleaseProfileFixture {
+    let temp = TempDir::new(prefix);
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source root for default release profile test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[profile]
+default = "release"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    temp.write("app/tests/smoke.ql", "fn main() -> Int { return 0 }\n");
+
+    let debug_smoke_output =
+        executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+    let release_smoke_output =
+        executable_output_path(&project_root.join("target/ql/release/tests"), "smoke");
+
+    PackageDefaultReleaseProfileFixture {
+        temp,
+        project_root,
+        debug_smoke_output,
+        release_smoke_output,
+    }
+}
+
+fn expected_package_profile_test_json(
+    request_path: &Path,
+    requested_profile: &str,
+    profile_overridden: bool,
+    target_profile: &str,
+) -> JsonValue {
+    serde_json::json!({
+        "schema": "ql.test.v1",
+        "path": request_path.display().to_string().replace('\\', "/"),
+        "requested_profile": requested_profile,
+        "profile_overridden": profile_overridden,
+        "package_name": JsonValue::Null,
+        "filter": JsonValue::Null,
+        "list_only": false,
+        "status": "ok",
+        "discovered_total": 1,
+        "selected_total": 1,
+        "targets": [
+            {
+                "path": "tests/smoke.ql",
+                "kind": "smoke",
+                "profile": target_profile,
+            }
+        ],
+        "passed": 1,
+        "failed": 0,
+        "failures": [],
+    })
 }
 
 #[test]
@@ -3101,6 +3154,108 @@ name = "app"
     assert_eq!(
         actual, expected,
         "package-path `ql test --json` should match the stable success contract"
+    );
+}
+
+#[test]
+fn test_package_path_json_uses_manifest_default_release_profile() {
+    if !toolchain_available("`ql test --json` manifest default profile test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture = write_package_default_release_profile_fixture(
+        "ql-project-test-json-manifest-default-profile",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["test", "--json"]).arg(&fixture.project_root);
+    let output = run_command_capture(&mut command, "`ql test --json` manifest default profile");
+    let (stdout, stderr) = expect_success(
+        "project-test-json-manifest-default-profile",
+        "manifest default profile test json success",
+        &output,
+    )
+    .expect("package-path `ql test --json` should honor manifest default profile");
+    expect_empty_stderr(
+        "project-test-json-manifest-default-profile",
+        "manifest default profile test json success",
+        &stderr,
+    )
+    .expect("manifest default profile test json success should not print stderr");
+
+    let actual = parse_json_output("project-test-json-manifest-default-profile", &stdout);
+    let expected =
+        expected_package_profile_test_json(&fixture.project_root, "debug", false, "release");
+    assert_eq!(
+        actual, expected,
+        "package-path `ql test --json` should report requested and effective profiles separately"
+    );
+    expect_file_exists(
+        "project-test-json-manifest-default-profile",
+        &fixture.release_smoke_output,
+        "manifest default profile json smoke executable",
+        "manifest default profile test json success",
+    )
+    .expect("manifest default profile test json success should emit release artifact");
+    assert!(
+        !fixture.debug_smoke_output.exists(),
+        "manifest default profile test json success should not silently emit debug artifacts"
+    );
+}
+
+#[test]
+fn test_package_path_json_profile_override_keeps_debug_profile() {
+    if !toolchain_available("`ql test --json --profile debug` manifest profile override test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture =
+        write_package_default_release_profile_fixture("ql-project-test-json-profile-override");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--json", "--profile", "debug"])
+        .arg(&fixture.project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json --profile debug` manifest profile override",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-json-profile-override",
+        "manifest profile override test json success",
+        &output,
+    )
+    .expect(
+        "package-path `ql test --json --profile debug` should override manifest default profile",
+    );
+    expect_empty_stderr(
+        "project-test-json-profile-override",
+        "manifest profile override test json success",
+        &stderr,
+    )
+    .expect("manifest profile override test json success should not print stderr");
+
+    let actual = parse_json_output("project-test-json-profile-override", &stdout);
+    let expected =
+        expected_package_profile_test_json(&fixture.project_root, "debug", true, "debug");
+    assert_eq!(
+        actual, expected,
+        "package-path `ql test --json --profile debug` should report explicit profile override"
+    );
+    expect_file_exists(
+        "project-test-json-profile-override",
+        &fixture.debug_smoke_output,
+        "manifest profile override json smoke executable",
+        "manifest profile override test json success",
+    )
+    .expect("manifest profile override test json success should emit debug artifact");
+    assert!(
+        !fixture.release_smoke_output.exists(),
+        "manifest profile override test json success should not emit release artifacts"
     );
 }
 
