@@ -1,11 +1,11 @@
 mod support;
 
-use ql_driver::{ToolchainOptions, discover_toolchain};
+use ql_driver::{discover_toolchain, ToolchainOptions};
 use serde_json::Value as JsonValue;
 use support::{
-    TempDir, executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
+    executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
     expect_file_exists, expect_silent_output, expect_stderr_contains, expect_success, ql_command,
-    run_command_capture, static_library_output_path, workspace_root,
+    run_command_capture, static_library_output_path, workspace_root, TempDir,
 };
 
 fn toolchain_available(context: &str) -> bool {
@@ -1023,7 +1023,7 @@ fn write_package_default_debug_run_fixture(prefix: &str) -> PackageRunProfileFix
     write_package_run_profile_fixture(prefix, "debug")
 }
 
-struct WorkspaceDefaultReleaseRunFixture {
+struct WorkspaceRunProfileFixture {
     temp: TempDir,
     project_root: std::path::PathBuf,
     workspace_manifest: std::path::PathBuf,
@@ -1032,21 +1032,24 @@ struct WorkspaceDefaultReleaseRunFixture {
     release_output: std::path::PathBuf,
 }
 
-fn write_workspace_default_release_run_fixture(prefix: &str) -> WorkspaceDefaultReleaseRunFixture {
+fn write_workspace_run_profile_fixture(
+    prefix: &str,
+    default_profile: &str,
+) -> WorkspaceRunProfileFixture {
     let temp = TempDir::new(prefix);
     let project_root = temp.path().join("workspace");
     std::fs::create_dir_all(project_root.join("packages/app/src"))
-        .expect("create workspace package source tree for default release profile run test");
-    let workspace_manifest = temp.write(
-        "workspace/qlang.toml",
+        .expect("create workspace package source tree for profile run test");
+    let workspace_manifest_text = format!(
         r#"
 [workspace]
 members = ["packages/app"]
 
 [profile]
-default = "release"
+default = "{default_profile}"
 "#,
     );
+    let workspace_manifest = temp.write("workspace/qlang.toml", &workspace_manifest_text);
     let app_manifest = temp.write(
         "workspace/packages/app/qlang.toml",
         r#"
@@ -1064,7 +1067,7 @@ name = "app"
     let release_output =
         executable_output_path(&project_root.join("packages/app/target/ql/release"), "main");
 
-    WorkspaceDefaultReleaseRunFixture {
+    WorkspaceRunProfileFixture {
         temp,
         project_root,
         workspace_manifest,
@@ -1072,6 +1075,14 @@ name = "app"
         debug_output,
         release_output,
     }
+}
+
+fn write_workspace_default_release_run_fixture(prefix: &str) -> WorkspaceRunProfileFixture {
+    write_workspace_run_profile_fixture(prefix, "release")
+}
+
+fn write_workspace_default_debug_run_fixture(prefix: &str) -> WorkspaceRunProfileFixture {
+    write_workspace_run_profile_fixture(prefix, "debug")
 }
 
 fn expect_default_release_run_profile_json(
@@ -1501,6 +1512,50 @@ fn run_workspace_path_profile_flag_overrides_workspace_default_profile() {
 }
 
 #[test]
+fn run_workspace_path_release_flag_overrides_workspace_default_profile() {
+    if !toolchain_available("`ql run --release` workspace profile test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture =
+        write_workspace_default_debug_run_fixture("ql-project-run-workspace-release-override");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["run"])
+        .arg(&fixture.project_root)
+        .arg("--release");
+    let output = run_command_capture(&mut command, "`ql run --release` workspace override");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-workspace-release-override",
+        "workspace release alias override run",
+        &output,
+        13,
+    )
+    .expect("workspace-path `ql run --release` should override workspace default");
+    expect_silent_output(
+        "project-run-workspace-release-override",
+        "workspace release alias override run",
+        &stdout,
+        &stderr,
+    )
+    .expect("workspace release alias override run should leave stdout/stderr to the program");
+    expect_file_exists(
+        "project-run-workspace-release-override",
+        &fixture.release_output,
+        "workspace release alias override executable",
+        "workspace release alias override run",
+    )
+    .expect("workspace release alias override run should emit release executable");
+    assert!(
+        !fixture.debug_output.exists(),
+        "workspace release alias override run should not emit debug executable"
+    );
+}
+
+#[test]
 fn run_workspace_path_json_uses_workspace_default_release_profile() {
     if !toolchain_available("`ql run --json` workspace profile test") {
         return;
@@ -1614,6 +1669,62 @@ fn run_workspace_path_json_profile_flag_overrides_workspace_default_profile() {
     assert!(
         !fixture.release_output.exists(),
         "workspace profile override run json should not emit release executable"
+    );
+}
+
+#[test]
+fn run_workspace_path_json_release_flag_overrides_workspace_default_profile() {
+    if !toolchain_available("`ql run --json --release` workspace profile test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture =
+        write_workspace_default_debug_run_fixture("ql-project-run-json-workspace-release-override");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["run"])
+        .arg(&fixture.project_root)
+        .args(["--json", "--release"]);
+    let output = run_command_capture(&mut command, "`ql run --json --release` workspace override");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-json-workspace-release-override",
+        "workspace release alias override run json",
+        &output,
+        13,
+    )
+    .expect("workspace-path `ql run --json --release` should override workspace default");
+    expect_empty_stderr(
+        "project-run-json-workspace-release-override",
+        "workspace release alias override run json",
+        &stderr,
+    )
+    .expect("workspace release alias override run json should not print stderr");
+
+    let json = parse_json_output("project-run-json-workspace-release-override", &stdout);
+    expect_default_release_run_profile_json(
+        "project-run-json-workspace-release-override",
+        &json,
+        &fixture.project_root,
+        &fixture.workspace_manifest,
+        &fixture.app_manifest,
+        "release",
+        true,
+        "release",
+        &fixture.release_output,
+    );
+    expect_file_exists(
+        "project-run-json-workspace-release-override",
+        &fixture.release_output,
+        "workspace release alias override run json executable",
+        "workspace release alias override run json",
+    )
+    .expect("workspace release alias override run json should emit release executable");
+    assert!(
+        !fixture.debug_output.exists(),
+        "workspace release alias override run json should not emit debug executable"
     );
 }
 
