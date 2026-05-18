@@ -1154,6 +1154,49 @@ fn run_package_path_uses_manifest_default_release_profile() {
 }
 
 #[test]
+fn run_package_path_profile_flag_overrides_manifest_default_profile() {
+    if !toolchain_available("`ql run --profile debug` manifest profile test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture = write_package_default_release_run_fixture("ql-project-run-profile-override");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["run"])
+        .arg(&fixture.project_root)
+        .args(["--profile", "debug"]);
+    let output = run_command_capture(&mut command, "`ql run --profile debug` manifest override");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-profile-override",
+        "manifest profile override run",
+        &output,
+        13,
+    )
+    .expect("package-path `ql run --profile debug` should override manifest default");
+    expect_silent_output(
+        "project-run-profile-override",
+        "manifest profile override run",
+        &stdout,
+        &stderr,
+    )
+    .expect("manifest profile override run should leave stdout/stderr to the program");
+    expect_file_exists(
+        "project-run-profile-override",
+        &fixture.debug_output,
+        "manifest profile override executable",
+        "manifest profile override run",
+    )
+    .expect("manifest profile override run should emit debug executable");
+    assert!(
+        !fixture.release_output.exists(),
+        "manifest profile override run should not emit release executable"
+    );
+}
+
+#[test]
 fn run_package_path_json_uses_manifest_default_release_profile() {
     if !toolchain_available("`ql run --json` manifest profile test") {
         return;
@@ -1299,6 +1342,50 @@ fn run_workspace_path_uses_workspace_default_profile() {
         "workspace default profile run",
     )
     .expect("workspace default profile run should emit the release executable");
+}
+
+#[test]
+fn run_workspace_path_profile_flag_overrides_workspace_default_profile() {
+    if !toolchain_available("`ql run --profile debug` workspace profile test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture =
+        write_workspace_default_release_run_fixture("ql-project-run-workspace-profile-override");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["run"])
+        .arg(&fixture.project_root)
+        .args(["--profile", "debug"]);
+    let output = run_command_capture(&mut command, "`ql run --profile debug` workspace override");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-workspace-profile-override",
+        "workspace profile override run",
+        &output,
+        13,
+    )
+    .expect("workspace-path `ql run --profile debug` should override workspace default");
+    expect_silent_output(
+        "project-run-workspace-profile-override",
+        "workspace profile override run",
+        &stdout,
+        &stderr,
+    )
+    .expect("workspace profile override run should leave stdout/stderr to the program");
+    expect_file_exists(
+        "project-run-workspace-profile-override",
+        &fixture.debug_output,
+        "workspace profile override executable",
+        "workspace profile override run",
+    )
+    .expect("workspace profile override run should emit debug executable");
+    assert!(
+        !fixture.release_output.exists(),
+        "workspace profile override run should not emit release executable"
+    );
 }
 
 #[test]
