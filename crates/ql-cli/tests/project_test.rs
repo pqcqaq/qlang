@@ -2812,6 +2812,7 @@ fn expected_profile_test_json(
 struct WorkspaceDefaultReleaseProfileFixture {
     temp: TempDir,
     project_root: PathBuf,
+    smoke_path: PathBuf,
     debug_smoke_output: PathBuf,
     release_smoke_output: PathBuf,
 }
@@ -2844,7 +2845,7 @@ name = "app"
         "workspace/packages/app/src/lib.ql",
         "pub fn helper() -> Int { return 1 }\n",
     );
-    temp.write(
+    let smoke_path = temp.write(
         "workspace/packages/app/tests/smoke.ql",
         "fn main() -> Int { return 0 }\n",
     );
@@ -2861,6 +2862,7 @@ name = "app"
     WorkspaceDefaultReleaseProfileFixture {
         temp,
         project_root,
+        smoke_path,
         debug_smoke_output,
         release_smoke_output,
     }
@@ -3833,6 +3835,216 @@ fn test_workspace_path_list_json_profile_override_keeps_debug_profile() {
     assert!(
         !fixture.debug_smoke_output.exists() && !fixture.release_smoke_output.exists(),
         "workspace profile override list json should not emit test artifacts"
+    );
+}
+
+#[test]
+fn test_workspace_member_file_json_uses_workspace_default_release_profile() {
+    if !toolchain_available("`ql test --json` workspace member file profile test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_default_release_profile_fixture(
+        "ql-project-test-json-workspace-member-file-default-profile",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["test", "--json"]).arg(&fixture.smoke_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json` workspace member file default profile",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-json-workspace-member-file-default-profile",
+        "workspace member file default profile json success",
+        &output,
+    )
+    .expect("workspace member file `ql test --json` should honor workspace default profile");
+    expect_empty_stderr(
+        "project-test-json-workspace-member-file-default-profile",
+        "workspace member file default profile json success",
+        &stderr,
+    )
+    .expect("workspace member file default profile json success should not print stderr");
+
+    let actual = parse_json_output(
+        "project-test-json-workspace-member-file-default-profile",
+        &stdout,
+    );
+    let expected =
+        expected_workspace_profile_test_json(&fixture.smoke_path, "debug", false, "release");
+    assert_eq!(
+        actual, expected,
+        "workspace member file json should expose the effective release profile"
+    );
+    expect_file_exists(
+        "project-test-json-workspace-member-file-default-profile",
+        &fixture.release_smoke_output,
+        "workspace member file default profile smoke executable",
+        "workspace member file default profile json success",
+    )
+    .expect("workspace member file default profile json success should emit release artifact");
+    assert!(
+        !fixture.debug_smoke_output.exists(),
+        "workspace member file default profile json success should not emit debug artifact"
+    );
+}
+
+#[test]
+fn test_workspace_member_file_json_profile_override_keeps_debug_profile() {
+    if !toolchain_available(
+        "`ql test --json --profile debug` workspace member file profile override test",
+    ) {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_default_release_profile_fixture(
+        "ql-project-test-json-workspace-member-file-profile-override",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--json", "--profile", "debug"])
+        .arg(&fixture.smoke_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json --profile debug` workspace member file profile override",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-json-workspace-member-file-profile-override",
+        "workspace member file profile override json success",
+        &output,
+    )
+    .expect(
+        "workspace member file `ql test --json --profile debug` should override workspace default profile",
+    );
+    expect_empty_stderr(
+        "project-test-json-workspace-member-file-profile-override",
+        "workspace member file profile override json success",
+        &stderr,
+    )
+    .expect("workspace member file profile override json success should not print stderr");
+
+    let actual = parse_json_output(
+        "project-test-json-workspace-member-file-profile-override",
+        &stdout,
+    );
+    let expected =
+        expected_workspace_profile_test_json(&fixture.smoke_path, "debug", true, "debug");
+    assert_eq!(
+        actual, expected,
+        "workspace member file json should expose the explicit debug profile"
+    );
+    expect_file_exists(
+        "project-test-json-workspace-member-file-profile-override",
+        &fixture.debug_smoke_output,
+        "workspace member file profile override smoke executable",
+        "workspace member file profile override json success",
+    )
+    .expect("workspace member file profile override json success should emit debug artifact");
+    assert!(
+        !fixture.release_smoke_output.exists(),
+        "workspace member file profile override json success should not emit release artifact"
+    );
+}
+
+#[test]
+fn test_workspace_member_file_list_json_uses_workspace_default_release_profile() {
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_default_release_profile_fixture(
+        "ql-project-test-list-json-workspace-member-file-default-profile",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--list", "--json"])
+        .arg(&fixture.smoke_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --list --json` workspace member file default profile",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-list-json-workspace-member-file-default-profile",
+        "workspace member file default profile list json",
+        &output,
+    )
+    .expect("workspace member file `ql test --list --json` should honor workspace default profile");
+    expect_empty_stderr(
+        "project-test-list-json-workspace-member-file-default-profile",
+        "workspace member file default profile list json",
+        &stderr,
+    )
+    .expect("workspace member file default profile list json should not print stderr");
+
+    let actual = parse_json_output(
+        "project-test-list-json-workspace-member-file-default-profile",
+        &stdout,
+    );
+    let expected = expected_workspace_profile_test_listing_json(
+        &fixture.smoke_path,
+        "debug",
+        false,
+        "release",
+    );
+    assert_eq!(
+        actual, expected,
+        "workspace member file list json should expose the effective release profile"
+    );
+    assert!(
+        !fixture.debug_smoke_output.exists() && !fixture.release_smoke_output.exists(),
+        "workspace member file default profile list json should not emit artifacts"
+    );
+}
+
+#[test]
+fn test_workspace_member_file_list_json_profile_override_keeps_debug_profile() {
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_default_release_profile_fixture(
+        "ql-project-test-list-json-workspace-member-file-profile-override",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--list", "--json", "--profile", "debug"])
+        .arg(&fixture.smoke_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --list --json --profile debug` workspace member file profile override",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-list-json-workspace-member-file-profile-override",
+        "workspace member file profile override list json",
+        &output,
+    )
+    .expect(
+        "workspace member file `ql test --list --json --profile debug` should keep debug profile",
+    );
+    expect_empty_stderr(
+        "project-test-list-json-workspace-member-file-profile-override",
+        "workspace member file profile override list json",
+        &stderr,
+    )
+    .expect("workspace member file profile override list json should not print stderr");
+
+    let actual = parse_json_output(
+        "project-test-list-json-workspace-member-file-profile-override",
+        &stdout,
+    );
+    let expected =
+        expected_workspace_profile_test_listing_json(&fixture.smoke_path, "debug", true, "debug");
+    assert_eq!(
+        actual, expected,
+        "workspace member file list json should expose the explicit debug profile"
+    );
+    assert!(
+        !fixture.debug_smoke_output.exists() && !fixture.release_smoke_output.exists(),
+        "workspace member file profile override list json should not emit artifacts"
     );
 }
 
