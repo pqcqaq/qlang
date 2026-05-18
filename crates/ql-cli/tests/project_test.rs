@@ -3738,6 +3738,84 @@ fn test_direct_project_test_file_json_reports_missing_filter_selection_failure()
     );
 }
 
+#[test]
+fn test_direct_project_test_file_json_runs_with_package_target_and_filter_selectors() {
+    if !toolchain_available(
+        "`ql test --json --package --target --filter` direct project smoke file",
+    ) {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let fixture =
+        write_standalone_passing_test_fixture("ql-project-test-direct-file-all-selectors-json");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--json"])
+        .arg(&fixture.smoke_path)
+        .args([
+            "--package",
+            "app",
+            "--target",
+            "tests/smoke.ql",
+            "--filter",
+            "smoke",
+        ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json --package --target --filter` direct project test file",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-direct-file-all-selectors-json",
+        "direct project test file all selector json execution",
+        &output,
+    )
+    .expect("direct project test file `ql test --json --package app --target tests/smoke.ql --filter smoke` should pass");
+    expect_empty_stderr(
+        "project-test-direct-file-all-selectors-json",
+        "direct project test file all selector json execution",
+        &stderr,
+    )
+    .expect("direct project test file selector json execution should not print stderr");
+
+    let actual = parse_json_output("project-test-direct-file-all-selectors-json", &stdout);
+    let expected = serde_json::json!({
+        "schema": "ql.test.v1",
+        "path": fixture.smoke_path.display().to_string().replace('\\', "/"),
+        "requested_profile": "debug",
+        "profile_overridden": false,
+        "package_name": "app",
+        "filter": "smoke",
+        "list_only": false,
+        "status": "ok",
+        "discovered_total": 1,
+        "selected_total": 1,
+        "targets": [
+            smoke_test_list_target(),
+        ],
+        "passed": 1,
+        "failed": 0,
+        "failures": [],
+    });
+    assert_eq!(
+        actual, expected,
+        "direct project test file selector execution should preserve the stable json contract"
+    );
+    expect_file_exists(
+        "project-test-direct-file-all-selectors-json",
+        &fixture.smoke_output,
+        "selected smoke test executable",
+        "direct project test file all selector json execution",
+    )
+    .expect("direct project test file selector execution should build the selected smoke test");
+    assert!(
+        !fixture.ui_path.with_extension("stderr").exists(),
+        "direct project test file selector execution should not evaluate unselected ui tests"
+    );
+}
+
 fn expected_standalone_test_list_json(
     request_path: &Path,
     package_name: Option<&str>,
@@ -3798,10 +3876,19 @@ struct StandaloneTestListFixture {
     temp: TempDir,
     project_root: PathBuf,
     smoke_path: PathBuf,
+    smoke_output: PathBuf,
     ui_path: PathBuf,
 }
 
 fn write_standalone_test_list_fixture(prefix: &str) -> StandaloneTestListFixture {
+    write_standalone_test_fixture(prefix, "fn main() -> Int { return nope }\n")
+}
+
+fn write_standalone_passing_test_fixture(prefix: &str) -> StandaloneTestListFixture {
+    write_standalone_test_fixture(prefix, "fn main() -> Int { return 0 }\n")
+}
+
+fn write_standalone_test_fixture(prefix: &str, smoke_source: &str) -> StandaloneTestListFixture {
     let temp = TempDir::new(prefix);
     let project_root = temp.path().join("app");
     std::fs::create_dir_all(project_root.join("src"))
@@ -3814,16 +3901,18 @@ name = "app"
 "#,
     );
     temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
-    let smoke_path = temp.write("app/tests/smoke.ql", "fn main() -> Int { return nope }\n");
+    let smoke_path = temp.write("app/tests/smoke.ql", smoke_source);
     let ui_path = temp.write(
         "app/tests/ui/type_error.ql",
         "fn main() -> Int { return nope }\n",
     );
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
 
     StandaloneTestListFixture {
         temp,
         project_root,
         smoke_path,
+        smoke_output,
         ui_path,
     }
 }
