@@ -3319,28 +3319,13 @@ name = "app"
 #[test]
 fn test_package_path_lists_discovered_tests_as_json() {
     let workspace_root = workspace_root();
-    let temp = TempDir::new("ql-project-test-list-json");
-    let project_root = temp.path().join("app");
-    std::fs::create_dir_all(project_root.join("src")).expect("create package source root");
-    temp.write(
-        "app/qlang.toml",
-        r#"
-[package]
-name = "app"
-"#,
-    );
-    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
-    temp.write("app/tests/smoke.ql", "fn main() -> Int { return nope }\n");
-    temp.write(
-        "app/tests/ui/type_error.ql",
-        "fn main() -> Int { return nope }\n",
-    );
+    let fixture = write_standalone_test_list_fixture("ql-project-test-list-json");
 
     let mut command = ql_command(&workspace_root);
-    command.current_dir(temp.path());
+    command.current_dir(fixture.temp.path());
     command
         .args(["test", "--list", "--json"])
-        .arg(&project_root);
+        .arg(&fixture.project_root);
     let output = run_command_capture(&mut command, "`ql test --list --json` package path");
     let (stdout, stderr) = expect_success(
         "project-test-list-json",
@@ -3358,7 +3343,7 @@ name = "app"
     let actual = parse_json_output("project-test-list-json", &stdout);
     let expected = serde_json::json!({
         "schema": "ql.test.v1",
-        "path": project_root.display().to_string().replace('\\', "/"),
+        "path": fixture.project_root.display().to_string().replace('\\', "/"),
         "requested_profile": "debug",
         "profile_overridden": false,
         "package_name": JsonValue::Null,
@@ -3387,6 +3372,112 @@ name = "app"
         actual, expected,
         "package-path `ql test --list --json` should match the stable listing contract"
     );
+    assert!(
+        !fixture.project_root.join("target").exists(),
+        "`ql test --list --json` package path should not build listed tests"
+    );
+    assert!(
+        !fixture.ui_path.with_extension("stderr").exists(),
+        "`ql test --list --json` package path should not evaluate listed ui tests"
+    );
+}
+
+#[test]
+fn test_direct_project_test_file_lists_selected_test_as_json() {
+    let workspace_root = workspace_root();
+    let fixture = write_standalone_test_list_fixture("ql-project-test-list-direct-file-json");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--list", "--json"])
+        .arg(&fixture.smoke_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --list --json` direct project test file",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-list-direct-file-json",
+        "direct project test file json listing",
+        &output,
+    )
+    .expect("direct project test file `ql test --list --json` should succeed");
+    expect_empty_stderr(
+        "project-test-list-direct-file-json",
+        "direct project test file json listing",
+        &stderr,
+    )
+    .expect("direct project test file `ql test --list --json` should not print stderr");
+
+    let actual = parse_json_output("project-test-list-direct-file-json", &stdout);
+    let expected = serde_json::json!({
+        "schema": "ql.test.v1",
+        "path": fixture.smoke_path.display().to_string().replace('\\', "/"),
+        "requested_profile": "debug",
+        "profile_overridden": false,
+        "package_name": JsonValue::Null,
+        "filter": JsonValue::Null,
+        "list_only": true,
+        "status": "listed",
+        "discovered_total": 1,
+        "selected_total": 1,
+        "targets": [
+            {
+                "path": "tests/smoke.ql",
+                "kind": "smoke",
+                "profile": "debug",
+            }
+        ],
+        "passed": 0,
+        "failed": 0,
+        "failures": [],
+    });
+    assert_eq!(
+        actual, expected,
+        "direct project test file `ql test --list --json` should match the stable listing contract"
+    );
+    assert!(
+        !fixture.project_root.join("target").exists(),
+        "`ql test --list --json` direct project test file should not build listed tests"
+    );
+    assert!(
+        !fixture.ui_path.with_extension("stderr").exists(),
+        "`ql test --list --json` direct project test file should not evaluate unselected ui tests"
+    );
+}
+
+struct StandaloneTestListFixture {
+    temp: TempDir,
+    project_root: PathBuf,
+    smoke_path: PathBuf,
+    ui_path: PathBuf,
+}
+
+fn write_standalone_test_list_fixture(prefix: &str) -> StandaloneTestListFixture {
+    let temp = TempDir::new(prefix);
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source root for test list fixture");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    let smoke_path = temp.write("app/tests/smoke.ql", "fn main() -> Int { return nope }\n");
+    let ui_path = temp.write(
+        "app/tests/ui/type_error.ql",
+        "fn main() -> Int { return nope }\n",
+    );
+
+    StandaloneTestListFixture {
+        temp,
+        project_root,
+        smoke_path,
+        ui_path,
+    }
 }
 
 struct TestListWorkspaceFixture {
