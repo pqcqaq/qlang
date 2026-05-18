@@ -3462,6 +3462,60 @@ fn test_direct_project_test_file_package_selector_lists_selected_test_as_json() 
 }
 
 #[test]
+fn test_direct_project_test_file_target_selector_lists_selected_test_as_json() {
+    let workspace_root = workspace_root();
+    let fixture =
+        write_standalone_test_list_fixture("ql-project-test-list-direct-file-target-json");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--list", "--json"])
+        .arg(&fixture.smoke_path)
+        .args(["--target", "tests/smoke.ql"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --list --json --target` direct project test file",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-list-direct-file-target-json",
+        "direct project test file target selector json listing",
+        &output,
+    )
+    .expect(
+        "direct project test file `ql test --list --json --target tests/smoke.ql` should succeed",
+    );
+    expect_empty_stderr(
+        "project-test-list-direct-file-target-json",
+        "direct project test file target selector json listing",
+        &stderr,
+    )
+    .expect(
+        "direct project test file `ql test --list --json --target tests/smoke.ql` should not print stderr",
+    );
+
+    let actual = parse_json_output("project-test-list-direct-file-target-json", &stdout);
+    let expected = expected_standalone_test_list_json(
+        &fixture.smoke_path,
+        None,
+        vec![smoke_test_list_target()],
+        1,
+    );
+    assert_eq!(
+        actual, expected,
+        "direct project test file `ql test --list --json --target tests/smoke.ql` should keep the selected file contract"
+    );
+    assert!(
+        !fixture.project_root.join("target").exists(),
+        "`ql test --list --json --target tests/smoke.ql` direct project test file should not build listed tests"
+    );
+    assert!(
+        !fixture.ui_path.with_extension("stderr").exists(),
+        "`ql test --list --json --target tests/smoke.ql` direct project test file should not evaluate unselected ui tests"
+    );
+}
+
+#[test]
 fn test_direct_project_test_file_json_rejects_mismatched_package_selector() {
     let workspace_root = workspace_root();
     let fixture =
@@ -3515,6 +3569,62 @@ fn test_direct_project_test_file_json_rejects_mismatched_package_selector() {
             .expect("direct project test file package mismatch json should expose a message")
             .contains("matched no workspace members"),
         "direct project test file package mismatch json should describe package mismatch: {json}"
+    );
+}
+
+#[test]
+fn test_direct_project_test_file_json_reports_missing_target_selection_failure() {
+    let workspace_root = workspace_root();
+    let fixture =
+        write_standalone_test_list_fixture("ql-project-test-direct-file-missing-target-json");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--json"])
+        .arg(&fixture.smoke_path)
+        .args(["--target", "tests/missing.ql"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json --target` direct project test file missing target",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-test-direct-file-missing-target-json",
+        "direct project test file missing target json",
+        &output,
+        1,
+    )
+    .expect("direct project test file `ql test --json --target tests/missing.ql` should fail");
+    expect_empty_stderr(
+        "project-test-direct-file-missing-target-json",
+        "direct project test file missing target json",
+        &stderr,
+    )
+    .expect("direct project test file missing target json should stay on stdout");
+
+    let json = parse_json_output("project-test-direct-file-missing-target-json", &stdout);
+    assert_eq!(json["schema"], "ql.test.v1");
+    assert_eq!(
+        json["path"],
+        fixture.smoke_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["package_name"], JsonValue::Null);
+    assert_eq!(json["status"], "no-match");
+    assert_eq!(json["discovered_total"], 1);
+    assert_eq!(json["selected_total"], 0);
+    assert_eq!(json["targets"], serde_json::json!([]));
+    assert_eq!(json["failures"], serde_json::json!([]));
+    assert_eq!(json["failure"]["kind"], "selection");
+    let failure = &json["failure"]["selection_failure"];
+    assert_eq!(failure["stage"], "target-selection");
+    assert_eq!(failure["selector"], "target `tests/missing.ql`");
+    assert_eq!(failure["target_count"], 1);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("direct project test file missing target json should expose a message")
+            .contains("found no test target `tests/missing.ql`"),
+        "direct project test file missing target json should describe target miss: {json}"
     );
 }
 
