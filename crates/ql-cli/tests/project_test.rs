@@ -5064,6 +5064,90 @@ fn test_workspace_path_package_selector_ui_list_json_accepts_target_and_filter_s
 }
 
 #[test]
+fn test_workspace_path_package_selector_ui_list_json_reports_missing_target() {
+    let fixture = write_workspace_package_ui_fixture(
+        "ql-project-test-workspace-ui-list-missing-target-json",
+        false,
+    );
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--list", "--json"])
+        .arg(&fixture.project_root)
+        .args(["--package", "app", "--target", "tests/ui/missing.ql"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --list --json --package --target` workspace ui missing target",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-test-workspace-ui-list-missing-target-json",
+        "workspace package selector ui list missing target json",
+        &output,
+        1,
+    )
+    .expect("workspace-path ui list json should fail when target selection misses");
+    expect_empty_stderr(
+        "project-test-workspace-ui-list-missing-target-json",
+        "workspace package selector ui list missing target json",
+        &stderr,
+    )
+    .expect("workspace package selector ui list missing target json should stay on stdout");
+
+    assert_workspace_package_ui_list_selection_failure_json(
+        "project-test-workspace-ui-list-missing-target-json",
+        &stdout,
+        &fixture.project_root,
+        None,
+        "target-selection",
+        "target `tests/ui/missing.ql`",
+        "found no test target `tests/ui/missing.ql`",
+    );
+}
+
+#[test]
+fn test_workspace_path_package_selector_ui_list_json_reports_missing_filter() {
+    let fixture = write_workspace_package_ui_fixture(
+        "ql-project-test-workspace-ui-list-missing-filter-json",
+        false,
+    );
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--list", "--json"])
+        .arg(&fixture.project_root)
+        .args(["--package", "app", "--filter", "missing"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --list --json --package --filter` workspace ui missing filter",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-test-workspace-ui-list-missing-filter-json",
+        "workspace package selector ui list missing filter json",
+        &output,
+        1,
+    )
+    .expect("workspace-path ui list json should fail when filter selection misses");
+    expect_empty_stderr(
+        "project-test-workspace-ui-list-missing-filter-json",
+        "workspace package selector ui list missing filter json",
+        &stderr,
+    )
+    .expect("workspace package selector ui list missing filter json should stay on stdout");
+
+    assert_workspace_package_ui_list_selection_failure_json(
+        "project-test-workspace-ui-list-missing-filter-json",
+        &stdout,
+        &fixture.project_root,
+        Some("missing"),
+        "filter-selection",
+        "filter `missing`",
+        "found no test files matching `missing`",
+    );
+}
+
+#[test]
 fn test_workspace_path_package_selector_reports_ui_snapshot_json_mismatch() {
     let fixture =
         write_workspace_package_ui_fixture("ql-project-test-workspace-ui-mismatch-json", false);
@@ -6875,6 +6959,50 @@ fn expected_workspace_package_ui_json_listing(
         filter,
         "packages/app/tests/ui/type_error.ql",
     )
+}
+
+fn assert_workspace_package_ui_list_selection_failure_json(
+    case_name: &str,
+    stdout: &str,
+    request_path: &Path,
+    filter: Option<&str>,
+    stage: &str,
+    selector: &str,
+    expected_message_fragment: &str,
+) {
+    let json = parse_json_output(case_name, stdout);
+    assert_eq!(json["schema"], "ql.test.v1");
+    assert_eq!(
+        json["path"],
+        request_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["requested_profile"], "debug");
+    assert_eq!(json["profile_overridden"], false);
+    assert_eq!(json["package_name"], "app");
+    assert_eq!(
+        json["filter"],
+        filter.map(JsonValue::from).unwrap_or(JsonValue::Null)
+    );
+    assert_eq!(json["list_only"], true);
+    assert_eq!(json["status"], "no-match");
+    assert_eq!(json["discovered_total"], 1);
+    assert_eq!(json["selected_total"], 0);
+    assert_eq!(json["targets"], serde_json::json!([]));
+    assert_eq!(json["passed"], 0);
+    assert_eq!(json["failed"], 0);
+    assert_eq!(json["failures"], serde_json::json!([]));
+    assert_eq!(json["failure"]["kind"], "selection");
+    let failure = &json["failure"]["selection_failure"];
+    assert_eq!(failure["stage"], stage);
+    assert_eq!(failure["selector"], selector);
+    assert_eq!(failure["target_count"], 1);
+    assert!(
+        failure["message"]
+            .as_str()
+            .expect("workspace ui list selection failure json should expose a message")
+            .contains(expected_message_fragment),
+        "workspace ui list selection failure json should describe the selector miss: {json}"
+    );
 }
 
 fn assert_project_ui_snapshot_mismatch_json(case_name: &str, stdout: &str, request_path: &Path) {
