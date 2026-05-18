@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf};
 
 use ql_analysis::analyze_source;
 use ql_diagnostics::render_diagnostics;
-use ql_driver::{discover_toolchain, ToolchainOptions};
+use ql_driver::{ToolchainOptions, discover_toolchain};
 use serde_json::Value as JsonValue;
 use support::{
-    executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
+    TempDir, executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
     expect_file_exists, expect_stderr_contains, expect_stdout_contains_all, expect_success,
-    ql_command, run_command_capture, static_library_output_path, workspace_root, TempDir,
+    ql_command, run_command_capture, static_library_output_path, workspace_root,
 };
 
 fn toolchain_available(context: &str) -> bool {
@@ -5817,6 +5817,168 @@ name = "tool"
         ],
     )
     .expect("workspace-path `ql test` should run member tests and skip members without tests");
+}
+
+#[test]
+fn test_workspace_path_runs_package_under_test_generic_bridges_for_all_members() {
+    if !toolchain_available("`ql test` workspace all-member package-under-test generic bridge") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-workspace-all-member-current-package-generic-bridge");
+    let project_root = temp.path().join("workspace");
+    fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create app package source tree");
+    fs::create_dir_all(project_root.join("packages/tool/src"))
+        .expect("create tool package source tree");
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        r#"
+pub fn identity[T](value: T) -> T {
+    return value
+}
+
+pub fn first[T, N](values: [T; N]) -> T {
+    return values[0]
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        r#"
+pub fn identity[T](value: T) -> T {
+    return value
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/tests/smoke.ql",
+        r#"
+use app.identity as identity
+use app.first as first
+
+fn echo[T](value: T) -> T {
+    return value
+}
+
+fn main() -> Int {
+    let value: Int = echo(identity(7))
+    let picked: Int = first([3, 4, 5])
+    return value + picked - 10
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/tests/smoke.ql",
+        r#"
+use tool.identity as identity
+
+fn echo[T](value: T) -> T {
+    return value
+}
+
+fn main() -> Int {
+    let enabled: Bool = echo(identity(true))
+    if enabled {
+        return 0
+    }
+    return 1
+}
+"#,
+    );
+
+    let app_library_output =
+        static_library_output_path(&project_root.join("packages/app/target/ql/debug"), "lib");
+    let tool_library_output =
+        static_library_output_path(&project_root.join("packages/tool/target/ql/debug"), "lib");
+    let app_smoke_output = executable_output_path(
+        &project_root.join("packages/app/target/ql/debug/tests"),
+        "smoke",
+    );
+    let tool_smoke_output = executable_output_path(
+        &project_root.join("packages/tool/target/ql/debug/tests"),
+        "smoke",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test` workspace all-member package-under-test generic bridge",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-workspace-all-member-current-package-generic-bridge",
+        "workspace all-member package-under-test generic bridge",
+        &output,
+    )
+    .expect("workspace-path `ql test` should bridge every selected package under test");
+    expect_empty_stderr(
+        "project-test-workspace-all-member-current-package-generic-bridge",
+        "workspace all-member package-under-test generic bridge",
+        &stderr,
+    )
+    .expect("workspace all-member bridge test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-workspace-all-member-current-package-generic-bridge",
+        &stdout.replace('\\', "/"),
+        &[
+            "test packages/app/tests/smoke.ql ... ok",
+            "test packages/tool/tests/smoke.ql ... ok",
+            "test result: ok. 2 passed; 0 failed",
+        ],
+    )
+    .expect("workspace all-member bridge test should report both passing smoke tests");
+    expect_file_exists(
+        "project-test-workspace-all-member-current-package-generic-bridge",
+        &app_library_output,
+        "app package-under-test library",
+        "`ql test` workspace all-member package-under-test generic bridge",
+    )
+    .expect("workspace all-member bridge test should build the app library");
+    expect_file_exists(
+        "project-test-workspace-all-member-current-package-generic-bridge",
+        &tool_library_output,
+        "tool package-under-test library",
+        "`ql test` workspace all-member package-under-test generic bridge",
+    )
+    .expect("workspace all-member bridge test should build the tool library");
+    expect_file_exists(
+        "project-test-workspace-all-member-current-package-generic-bridge",
+        &app_smoke_output,
+        "app smoke executable",
+        "`ql test` workspace all-member package-under-test generic bridge",
+    )
+    .expect("workspace all-member bridge test should emit the app smoke executable");
+    expect_file_exists(
+        "project-test-workspace-all-member-current-package-generic-bridge",
+        &tool_smoke_output,
+        "tool smoke executable",
+        "`ql test` workspace all-member package-under-test generic bridge",
+    )
+    .expect("workspace all-member bridge test should emit the tool smoke executable");
 }
 
 #[test]
