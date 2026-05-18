@@ -27,7 +27,7 @@
 - 继续收口 `ql-cli` project pipeline，优先扩真实 workspace/package smoke，而不是堆只测内部函数的单元测试。
 - `project init --stdlib` starter 已覆盖 package/workspace 的 `check/build/run/test`、`emit-interface`、`emit-interface --check`、package `graph/status --json`、package `dependencies` 文本、JSON 和 `--name` JSON、package `dependents --name --json`、workspace `graph/status --json --package`、workspace `dependencies --name` 文本和 JSON、以及关键 JSON 输出。下一步继续把它作为 downstream 可用性入口维护。
 - `ql project emit-interface` 的 standalone package source-path 正向回归已覆盖普通、`--check`、`--changed-only` 和 `--changed-only --check` 组合；后续只在实际回归暴露新的 selector/reporting 缺口时继续补强，确保接口产物入口和 `check/build` 共用的包解析合同一致。
-- `ql test` 的 package-under-test/direct-dependency/local-generic source override 已覆盖 package path 和直接 project test file；下一步继续收紧更宽 dependency-aware backend 组合路径，并纳入共享 project pipeline。
+- `ql test` 的 package-under-test/direct-dependency/local-generic source override 已覆盖 package path 和直接 project test file，直接文件入口也覆盖 dependency generic public function bridge；下一步继续收紧更宽 dependency-aware backend 组合路径，并纳入共享 project pipeline。
 - 继续扩大 stdlib package-local smoke、stdlib examples 和 downstream consumers 对 generic public API 的覆盖。
 - LSP 下一步重点是把 diagnostics、formatting、folding/selection、signatureHelp/inlayHint、codeLens 等请求收敛到统一 workspace analysis/cache 边界。
 - README、roadmap、stdlib、VSCode 文档必须跟实现同步；实现未落地时文档写成未支持。
