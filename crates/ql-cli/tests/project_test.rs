@@ -6376,6 +6376,53 @@ fn test_direct_project_ui_file_json_runs_with_package_target_and_filter_selector
 }
 
 #[test]
+fn test_direct_project_ui_file_lists_with_package_target_and_filter_selectors_as_json() {
+    let workspace_root = workspace_root();
+    let fixture = write_direct_project_ui_fixture(
+        "ql-project-test-ui-direct-file-list-selectors-json",
+        false,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--list", "--json"])
+        .arg(&fixture.ui_path)
+        .args([
+            "--package",
+            "app",
+            "--target",
+            "tests/ui/type_error.ql",
+            "--filter",
+            "type_error",
+        ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --list --json --package --target --filter` direct project ui file",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-ui-direct-file-list-selectors-json",
+        "direct project ui file all selector json listing",
+        &output,
+    )
+    .expect("direct project ui file `ql test --list --json --package app --target tests/ui/type_error.ql --filter type_error` should list without executing snapshots");
+    expect_empty_stderr(
+        "project-test-ui-direct-file-list-selectors-json",
+        "direct project ui file all selector json listing",
+        &stderr,
+    )
+    .expect("direct project ui file selector json listing should not print stderr");
+
+    let actual = parse_json_output("project-test-ui-direct-file-list-selectors-json", &stdout);
+    let expected =
+        expected_direct_project_ui_json_listing(&fixture.ui_path, Some("app"), Some("type_error"));
+    assert_eq!(
+        actual, expected,
+        "direct project ui file selector listing should preserve the stable json contract"
+    );
+}
+
+#[test]
 fn test_direct_project_ui_file_json_reports_snapshot_mismatch() {
     let workspace_root = workspace_root();
     let fixture =
@@ -6489,6 +6536,31 @@ fn expected_direct_project_ui_json_success(
             direct_project_ui_json_target(),
         ],
         "passed": 1,
+        "failed": 0,
+        "failures": [],
+    })
+}
+
+fn expected_direct_project_ui_json_listing(
+    request_path: &Path,
+    package_name: Option<&str>,
+    filter: Option<&str>,
+) -> JsonValue {
+    serde_json::json!({
+        "schema": "ql.test.v1",
+        "path": request_path.display().to_string().replace('\\', "/"),
+        "requested_profile": "debug",
+        "profile_overridden": false,
+        "package_name": package_name.map(JsonValue::from).unwrap_or(JsonValue::Null),
+        "filter": filter.map(JsonValue::from).unwrap_or(JsonValue::Null),
+        "list_only": true,
+        "status": "listed",
+        "discovered_total": 1,
+        "selected_total": 1,
+        "targets": [
+            direct_project_ui_json_target(),
+        ],
+        "passed": 0,
         "failed": 0,
         "failures": [],
     })
