@@ -5639,6 +5639,108 @@ fn main() -> Int {
 }
 
 #[test]
+fn test_direct_project_smoke_file_dependency_generic_bridge_reports_json_success() {
+    if !toolchain_available("`ql test --json` direct project smoke file dependency generic bridge")
+    {
+        return;
+    }
+
+    let fixture = write_dependency_smoke_project(
+        "ql-project-test-direct-file-dependency-generic-json",
+        r#"
+pub fn identity[T](value: T) -> T {
+    return value
+}
+
+pub fn first[T, N](values: [T; N]) -> T {
+    return values[0]
+}
+"#,
+        r#"
+use dep.identity as identity
+use dep.first as first
+
+fn main() -> Int {
+    let value: Int = identity(7)
+    let picked: Int = first([5, 8, 13])
+    return value + picked - 12
+}
+"#,
+    );
+    let workspace_root = workspace_root();
+    let smoke_path = fixture.project_root.join("tests/smoke.ql");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command.args(["test", "--json"]).arg(&smoke_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json` direct project smoke file dependency generic bridge",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-direct-file-dependency-generic-json",
+        "direct project smoke file dependency generic json bridge",
+        &output,
+    )
+    .expect("direct project smoke files should report dependency generic bridge success as json");
+    expect_empty_stderr(
+        "project-test-direct-file-dependency-generic-json",
+        "direct project smoke file dependency generic json bridge",
+        &stderr,
+    )
+    .expect("direct project dependency generic json bridge should not print stderr");
+
+    let actual = parse_json_output("project-test-direct-file-dependency-generic-json", &stdout);
+    let expected = serde_json::json!({
+        "schema": "ql.test.v1",
+        "path": smoke_path.display().to_string().replace('\\', "/"),
+        "requested_profile": "debug",
+        "profile_overridden": false,
+        "package_name": JsonValue::Null,
+        "filter": JsonValue::Null,
+        "list_only": false,
+        "status": "ok",
+        "discovered_total": 1,
+        "selected_total": 1,
+        "targets": [
+            {
+                "path": "tests/smoke.ql",
+                "kind": "smoke",
+                "profile": "debug",
+            }
+        ],
+        "passed": 1,
+        "failed": 0,
+        "failures": [],
+    });
+    assert_eq!(
+        actual, expected,
+        "direct project smoke file `ql test --json` should preserve the project test-file contract"
+    );
+    expect_file_exists(
+        "project-test-direct-file-dependency-generic-json",
+        &fixture.interface_output,
+        "synced dependency interface",
+        "`ql test --json` direct project smoke file dependency generic bridge",
+    )
+    .expect("direct project dependency generic json bridge should emit the dependency interface");
+    expect_file_exists(
+        "project-test-direct-file-dependency-generic-json",
+        &fixture.dependency_output,
+        "dependency package artifact",
+        "`ql test --json` direct project smoke file dependency generic bridge",
+    )
+    .expect("direct project dependency generic json bridge should build the dependency artifact");
+    expect_file_exists(
+        "project-test-direct-file-dependency-generic-json",
+        &fixture.smoke_output,
+        "direct project dependency generic json smoke executable",
+        "`ql test --json` direct project smoke file dependency generic bridge",
+    )
+    .expect("direct project dependency generic json bridge should emit the smoke executable");
+}
+
+#[test]
 fn test_direct_project_ui_file_uses_ui_snapshot_semantics() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-test-ui-direct-file");

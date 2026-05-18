@@ -31,7 +31,7 @@
 - 继续扩大 stdlib package-local smoke、stdlib examples 和 downstream consumers 对 generic public API 的覆盖。
 - LSP 下一步重点是把 diagnostics、formatting、folding/selection、signatureHelp/inlayHint、codeLens 等请求收敛到统一 workspace analysis/cache 边界。
 - README、roadmap、stdlib、VSCode 文档必须跟实现同步；实现未落地时文档写成未支持。
-- JSON 输出要覆盖成功和 preflight/render/selection failure，保证 CLI 能被工具链稳定消费。
+- JSON 输出要继续覆盖成功和 preflight/render/selection failure；`ql test --json` 已覆盖直接 project test file 的 dependency generic bridge 成功报告。
 
 ## 明确后置
 
