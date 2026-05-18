@@ -22,16 +22,17 @@ use tower_lsp::lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeLens, CodeLensParams,
     CompletionItem as LspCompletionItem, CompletionParams, CompletionResponse, Diagnostic,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentFormattingParams, DocumentHighlight, DocumentOnTypeFormattingParams,
-    DocumentRangeFormattingParams, DocumentSymbolParams, DocumentSymbolResponse, FoldingRange,
-    FoldingRangeParams, FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse, Hover,
-    HoverParams, InitializeParams, InitializeResult, InlayHint, InlayHintParams, Location,
-    Position, PrepareRenameResponse, PublishDiagnosticsParams, Range, ReferenceContext,
-    ReferenceParams, RenameParams, SelectionRange, SelectionRangeParams, SemanticTokensParams,
-    SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult, SignatureHelp,
-    SignatureHelpParams, SymbolInformation, TextDocumentContentChangeEvent, TextDocumentIdentifier,
-    TextDocumentItem, TextDocumentPositionParams, TextEdit, TypeHierarchyItem,
-    TypeHierarchyPrepareParams, TypeHierarchySubtypesParams, TypeHierarchySupertypesParams, Url,
+    DocumentFormattingParams, DocumentHighlight, DocumentLink, DocumentLinkParams,
+    DocumentOnTypeFormattingParams, DocumentRangeFormattingParams, DocumentSymbolParams,
+    DocumentSymbolResponse, FoldingRange, FoldingRangeParams, FormattingOptions,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, InitializeParams,
+    InitializeResult, InlayHint, InlayHintParams, Location, Position, PrepareRenameResponse,
+    PublishDiagnosticsParams, Range, ReferenceContext, ReferenceParams, RenameParams,
+    SelectionRange, SelectionRangeParams, SemanticTokensParams, SemanticTokensRangeParams,
+    SemanticTokensRangeResult, SemanticTokensResult, SignatureHelp, SignatureHelpParams,
+    SymbolInformation, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+    TextDocumentPositionParams, TextEdit, TypeHierarchyItem, TypeHierarchyPrepareParams,
+    TypeHierarchySubtypesParams, TypeHierarchySupertypesParams, Url,
     VersionedTextDocumentIdentifier, WorkspaceEdit, WorkspaceFolder,
 };
 
@@ -627,6 +628,23 @@ pub async fn document_symbol_via_request(
     )
     .await;
     serde_json::from_value(value).expect("textDocument/documentSymbol result should deserialize")
+}
+
+pub async fn document_link_via_request(
+    service: &mut LspService<Backend>,
+    uri: Url,
+) -> Option<Vec<DocumentLink>> {
+    let value = request_value(
+        service,
+        "textDocument/documentLink",
+        json!(DocumentLinkParams {
+            text_document: TextDocumentIdentifier { uri },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }),
+    )
+    .await;
+    serde_json::from_value(value).expect("textDocument/documentLink result should deserialize")
 }
 
 pub async fn semantic_tokens_full_via_request(

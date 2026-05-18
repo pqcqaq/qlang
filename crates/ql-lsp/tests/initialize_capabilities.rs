@@ -59,6 +59,11 @@ async fn initialize_declares_rich_editor_capabilities() {
         capabilities.document_highlight_provider,
         Some(OneOf::Left(true))
     ));
+    let document_link = capabilities
+        .document_link_provider
+        .as_ref()
+        .expect("documentLink provider should be declared");
+    assert_eq!(document_link.resolve_provider, Some(false));
     assert!(matches!(
         capabilities.document_symbol_provider,
         Some(OneOf::Left(true))
