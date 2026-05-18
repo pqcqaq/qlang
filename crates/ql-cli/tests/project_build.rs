@@ -6464,6 +6464,54 @@ fn build_workspace_path_uses_workspace_default_profile() {
 }
 
 #[test]
+fn build_workspace_path_profile_flag_overrides_workspace_default_profile() {
+    let workspace_root = workspace_root();
+    let fixture = write_workspace_default_release_build_fixture(
+        "ql-project-build-workspace-profile-override",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["build"])
+        .arg(&fixture.project_root)
+        .args(["--profile", "debug"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --profile debug` workspace override",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-workspace-profile-override",
+        "workspace profile override build",
+        &output,
+    )
+    .expect("workspace-path `ql build --profile debug` should override workspace default profile");
+    expect_empty_stderr(
+        "project-build-workspace-profile-override",
+        "workspace profile override build",
+        &stderr,
+    )
+    .expect("workspace profile override build should not print stderr");
+    expect_stdout_contains_all(
+        "project-build-workspace-profile-override",
+        &stdout.replace('\\', "/"),
+        &[&format!("wrote staticlib: {}", fixture.debug_output.display()).replace('\\', "/")],
+    )
+    .expect("workspace profile override build should write artifacts under debug");
+    expect_file_exists(
+        "project-build-workspace-profile-override",
+        &fixture.debug_output,
+        "workspace profile override artifact",
+        "workspace profile override build",
+    )
+    .expect("workspace profile override build should emit the debug artifact");
+    assert!(
+        !fixture.release_output.exists(),
+        "workspace profile override build should not emit release artifacts"
+    );
+}
+
+#[test]
 fn build_workspace_path_json_uses_workspace_default_release_profile() {
     let workspace_root = workspace_root();
     let fixture = write_workspace_default_release_build_fixture(
