@@ -1,6 +1,6 @@
 # 开发计划
 
-> 最后同步：2026-05-17
+> 最后同步：2026-05-18
 
 只记录当前开发顺序和可执行约束。不写日期承诺，不写流水账。
 
@@ -27,11 +27,11 @@
 - 继续收口 `ql-cli` project pipeline，优先扩真实 workspace/package smoke，而不是堆只测内部函数的单元测试。
 - `project init --stdlib` starter 已覆盖 package/workspace 的 `check/build/run/test`、`emit-interface`、`emit-interface --check`、package `graph/status --json`、package `dependencies` 文本、JSON 和 `--name` JSON、package `dependents --name --json`、workspace `graph/status --json --package`、workspace `dependencies --name` 文本和 JSON、以及关键 JSON 输出。下一步继续把它作为 downstream 可用性入口维护。
 - `ql project emit-interface` 的 standalone package source-path 正向回归已覆盖普通、`--check`、`--changed-only` 和 `--changed-only --check` 组合；后续只在实际回归暴露新的 selector/reporting 缺口时继续补强，确保接口产物入口和 `check/build` 共用的包解析合同一致。
-- `ql test` 的 package-under-test/direct-dependency/local-generic source override 已覆盖 package path 和直接 project test file，package/direct UI snapshot JSON success/failure 已覆盖，直接 smoke/UI 文件入口也覆盖 dependency generic public function、wrapper/helper bridge、`--list --json` listing、`--package` / `--target` / `--filter` selector 合同、组合 selector listing，以及组合 selector 下的 JSON 执行成功；下一步继续收紧更宽 dependency-aware backend 组合路径，并纳入共享 project pipeline。
+- `ql test` 的 package-under-test/direct-dependency/local-generic source override 已覆盖 package path 和直接 project test file，workspace/package/direct UI snapshot JSON success/failure 已覆盖，直接 smoke/UI 文件入口也覆盖 dependency generic public function、wrapper/helper bridge、`--list --json` listing、`--package` / `--target` / `--filter` selector 合同、组合 selector listing，以及组合 selector 下的 JSON 执行成功；下一步继续收紧更宽 dependency-aware backend 组合路径，并纳入共享 project pipeline。
 - 继续扩大 stdlib package-local smoke、stdlib examples 和 downstream consumers 对 generic public API 的覆盖。
 - LSP 下一步重点是把 diagnostics、formatting、folding/selection、signatureHelp/inlayHint、codeLens 等请求收敛到统一 workspace analysis/cache 边界。
 - README、roadmap、stdlib、VSCode 文档必须跟实现同步；实现未落地时文档写成未支持。
-- JSON 输出要继续覆盖成功和 preflight/render/selection failure；`ql test --json` 已覆盖 package/direct UI success/failure、直接 project test file 的 dependency generic bridge 成功报告、smoke/UI 组合 selector 成功、package selector mismatch、target selector miss 和 filter miss，`ql test --list --json` 已覆盖 direct project smoke/UI file listing 和组合 selector listing。
+- JSON 输出要继续覆盖成功和 preflight/render/selection failure；`ql test --json` 已覆盖 workspace/package/direct UI success/failure、workspace package UI selector 成功、直接 project test file 的 dependency generic bridge 成功报告、smoke/UI 组合 selector 成功、package selector mismatch、target selector miss 和 filter miss，`ql test --list --json` 已覆盖 direct project smoke/UI file listing 和组合 selector listing。
 
 ## 明确后置
 

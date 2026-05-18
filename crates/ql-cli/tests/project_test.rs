@@ -62,6 +62,12 @@ struct WorkspaceTestPackageSelectorProject {
     unselected_smoke_output: PathBuf,
 }
 
+struct WorkspacePackageUiFixture {
+    temp: TempDir,
+    project_root: PathBuf,
+    app_root: PathBuf,
+}
+
 fn write_dependency_smoke_project(
     prefix: &str,
     dependency_source: &str,
@@ -184,6 +190,72 @@ name = "tool"
         selected_smoke_output,
         selected_extra_output,
         unselected_smoke_output,
+    }
+}
+
+fn write_workspace_package_ui_fixture(
+    prefix: &str,
+    matching_app_snapshot: bool,
+) -> WorkspacePackageUiFixture {
+    let temp = TempDir::new(prefix);
+    let project_root = temp.path().join("workspace");
+    let app_root = project_root.join("packages").join("app");
+    fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create workspace app source tree");
+    fs::create_dir_all(project_root.join("packages/tool/src"))
+        .expect("create workspace tool source tree");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn helper() -> Int { return 1 }\n",
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        "pub fn helper() -> Int { return 2 }\n",
+    );
+
+    let source = "fn main() -> Int { return nope }\n";
+    let app_ui_path = temp.write("workspace/packages/app/tests/ui/type_error.ql", source);
+    let app_snapshot = if matching_app_snapshot {
+        ui_snapshot("tests/ui/type_error.ql", source)
+    } else {
+        "error: wrong app snapshot\n".to_owned()
+    };
+    fs::write(app_ui_path.with_extension("stderr"), app_snapshot)
+        .expect("write selected workspace ui stderr snapshot");
+
+    let tool_ui_path = temp.write("workspace/packages/tool/tests/ui/tool_error.ql", source);
+    fs::write(
+        tool_ui_path.with_extension("stderr"),
+        "error: unselected tool snapshot\n",
+    )
+    .expect("write unselected workspace ui stderr snapshot");
+
+    WorkspacePackageUiFixture {
+        temp,
+        project_root,
+        app_root,
     }
 }
 
@@ -4794,6 +4866,156 @@ fn test_workspace_member_directory_package_selector_reports_json_success() {
 }
 
 #[test]
+fn test_workspace_path_package_selector_reports_ui_snapshot_json_success() {
+    let fixture = write_workspace_package_ui_fixture("ql-project-test-workspace-ui-json", true);
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--json"])
+        .arg(&fixture.project_root)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json --package` workspace ui tests",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-workspace-ui-json",
+        "workspace package selector ui json success",
+        &output,
+    )
+    .expect("workspace-path `ql test --json --package` should run selected ui tests");
+    expect_empty_stderr(
+        "project-test-workspace-ui-json",
+        "workspace package selector ui json success",
+        &stderr,
+    )
+    .expect("workspace package selector ui json success should not print stderr");
+
+    let actual = parse_json_output("project-test-workspace-ui-json", &stdout);
+    let expected = expected_workspace_package_ui_json_success(&fixture.project_root, None);
+    assert_eq!(
+        actual, expected,
+        "workspace-path ui json success should preserve the selected-package contract"
+    );
+}
+
+#[test]
+fn test_workspace_member_directory_package_selector_reports_ui_snapshot_json_success() {
+    let fixture = write_workspace_package_ui_fixture("ql-project-test-member-dir-ui-json", true);
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--json"])
+        .arg(&fixture.app_root)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json --package` workspace member directory ui tests",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-member-dir-ui-json",
+        "workspace member directory package selector ui json success",
+        &output,
+    )
+    .expect("workspace member directory `ql test --json --package` should run selected ui tests");
+    expect_empty_stderr(
+        "project-test-member-dir-ui-json",
+        "workspace member directory package selector ui json success",
+        &stderr,
+    )
+    .expect("workspace member directory ui json success should not print stderr");
+
+    let actual = parse_json_output("project-test-member-dir-ui-json", &stdout);
+    let expected = expected_workspace_package_ui_json_success(&fixture.app_root, None);
+    assert_eq!(
+        actual, expected,
+        "workspace member directory ui json success should keep workspace-relative selected targets"
+    );
+}
+
+#[test]
+fn test_workspace_path_package_selector_ui_json_runs_with_target_and_filter_selectors() {
+    let fixture =
+        write_workspace_package_ui_fixture("ql-project-test-workspace-ui-selectors-json", true);
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--json"])
+        .arg(&fixture.project_root)
+        .args([
+            "--package",
+            "app",
+            "--target",
+            "tests/ui/type_error.ql",
+            "--filter",
+            "type_error",
+        ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json --package --target --filter` workspace ui tests",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-workspace-ui-selectors-json",
+        "workspace package selector ui json selector execution",
+        &output,
+    )
+    .expect("workspace-path ui json execution should accept package-relative target and filter selectors");
+    expect_empty_stderr(
+        "project-test-workspace-ui-selectors-json",
+        "workspace package selector ui json selector execution",
+        &stderr,
+    )
+    .expect("workspace package selector ui json selector execution should not print stderr");
+
+    let actual = parse_json_output("project-test-workspace-ui-selectors-json", &stdout);
+    let expected =
+        expected_workspace_package_ui_json_success(&fixture.project_root, Some("type_error"));
+    assert_eq!(
+        actual, expected,
+        "workspace-path ui json selector execution should preserve the stable json contract"
+    );
+}
+
+#[test]
+fn test_workspace_path_package_selector_reports_ui_snapshot_json_mismatch() {
+    let fixture =
+        write_workspace_package_ui_fixture("ql-project-test-workspace-ui-mismatch-json", false);
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--json"])
+        .arg(&fixture.project_root)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json --package` workspace ui snapshot mismatch",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-test-workspace-ui-mismatch-json",
+        "workspace package selector ui mismatch json",
+        &output,
+        1,
+    )
+    .expect("workspace-path ui json should fail when the selected package snapshot mismatches");
+    expect_empty_stderr(
+        "project-test-workspace-ui-mismatch-json",
+        "workspace package selector ui mismatch json",
+        &stderr,
+    )
+    .expect("workspace package selector ui mismatch json should stay on stdout");
+
+    assert_workspace_package_ui_snapshot_mismatch_json(
+        "project-test-workspace-ui-mismatch-json",
+        &stdout,
+        &fixture.project_root,
+    );
+}
+
+#[test]
 fn test_workspace_path_json_package_selector_reports_missing_source_root_preflight_failure() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-test-package-selector-missing-source-root-json");
@@ -6500,18 +6722,48 @@ name = "app"
     }
 }
 
-fn direct_project_ui_json_target() -> JsonValue {
+fn project_ui_json_target(path: &str) -> JsonValue {
     serde_json::json!({
-        "path": "tests/ui/type_error.ql",
+        "path": path,
         "kind": "ui",
         "profile": JsonValue::Null,
     })
+}
+
+fn direct_project_ui_json_target() -> JsonValue {
+    project_ui_json_target("tests/ui/type_error.ql")
 }
 
 fn expected_project_ui_json_success(
     request_path: &Path,
     package_name: Option<&str>,
     filter: Option<&str>,
+) -> JsonValue {
+    expected_project_ui_json_success_with_target(
+        request_path,
+        package_name,
+        filter,
+        "tests/ui/type_error.ql",
+    )
+}
+
+fn expected_workspace_package_ui_json_success(
+    request_path: &Path,
+    filter: Option<&str>,
+) -> JsonValue {
+    expected_project_ui_json_success_with_target(
+        request_path,
+        Some("app"),
+        filter,
+        "packages/app/tests/ui/type_error.ql",
+    )
+}
+
+fn expected_project_ui_json_success_with_target(
+    request_path: &Path,
+    package_name: Option<&str>,
+    filter: Option<&str>,
+    target_path: &str,
 ) -> JsonValue {
     serde_json::json!({
         "schema": "ql.test.v1",
@@ -6525,7 +6777,7 @@ fn expected_project_ui_json_success(
         "discovered_total": 1,
         "selected_total": 1,
         "targets": [
-            direct_project_ui_json_target(),
+            project_ui_json_target(target_path),
         ],
         "passed": 1,
         "failed": 0,
@@ -6534,6 +6786,35 @@ fn expected_project_ui_json_success(
 }
 
 fn assert_project_ui_snapshot_mismatch_json(case_name: &str, stdout: &str, request_path: &Path) {
+    assert_project_ui_snapshot_mismatch_json_with_target(
+        case_name,
+        stdout,
+        request_path,
+        "tests/ui/type_error.ql",
+    );
+}
+
+fn assert_workspace_package_ui_snapshot_mismatch_json(
+    case_name: &str,
+    stdout: &str,
+    request_path: &Path,
+) {
+    let json = assert_project_ui_snapshot_mismatch_json_with_target(
+        case_name,
+        stdout,
+        request_path,
+        "packages/app/tests/ui/type_error.ql",
+    );
+    assert_eq!(json["package_name"], "app");
+    assert_eq!(json["filter"], JsonValue::Null);
+}
+
+fn assert_project_ui_snapshot_mismatch_json_with_target(
+    case_name: &str,
+    stdout: &str,
+    request_path: &Path,
+    target_path: &str,
+) -> JsonValue {
     let json = parse_json_output(case_name, stdout);
     assert_eq!(json["schema"], "ql.test.v1");
     assert_eq!(
@@ -6545,11 +6826,11 @@ fn assert_project_ui_snapshot_mismatch_json(case_name: &str, stdout: &str, reque
     assert_eq!(json["selected_total"], 1);
     assert_eq!(
         json["targets"],
-        serde_json::json!([direct_project_ui_json_target()])
+        serde_json::json!([project_ui_json_target(target_path)])
     );
     assert_eq!(json["passed"], 0);
     assert_eq!(json["failed"], 1);
-    assert_eq!(json["failures"][0]["path"], "tests/ui/type_error.ql");
+    assert_eq!(json["failures"][0]["path"], target_path);
     assert_eq!(json["failures"][0]["kind"], "ui");
     assert!(
         json["failures"][0]["detail"]
@@ -6558,6 +6839,7 @@ fn assert_project_ui_snapshot_mismatch_json(case_name: &str, stdout: &str, reque
             .contains("ui stderr snapshot mismatch"),
         "project ui mismatch json should describe snapshot mismatch: {json}"
     );
+    json
 }
 
 fn expected_direct_project_ui_json_listing(
