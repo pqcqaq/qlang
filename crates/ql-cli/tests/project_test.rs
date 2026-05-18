@@ -6323,27 +6323,55 @@ fn test_direct_project_ui_file_reports_json_success() {
     .expect("direct project ui file json success should not print stderr");
 
     let actual = parse_json_output("project-test-ui-direct-file-json", &stdout);
-    let expected = serde_json::json!({
-        "schema": "ql.test.v1",
-        "path": fixture.ui_path.display().to_string().replace('\\', "/"),
-        "requested_profile": "debug",
-        "profile_overridden": false,
-        "package_name": JsonValue::Null,
-        "filter": JsonValue::Null,
-        "list_only": false,
-        "status": "ok",
-        "discovered_total": 1,
-        "selected_total": 1,
-        "targets": [
-            direct_project_ui_json_target(),
-        ],
-        "passed": 1,
-        "failed": 0,
-        "failures": [],
-    });
+    let expected = expected_direct_project_ui_json_success(&fixture.ui_path, None, None);
     assert_eq!(
         actual, expected,
         "direct project ui file json success should preserve the stable json contract"
+    );
+}
+
+#[test]
+fn test_direct_project_ui_file_json_runs_with_package_target_and_filter_selectors() {
+    let workspace_root = workspace_root();
+    let fixture =
+        write_direct_project_ui_fixture("ql-project-test-ui-direct-file-all-selectors-json", true);
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(fixture.temp.path());
+    command
+        .args(["test", "--json"])
+        .arg(&fixture.ui_path)
+        .args([
+            "--package",
+            "app",
+            "--target",
+            "tests/ui/type_error.ql",
+            "--filter",
+            "type_error",
+        ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql test --json --package --target --filter` direct project ui file",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-test-ui-direct-file-all-selectors-json",
+        "direct project ui file all selector json execution",
+        &output,
+    )
+    .expect("direct project ui file `ql test --json --package app --target tests/ui/type_error.ql --filter type_error` should pass");
+    expect_empty_stderr(
+        "project-test-ui-direct-file-all-selectors-json",
+        "direct project ui file all selector json execution",
+        &stderr,
+    )
+    .expect("direct project ui file selector json execution should not print stderr");
+
+    let actual = parse_json_output("project-test-ui-direct-file-all-selectors-json", &stdout);
+    let expected =
+        expected_direct_project_ui_json_success(&fixture.ui_path, Some("app"), Some("type_error"));
+    assert_eq!(
+        actual, expected,
+        "direct project ui file selector execution should preserve the stable json contract"
     );
 }
 
@@ -6438,6 +6466,31 @@ fn direct_project_ui_json_target() -> JsonValue {
         "path": "tests/ui/type_error.ql",
         "kind": "ui",
         "profile": JsonValue::Null,
+    })
+}
+
+fn expected_direct_project_ui_json_success(
+    request_path: &Path,
+    package_name: Option<&str>,
+    filter: Option<&str>,
+) -> JsonValue {
+    serde_json::json!({
+        "schema": "ql.test.v1",
+        "path": request_path.display().to_string().replace('\\', "/"),
+        "requested_profile": "debug",
+        "profile_overridden": false,
+        "package_name": package_name.map(JsonValue::from).unwrap_or(JsonValue::Null),
+        "filter": filter.map(JsonValue::from).unwrap_or(JsonValue::Null),
+        "list_only": false,
+        "status": "ok",
+        "discovered_total": 1,
+        "selected_total": 1,
+        "targets": [
+            direct_project_ui_json_target(),
+        ],
+        "passed": 1,
+        "failed": 0,
+        "failures": [],
     })
 }
 
