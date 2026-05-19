@@ -350,6 +350,107 @@ fn assert_repo_stdlib_starter_dependencies_json(context: &str, dependencies_json
     }
 }
 
+fn assert_repo_stdlib_targets_json(context: &str, targets_json: &JsonValue) {
+    assert_eq!(targets_json["schema"], "ql.project.targets.v1");
+    let members = targets_json["members"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose target members: {targets_json}"));
+    assert_eq!(
+        members.len(),
+        6,
+        "{context} should expose every stdlib target member"
+    );
+
+    for (package_name, manifest_path, expected_targets) in [
+        (
+            "std.core",
+            "stdlib/packages/core/qlang.toml",
+            vec![("lib", "src/lib.ql")],
+        ),
+        (
+            "std.option",
+            "stdlib/packages/option/qlang.toml",
+            vec![("lib", "src/lib.ql")],
+        ),
+        (
+            "std.result",
+            "stdlib/packages/result/qlang.toml",
+            vec![("lib", "src/lib.ql")],
+        ),
+        (
+            "std.array",
+            "stdlib/packages/array/qlang.toml",
+            vec![("lib", "src/lib.ql")],
+        ),
+        (
+            "std.test",
+            "stdlib/packages/test/qlang.toml",
+            vec![("lib", "src/lib.ql")],
+        ),
+        (
+            "stdlib.starter",
+            "stdlib/examples/starter/qlang.toml",
+            vec![("lib", "src/lib.ql"), ("bin", "src/main.ql")],
+        ),
+    ] {
+        let member = members
+            .iter()
+            .find(|actual| actual["package_name"] == package_name)
+            .unwrap_or_else(|| panic!("{context} should expose targets for `{package_name}`"));
+        assert_eq!(member["manifest_path"], manifest_path);
+        let targets = member["targets"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{context} should expose targets for `{package_name}`"));
+        assert_eq!(
+            targets.len(),
+            expected_targets.len(),
+            "{context} should expose expected target count for `{package_name}`"
+        );
+        for (kind, path) in expected_targets {
+            assert!(
+                targets
+                    .iter()
+                    .any(|actual| actual["kind"] == kind && actual["path"] == path),
+                "{context} should expose `{kind}` target `{path}` for `{package_name}`: {targets_json}"
+            );
+        }
+    }
+}
+
+fn assert_repo_stdlib_dependents_json(
+    context: &str,
+    dependents_json: &JsonValue,
+    package_name: &str,
+    expected_dependents: &[(&str, &str)],
+) {
+    assert_eq!(dependents_json["schema"], "ql.project.dependents.v1");
+    assert_eq!(dependents_json["path"], "stdlib");
+    assert_eq!(
+        dependents_json["workspace_manifest_path"],
+        "stdlib/qlang.toml"
+    );
+    assert_eq!(dependents_json["package_name"], package_name);
+    let dependents = dependents_json["dependents"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose dependents: {dependents_json}"));
+    assert_eq!(
+        dependents.len(),
+        expected_dependents.len(),
+        "{context} should expose expected dependent count for `{package_name}`"
+    );
+
+    for (dependent_name, member_path) in expected_dependents {
+        assert!(
+            dependents.iter().any(|actual| {
+                actual["package_name"] == *dependent_name
+                    && actual["member"] == *member_path
+                    && actual["manifest_path"] == format!("stdlib/{member_path}/qlang.toml")
+            }),
+            "{context} should expose dependent `{dependent_name}`: {dependents_json}"
+        );
+    }
+}
+
 fn assert_stdlib_dependency_build_targets(context: &str, build_json: &JsonValue) {
     let built_targets = build_json["built_targets"]
         .as_array()
@@ -1276,6 +1377,102 @@ fn repo_stdlib_workspace_graph_and_dependencies_are_current() {
     .unwrap();
     let actual = parse_json_output("repo-stdlib-workspace-graph", &stdout);
     assert_repo_stdlib_starter_dependencies_json("repo stdlib starter dependencies json", &actual);
+}
+
+#[test]
+fn repo_stdlib_workspace_targets_and_dependents_are_current() {
+    let workspace_root = workspace_root();
+
+    let mut targets = ql_command(&workspace_root);
+    targets.args(["project", "targets", "stdlib", "--json"]);
+    let output = run_command_capture(&mut targets, "`ql project targets stdlib --json`");
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-targets",
+        "targets repo stdlib workspace",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-targets",
+        "targets repo stdlib workspace",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-targets", &stdout);
+    assert_repo_stdlib_targets_json("repo stdlib workspace targets json", &actual);
+
+    let mut option_dependents = ql_command(&workspace_root);
+    option_dependents.args([
+        "project",
+        "dependents",
+        "stdlib",
+        "--name",
+        "std.option",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut option_dependents,
+        "`ql project dependents stdlib --name std.option --json`",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-targets",
+        "std.option dependents in repo stdlib workspace",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-targets",
+        "std.option dependents in repo stdlib workspace",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-targets", &stdout);
+    assert_repo_stdlib_dependents_json(
+        "repo stdlib std.option dependents json",
+        &actual,
+        "std.option",
+        &[
+            ("std.result", "packages/result"),
+            ("std.test", "packages/test"),
+            ("stdlib.starter", "examples/starter"),
+        ],
+    );
+
+    let mut core_dependents = ql_command(&workspace_root);
+    core_dependents.args([
+        "project",
+        "dependents",
+        "stdlib",
+        "--name",
+        "std.core",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut core_dependents,
+        "`ql project dependents stdlib --name std.core --json`",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-targets",
+        "std.core dependents in repo stdlib workspace",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-targets",
+        "std.core dependents in repo stdlib workspace",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-targets", &stdout);
+    assert_repo_stdlib_dependents_json(
+        "repo stdlib std.core dependents json",
+        &actual,
+        "std.core",
+        &[
+            ("std.test", "packages/test"),
+            ("stdlib.starter", "examples/starter"),
+        ],
+    );
 }
 
 #[test]

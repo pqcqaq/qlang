@@ -67,6 +67,8 @@ cargo run -q -p ql-cli -- project emit-interface --check stdlib
 cargo run -q -p ql-cli -- project status stdlib --json
 cargo run -q -p ql-cli -- project graph stdlib --json
 cargo run -q -p ql-cli -- project dependencies stdlib --name stdlib.starter --json
+cargo run -q -p ql-cli -- project dependents stdlib --name std.option --json
+cargo run -q -p ql-cli -- project dependents stdlib --name std.core --json
 cargo run -q -p ql-cli -- build stdlib
 cargo run -q -p ql-cli -- test stdlib
 ```
