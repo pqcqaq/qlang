@@ -1,0 +1,20 @@
+// qlang interface v1
+// package: stdlib.starter
+
+// source: src/lib.ql
+use std.array.at_array_or as at_array_or
+use std.array.contains_array as contains_array
+use std.array.count_array as count_array
+use std.array.first_array as first_array
+use std.array.repeat_array as repeat_array
+use std.array.sum_int_array as sum_int_array
+use std.core.clamp_int as clamp_int
+use std.option.Option as Option
+use std.option.some as option_some
+use std.option.unwrap_or as option_unwrap_or
+use std.result.Result as Result
+use std.result.error_to_option as result_error_to_option
+use std.result.ok_or as result_ok_or
+use std.result.to_option as result_to_option
+
+pub fn run() -> Int

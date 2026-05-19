@@ -1,0 +1,32 @@
+// qlang interface v1
+// package: std.result
+
+// source: src/lib.ql
+package std.result
+
+use std.option.Option as Option
+
+pub enum Result[T, E] {
+    Ok(T),
+    Err(E),
+}
+
+pub fn ok[T, E](value: T) -> Result[T, E]
+
+pub fn err[T, E](error: E) -> Result[T, E]
+
+pub fn is_ok[T, E](value: Result[T, E]) -> Bool
+
+pub fn is_err[T, E](value: Result[T, E]) -> Bool
+
+pub fn unwrap_result_or[T, E](value: Result[T, E], fallback: T) -> T
+
+pub fn or_result[T, E](value: Result[T, E], fallback: Result[T, E]) -> Result[T, E]
+
+pub fn error_or[T, E](value: Result[T, E], fallback: E) -> E
+
+pub fn ok_or[T, E](value: Option[T], error: E) -> Result[T, E]
+
+pub fn to_option[T, E](value: Result[T, E]) -> Option[T]
+
+pub fn error_to_option[T, E](value: Result[T, E]) -> Option[E]

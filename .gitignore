@@ -3,5 +3,7 @@ docs/.vitepress/cache/
 docs/.vitepress/dist/
 target/
 *.qi
+!stdlib/packages/*/*.qi
+!stdlib/examples/*/*.qi
 .serena/
 ramdon_tests/

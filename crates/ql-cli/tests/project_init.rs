@@ -178,6 +178,66 @@ fn assert_repo_stdlib_check_json(
     );
 }
 
+fn assert_repo_stdlib_status_json(context: &str, status_json: &JsonValue) {
+    assert_eq!(status_json["schema"], "ql.project.status.v1");
+    assert_eq!(status_json["kind"], "workspace");
+    assert_eq!(status_json["status"], "ok");
+    assert_eq!(status_json["path"], "stdlib");
+    assert_eq!(status_json["project_manifest_path"], "stdlib/qlang.toml");
+
+    let members = status_json["members"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose workspace members: {status_json}"));
+    assert_eq!(
+        members.len(),
+        6,
+        "{context} should expose every stdlib member"
+    );
+
+    for (member_path, package_name, interface_path) in [
+        (
+            "packages/core",
+            "std.core",
+            "stdlib/packages/core/std.core.qi",
+        ),
+        (
+            "packages/option",
+            "std.option",
+            "stdlib/packages/option/std.option.qi",
+        ),
+        (
+            "packages/result",
+            "std.result",
+            "stdlib/packages/result/std.result.qi",
+        ),
+        (
+            "packages/array",
+            "std.array",
+            "stdlib/packages/array/std.array.qi",
+        ),
+        (
+            "packages/test",
+            "std.test",
+            "stdlib/packages/test/std.test.qi",
+        ),
+        (
+            "examples/starter",
+            "stdlib.starter",
+            "stdlib/examples/starter/stdlib.starter.qi",
+        ),
+    ] {
+        let member = members
+            .iter()
+            .find(|actual| actual["member"] == member_path)
+            .unwrap_or_else(|| panic!("{context} should expose member `{member_path}`"));
+        assert_eq!(member["package_name"], package_name);
+        assert_eq!(member["interface"]["path"], interface_path);
+        assert_eq!(member["interface"]["status"], "valid");
+        assert_eq!(member["interface"]["detail"], JsonValue::Null);
+        assert_eq!(member["interface"]["stale_reasons"], serde_json::json!([]));
+    }
+}
+
 fn assert_stdlib_dependency_build_targets(context: &str, build_json: &JsonValue) {
     let built_targets = build_json["built_targets"]
         .as_array()
@@ -998,6 +1058,61 @@ fn repo_stdlib_fixture_syncs_interfaces_and_checks_workspace() {
         false,
         &[],
     );
+}
+
+#[test]
+fn repo_stdlib_workspace_interfaces_are_current() {
+    let workspace_root = workspace_root();
+
+    let mut check_interfaces = ql_command(&workspace_root);
+    check_interfaces.args(["project", "emit-interface", "--check", "stdlib"]);
+    let output = run_command_capture(
+        &mut check_interfaces,
+        "`ql project emit-interface --check stdlib`",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-interfaces",
+        "check repo stdlib workspace interfaces",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-interfaces",
+        "check repo stdlib workspace interfaces",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "repo-stdlib-workspace-interfaces",
+        &stdout.replace('\\', "/"),
+        &[
+            "ok interface: stdlib/packages/core/std.core.qi",
+            "ok interface: stdlib/packages/option/std.option.qi",
+            "ok interface: stdlib/packages/result/std.result.qi",
+            "ok interface: stdlib/packages/array/std.array.qi",
+            "ok interface: stdlib/packages/test/std.test.qi",
+            "ok interface: stdlib/examples/starter/stdlib.starter.qi",
+        ],
+    )
+    .unwrap();
+
+    let mut status = ql_command(&workspace_root);
+    status.args(["project", "status", "stdlib", "--json"]);
+    let output = run_command_capture(&mut status, "`ql project status stdlib --json`");
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-interfaces",
+        "status repo stdlib workspace",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-interfaces",
+        "status repo stdlib workspace",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-interfaces", &stdout);
+    assert_repo_stdlib_status_json("repo stdlib workspace status json", &actual);
 }
 
 #[test]

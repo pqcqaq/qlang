@@ -1,0 +1,22 @@
+// qlang interface v1
+// package: std.option
+
+// source: src/lib.ql
+package std.option
+
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+
+pub fn some[T](value: T) -> Option[T]
+
+pub fn none_option[T]() -> Option[T]
+
+pub fn is_some[T](value: Option[T]) -> Bool
+
+pub fn is_none[T](value: Option[T]) -> Bool
+
+pub fn unwrap_or[T](value: Option[T], fallback: T) -> T
+
+pub fn or_option[T](value: Option[T], fallback: Option[T]) -> Option[T]
