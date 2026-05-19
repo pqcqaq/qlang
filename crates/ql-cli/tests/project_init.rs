@@ -417,6 +417,111 @@ fn assert_repo_stdlib_targets_json(context: &str, targets_json: &JsonValue) {
     }
 }
 
+fn assert_repo_stdlib_run_list_json(context: &str, targets_json: &JsonValue) {
+    assert_eq!(targets_json["schema"], "ql.project.targets.v1");
+    let members = targets_json["members"].as_array().unwrap_or_else(|| {
+        panic!("{context} should expose runnable target members: {targets_json}")
+    });
+    assert_eq!(
+        members.len(),
+        6,
+        "{context} should expose every stdlib workspace member"
+    );
+
+    for (package_name, manifest_path, expected_targets) in [
+        (
+            "std.core",
+            "stdlib/packages/core/qlang.toml",
+            Vec::<(&str, &str)>::new(),
+        ),
+        (
+            "std.option",
+            "stdlib/packages/option/qlang.toml",
+            Vec::new(),
+        ),
+        (
+            "std.result",
+            "stdlib/packages/result/qlang.toml",
+            Vec::new(),
+        ),
+        ("std.array", "stdlib/packages/array/qlang.toml", Vec::new()),
+        ("std.test", "stdlib/packages/test/qlang.toml", Vec::new()),
+        (
+            "stdlib.starter",
+            "stdlib/examples/starter/qlang.toml",
+            vec![("bin", "src/main.ql")],
+        ),
+    ] {
+        let member = members
+            .iter()
+            .find(|actual| actual["package_name"] == package_name)
+            .unwrap_or_else(|| panic!("{context} should expose run-list member `{package_name}`"));
+        assert_eq!(member["manifest_path"], manifest_path);
+        let targets = member["targets"].as_array().unwrap_or_else(|| {
+            panic!("{context} should expose runnable targets for `{package_name}`")
+        });
+        assert_eq!(
+            targets.len(),
+            expected_targets.len(),
+            "{context} should expose runnable target count for `{package_name}`"
+        );
+        for (kind, path) in expected_targets {
+            assert!(
+                targets
+                    .iter()
+                    .any(|actual| actual["kind"] == kind && actual["path"] == path),
+                "{context} should expose runnable `{kind}` target `{path}` for `{package_name}`: {targets_json}"
+            );
+        }
+    }
+}
+
+fn assert_repo_stdlib_test_list_json(
+    context: &str,
+    test_json: &JsonValue,
+    package_name: Option<&str>,
+    expected_targets: &[&str],
+) {
+    assert_eq!(test_json["schema"], "ql.test.v1");
+    assert_eq!(test_json["path"], "stdlib");
+    assert_eq!(test_json["requested_profile"], "debug");
+    assert_eq!(test_json["profile_overridden"], false);
+    match package_name {
+        Some(package_name) => assert_eq!(test_json["package_name"], package_name),
+        None => assert_eq!(test_json["package_name"], JsonValue::Null),
+    }
+    assert_eq!(test_json["filter"], JsonValue::Null);
+    assert_eq!(test_json["list_only"], true);
+    assert_eq!(test_json["status"], "listed");
+    assert_eq!(
+        test_json["discovered_total"],
+        serde_json::json!(expected_targets.len())
+    );
+    assert_eq!(
+        test_json["selected_total"],
+        serde_json::json!(expected_targets.len())
+    );
+    assert_eq!(
+        test_json["targets"],
+        JsonValue::Array(
+            expected_targets
+                .iter()
+                .map(|path| {
+                    serde_json::json!({
+                        "path": *path,
+                        "kind": "smoke",
+                        "profile": "debug",
+                    })
+                })
+                .collect()
+        ),
+        "{context} should list the expected stdlib smoke targets"
+    );
+    assert_eq!(test_json["passed"], 0);
+    assert_eq!(test_json["failed"], 0);
+    assert_eq!(test_json["failures"], serde_json::json!([]));
+}
+
 fn assert_repo_stdlib_dependents_json(
     context: &str,
     dependents_json: &JsonValue,
@@ -1612,6 +1717,112 @@ fn repo_stdlib_workspace_targets_and_dependents_are_current() {
             ("std.test", "packages/test"),
             ("stdlib.starter", "examples/starter"),
         ],
+    );
+}
+
+#[test]
+fn repo_stdlib_workspace_lists_build_run_and_tests() {
+    let workspace_root = workspace_root();
+
+    let mut build_list = ql_command(&workspace_root);
+    build_list.args(["build", "stdlib", "--list", "--json"]);
+    let output = run_command_capture(&mut build_list, "`ql build stdlib --list --json`");
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-list",
+        "list build targets in repo stdlib workspace",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-list",
+        "list build targets in repo stdlib workspace",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-list", &stdout);
+    assert_repo_stdlib_targets_json("repo stdlib build list json", &actual);
+
+    let mut run_list = ql_command(&workspace_root);
+    run_list.args(["run", "stdlib", "--list", "--json"]);
+    let output = run_command_capture(&mut run_list, "`ql run stdlib --list --json`");
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-list",
+        "list runnable targets in repo stdlib workspace",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-list",
+        "list runnable targets in repo stdlib workspace",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-list", &stdout);
+    assert_repo_stdlib_run_list_json("repo stdlib run list json", &actual);
+
+    let all_smoke_targets = [
+        "packages/core/tests/smoke.ql",
+        "packages/option/tests/smoke.ql",
+        "packages/result/tests/smoke.ql",
+        "packages/array/tests/smoke.ql",
+        "packages/test/tests/smoke.ql",
+        "examples/starter/tests/smoke.ql",
+    ];
+
+    let mut test_list = ql_command(&workspace_root);
+    test_list.args(["test", "stdlib", "--list", "--json"]);
+    let output = run_command_capture(&mut test_list, "`ql test stdlib --list --json`");
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-list",
+        "list all smoke tests in repo stdlib workspace",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-list",
+        "list all smoke tests in repo stdlib workspace",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-list", &stdout);
+    assert_repo_stdlib_test_list_json(
+        "repo stdlib test list json",
+        &actual,
+        None,
+        &all_smoke_targets,
+    );
+
+    let mut starter_test_list = ql_command(&workspace_root);
+    starter_test_list.args([
+        "test",
+        "stdlib",
+        "--list",
+        "--json",
+        "--package",
+        "stdlib.starter",
+    ]);
+    let output = run_command_capture(
+        &mut starter_test_list,
+        "`ql test stdlib --list --json --package stdlib.starter`",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-list",
+        "list starter smoke tests in repo stdlib workspace",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-list",
+        "list starter smoke tests in repo stdlib workspace",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-list", &stdout);
+    assert_repo_stdlib_test_list_json(
+        "repo stdlib starter test list json",
+        &actual,
+        Some("stdlib.starter"),
+        &["examples/starter/tests/smoke.ql"],
     );
 }
 
