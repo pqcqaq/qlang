@@ -81,6 +81,103 @@ fn assert_stdlib_check_json(
     );
 }
 
+fn repo_stdlib_checked_files(stdlib_root: &Path) -> Vec<PathBuf> {
+    vec![
+        stdlib_root.join("packages/core/src/lib.ql"),
+        stdlib_root.join("packages/option/src/lib.ql"),
+        stdlib_root.join("packages/result/src/lib.ql"),
+        stdlib_root.join("packages/array/src/lib.ql"),
+        stdlib_root.join("packages/test/src/lib.ql"),
+        stdlib_root.join("examples/starter/src/lib.ql"),
+        stdlib_root.join("examples/starter/src/main.ql"),
+    ]
+}
+
+fn repo_stdlib_written_interfaces(stdlib_root: &Path) -> Vec<PathBuf> {
+    vec![
+        stdlib_root.join("packages/option/std.option.qi"),
+        stdlib_root.join("packages/array/std.array.qi"),
+        stdlib_root.join("packages/core/std.core.qi"),
+        stdlib_root.join("packages/result/std.result.qi"),
+        stdlib_root.join("packages/test/std.test.qi"),
+    ]
+}
+
+fn repo_stdlib_loaded_interfaces(stdlib_root: &Path) -> Vec<PathBuf> {
+    vec![
+        stdlib_root.join("packages/option/std.option.qi"),
+        stdlib_root.join("packages/array/std.array.qi"),
+        stdlib_root.join("packages/core/std.core.qi"),
+        stdlib_root.join("packages/option/std.option.qi"),
+        stdlib_root.join("packages/result/std.result.qi"),
+        stdlib_root.join("packages/array/std.array.qi"),
+        stdlib_root.join("packages/core/std.core.qi"),
+        stdlib_root.join("packages/option/std.option.qi"),
+        stdlib_root.join("packages/result/std.result.qi"),
+        stdlib_root.join("packages/test/std.test.qi"),
+    ]
+}
+
+fn json_path_list(paths: &[PathBuf]) -> JsonValue {
+    serde_json::json!(paths.iter().map(|path| json_path(path)).collect::<Vec<_>>())
+}
+
+fn normalize_cli_json_path(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    normalized
+        .strip_prefix("//?/")
+        .unwrap_or(&normalized)
+        .to_owned()
+}
+
+fn assert_repo_stdlib_check_json(
+    context: &str,
+    check_json: &JsonValue,
+    stdlib_root: &Path,
+    sync_interfaces: bool,
+    written_interfaces: &[PathBuf],
+) {
+    assert_eq!(check_json["schema"], "ql.check.v1");
+    assert_eq!(check_json["scope"], "workspace");
+    assert_eq!(check_json["status"], "ok");
+    assert_eq!(
+        check_json["project_manifest_path"],
+        json_path(&stdlib_root.join("qlang.toml"))
+    );
+    assert_eq!(check_json["diagnostic_files"], serde_json::json!([]));
+    assert_eq!(check_json["failing_manifests"], serde_json::json!([]));
+    assert_eq!(check_json["sync_interfaces"], sync_interfaces);
+    assert_eq!(
+        check_json["checked_files"],
+        json_path_list(&repo_stdlib_checked_files(stdlib_root)),
+        "{context} should check every stdlib package/example source"
+    );
+    assert_eq!(
+        check_json["loaded_interfaces"],
+        json_path_list(&repo_stdlib_loaded_interfaces(stdlib_root)),
+        "{context} should report loaded stdlib dependency interfaces in traversal order"
+    );
+    let actual_written_interfaces = check_json["written_interfaces"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should report written interface paths as an array"))
+        .iter()
+        .map(|path| {
+            normalize_cli_json_path(
+                path.as_str()
+                    .unwrap_or_else(|| panic!("{context} should report string interface paths")),
+            )
+        })
+        .collect::<Vec<_>>();
+    let expected_written_interfaces = written_interfaces
+        .iter()
+        .map(|path| normalize_cli_json_path(&json_path(path)))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual_written_interfaces, expected_written_interfaces,
+        "{context} should report synchronized interface artifacts"
+    );
+}
+
 fn assert_stdlib_dependency_build_targets(context: &str, build_json: &JsonValue) {
     let built_targets = build_json["built_targets"]
         .as_array()
@@ -822,6 +919,84 @@ fn repo_stdlib_fixture_runs_all_workspace_smoke_tests() {
     assert_eq!(
         actual, expected,
         "copied repo stdlib workspace should keep a stable full-workspace test json contract"
+    );
+}
+
+#[test]
+fn repo_stdlib_fixture_syncs_interfaces_and_checks_workspace() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-repo-stdlib-workspace-check");
+    let stdlib_root = write_repo_stdlib_fixture(&temp, &workspace_root);
+    let written_interfaces = repo_stdlib_written_interfaces(&stdlib_root);
+
+    for interface_path in &written_interfaces {
+        assert!(
+            !interface_path.exists(),
+            "repo stdlib fixture should start from source-only packages: {}",
+            interface_path.display()
+        );
+    }
+
+    let mut sync_check = ql_command(&workspace_root);
+    sync_check
+        .args(["check", "--sync-interfaces", "--json"])
+        .arg(&stdlib_root);
+    let output = run_command_capture(
+        &mut sync_check,
+        "`ql check --sync-interfaces --json` copied repo stdlib workspace",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-check",
+        "sync copied repo stdlib workspace interfaces",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-check",
+        "sync copied repo stdlib workspace interfaces",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-check", &stdout);
+    assert_repo_stdlib_check_json(
+        "synced copied repo stdlib workspace check json",
+        &actual,
+        &stdlib_root,
+        true,
+        &written_interfaces,
+    );
+    for interface_path in &written_interfaces {
+        expect_file_exists(
+            "repo-stdlib-workspace-check",
+            interface_path,
+            "synced stdlib interface artifact",
+            "`ql check --sync-interfaces --json` copied repo stdlib workspace",
+        )
+        .unwrap();
+    }
+
+    let mut check = ql_command(&workspace_root);
+    check.args(["check", "--json"]).arg(&stdlib_root);
+    let output = run_command_capture(&mut check, "`ql check --json` synced repo stdlib workspace");
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-check",
+        "check synced repo stdlib workspace",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-check",
+        "check synced repo stdlib workspace",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-check", &stdout);
+    assert_repo_stdlib_check_json(
+        "synced copied repo stdlib workspace follow-up check json",
+        &actual,
+        &stdlib_root,
+        false,
+        &[],
     );
 }
 
