@@ -238,6 +238,77 @@ fn assert_repo_stdlib_status_json(context: &str, status_json: &JsonValue) {
     }
 }
 
+fn assert_repo_stdlib_starter_status_json(context: &str, status_json: &JsonValue) {
+    assert_eq!(status_json["schema"], "ql.project.status.v1");
+    assert_eq!(status_json["kind"], "workspace");
+    assert_eq!(status_json["status"], "ok");
+    assert_eq!(status_json["path"], "stdlib");
+    assert_eq!(status_json["project_manifest_path"], "stdlib/qlang.toml");
+
+    let members = status_json["members"].as_array().unwrap_or_else(|| {
+        panic!("{context} should expose selected workspace member: {status_json}")
+    });
+    assert_eq!(
+        members.len(),
+        1,
+        "{context} should expose only the selected starter member"
+    );
+    let starter = &members[0];
+    assert_eq!(starter["member"], "examples/starter");
+    assert_eq!(starter["package_name"], "stdlib.starter");
+    assert_eq!(
+        starter["manifest_path"],
+        "stdlib/examples/starter/qlang.toml"
+    );
+    assert_eq!(
+        starter["interface"]["path"],
+        "stdlib/examples/starter/stdlib.starter.qi"
+    );
+    assert_eq!(starter["interface"]["status"], "valid");
+    assert_eq!(starter["interface"]["detail"], JsonValue::Null);
+    assert_eq!(starter["interface"]["stale_reasons"], serde_json::json!([]));
+    assert_eq!(
+        starter["targets"],
+        serde_json::json!([
+            {
+                "kind": "lib",
+                "path": "src/lib.ql",
+            },
+            {
+                "kind": "bin",
+                "path": "src/main.ql",
+            }
+        ])
+    );
+
+    let dependencies = starter["dependencies"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose starter dependencies: {status_json}"));
+    assert_eq!(
+        dependencies.len(),
+        5,
+        "{context} should expose every starter dependency"
+    );
+    for (package_name, member, dependency_path) in [
+        ("std.array", "packages/array", "../../packages/array"),
+        ("std.core", "packages/core", "../../packages/core"),
+        ("std.option", "packages/option", "../../packages/option"),
+        ("std.result", "packages/result", "../../packages/result"),
+        ("std.test", "packages/test", "../../packages/test"),
+    ] {
+        assert!(
+            dependencies.iter().any(|actual| {
+                actual["kind"] == "workspace"
+                    && actual["package_name"] == package_name
+                    && actual["member"] == member
+                    && actual["dependency_path"] == dependency_path
+                    && actual["manifest_path"] == format!("stdlib/{member}/qlang.toml")
+            }),
+            "{context} should expose dependency `{package_name}`: {status_json}"
+        );
+    }
+}
+
 fn assert_repo_stdlib_graph_json(context: &str, graph_json: &JsonValue) {
     assert_eq!(graph_json["schema"], "ql.project.graph.v1");
     assert_eq!(graph_json["manifest_path"], "stdlib/qlang.toml");
@@ -309,6 +380,90 @@ fn assert_repo_stdlib_graph_json(context: &str, graph_json: &JsonValue) {
                     && actual["transitive_reference_failures"]["first_failure"] == JsonValue::Null
             }),
             "{context} should expose valid starter dependency `{package_name}`: {graph_json}"
+        );
+    }
+}
+
+fn assert_repo_stdlib_starter_graph_json(context: &str, graph_json: &JsonValue) {
+    assert_eq!(graph_json["schema"], "ql.project.graph.v1");
+    assert_eq!(
+        graph_json["manifest_path"],
+        "stdlib/examples/starter/qlang.toml"
+    );
+    assert_eq!(graph_json["package_name"], "stdlib.starter");
+    assert_eq!(graph_json["interface"]["path"], "stdlib.starter.qi");
+    assert_eq!(graph_json["interface"]["status"], "valid");
+    assert_eq!(graph_json["interface"]["detail"], JsonValue::Null);
+    assert_eq!(
+        graph_json["interface"]["stale_reasons"],
+        serde_json::json!([])
+    );
+    assert_eq!(graph_json["workspace_members"], serde_json::json!([]));
+    assert_eq!(graph_json["workspace_packages"], serde_json::json!([]));
+    assert_eq!(
+        graph_json["references"],
+        serde_json::json!([
+            "../../packages/array",
+            "../../packages/core",
+            "../../packages/option",
+            "../../packages/result",
+            "../../packages/test",
+        ])
+    );
+
+    let reference_interfaces = graph_json["reference_interfaces"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose reference interfaces: {graph_json}"));
+    assert_eq!(
+        reference_interfaces.len(),
+        5,
+        "{context} should expose every starter reference interface"
+    );
+    for (package_name, reference, manifest_path, interface_path) in [
+        (
+            "std.array",
+            "../../packages/array",
+            "packages/array/qlang.toml",
+            "packages/array/std.array.qi",
+        ),
+        (
+            "std.core",
+            "../../packages/core",
+            "packages/core/qlang.toml",
+            "packages/core/std.core.qi",
+        ),
+        (
+            "std.option",
+            "../../packages/option",
+            "packages/option/qlang.toml",
+            "packages/option/std.option.qi",
+        ),
+        (
+            "std.result",
+            "../../packages/result",
+            "packages/result/qlang.toml",
+            "packages/result/std.result.qi",
+        ),
+        (
+            "std.test",
+            "../../packages/test",
+            "packages/test/qlang.toml",
+            "packages/test/std.test.qi",
+        ),
+    ] {
+        assert!(
+            reference_interfaces.iter().any(|actual| {
+                actual["package_name"] == package_name
+                    && actual["reference"] == reference
+                    && actual["manifest_path"] == manifest_path
+                    && actual["path"] == interface_path
+                    && actual["status"] == "valid"
+                    && actual["detail"] == JsonValue::Null
+                    && actual["stale_reasons"] == serde_json::json!([])
+                    && actual["transitive_reference_failures"]["count"] == 0
+                    && actual["transitive_reference_failures"]["first_failure"] == JsonValue::Null
+            }),
+            "{context} should expose valid starter reference interface `{package_name}`: {graph_json}"
         );
     }
 }
@@ -415,6 +570,30 @@ fn assert_repo_stdlib_targets_json(context: &str, targets_json: &JsonValue) {
             );
         }
     }
+}
+
+fn assert_repo_stdlib_starter_targets_json(context: &str, targets_json: &JsonValue) {
+    assert_eq!(targets_json["schema"], "ql.project.targets.v1");
+    assert_eq!(
+        targets_json["members"],
+        serde_json::json!([
+            {
+                "manifest_path": "stdlib/examples/starter/qlang.toml",
+                "package_name": "stdlib.starter",
+                "targets": [
+                    {
+                        "kind": "lib",
+                        "path": "src/lib.ql",
+                    },
+                    {
+                        "kind": "bin",
+                        "path": "src/main.ql",
+                    }
+                ],
+            }
+        ]),
+        "{context} should expose only the selected starter targets"
+    );
 }
 
 fn assert_repo_stdlib_run_list_json(context: &str, targets_json: &JsonValue) {
@@ -1733,6 +1912,95 @@ fn repo_stdlib_workspace_graph_and_dependencies_are_current() {
     .unwrap();
     let actual = parse_json_output("repo-stdlib-workspace-graph", &stdout);
     assert_repo_stdlib_starter_dependencies_json("repo stdlib starter dependencies json", &actual);
+}
+
+#[test]
+fn repo_stdlib_workspace_starter_metadata_selectors_are_current() {
+    let workspace_root = workspace_root();
+
+    let mut graph = ql_command(&workspace_root);
+    graph.args([
+        "project",
+        "graph",
+        "stdlib",
+        "--package",
+        "stdlib.starter",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut graph,
+        "`ql project graph stdlib --package stdlib.starter --json`",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-metadata",
+        "graph repo stdlib starter package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-metadata",
+        "graph repo stdlib starter package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-starter-metadata", &stdout);
+    assert_repo_stdlib_starter_graph_json("repo stdlib starter graph json", &actual);
+
+    let mut status = ql_command(&workspace_root);
+    status.args([
+        "project",
+        "status",
+        "stdlib",
+        "--package",
+        "stdlib.starter",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut status,
+        "`ql project status stdlib --package stdlib.starter --json`",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-metadata",
+        "status repo stdlib starter package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-metadata",
+        "status repo stdlib starter package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-starter-metadata", &stdout);
+    assert_repo_stdlib_starter_status_json("repo stdlib starter status json", &actual);
+
+    let mut targets = ql_command(&workspace_root);
+    targets.args([
+        "project",
+        "targets",
+        "stdlib",
+        "--package",
+        "stdlib.starter",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut targets,
+        "`ql project targets stdlib --package stdlib.starter --json`",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-metadata",
+        "targets repo stdlib starter package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-metadata",
+        "targets repo stdlib starter package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-starter-metadata", &stdout);
+    assert_repo_stdlib_starter_targets_json("repo stdlib starter targets json", &actual);
 }
 
 #[test]
