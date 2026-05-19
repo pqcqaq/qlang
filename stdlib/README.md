@@ -65,6 +65,8 @@ cargo run -q -p ql-cli -- project targets stdlib
 cargo run -q -p ql-cli -- check --sync-interfaces stdlib
 cargo run -q -p ql-cli -- check stdlib --package stdlib.starter --json
 cargo run -q -p ql-cli -- project emit-interface --check stdlib
+cargo run -q -p ql-cli -- project emit-interface --check stdlib --package stdlib.starter
+cargo run -q -p ql-cli -- project emit-interface --changed-only --check stdlib --package stdlib.starter
 cargo run -q -p ql-cli -- project status stdlib --json
 cargo run -q -p ql-cli -- project status stdlib --package stdlib.starter --json
 cargo run -q -p ql-cli -- project graph stdlib --json

@@ -1844,6 +1844,71 @@ fn repo_stdlib_workspace_interfaces_are_current() {
     )
     .unwrap();
 
+    let mut check_starter_interface = ql_command(&workspace_root);
+    check_starter_interface.args([
+        "project",
+        "emit-interface",
+        "--check",
+        "stdlib",
+        "--package",
+        "stdlib.starter",
+    ]);
+    let output = run_command_capture(
+        &mut check_starter_interface,
+        "`ql project emit-interface --check stdlib --package stdlib.starter`",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-interfaces",
+        "check repo stdlib starter interface",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-interfaces",
+        "check repo stdlib starter interface",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "repo-stdlib-workspace-interfaces",
+        &stdout.replace('\\', "/"),
+        &["ok interface: stdlib/examples/starter/stdlib.starter.qi"],
+    )
+    .unwrap();
+
+    let mut check_changed_starter_interface = ql_command(&workspace_root);
+    check_changed_starter_interface.args([
+        "project",
+        "emit-interface",
+        "--changed-only",
+        "--check",
+        "stdlib",
+        "--package",
+        "stdlib.starter",
+    ]);
+    let output = run_command_capture(
+        &mut check_changed_starter_interface,
+        "`ql project emit-interface --changed-only --check stdlib --package stdlib.starter`",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-interfaces",
+        "check changed-only repo stdlib starter interface",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-interfaces",
+        "check changed-only repo stdlib starter interface",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "repo-stdlib-workspace-interfaces",
+        &stdout.replace('\\', "/"),
+        &["up-to-date interface: stdlib/examples/starter/stdlib.starter.qi"],
+    )
+    .unwrap();
+
     let mut status = ql_command(&workspace_root);
     status.args(["project", "status", "stdlib", "--json"]);
     let output = run_command_capture(&mut status, "`ql project status stdlib --json`");
