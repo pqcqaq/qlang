@@ -451,6 +451,146 @@ fn assert_repo_stdlib_dependents_json(
     }
 }
 
+fn repo_stdlib_artifact_path(package_dir: &str, kind: &str, stem: &str) -> String {
+    let root = Path::new("stdlib")
+        .join(package_dir)
+        .join("target/ql/debug");
+    let path = match kind {
+        "staticlib" => static_library_output_path(&root, stem),
+        "exe" => executable_output_path(&root, stem),
+        "llvm-ir" => root.join(format!("{stem}.ll")),
+        _ => panic!("unsupported stdlib artifact kind `{kind}`"),
+    };
+    json_path(&path)
+}
+
+fn assert_repo_stdlib_build_json(context: &str, build_json: &JsonValue) {
+    assert_eq!(build_json["schema"], "ql.build.v1");
+    assert_eq!(build_json["scope"], "project");
+    assert_eq!(build_json["path"], "stdlib");
+    assert_eq!(build_json["project_manifest_path"], "stdlib/qlang.toml");
+    assert_eq!(build_json["requested_emit"], "llvm-ir");
+    assert_eq!(build_json["requested_profile"], "debug");
+    assert_eq!(build_json["profile_overridden"], false);
+    assert_eq!(build_json["emit_interface"], false);
+    assert_eq!(build_json["status"], "ok");
+    assert_eq!(build_json["failure"], JsonValue::Null);
+
+    let interfaces = build_json["interfaces"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose interface writes: {build_json}"));
+    assert_eq!(
+        interfaces.len(),
+        6,
+        "{context} should rewrite every stdlib interface"
+    );
+    for (package_name, package_dir, interface_file) in [
+        ("std.core", "packages/core", "std.core.qi"),
+        ("std.option", "packages/option", "std.option.qi"),
+        ("std.result", "packages/result", "std.result.qi"),
+        ("std.array", "packages/array", "std.array.qi"),
+        ("std.test", "packages/test", "std.test.qi"),
+        ("stdlib.starter", "examples/starter", "stdlib.starter.qi"),
+    ] {
+        assert!(
+            interfaces.iter().any(|actual| {
+                actual["manifest_path"] == format!("stdlib/{package_dir}/qlang.toml")
+                    && actual["package_name"] == package_name
+                    && actual["path"] == format!("stdlib/{package_dir}/{interface_file}")
+                    && actual["selected"] == true
+                    && actual["status"] == "wrote"
+            }),
+            "{context} should report interface write for `{package_name}`: {build_json}"
+        );
+    }
+
+    let built_targets = build_json["built_targets"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose built targets: {build_json}"));
+    assert_eq!(
+        built_targets.len(),
+        7,
+        "{context} should build every stdlib lib target and starter bin"
+    );
+    for (package_name, package_dir) in [
+        ("std.core", "packages/core"),
+        ("std.option", "packages/option"),
+        ("std.result", "packages/result"),
+        ("std.array", "packages/array"),
+        ("std.test", "packages/test"),
+        ("stdlib.starter", "examples/starter"),
+    ] {
+        assert!(
+            built_targets.iter().any(|actual| {
+                actual["manifest_path"] == format!("stdlib/{package_dir}/qlang.toml")
+                    && actual["package_name"] == package_name
+                    && actual["selected"] == true
+                    && actual["dependency_only"] == false
+                    && actual["kind"] == "lib"
+                    && actual["path"] == "src/lib.ql"
+                    && actual["emit"] == "staticlib"
+                    && actual["profile"] == "debug"
+                    && actual["artifact_path"]
+                        == repo_stdlib_artifact_path(package_dir, "staticlib", "lib")
+                    && actual["c_header_path"] == JsonValue::Null
+            }),
+            "{context} should include lib build target for `{package_name}`: {build_json}"
+        );
+    }
+    assert!(
+        built_targets.iter().any(|actual| {
+            actual["manifest_path"] == "stdlib/examples/starter/qlang.toml"
+                && actual["package_name"] == "stdlib.starter"
+                && actual["selected"] == true
+                && actual["dependency_only"] == false
+                && actual["kind"] == "bin"
+                && actual["path"] == "src/main.ql"
+                && actual["emit"] == "llvm-ir"
+                && actual["profile"] == "debug"
+                && actual["artifact_path"]
+                    == repo_stdlib_artifact_path("examples/starter", "llvm-ir", "main")
+                && actual["c_header_path"] == JsonValue::Null
+        }),
+        "{context} should include starter bin llvm-ir target: {build_json}"
+    );
+}
+
+fn assert_repo_stdlib_run_json(context: &str, run_json: &JsonValue) {
+    assert_eq!(run_json["schema"], "ql.run.v1");
+    assert_eq!(run_json["scope"], "project");
+    assert_eq!(run_json["path"], "stdlib");
+    assert_eq!(run_json["project_manifest_path"], "stdlib/qlang.toml");
+    assert_eq!(run_json["requested_profile"], "debug");
+    assert_eq!(run_json["profile_overridden"], false);
+    assert_eq!(run_json["program_args"], serde_json::json!([]));
+    assert_eq!(run_json["status"], "completed");
+    assert_eq!(run_json["failure"], JsonValue::Null);
+    assert_eq!(
+        run_json["built_target"],
+        serde_json::json!({
+            "manifest_path": "stdlib/examples/starter/qlang.toml",
+            "package_name": "stdlib.starter",
+            "selected": true,
+            "dependency_only": false,
+            "kind": "bin",
+            "path": "src/main.ql",
+            "emit": "exe",
+            "profile": "debug",
+            "artifact_path": repo_stdlib_artifact_path("examples/starter", "exe", "main"),
+            "c_header_path": JsonValue::Null,
+        }),
+        "{context} should run the stdlib starter executable"
+    );
+    assert_eq!(
+        run_json["execution"],
+        serde_json::json!({
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+        })
+    );
+}
+
 fn assert_stdlib_dependency_build_targets(context: &str, build_json: &JsonValue) {
     let built_targets = build_json["built_targets"]
         .as_array()
@@ -1473,6 +1613,117 @@ fn repo_stdlib_workspace_targets_and_dependents_are_current() {
             ("stdlib.starter", "examples/starter"),
         ],
     );
+}
+
+#[test]
+fn repo_stdlib_workspace_builds_and_runs_starter() {
+    if !toolchain_available("`ql build/run` repo stdlib workspace") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+
+    let mut build = ql_command(&workspace_root);
+    build.args(["build", "stdlib", "--json"]);
+    let output = run_command_capture(&mut build, "`ql build stdlib --json`");
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-build-run",
+        "build repo stdlib workspace",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-build-run",
+        "build repo stdlib workspace",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-build-run", &stdout);
+    assert_repo_stdlib_build_json("repo stdlib workspace build json", &actual);
+    for (context, path) in [
+        (
+            "std.core static library",
+            static_library_output_path(
+                &workspace_root.join("stdlib/packages/core/target/ql/debug"),
+                "lib",
+            ),
+        ),
+        (
+            "std.option static library",
+            static_library_output_path(
+                &workspace_root.join("stdlib/packages/option/target/ql/debug"),
+                "lib",
+            ),
+        ),
+        (
+            "std.result static library",
+            static_library_output_path(
+                &workspace_root.join("stdlib/packages/result/target/ql/debug"),
+                "lib",
+            ),
+        ),
+        (
+            "std.array static library",
+            static_library_output_path(
+                &workspace_root.join("stdlib/packages/array/target/ql/debug"),
+                "lib",
+            ),
+        ),
+        (
+            "std.test static library",
+            static_library_output_path(
+                &workspace_root.join("stdlib/packages/test/target/ql/debug"),
+                "lib",
+            ),
+        ),
+        (
+            "stdlib starter static library",
+            static_library_output_path(
+                &workspace_root.join("stdlib/examples/starter/target/ql/debug"),
+                "lib",
+            ),
+        ),
+        (
+            "stdlib starter llvm-ir",
+            workspace_root.join("stdlib/examples/starter/target/ql/debug/main.ll"),
+        ),
+    ] {
+        expect_file_exists(
+            "repo-stdlib-workspace-build-run",
+            &path,
+            context,
+            "`ql build stdlib --json`",
+        )
+        .unwrap();
+    }
+
+    let mut run = ql_command(&workspace_root);
+    run.args(["run", "stdlib", "--package", "stdlib.starter", "--json"]);
+    let output = run_command_capture(&mut run, "`ql run stdlib --package stdlib.starter --json`");
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-build-run",
+        "run repo stdlib starter",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-build-run",
+        "run repo stdlib starter",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-build-run", &stdout);
+    assert_repo_stdlib_run_json("repo stdlib starter run json", &actual);
+    expect_file_exists(
+        "repo-stdlib-workspace-build-run",
+        &executable_output_path(
+            &workspace_root.join("stdlib/examples/starter/target/ql/debug"),
+            "main",
+        ),
+        "stdlib starter executable",
+        "`ql run stdlib --package stdlib.starter --json`",
+    )
+    .unwrap();
 }
 
 #[test]
