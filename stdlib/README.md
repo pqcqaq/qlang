@@ -63,6 +63,7 @@ cargo run -q -p ql-cli -- project init D:\Projects\my-qlang-workspace --workspac
 ```powershell
 cargo run -q -p ql-cli -- project targets stdlib
 cargo run -q -p ql-cli -- check --sync-interfaces stdlib
+cargo run -q -p ql-cli -- check stdlib --package stdlib.starter --json
 cargo run -q -p ql-cli -- project emit-interface --check stdlib
 cargo run -q -p ql-cli -- project status stdlib --json
 cargo run -q -p ql-cli -- project graph stdlib --json
@@ -70,11 +71,13 @@ cargo run -q -p ql-cli -- project dependencies stdlib --name stdlib.starter --js
 cargo run -q -p ql-cli -- project dependents stdlib --name std.option --json
 cargo run -q -p ql-cli -- project dependents stdlib --name std.core --json
 cargo run -q -p ql-cli -- build stdlib --list --json
+cargo run -q -p ql-cli -- build stdlib --package stdlib.starter --json
 cargo run -q -p ql-cli -- build stdlib --json
 cargo run -q -p ql-cli -- run stdlib --list --json
 cargo run -q -p ql-cli -- run stdlib --package stdlib.starter --json
 cargo run -q -p ql-cli -- test stdlib --list --json
 cargo run -q -p ql-cli -- test stdlib --list --json --package stdlib.starter
+cargo run -q -p ql-cli -- test stdlib --package stdlib.starter --json
 cargo run -q -p ql-cli -- test stdlib
 ```
 
