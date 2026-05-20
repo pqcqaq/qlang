@@ -236,12 +236,19 @@ fn assert_repo_stdlib_status_json(context: &str, status_json: &JsonValue) {
     }
 }
 
-fn assert_repo_stdlib_starter_status_json(context: &str, status_json: &JsonValue) {
+fn assert_repo_stdlib_starter_status_json(
+    context: &str,
+    status_json: &JsonValue,
+    stdlib_root: &Path,
+) {
     assert_eq!(status_json["schema"], "ql.project.status.v1");
     assert_eq!(status_json["kind"], "workspace");
     assert_eq!(status_json["status"], "ok");
-    assert_eq!(status_json["path"], "stdlib");
-    assert_eq!(status_json["project_manifest_path"], "stdlib/qlang.toml");
+    assert_eq!(status_json["path"], json_path(stdlib_root));
+    assert_eq!(
+        status_json["project_manifest_path"],
+        json_path(&stdlib_root.join("qlang.toml"))
+    );
 
     let members = status_json["members"].as_array().unwrap_or_else(|| {
         panic!("{context} should expose selected workspace member: {status_json}")
@@ -256,11 +263,11 @@ fn assert_repo_stdlib_starter_status_json(context: &str, status_json: &JsonValue
     assert_eq!(starter["package_name"], "stdlib.starter");
     assert_eq!(
         starter["manifest_path"],
-        "stdlib/examples/starter/qlang.toml"
+        json_path(&stdlib_root.join("examples/starter/qlang.toml"))
     );
     assert_eq!(
         starter["interface"]["path"],
-        "stdlib/examples/starter/stdlib.starter.qi"
+        json_path(&stdlib_root.join("examples/starter/stdlib.starter.qi"))
     );
     assert_eq!(starter["interface"]["status"], "valid");
     assert_eq!(starter["interface"]["detail"], JsonValue::Null);
@@ -300,7 +307,8 @@ fn assert_repo_stdlib_starter_status_json(context: &str, status_json: &JsonValue
                     && actual["package_name"] == package_name
                     && actual["member"] == member
                     && actual["dependency_path"] == dependency_path
-                    && actual["manifest_path"] == format!("stdlib/{member}/qlang.toml")
+                    && actual["manifest_path"]
+                        == json_path(&stdlib_root.join(format!("{member}/qlang.toml")))
             }),
             "{context} should expose dependency `{package_name}`: {status_json}"
         );
@@ -382,11 +390,15 @@ fn assert_repo_stdlib_graph_json(context: &str, graph_json: &JsonValue) {
     }
 }
 
-fn assert_repo_stdlib_starter_graph_json(context: &str, graph_json: &JsonValue) {
+fn assert_repo_stdlib_starter_graph_json(
+    context: &str,
+    graph_json: &JsonValue,
+    stdlib_root: &Path,
+) {
     assert_eq!(graph_json["schema"], "ql.project.graph.v1");
     assert_eq!(
         graph_json["manifest_path"],
-        "stdlib/examples/starter/qlang.toml"
+        json_path(&stdlib_root.join("examples/starter/qlang.toml"))
     );
     assert_eq!(graph_json["package_name"], "stdlib.starter");
     assert_eq!(graph_json["interface"]["path"], "stdlib.starter.qi");
@@ -570,13 +582,17 @@ fn assert_repo_stdlib_targets_json(context: &str, targets_json: &JsonValue) {
     }
 }
 
-fn assert_repo_stdlib_starter_targets_json(context: &str, targets_json: &JsonValue) {
+fn assert_repo_stdlib_starter_targets_json(
+    context: &str,
+    targets_json: &JsonValue,
+    stdlib_root: &Path,
+) {
     assert_eq!(targets_json["schema"], "ql.project.targets.v1");
     assert_eq!(
         targets_json["members"],
         serde_json::json!([
             {
-                "manifest_path": "stdlib/examples/starter/qlang.toml",
+                "manifest_path": json_path(&stdlib_root.join("examples/starter/qlang.toml")),
                 "package_name": "stdlib.starter",
                 "targets": [
                     {
@@ -1932,6 +1948,159 @@ fn repo_stdlib_fixture_syncs_interfaces_and_checks_workspace() {
 }
 
 #[test]
+fn repo_stdlib_fixture_starter_metadata_selectors_after_interface_sync() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-repo-stdlib-workspace-starter-metadata");
+    let stdlib_root = write_repo_stdlib_fixture(&temp, &workspace_root);
+
+    let mut sync_check = ql_command(&workspace_root);
+    sync_check
+        .args(["check", "--sync-interfaces", "--json"])
+        .arg(&stdlib_root);
+    let output = run_command_capture(
+        &mut sync_check,
+        "`ql check --sync-interfaces --json` copied repo stdlib metadata fixture",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-metadata-fixture",
+        "sync copied repo stdlib metadata fixture interfaces",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-metadata-fixture",
+        "sync copied repo stdlib metadata fixture interfaces",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-starter-metadata-fixture", &stdout);
+    assert_repo_stdlib_check_json(
+        "synced copied repo stdlib metadata fixture check json",
+        &actual,
+        &stdlib_root,
+        true,
+        &repo_stdlib_written_interfaces(&stdlib_root),
+    );
+
+    let mut emit_starter = ql_command(&workspace_root);
+    emit_starter
+        .args(["project", "emit-interface"])
+        .arg(&stdlib_root)
+        .args(["--package", "stdlib.starter"]);
+    let output = run_command_capture(
+        &mut emit_starter,
+        "`ql project emit-interface` copied repo stdlib starter",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-metadata-fixture",
+        "emit copied repo stdlib starter interface",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-metadata-fixture",
+        "emit copied repo stdlib starter interface",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "repo-stdlib-workspace-starter-metadata-fixture",
+        &stdout.replace('\\', "/"),
+        &[&format!(
+            "wrote interface: {}",
+            json_path(&stdlib_root.join("examples/starter/stdlib.starter.qi"))
+        )],
+    )
+    .unwrap();
+
+    let mut graph = ql_command(&workspace_root);
+    graph.args(["project", "graph"]).arg(&stdlib_root).args([
+        "--package",
+        "stdlib.starter",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut graph,
+        "`ql project graph --package stdlib.starter --json` copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-metadata-fixture",
+        "graph copied repo stdlib starter package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-metadata-fixture",
+        "graph copied repo stdlib starter package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-starter-metadata-fixture", &stdout);
+    assert_repo_stdlib_starter_graph_json(
+        "copied repo stdlib starter graph json",
+        &actual,
+        &stdlib_root,
+    );
+
+    let mut status = ql_command(&workspace_root);
+    status.args(["project", "status"]).arg(&stdlib_root).args([
+        "--package",
+        "stdlib.starter",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut status,
+        "`ql project status --package stdlib.starter --json` copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-metadata-fixture",
+        "status copied repo stdlib starter package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-metadata-fixture",
+        "status copied repo stdlib starter package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-starter-metadata-fixture", &stdout);
+    assert_repo_stdlib_starter_status_json(
+        "copied repo stdlib starter status json",
+        &actual,
+        &stdlib_root,
+    );
+
+    let mut targets = ql_command(&workspace_root);
+    targets
+        .args(["project", "targets"])
+        .arg(&stdlib_root)
+        .args(["--package", "stdlib.starter", "--json"]);
+    let output = run_command_capture(
+        &mut targets,
+        "`ql project targets --package stdlib.starter --json` copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-metadata-fixture",
+        "targets copied repo stdlib starter package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-metadata-fixture",
+        "targets copied repo stdlib starter package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-starter-metadata-fixture", &stdout);
+    assert_repo_stdlib_starter_targets_json(
+        "copied repo stdlib starter targets json",
+        &actual,
+        &stdlib_root,
+    );
+}
+
+#[test]
 fn repo_stdlib_fixture_writes_and_checks_workspace_lockfile() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-repo-stdlib-workspace-lock");
@@ -2375,7 +2544,11 @@ fn repo_stdlib_workspace_starter_metadata_selectors_are_current() {
     )
     .unwrap();
     let actual = parse_json_output("repo-stdlib-workspace-starter-metadata", &stdout);
-    assert_repo_stdlib_starter_graph_json("repo stdlib starter graph json", &actual);
+    assert_repo_stdlib_starter_graph_json(
+        "repo stdlib starter graph json",
+        &actual,
+        Path::new("stdlib"),
+    );
 
     let mut status = ql_command(&workspace_root);
     status.args([
@@ -2403,7 +2576,11 @@ fn repo_stdlib_workspace_starter_metadata_selectors_are_current() {
     )
     .unwrap();
     let actual = parse_json_output("repo-stdlib-workspace-starter-metadata", &stdout);
-    assert_repo_stdlib_starter_status_json("repo stdlib starter status json", &actual);
+    assert_repo_stdlib_starter_status_json(
+        "repo stdlib starter status json",
+        &actual,
+        Path::new("stdlib"),
+    );
 
     let mut targets = ql_command(&workspace_root);
     targets.args([
@@ -2431,7 +2608,11 @@ fn repo_stdlib_workspace_starter_metadata_selectors_are_current() {
     )
     .unwrap();
     let actual = parse_json_output("repo-stdlib-workspace-starter-metadata", &stdout);
-    assert_repo_stdlib_starter_targets_json("repo stdlib starter targets json", &actual);
+    assert_repo_stdlib_starter_targets_json(
+        "repo stdlib starter targets json",
+        &actual,
+        Path::new("stdlib"),
+    );
 }
 
 #[test]
