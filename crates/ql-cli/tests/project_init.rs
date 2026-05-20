@@ -3,13 +3,13 @@ mod support;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use ql_driver::{ToolchainOptions, discover_toolchain};
+use ql_driver::{discover_toolchain, ToolchainOptions};
 use serde_json::Value as JsonValue;
 use support::{
-    TempDir, executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
+    executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
     expect_file_exists, expect_silent_output, expect_stderr_contains, expect_stdout_contains_all,
     expect_success, ql_command, read_normalized_file, run_command_capture,
-    static_library_output_path, workspace_root,
+    static_library_output_path, workspace_root, TempDir,
 };
 
 fn toolchain_available(context: &str) -> bool {
@@ -60,12 +60,10 @@ fn assert_stdlib_check_json(
     assert_eq!(check_json["written_interfaces"], serde_json::json!([]));
     assert_eq!(
         check_json["checked_files"],
-        serde_json::json!(
-            checked_files
-                .iter()
-                .map(|path| json_path(path))
-                .collect::<Vec<_>>()
-        ),
+        serde_json::json!(checked_files
+            .iter()
+            .map(|path| json_path(path))
+            .collect::<Vec<_>>()),
         "{context} should report the initialized package sources"
     );
     assert_eq!(
@@ -2017,6 +2015,131 @@ fn repo_stdlib_fixture_writes_and_checks_workspace_lockfile() {
     assert_eq!(
         actual["lockfile"], lockfile_json,
         "copied repo stdlib lock check should report the written lockfile exactly"
+    );
+}
+
+#[test]
+fn repo_stdlib_fixture_lock_check_reports_stale_workspace_lockfile() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-repo-stdlib-workspace-lock-stale");
+    let stdlib_root = write_repo_stdlib_fixture(&temp, &workspace_root);
+    let manifest_path = stdlib_root.join("qlang.toml");
+    let lockfile_path = stdlib_root.join("qlang.lock");
+
+    let mut lock = ql_command(&workspace_root);
+    lock.args(["project", "lock", "--json"]).arg(&stdlib_root);
+    let output = run_command_capture(&mut lock, "`ql project lock --json` copied repo stdlib");
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-lock-stale",
+        "write copied repo stdlib workspace lockfile",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-lock-stale",
+        "write copied repo stdlib workspace lockfile",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-lock-stale", &stdout);
+    assert_repo_stdlib_lock_json(
+        "copied repo stdlib workspace initial lock json",
+        &actual,
+        &stdlib_root,
+        &stdlib_root,
+        false,
+        "wrote",
+    );
+    let initial_lockfile =
+        read_normalized_file(&lockfile_path, "initial copied repo stdlib lockfile");
+
+    temp.write(
+        "stdlib/packages/core/qlang.toml",
+        r#"[package]
+name = "std.core"
+
+[profile]
+default = "debug"
+"#,
+    );
+
+    let mut check = ql_command(&workspace_root);
+    check
+        .args(["project", "lock", "--check", "--json"])
+        .arg(&stdlib_root);
+    let output = run_command_capture(
+        &mut check,
+        "`ql project lock --check --json` stale copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "repo-stdlib-workspace-lock-stale",
+        "check stale copied repo stdlib workspace lockfile",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-lock-stale",
+        "check stale copied repo stdlib workspace lockfile",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-lock-stale", &stdout);
+
+    assert_eq!(actual["schema"], "ql.project.lock.result.v1");
+    assert_eq!(actual["path"], json_path(&stdlib_root));
+    assert_eq!(actual["project_manifest_path"], json_path(&manifest_path));
+    assert_eq!(actual["lockfile_path"], json_path(&lockfile_path));
+    assert_eq!(actual["check_only"], true);
+    assert_eq!(actual["status"], "failed");
+    assert_eq!(actual["failure"]["kind"], "stale");
+    assert_eq!(
+        actual["failure"]["message"],
+        format!("lockfile `{}` is stale", json_path(&lockfile_path))
+    );
+    assert_eq!(
+        actual["failure"]["rerun_command"],
+        format!("ql project lock {}", json_path(&manifest_path))
+    );
+    assert_eq!(actual["lockfile"]["schema"], "ql.project.lock.v1");
+    assert_eq!(actual["lockfile"]["root"]["kind"], "workspace");
+    assert_eq!(actual["lockfile"]["root"]["manifest_path"], "qlang.toml");
+    assert_eq!(
+        actual["lockfile"]["workspace_members"],
+        serde_json::json!([
+            "packages/core/qlang.toml",
+            "packages/option/qlang.toml",
+            "packages/result/qlang.toml",
+            "packages/array/qlang.toml",
+            "packages/test/qlang.toml",
+            "examples/starter/qlang.toml",
+        ])
+    );
+    let core_package = actual["lockfile"]["packages"]
+        .as_array()
+        .unwrap_or_else(|| {
+            panic!("stale copied repo stdlib check should report rendered packages: {actual}")
+        })
+        .iter()
+        .find(|package| package["package_name"] == "std.core")
+        .unwrap_or_else(|| {
+            panic!("stale copied repo stdlib check should report std.core package: {actual}")
+        });
+    assert_eq!(core_package["manifest_path"], "packages/core/qlang.toml");
+    assert_eq!(core_package["default_profile"], "debug");
+
+    let unchanged_lockfile =
+        read_normalized_file(&lockfile_path, "stale copied repo stdlib lockfile");
+    assert_eq!(
+        initial_lockfile, unchanged_lockfile,
+        "stale copied repo stdlib lock check should not rewrite qlang.lock"
+    );
+    let on_disk_lockfile: JsonValue = serde_json::from_str(&unchanged_lockfile)
+        .expect("unchanged copied repo stdlib lockfile should remain valid json");
+    assert_eq!(
+        on_disk_lockfile["packages"][0]["default_profile"],
+        JsonValue::Null,
+        "unchanged lockfile should keep the pre-drift std.core profile"
     );
 }
 
