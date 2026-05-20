@@ -478,12 +478,16 @@ fn assert_repo_stdlib_starter_graph_json(
     }
 }
 
-fn assert_repo_stdlib_starter_dependencies_json(context: &str, dependencies_json: &JsonValue) {
+fn assert_repo_stdlib_starter_dependencies_json(
+    context: &str,
+    dependencies_json: &JsonValue,
+    stdlib_root: &Path,
+) {
     assert_eq!(dependencies_json["schema"], "ql.project.dependencies.v1");
-    assert_eq!(dependencies_json["path"], "stdlib");
+    assert_eq!(dependencies_json["path"], json_path(stdlib_root));
     assert_eq!(
         dependencies_json["workspace_manifest_path"],
-        "stdlib/qlang.toml"
+        json_path(&stdlib_root.join("qlang.toml"))
     );
     assert_eq!(dependencies_json["package_name"], "stdlib.starter");
 
@@ -508,7 +512,8 @@ fn assert_repo_stdlib_starter_dependencies_json(context: &str, dependencies_json
                     && actual["package_name"] == package_name
                     && actual["member"] == member
                     && actual["dependency_path"] == dependency_path
-                    && actual["manifest_path"] == format!("stdlib/{member}/qlang.toml")
+                    && actual["manifest_path"]
+                        == json_path(&stdlib_root.join(format!("{member}/qlang.toml")))
             }),
             "{context} should expose dependency `{package_name}`: {dependencies_json}"
         );
@@ -748,14 +753,15 @@ fn assert_repo_stdlib_starter_check_json(context: &str, check_json: &JsonValue) 
 fn assert_repo_stdlib_dependents_json(
     context: &str,
     dependents_json: &JsonValue,
+    stdlib_root: &Path,
     package_name: &str,
     expected_dependents: &[(&str, &str)],
 ) {
     assert_eq!(dependents_json["schema"], "ql.project.dependents.v1");
-    assert_eq!(dependents_json["path"], "stdlib");
+    assert_eq!(dependents_json["path"], json_path(stdlib_root));
     assert_eq!(
         dependents_json["workspace_manifest_path"],
-        "stdlib/qlang.toml"
+        json_path(&stdlib_root.join("qlang.toml"))
     );
     assert_eq!(dependents_json["package_name"], package_name);
     let dependents = dependents_json["dependents"]
@@ -772,7 +778,8 @@ fn assert_repo_stdlib_dependents_json(
             dependents.iter().any(|actual| {
                 actual["package_name"] == *dependent_name
                     && actual["member"] == *member_path
-                    && actual["manifest_path"] == format!("stdlib/{member_path}/qlang.toml")
+                    && actual["manifest_path"]
+                        == json_path(&stdlib_root.join(format!("{member_path}/qlang.toml")))
             }),
             "{context} should expose dependent `{dependent_name}`: {dependents_json}"
         );
@@ -2101,6 +2108,108 @@ fn repo_stdlib_fixture_starter_metadata_selectors_after_interface_sync() {
 }
 
 #[test]
+fn repo_stdlib_fixture_dependency_selectors_use_copied_workspace_paths() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-repo-stdlib-workspace-dependency-selectors");
+    let stdlib_root = write_repo_stdlib_fixture(&temp, &workspace_root);
+
+    let mut package_dependencies = ql_command(&workspace_root);
+    package_dependencies
+        .args(["project", "dependencies"])
+        .arg(&stdlib_root)
+        .args(["--package", "stdlib.starter", "--json"]);
+    let output = run_command_capture(
+        &mut package_dependencies,
+        "`ql project dependencies --package stdlib.starter --json` copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-dependency-selectors",
+        "dependencies copied repo stdlib starter package selector",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-dependency-selectors",
+        "dependencies copied repo stdlib starter package selector",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-dependency-selectors", &stdout);
+    assert_repo_stdlib_starter_dependencies_json(
+        "copied repo stdlib starter dependencies package selector json",
+        &actual,
+        &stdlib_root,
+    );
+
+    let mut option_dependents = ql_command(&workspace_root);
+    option_dependents
+        .args(["project", "dependents"])
+        .arg(&stdlib_root)
+        .args(["--package", "std.option", "--json"]);
+    let output = run_command_capture(
+        &mut option_dependents,
+        "`ql project dependents --package std.option --json` copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-dependency-selectors",
+        "std.option dependents in copied repo stdlib by package selector",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-dependency-selectors",
+        "std.option dependents in copied repo stdlib by package selector",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-dependency-selectors", &stdout);
+    assert_repo_stdlib_dependents_json(
+        "copied repo stdlib std.option dependents package selector json",
+        &actual,
+        &stdlib_root,
+        "std.option",
+        &[
+            ("std.result", "packages/result"),
+            ("std.test", "packages/test"),
+            ("stdlib.starter", "examples/starter"),
+        ],
+    );
+
+    let mut core_dependents = ql_command(&workspace_root);
+    core_dependents
+        .args(["project", "dependents"])
+        .arg(&stdlib_root)
+        .args(["--name", "std.core", "--json"]);
+    let output = run_command_capture(
+        &mut core_dependents,
+        "`ql project dependents --name std.core --json` copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-dependency-selectors",
+        "std.core dependents in copied repo stdlib by name selector",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-dependency-selectors",
+        "std.core dependents in copied repo stdlib by name selector",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-dependency-selectors", &stdout);
+    assert_repo_stdlib_dependents_json(
+        "copied repo stdlib std.core dependents json",
+        &actual,
+        &stdlib_root,
+        "std.core",
+        &[
+            ("std.test", "packages/test"),
+            ("stdlib.starter", "examples/starter"),
+        ],
+    );
+}
+
+#[test]
 fn repo_stdlib_fixture_writes_and_checks_workspace_lockfile() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-repo-stdlib-workspace-lock");
@@ -2480,7 +2589,11 @@ fn repo_stdlib_workspace_graph_and_dependencies_are_current() {
     )
     .unwrap();
     let actual = parse_json_output("repo-stdlib-workspace-graph", &stdout);
-    assert_repo_stdlib_starter_dependencies_json("repo stdlib starter dependencies json", &actual);
+    assert_repo_stdlib_starter_dependencies_json(
+        "repo stdlib starter dependencies json",
+        &actual,
+        Path::new("stdlib"),
+    );
 
     let mut package_dependencies = ql_command(&workspace_root);
     package_dependencies.args([
@@ -2511,6 +2624,7 @@ fn repo_stdlib_workspace_graph_and_dependencies_are_current() {
     assert_repo_stdlib_starter_dependencies_json(
         "repo stdlib starter dependencies package selector json",
         &actual,
+        Path::new("stdlib"),
     );
 }
 
@@ -2666,6 +2780,7 @@ fn repo_stdlib_workspace_targets_and_dependents_are_current() {
     assert_repo_stdlib_dependents_json(
         "repo stdlib std.option dependents json",
         &actual,
+        Path::new("stdlib"),
         "std.option",
         &[
             ("std.result", "packages/result"),
@@ -2703,6 +2818,7 @@ fn repo_stdlib_workspace_targets_and_dependents_are_current() {
     assert_repo_stdlib_dependents_json(
         "repo stdlib std.option dependents package selector json",
         &actual,
+        Path::new("stdlib"),
         "std.option",
         &[
             ("std.result", "packages/result"),
@@ -2740,6 +2856,7 @@ fn repo_stdlib_workspace_targets_and_dependents_are_current() {
     assert_repo_stdlib_dependents_json(
         "repo stdlib std.core dependents json",
         &actual,
+        Path::new("stdlib"),
         "std.core",
         &[
             ("std.test", "packages/test"),
