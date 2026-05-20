@@ -745,11 +745,18 @@ fn assert_repo_stdlib_test_list_json(
     assert_eq!(test_json["failures"], serde_json::json!([]));
 }
 
-fn assert_repo_stdlib_starter_check_json(context: &str, check_json: &JsonValue) {
+fn assert_repo_stdlib_starter_check_json(
+    context: &str,
+    check_json: &JsonValue,
+    stdlib_root: &Path,
+) {
     assert_eq!(check_json["schema"], "ql.check.v1");
     assert_eq!(check_json["scope"], "workspace");
     assert_eq!(check_json["status"], "ok");
-    assert_eq!(check_json["project_manifest_path"], "stdlib/qlang.toml");
+    assert_eq!(
+        check_json["project_manifest_path"],
+        json_path(&stdlib_root.join("qlang.toml"))
+    );
     assert_eq!(check_json["diagnostic_files"], serde_json::json!([]));
     assert_eq!(check_json["failing_manifests"], serde_json::json!([]));
     assert_eq!(check_json["sync_interfaces"], false);
@@ -757,19 +764,19 @@ fn assert_repo_stdlib_starter_check_json(context: &str, check_json: &JsonValue) 
     assert_eq!(
         check_json["checked_files"],
         serde_json::json!([
-            "stdlib/examples/starter/src/lib.ql",
-            "stdlib/examples/starter/src/main.ql",
+            json_path(&stdlib_root.join("examples/starter/src/lib.ql")),
+            json_path(&stdlib_root.join("examples/starter/src/main.ql")),
         ]),
         "{context} should check only the selected starter package sources"
     );
     assert_eq!(
         check_json["loaded_interfaces"],
         serde_json::json!([
-            "stdlib/packages/array/std.array.qi",
-            "stdlib/packages/core/std.core.qi",
-            "stdlib/packages/option/std.option.qi",
-            "stdlib/packages/result/std.result.qi",
-            "stdlib/packages/test/std.test.qi",
+            json_path(&stdlib_root.join("packages/array/std.array.qi")),
+            json_path(&stdlib_root.join("packages/core/std.core.qi")),
+            json_path(&stdlib_root.join("packages/option/std.option.qi")),
+            json_path(&stdlib_root.join("packages/result/std.result.qi")),
+            json_path(&stdlib_root.join("packages/test/std.test.qi")),
         ]),
         "{context} should load the starter dependency interfaces"
     );
@@ -2011,6 +2018,161 @@ fn repo_stdlib_fixture_syncs_interfaces_and_checks_workspace() {
         false,
         &[],
     );
+}
+
+#[test]
+fn repo_stdlib_fixture_checks_starter_package_and_interfaces() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-repo-stdlib-workspace-starter-interfaces");
+    let stdlib_root = write_repo_stdlib_fixture(&temp, &workspace_root);
+    let starter_interface = stdlib_root.join("examples/starter/stdlib.starter.qi");
+
+    let mut sync_check = ql_command(&workspace_root);
+    sync_check
+        .args(["check", "--sync-interfaces", "--json"])
+        .arg(&stdlib_root);
+    let output = run_command_capture(
+        &mut sync_check,
+        "`ql check --sync-interfaces --json` copied repo stdlib interface fixture",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-interface-fixture",
+        "sync copied repo stdlib interface fixture interfaces",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-interface-fixture",
+        "sync copied repo stdlib interface fixture interfaces",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-starter-interface-fixture", &stdout);
+    assert_repo_stdlib_check_json(
+        "synced copied repo stdlib interface fixture check json",
+        &actual,
+        &stdlib_root,
+        true,
+        &repo_stdlib_written_interfaces(&stdlib_root),
+    );
+
+    let mut emit_starter = ql_command(&workspace_root);
+    emit_starter
+        .args(["project", "emit-interface"])
+        .arg(&stdlib_root)
+        .args(["--package", "stdlib.starter"]);
+    let output = run_command_capture(
+        &mut emit_starter,
+        "`ql project emit-interface --package stdlib.starter` copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-interface-fixture",
+        "emit copied repo stdlib starter interface",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-interface-fixture",
+        "emit copied repo stdlib starter interface",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "repo-stdlib-workspace-starter-interface-fixture",
+        &stdout.replace('\\', "/"),
+        &[&format!(
+            "wrote interface: {}",
+            json_path(&starter_interface)
+        )],
+    )
+    .unwrap();
+
+    let mut package_check = ql_command(&workspace_root);
+    package_check
+        .args(["check"])
+        .arg(&stdlib_root)
+        .args(["--package", "stdlib.starter", "--json"]);
+    let output = run_command_capture(
+        &mut package_check,
+        "`ql check --package stdlib.starter --json` copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-interface-fixture",
+        "check copied repo stdlib starter package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-interface-fixture",
+        "check copied repo stdlib starter package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-starter-interface-fixture", &stdout);
+    assert_repo_stdlib_starter_check_json(
+        "copied repo stdlib starter check json",
+        &actual,
+        &stdlib_root,
+    );
+
+    let mut check_starter_interface = ql_command(&workspace_root);
+    check_starter_interface
+        .args(["project", "emit-interface", "--check"])
+        .arg(&stdlib_root)
+        .args(["--package", "stdlib.starter"]);
+    let output = run_command_capture(
+        &mut check_starter_interface,
+        "`ql project emit-interface --check --package stdlib.starter` copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-interface-fixture",
+        "check copied repo stdlib starter interface",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-interface-fixture",
+        "check copied repo stdlib starter interface",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "repo-stdlib-workspace-starter-interface-fixture",
+        &stdout.replace('\\', "/"),
+        &[&format!("ok interface: {}", json_path(&starter_interface))],
+    )
+    .unwrap();
+
+    let mut check_changed_starter_interface = ql_command(&workspace_root);
+    check_changed_starter_interface
+        .args(["project", "emit-interface", "--changed-only", "--check"])
+        .arg(&stdlib_root)
+        .args(["--package", "stdlib.starter"]);
+    let output = run_command_capture(
+        &mut check_changed_starter_interface,
+        "`ql project emit-interface --changed-only --check --package stdlib.starter` copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-interface-fixture",
+        "check changed-only copied repo stdlib starter interface",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-interface-fixture",
+        "check changed-only copied repo stdlib starter interface",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "repo-stdlib-workspace-starter-interface-fixture",
+        &stdout.replace('\\', "/"),
+        &[&format!(
+            "up-to-date interface: {}",
+            json_path(&starter_interface)
+        )],
+    )
+    .unwrap();
 }
 
 #[test]
@@ -3351,7 +3513,11 @@ fn repo_stdlib_workspace_checks_builds_and_tests_starter_package() {
     )
     .unwrap();
     let actual = parse_json_output("repo-stdlib-workspace-starter-package", &stdout);
-    assert_repo_stdlib_starter_check_json("repo stdlib starter check json", &actual);
+    assert_repo_stdlib_starter_check_json(
+        "repo stdlib starter check json",
+        &actual,
+        Path::new("stdlib"),
+    );
 
     let mut build = ql_command(&workspace_root);
     build.args(["build", "stdlib", "--package", "stdlib.starter", "--json"]);
