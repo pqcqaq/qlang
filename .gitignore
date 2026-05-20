@@ -5,5 +5,6 @@ target/
 *.qi
 !stdlib/packages/*/*.qi
 !stdlib/examples/*/*.qi
+!stdlib/qlang.lock
 .serena/
 ramdon_tests/

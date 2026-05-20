@@ -1,0 +1,112 @@
+{
+  "packages": [
+    {
+      "default_profile": null,
+      "dependencies": [],
+      "manifest_path": "packages/core/qlang.toml",
+      "package_name": "std.core",
+      "selected": true,
+      "targets": [
+        {
+          "kind": "lib",
+          "path": "packages/core/src/lib.ql"
+        }
+      ]
+    },
+    {
+      "default_profile": null,
+      "dependencies": [],
+      "manifest_path": "packages/option/qlang.toml",
+      "package_name": "std.option",
+      "selected": true,
+      "targets": [
+        {
+          "kind": "lib",
+          "path": "packages/option/src/lib.ql"
+        }
+      ]
+    },
+    {
+      "default_profile": null,
+      "dependencies": [
+        "packages/option/qlang.toml"
+      ],
+      "manifest_path": "packages/result/qlang.toml",
+      "package_name": "std.result",
+      "selected": true,
+      "targets": [
+        {
+          "kind": "lib",
+          "path": "packages/result/src/lib.ql"
+        }
+      ]
+    },
+    {
+      "default_profile": null,
+      "dependencies": [],
+      "manifest_path": "packages/array/qlang.toml",
+      "package_name": "std.array",
+      "selected": true,
+      "targets": [
+        {
+          "kind": "lib",
+          "path": "packages/array/src/lib.ql"
+        }
+      ]
+    },
+    {
+      "default_profile": null,
+      "dependencies": [
+        "packages/array/qlang.toml",
+        "packages/core/qlang.toml",
+        "packages/option/qlang.toml",
+        "packages/result/qlang.toml"
+      ],
+      "manifest_path": "packages/test/qlang.toml",
+      "package_name": "std.test",
+      "selected": true,
+      "targets": [
+        {
+          "kind": "lib",
+          "path": "packages/test/src/lib.ql"
+        }
+      ]
+    },
+    {
+      "default_profile": null,
+      "dependencies": [
+        "packages/array/qlang.toml",
+        "packages/core/qlang.toml",
+        "packages/option/qlang.toml",
+        "packages/result/qlang.toml",
+        "packages/test/qlang.toml"
+      ],
+      "manifest_path": "examples/starter/qlang.toml",
+      "package_name": "stdlib.starter",
+      "selected": true,
+      "targets": [
+        {
+          "kind": "lib",
+          "path": "examples/starter/src/lib.ql"
+        },
+        {
+          "kind": "bin",
+          "path": "examples/starter/src/main.ql"
+        }
+      ]
+    }
+  ],
+  "root": {
+    "kind": "workspace",
+    "manifest_path": "qlang.toml"
+  },
+  "schema": "ql.project.lock.v1",
+  "workspace_members": [
+    "packages/core/qlang.toml",
+    "packages/option/qlang.toml",
+    "packages/result/qlang.toml",
+    "packages/array/qlang.toml",
+    "packages/test/qlang.toml",
+    "examples/starter/qlang.toml"
+  ]
+}

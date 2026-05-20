@@ -765,6 +765,123 @@ fn assert_repo_stdlib_dependents_json(
     }
 }
 
+fn assert_repo_stdlib_lock_json(
+    context: &str,
+    lock_json: &JsonValue,
+    check_only: bool,
+    status: &str,
+) {
+    assert_eq!(lock_json["schema"], "ql.project.lock.result.v1");
+    assert_eq!(lock_json["path"], "stdlib");
+    assert_eq!(lock_json["project_manifest_path"], "stdlib/qlang.toml");
+    assert_eq!(lock_json["lockfile_path"], "stdlib/qlang.lock");
+    assert_eq!(lock_json["check_only"], check_only);
+    assert_eq!(lock_json["status"], status);
+    assert_eq!(lock_json["failure"], JsonValue::Null);
+
+    let lockfile = &lock_json["lockfile"];
+    assert_eq!(lockfile["schema"], "ql.project.lock.v1");
+    assert_eq!(lockfile["root"]["kind"], "workspace");
+    assert_eq!(lockfile["root"]["manifest_path"], "qlang.toml");
+    assert_eq!(
+        lockfile["workspace_members"],
+        serde_json::json!([
+            "packages/core/qlang.toml",
+            "packages/option/qlang.toml",
+            "packages/result/qlang.toml",
+            "packages/array/qlang.toml",
+            "packages/test/qlang.toml",
+            "examples/starter/qlang.toml",
+        ])
+    );
+
+    let packages = lockfile["packages"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose locked packages: {lock_json}"));
+    assert_eq!(
+        packages.len(),
+        6,
+        "{context} should lock every repo stdlib package"
+    );
+
+    for (package_name, manifest_path, dependencies, targets) in [
+        (
+            "std.core",
+            "packages/core/qlang.toml",
+            Vec::<&str>::new(),
+            vec![("lib", "packages/core/src/lib.ql")],
+        ),
+        (
+            "std.option",
+            "packages/option/qlang.toml",
+            Vec::new(),
+            vec![("lib", "packages/option/src/lib.ql")],
+        ),
+        (
+            "std.result",
+            "packages/result/qlang.toml",
+            vec!["packages/option/qlang.toml"],
+            vec![("lib", "packages/result/src/lib.ql")],
+        ),
+        (
+            "std.array",
+            "packages/array/qlang.toml",
+            Vec::new(),
+            vec![("lib", "packages/array/src/lib.ql")],
+        ),
+        (
+            "std.test",
+            "packages/test/qlang.toml",
+            vec![
+                "packages/array/qlang.toml",
+                "packages/core/qlang.toml",
+                "packages/option/qlang.toml",
+                "packages/result/qlang.toml",
+            ],
+            vec![("lib", "packages/test/src/lib.ql")],
+        ),
+        (
+            "stdlib.starter",
+            "examples/starter/qlang.toml",
+            vec![
+                "packages/array/qlang.toml",
+                "packages/core/qlang.toml",
+                "packages/option/qlang.toml",
+                "packages/result/qlang.toml",
+                "packages/test/qlang.toml",
+            ],
+            vec![
+                ("lib", "examples/starter/src/lib.ql"),
+                ("bin", "examples/starter/src/main.ql"),
+            ],
+        ),
+    ] {
+        let package = packages
+            .iter()
+            .find(|actual| actual["package_name"] == package_name)
+            .unwrap_or_else(|| panic!("{context} should lock package `{package_name}`"));
+        assert_eq!(package["manifest_path"], manifest_path);
+        assert_eq!(package["selected"], true);
+        assert_eq!(package["default_profile"], JsonValue::Null);
+        assert_eq!(package["dependencies"], serde_json::json!(dependencies));
+        assert_eq!(
+            package["targets"],
+            JsonValue::Array(
+                targets
+                    .iter()
+                    .map(|(kind, path)| {
+                        serde_json::json!({
+                            "kind": *kind,
+                            "path": *path,
+                        })
+                    })
+                    .collect()
+            ),
+            "{context} should lock expected targets for `{package_name}`"
+        );
+    }
+}
+
 fn repo_stdlib_artifact_path(package_dir: &str, kind: &str, stem: &str) -> String {
     let root = Path::new("stdlib")
         .join(package_dir)
@@ -2229,6 +2346,45 @@ fn repo_stdlib_workspace_targets_and_dependents_are_current() {
             ("std.test", "packages/test"),
             ("stdlib.starter", "examples/starter"),
         ],
+    );
+}
+
+#[test]
+fn repo_stdlib_workspace_lockfile_is_current() {
+    let workspace_root = workspace_root();
+
+    let mut lock_check = ql_command(&workspace_root);
+    lock_check.args(["project", "lock", "stdlib", "--check", "--json"]);
+    let output = run_command_capture(&mut lock_check, "`ql project lock stdlib --check --json`");
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-lock",
+        "check repo stdlib workspace lockfile",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-lock",
+        "check repo stdlib workspace lockfile",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-lock", &stdout);
+    assert_repo_stdlib_lock_json(
+        "repo stdlib workspace lock check json",
+        &actual,
+        true,
+        "up-to-date",
+    );
+
+    let lockfile_source = read_normalized_file(
+        &workspace_root.join("stdlib/qlang.lock"),
+        "repo stdlib lockfile",
+    );
+    let lockfile_json = serde_json::from_str::<JsonValue>(&lockfile_source)
+        .expect("repo stdlib lockfile should remain valid json");
+    assert_eq!(
+        actual["lockfile"], lockfile_json,
+        "repo stdlib lock check should report the tracked lockfile exactly"
     );
 }
 
