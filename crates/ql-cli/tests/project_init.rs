@@ -768,13 +768,21 @@ fn assert_repo_stdlib_dependents_json(
 fn assert_repo_stdlib_lock_json(
     context: &str,
     lock_json: &JsonValue,
+    request_path: &Path,
+    stdlib_root: &Path,
     check_only: bool,
     status: &str,
 ) {
     assert_eq!(lock_json["schema"], "ql.project.lock.result.v1");
-    assert_eq!(lock_json["path"], "stdlib");
-    assert_eq!(lock_json["project_manifest_path"], "stdlib/qlang.toml");
-    assert_eq!(lock_json["lockfile_path"], "stdlib/qlang.lock");
+    assert_eq!(lock_json["path"], json_path(request_path));
+    assert_eq!(
+        lock_json["project_manifest_path"],
+        json_path(&stdlib_root.join("qlang.toml"))
+    );
+    assert_eq!(
+        lock_json["lockfile_path"],
+        json_path(&stdlib_root.join("qlang.lock"))
+    );
     assert_eq!(lock_json["check_only"], check_only);
     assert_eq!(lock_json["status"], status);
     assert_eq!(lock_json["failure"], JsonValue::Null);
@@ -1926,6 +1934,93 @@ fn repo_stdlib_fixture_syncs_interfaces_and_checks_workspace() {
 }
 
 #[test]
+fn repo_stdlib_fixture_writes_and_checks_workspace_lockfile() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-repo-stdlib-workspace-lock");
+    let stdlib_root = write_repo_stdlib_fixture(&temp, &workspace_root);
+    let lockfile_path = stdlib_root.join("qlang.lock");
+
+    assert!(
+        !lockfile_path.exists(),
+        "copied repo stdlib fixture should start without a generated lockfile"
+    );
+
+    let mut lock = ql_command(&workspace_root);
+    lock.args(["project", "lock", "--json"]).arg(&stdlib_root);
+    let output = run_command_capture(&mut lock, "`ql project lock --json` copied repo stdlib");
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-lock",
+        "write copied repo stdlib workspace lockfile",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-lock",
+        "write copied repo stdlib workspace lockfile",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-lock", &stdout);
+    assert_repo_stdlib_lock_json(
+        "copied repo stdlib workspace lock json",
+        &actual,
+        &stdlib_root,
+        &stdlib_root,
+        false,
+        "wrote",
+    );
+    expect_file_exists(
+        "repo-stdlib-workspace-lock",
+        &lockfile_path,
+        "copied repo stdlib workspace lockfile",
+        "`ql project lock --json` copied repo stdlib",
+    )
+    .unwrap();
+
+    let lockfile_source = read_normalized_file(&lockfile_path, "copied repo stdlib lockfile");
+    let lockfile_json = serde_json::from_str::<JsonValue>(&lockfile_source)
+        .expect("copied repo stdlib lockfile should remain valid json");
+    assert_eq!(
+        actual["lockfile"], lockfile_json,
+        "copied repo stdlib lock write should report the written lockfile exactly"
+    );
+
+    let mut check = ql_command(&workspace_root);
+    check
+        .args(["project", "lock", "--check", "--json"])
+        .arg(&stdlib_root);
+    let output = run_command_capture(
+        &mut check,
+        "`ql project lock --check --json` copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-lock",
+        "check copied repo stdlib workspace lockfile",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-lock",
+        "check copied repo stdlib workspace lockfile",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-lock", &stdout);
+    assert_repo_stdlib_lock_json(
+        "copied repo stdlib workspace lock check json",
+        &actual,
+        &stdlib_root,
+        &stdlib_root,
+        true,
+        "up-to-date",
+    );
+    assert_eq!(
+        actual["lockfile"], lockfile_json,
+        "copied repo stdlib lock check should report the written lockfile exactly"
+    );
+}
+
+#[test]
 fn repo_stdlib_workspace_interfaces_are_current() {
     let workspace_root = workspace_root();
 
@@ -2372,6 +2467,8 @@ fn repo_stdlib_workspace_lockfile_is_current() {
     assert_repo_stdlib_lock_json(
         "repo stdlib workspace lock check json",
         &actual,
+        Path::new("stdlib"),
+        Path::new("stdlib"),
         true,
         "up-to-date",
     );
