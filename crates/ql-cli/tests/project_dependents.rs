@@ -378,6 +378,46 @@ fn project_dependents_json_supports_standalone_package_name_selector() {
 }
 
 #[test]
+fn project_dependents_json_supports_standalone_package_package_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependents-package-alias-json");
+    let project_root = write_standalone_package(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependents",
+        &project_root.to_string_lossy(),
+        "--package",
+        "app",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependents --package --json` standalone package",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-dependents-package-alias-json",
+        "project dependents standalone package selector alias json",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependents-package-alias-json",
+        "project dependents standalone package selector alias json",
+        &stderr,
+    )
+    .unwrap();
+
+    let actual = parse_json_output("project-dependents-package-alias-json", &stdout);
+    let expected = expected_standalone_package_dependents_json(&project_root, &project_root);
+    assert_eq!(
+        actual, expected,
+        "project dependents standalone package selector alias json stdout"
+    );
+}
+
+#[test]
 fn project_dependents_json_supports_standalone_package_source_path() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-dependents-package-source-json");

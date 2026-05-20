@@ -762,17 +762,18 @@ fn run() -> Result<(), u8> {
 
                     while index < remaining.len() {
                         match remaining[index].as_str() {
-                            "--name" => {
+                            "--name" | "--package" => {
+                                let selector_option = remaining[index].clone();
                                 index += 1;
                                 let Some(value) = remaining.get(index) else {
                                     eprintln!(
-                                        "error: `ql project dependents --name` expects a package name"
+                                        "error: `ql project dependents {selector_option}` expects a package name"
                                     );
                                     return Err(1);
                                 };
                                 if package_name.is_some() {
                                     eprintln!(
-                                        "error: `ql project dependents` received `--name` more than once"
+                                        "error: `ql project dependents` received package selector more than once"
                                     );
                                     return Err(1);
                                 }
@@ -815,17 +816,18 @@ fn run() -> Result<(), u8> {
 
                     while index < remaining.len() {
                         match remaining[index].as_str() {
-                            "--name" => {
+                            "--name" | "--package" => {
+                                let selector_option = remaining[index].clone();
                                 index += 1;
                                 let Some(value) = remaining.get(index) else {
                                     eprintln!(
-                                        "error: `ql project dependencies --name` expects a package name"
+                                        "error: `ql project dependencies {selector_option}` expects a package name"
                                     );
                                     return Err(1);
                                 };
                                 if package_name.is_some() {
                                     eprintln!(
-                                        "error: `ql project dependencies` received `--name` more than once"
+                                        "error: `ql project dependencies` received package selector more than once"
                                     );
                                     return Err(1);
                                 }
@@ -14403,8 +14405,10 @@ fn print_usage() {
     eprintln!("  ql project status [file-or-dir] [--package <name>] [--json]");
     eprintln!("  ql project target add [file-or-dir] [--package <name>] --bin <name>");
     eprintln!("  ql project graph [file-or-dir] [--package <name>] [--json]");
-    eprintln!("  ql project dependents [file-or-dir] [--name <package>] [--json]");
-    eprintln!("  ql project dependencies [file-or-dir] [--name <package>] [--json]");
+    eprintln!("  ql project dependents [file-or-dir] [--name <package>|--package <name>] [--json]");
+    eprintln!(
+        "  ql project dependencies [file-or-dir] [--name <package>|--package <name>] [--json]"
+    );
     eprintln!("  ql project lock [file-or-dir] [--check] [--json]");
     eprintln!("  ql project init [dir] [--workspace] [--name <package>] [--stdlib <path>]");
     eprintln!("  ql project add [file-or-dir] --name <package> [--dependency <package> ...]");

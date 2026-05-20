@@ -1977,6 +1977,37 @@ fn repo_stdlib_workspace_graph_and_dependencies_are_current() {
     .unwrap();
     let actual = parse_json_output("repo-stdlib-workspace-graph", &stdout);
     assert_repo_stdlib_starter_dependencies_json("repo stdlib starter dependencies json", &actual);
+
+    let mut package_dependencies = ql_command(&workspace_root);
+    package_dependencies.args([
+        "project",
+        "dependencies",
+        "stdlib",
+        "--package",
+        "stdlib.starter",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut package_dependencies,
+        "`ql project dependencies stdlib --package stdlib.starter --json`",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-graph",
+        "dependencies repo stdlib starter package selector",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-graph",
+        "dependencies repo stdlib starter package selector",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-graph", &stdout);
+    assert_repo_stdlib_starter_dependencies_json(
+        "repo stdlib starter dependencies package selector json",
+        &actual,
+    );
 }
 
 #[test]
@@ -2118,6 +2149,43 @@ fn repo_stdlib_workspace_targets_and_dependents_are_current() {
     let actual = parse_json_output("repo-stdlib-workspace-targets", &stdout);
     assert_repo_stdlib_dependents_json(
         "repo stdlib std.option dependents json",
+        &actual,
+        "std.option",
+        &[
+            ("std.result", "packages/result"),
+            ("std.test", "packages/test"),
+            ("stdlib.starter", "examples/starter"),
+        ],
+    );
+
+    let mut option_package_dependents = ql_command(&workspace_root);
+    option_package_dependents.args([
+        "project",
+        "dependents",
+        "stdlib",
+        "--package",
+        "std.option",
+        "--json",
+    ]);
+    let output = run_command_capture(
+        &mut option_package_dependents,
+        "`ql project dependents stdlib --package std.option --json`",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-targets",
+        "std.option dependents in repo stdlib workspace by package selector",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-targets",
+        "std.option dependents in repo stdlib workspace by package selector",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-targets", &stdout);
+    assert_repo_stdlib_dependents_json(
+        "repo stdlib std.option dependents package selector json",
         &actual,
         "std.option",
         &[

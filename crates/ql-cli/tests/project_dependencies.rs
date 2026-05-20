@@ -275,6 +275,53 @@ fn project_dependencies_supports_standalone_package_name_selector() {
 }
 
 #[test]
+fn project_dependencies_supports_standalone_package_package_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependencies-package-alias");
+    let project_root = write_standalone_package_with_local_dependency(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "project",
+        "dependencies",
+        &project_root.to_string_lossy(),
+        "--package",
+        "app",
+    ]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependencies --package` standalone package",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-dependencies-package-alias",
+        "project dependencies standalone package selector alias",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependencies-package-alias",
+        "project dependencies standalone package selector alias",
+        &stderr,
+    )
+    .unwrap();
+
+    let expected = format!(
+        "workspace_manifest: {}\npackage: app\ndependencies:\n  - ../vendor/core (vendor.core, local)\n",
+        project_root
+            .join("qlang.toml")
+            .to_string_lossy()
+            .replace('\\', "/")
+    );
+    expect_snapshot_matches(
+        "project-dependencies-package-alias",
+        "project dependencies standalone package selector alias stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .unwrap();
+}
+
+#[test]
 fn project_dependencies_refuses_standalone_package_name_selector_mismatch() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-dependencies-package-selector-mismatch");

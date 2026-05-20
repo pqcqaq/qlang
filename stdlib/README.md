@@ -73,7 +73,9 @@ cargo run -q -p ql-cli -- project graph stdlib --json
 cargo run -q -p ql-cli -- project graph stdlib --package stdlib.starter --json
 cargo run -q -p ql-cli -- project targets stdlib --package stdlib.starter --json
 cargo run -q -p ql-cli -- project dependencies stdlib --name stdlib.starter --json
+cargo run -q -p ql-cli -- project dependencies stdlib --package stdlib.starter --json
 cargo run -q -p ql-cli -- project dependents stdlib --name std.option --json
+cargo run -q -p ql-cli -- project dependents stdlib --package std.option --json
 cargo run -q -p ql-cli -- project dependents stdlib --name std.core --json
 cargo run -q -p ql-cli -- build stdlib --list --json
 cargo run -q -p ql-cli -- build stdlib --package stdlib.starter --json
