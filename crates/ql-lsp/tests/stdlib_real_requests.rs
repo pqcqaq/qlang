@@ -2,6 +2,8 @@ mod common;
 
 #[path = "stdlib_real_requests/code_action.rs"]
 mod code_action;
+#[path = "stdlib_real_requests/code_lens.rs"]
+mod code_lens;
 #[path = "stdlib_real_requests/completion.rs"]
 mod completion;
 #[path = "stdlib_real_requests/hierarchy.rs"]
