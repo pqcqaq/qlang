@@ -90,6 +90,6 @@ cargo run -q -p ql-cli -- test stdlib --package stdlib.starter --json
 cargo run -q -p ql-cli -- test stdlib
 ```
 
-集成门禁还覆盖复制出的 source-only stdlib：`project dependencies/dependents --package/--name --json`、同步接口后 `project graph/status/targets --package stdlib.starter --json`、写入 `qlang.lock`、`--check --json` up-to-date，以及修改 manifest 后的 stale failure JSON；stale 检查不会重写旧 lockfile。
+集成门禁还覆盖复制出的 source-only stdlib：starter `build/run/test --package --json`、`project dependencies/dependents --package/--name --json`、同步接口后 `project graph/status/targets --package stdlib.starter --json`、写入 `qlang.lock`、`--check --json` up-to-date，以及修改 manifest 后的 stale failure JSON；stale 检查不会重写旧 lockfile。
 
 事实源：`stdlib/packages/*/src/lib.ql`、`stdlib/examples/starter`、smoke tests 和生成的 `.qi`。

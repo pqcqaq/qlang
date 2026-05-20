@@ -912,9 +912,16 @@ fn assert_repo_stdlib_lock_json(
 }
 
 fn repo_stdlib_artifact_path(package_dir: &str, kind: &str, stem: &str) -> String {
-    let root = Path::new("stdlib")
-        .join(package_dir)
-        .join("target/ql/debug");
+    repo_stdlib_artifact_path_for(Path::new("stdlib"), package_dir, kind, stem)
+}
+
+fn repo_stdlib_artifact_path_for(
+    stdlib_root: &Path,
+    package_dir: &str,
+    kind: &str,
+    stem: &str,
+) -> String {
+    let root = stdlib_root.join(package_dir).join("target/ql/debug");
     let path = match kind {
         "staticlib" => static_library_output_path(&root, stem),
         "exe" => executable_output_path(&root, stem),
@@ -1015,11 +1022,18 @@ fn assert_repo_stdlib_build_json(context: &str, build_json: &JsonValue) {
     );
 }
 
-fn assert_repo_stdlib_starter_build_json(context: &str, build_json: &JsonValue) {
+fn assert_repo_stdlib_starter_build_json(
+    context: &str,
+    build_json: &JsonValue,
+    stdlib_root: &Path,
+) {
     assert_eq!(build_json["schema"], "ql.build.v1");
     assert_eq!(build_json["scope"], "project");
-    assert_eq!(build_json["path"], "stdlib");
-    assert_eq!(build_json["project_manifest_path"], "stdlib/qlang.toml");
+    assert_eq!(build_json["path"], json_path(stdlib_root));
+    assert_eq!(
+        build_json["project_manifest_path"],
+        json_path(&stdlib_root.join("qlang.toml"))
+    );
     assert_eq!(build_json["requested_emit"], "llvm-ir");
     assert_eq!(build_json["requested_profile"], "debug");
     assert_eq!(build_json["profile_overridden"], false);
@@ -1031,9 +1045,9 @@ fn assert_repo_stdlib_starter_build_json(context: &str, build_json: &JsonValue) 
         build_json["interfaces"],
         serde_json::json!([
             {
-                "manifest_path": "stdlib/examples/starter/qlang.toml",
+                "manifest_path": json_path(&stdlib_root.join("examples/starter/qlang.toml")),
                 "package_name": "stdlib.starter",
-                "path": "stdlib/examples/starter/stdlib.starter.qi",
+                "path": json_path(&stdlib_root.join("examples/starter/stdlib.starter.qi")),
                 "selected": true,
                 "status": "wrote",
             }
@@ -1058,7 +1072,8 @@ fn assert_repo_stdlib_starter_build_json(context: &str, build_json: &JsonValue) 
     ] {
         assert!(
             built_targets.iter().any(|actual| {
-                actual["manifest_path"] == format!("stdlib/{package_dir}/qlang.toml")
+                actual["manifest_path"]
+                    == json_path(&stdlib_root.join(format!("{package_dir}/qlang.toml")))
                     && actual["package_name"] == package_name
                     && actual["selected"] == false
                     && actual["dependency_only"] == true
@@ -1067,7 +1082,12 @@ fn assert_repo_stdlib_starter_build_json(context: &str, build_json: &JsonValue) 
                     && actual["emit"] == "staticlib"
                     && actual["profile"] == "debug"
                     && actual["artifact_path"]
-                        == repo_stdlib_artifact_path(package_dir, "staticlib", "lib")
+                        == repo_stdlib_artifact_path_for(
+                            stdlib_root,
+                            package_dir,
+                            "staticlib",
+                            "lib",
+                        )
                     && actual["c_header_path"] == JsonValue::Null
             }),
             "{context} should build dependency-only target for `{package_name}`: {build_json}"
@@ -1079,7 +1099,8 @@ fn assert_repo_stdlib_starter_build_json(context: &str, build_json: &JsonValue) 
     ] {
         assert!(
             built_targets.iter().any(|actual| {
-                actual["manifest_path"] == "stdlib/examples/starter/qlang.toml"
+                actual["manifest_path"]
+                    == json_path(&stdlib_root.join("examples/starter/qlang.toml"))
                     && actual["package_name"] == "stdlib.starter"
                     && actual["selected"] == true
                     && actual["dependency_only"] == false
@@ -1088,7 +1109,12 @@ fn assert_repo_stdlib_starter_build_json(context: &str, build_json: &JsonValue) 
                     && actual["emit"] == emit
                     && actual["profile"] == "debug"
                     && actual["artifact_path"]
-                        == repo_stdlib_artifact_path("examples/starter", artifact_kind, stem)
+                        == repo_stdlib_artifact_path_for(
+                            stdlib_root,
+                            "examples/starter",
+                            artifact_kind,
+                            stem,
+                        )
                     && actual["c_header_path"] == JsonValue::Null
             }),
             "{context} should build selected starter `{kind}` target: {build_json}"
@@ -1096,11 +1122,14 @@ fn assert_repo_stdlib_starter_build_json(context: &str, build_json: &JsonValue) 
     }
 }
 
-fn assert_repo_stdlib_run_json(context: &str, run_json: &JsonValue) {
+fn assert_repo_stdlib_run_json(context: &str, run_json: &JsonValue, stdlib_root: &Path) {
     assert_eq!(run_json["schema"], "ql.run.v1");
     assert_eq!(run_json["scope"], "project");
-    assert_eq!(run_json["path"], "stdlib");
-    assert_eq!(run_json["project_manifest_path"], "stdlib/qlang.toml");
+    assert_eq!(run_json["path"], json_path(stdlib_root));
+    assert_eq!(
+        run_json["project_manifest_path"],
+        json_path(&stdlib_root.join("qlang.toml"))
+    );
     assert_eq!(run_json["requested_profile"], "debug");
     assert_eq!(run_json["profile_overridden"], false);
     assert_eq!(run_json["program_args"], serde_json::json!([]));
@@ -1109,7 +1138,7 @@ fn assert_repo_stdlib_run_json(context: &str, run_json: &JsonValue) {
     assert_eq!(
         run_json["built_target"],
         serde_json::json!({
-            "manifest_path": "stdlib/examples/starter/qlang.toml",
+            "manifest_path": json_path(&stdlib_root.join("examples/starter/qlang.toml")),
             "package_name": "stdlib.starter",
             "selected": true,
             "dependency_only": false,
@@ -1117,7 +1146,12 @@ fn assert_repo_stdlib_run_json(context: &str, run_json: &JsonValue) {
             "path": "src/main.ql",
             "emit": "exe",
             "profile": "debug",
-            "artifact_path": repo_stdlib_artifact_path("examples/starter", "exe", "main"),
+            "artifact_path": repo_stdlib_artifact_path_for(
+                stdlib_root,
+                "examples/starter",
+                "exe",
+                "main"
+            ),
             "c_header_path": JsonValue::Null,
         }),
         "{context} should run the stdlib starter executable"
@@ -2210,6 +2244,158 @@ fn repo_stdlib_fixture_dependency_selectors_use_copied_workspace_paths() {
 }
 
 #[test]
+fn repo_stdlib_fixture_builds_runs_and_tests_starter_package() {
+    if !toolchain_available("`ql build/run/test --package` copied repo stdlib starter") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-repo-stdlib-workspace-starter-package");
+    let stdlib_root = write_repo_stdlib_fixture(&temp, &workspace_root);
+
+    let mut build = ql_command(&workspace_root);
+    build
+        .args(["build"])
+        .arg(&stdlib_root)
+        .args(["--package", "stdlib.starter", "--json"]);
+    let output = run_command_capture(
+        &mut build,
+        "`ql build --package stdlib.starter --json` copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-package-fixture",
+        "build copied repo stdlib starter package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-package-fixture",
+        "build copied repo stdlib starter package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-starter-package-fixture", &stdout);
+    assert_repo_stdlib_starter_build_json(
+        "copied repo stdlib starter build json",
+        &actual,
+        &stdlib_root,
+    );
+
+    for (context, path) in [
+        (
+            "copied stdlib starter static library",
+            static_library_output_path(
+                &stdlib_root.join("examples/starter/target/ql/debug"),
+                "lib",
+            ),
+        ),
+        (
+            "copied stdlib starter llvm-ir",
+            stdlib_root.join("examples/starter/target/ql/debug/main.ll"),
+        ),
+    ] {
+        expect_file_exists(
+            "repo-stdlib-workspace-starter-package-fixture",
+            &path,
+            context,
+            "`ql build --package stdlib.starter --json` copied repo stdlib",
+        )
+        .unwrap();
+    }
+
+    let mut run = ql_command(&workspace_root);
+    run.args(["run"])
+        .arg(&stdlib_root)
+        .args(["--package", "stdlib.starter", "--json"]);
+    let output = run_command_capture(
+        &mut run,
+        "`ql run --package stdlib.starter --json` copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-package-fixture",
+        "run copied repo stdlib starter package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-package-fixture",
+        "run copied repo stdlib starter package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-starter-package-fixture", &stdout);
+    assert_repo_stdlib_run_json("copied repo stdlib starter run json", &actual, &stdlib_root);
+    expect_file_exists(
+        "repo-stdlib-workspace-starter-package-fixture",
+        &executable_output_path(
+            &stdlib_root.join("examples/starter/target/ql/debug"),
+            "main",
+        ),
+        "copied stdlib starter executable",
+        "`ql run --package stdlib.starter --json` copied repo stdlib",
+    )
+    .unwrap();
+
+    let mut test = ql_command(&workspace_root);
+    test.args(["test"])
+        .arg(&stdlib_root)
+        .args(["--package", "stdlib.starter", "--json"]);
+    let output = run_command_capture(
+        &mut test,
+        "`ql test --package stdlib.starter --json` copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-package-fixture",
+        "test copied repo stdlib starter package",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-package-fixture",
+        "test copied repo stdlib starter package",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-starter-package-fixture", &stdout);
+    let expected = serde_json::json!({
+        "schema": "ql.test.v1",
+        "path": json_path(&stdlib_root),
+        "requested_profile": "debug",
+        "profile_overridden": false,
+        "package_name": "stdlib.starter",
+        "filter": JsonValue::Null,
+        "list_only": false,
+        "status": "ok",
+        "discovered_total": 1,
+        "selected_total": 1,
+        "targets": [
+            {
+                "path": "examples/starter/tests/smoke.ql",
+                "kind": "smoke",
+                "profile": "debug",
+            },
+        ],
+        "passed": 1,
+        "failed": 0,
+        "failures": [],
+    });
+    assert_eq!(
+        actual, expected,
+        "copied repo stdlib starter package should keep a stable test json contract"
+    );
+    expect_file_exists(
+        "repo-stdlib-workspace-starter-package-fixture",
+        &executable_output_path(
+            &stdlib_root.join("examples/starter/target/ql/debug/tests"),
+            "smoke",
+        ),
+        "copied stdlib starter smoke executable",
+        "`ql test --package stdlib.starter --json` copied repo stdlib",
+    )
+    .unwrap();
+}
+
+#[test]
 fn repo_stdlib_fixture_writes_and_checks_workspace_lockfile() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-repo-stdlib-workspace-lock");
@@ -3060,7 +3246,11 @@ fn repo_stdlib_workspace_checks_builds_and_tests_starter_package() {
     )
     .unwrap();
     let actual = parse_json_output("repo-stdlib-workspace-starter-package", &stdout);
-    assert_repo_stdlib_starter_build_json("repo stdlib starter build json", &actual);
+    assert_repo_stdlib_starter_build_json(
+        "repo stdlib starter build json",
+        &actual,
+        Path::new("stdlib"),
+    );
 
     let mut test = ql_command(&workspace_root);
     test.args(["test", "stdlib", "--package", "stdlib.starter", "--json"]);
@@ -3207,7 +3397,7 @@ fn repo_stdlib_workspace_builds_and_runs_starter() {
     )
     .unwrap();
     let actual = parse_json_output("repo-stdlib-workspace-build-run", &stdout);
-    assert_repo_stdlib_run_json("repo stdlib starter run json", &actual);
+    assert_repo_stdlib_run_json("repo stdlib starter run json", &actual, Path::new("stdlib"));
     expect_file_exists(
         "repo-stdlib-workspace-build-run",
         &executable_output_path(
