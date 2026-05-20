@@ -6,6 +6,8 @@ mod code_action;
 mod code_lens;
 #[path = "stdlib_real_requests/completion.rs"]
 mod completion;
+#[path = "stdlib_real_requests/document_link.rs"]
+mod document_link;
 #[path = "stdlib_real_requests/hierarchy.rs"]
 mod hierarchy;
 #[path = "stdlib_real_requests/implementation.rs"]
