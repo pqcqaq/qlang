@@ -674,14 +674,39 @@ fn assert_repo_stdlib_run_list_json(context: &str, targets_json: &JsonValue) {
     }
 }
 
+fn assert_repo_stdlib_starter_run_list_json(
+    context: &str,
+    targets_json: &JsonValue,
+    stdlib_root: &Path,
+) {
+    assert_eq!(targets_json["schema"], "ql.project.targets.v1");
+    assert_eq!(
+        targets_json["members"],
+        serde_json::json!([
+            {
+                "manifest_path": json_path(&stdlib_root.join("examples/starter/qlang.toml")),
+                "package_name": "stdlib.starter",
+                "targets": [
+                    {
+                        "kind": "bin",
+                        "path": "src/main.ql",
+                    }
+                ],
+            }
+        ]),
+        "{context} should expose only the selected starter runnable target"
+    );
+}
+
 fn assert_repo_stdlib_test_list_json(
     context: &str,
     test_json: &JsonValue,
+    stdlib_root: &Path,
     package_name: Option<&str>,
     expected_targets: &[&str],
 ) {
     assert_eq!(test_json["schema"], "ql.test.v1");
-    assert_eq!(test_json["path"], "stdlib");
+    assert_eq!(test_json["path"], json_path(stdlib_root));
     assert_eq!(test_json["requested_profile"], "debug");
     assert_eq!(test_json["profile_overridden"], false);
     match package_name {
@@ -2396,6 +2421,105 @@ fn repo_stdlib_fixture_builds_runs_and_tests_starter_package() {
 }
 
 #[test]
+fn repo_stdlib_fixture_lists_starter_package_targets() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-repo-stdlib-workspace-starter-lists");
+    let stdlib_root = write_repo_stdlib_fixture(&temp, &workspace_root);
+
+    let mut build_list = ql_command(&workspace_root);
+    build_list.args(["build"]).arg(&stdlib_root).args([
+        "--list",
+        "--json",
+        "--package",
+        "stdlib.starter",
+    ]);
+    let output = run_command_capture(
+        &mut build_list,
+        "`ql build --list --json --package stdlib.starter` copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-lists",
+        "list copied repo stdlib starter build targets",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-lists",
+        "list copied repo stdlib starter build targets",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-starter-lists", &stdout);
+    assert_repo_stdlib_starter_targets_json(
+        "copied repo stdlib starter build list json",
+        &actual,
+        &stdlib_root,
+    );
+
+    let mut run_list = ql_command(&workspace_root);
+    run_list.args(["run"]).arg(&stdlib_root).args([
+        "--list",
+        "--json",
+        "--package",
+        "stdlib.starter",
+    ]);
+    let output = run_command_capture(
+        &mut run_list,
+        "`ql run --list --json --package stdlib.starter` copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-lists",
+        "list copied repo stdlib starter run targets",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-lists",
+        "list copied repo stdlib starter run targets",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-starter-lists", &stdout);
+    assert_repo_stdlib_starter_run_list_json(
+        "copied repo stdlib starter run list json",
+        &actual,
+        &stdlib_root,
+    );
+
+    let mut test_list = ql_command(&workspace_root);
+    test_list.args(["test"]).arg(&stdlib_root).args([
+        "--list",
+        "--json",
+        "--package",
+        "stdlib.starter",
+    ]);
+    let output = run_command_capture(
+        &mut test_list,
+        "`ql test --list --json --package stdlib.starter` copied repo stdlib",
+    );
+    let (stdout, stderr) = expect_success(
+        "repo-stdlib-workspace-starter-lists",
+        "list copied repo stdlib starter tests",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "repo-stdlib-workspace-starter-lists",
+        "list copied repo stdlib starter tests",
+        &stderr,
+    )
+    .unwrap();
+    let actual = parse_json_output("repo-stdlib-workspace-starter-lists", &stdout);
+    assert_repo_stdlib_test_list_json(
+        "copied repo stdlib starter test list json",
+        &actual,
+        &stdlib_root,
+        Some("stdlib.starter"),
+        &["examples/starter/tests/smoke.ql"],
+    );
+}
+
+#[test]
 fn repo_stdlib_fixture_writes_and_checks_workspace_lockfile() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-repo-stdlib-workspace-lock");
@@ -3160,6 +3284,7 @@ fn repo_stdlib_workspace_lists_build_run_and_tests() {
     assert_repo_stdlib_test_list_json(
         "repo stdlib test list json",
         &actual,
+        Path::new("stdlib"),
         None,
         &all_smoke_targets,
     );
@@ -3193,6 +3318,7 @@ fn repo_stdlib_workspace_lists_build_run_and_tests() {
     assert_repo_stdlib_test_list_json(
         "repo stdlib starter test list json",
         &actual,
+        Path::new("stdlib"),
         Some("stdlib.starter"),
         &["examples/starter/tests/smoke.ql"],
     );
