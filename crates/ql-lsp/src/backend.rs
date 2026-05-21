@@ -7713,6 +7713,63 @@ fn workspace_source_dependency_prepare_rename_with_open_docs(
         })
 }
 
+fn prepare_rename_for_workspace_context(
+    uri: &Url,
+    source: &str,
+    context: &WorkspaceRequestContext,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<PrepareRenameResponse> {
+    let analysis = context.analysis.as_ref();
+    let package = &context.package;
+    let open_docs = &context.open_docs;
+
+    if let Some(rename) = prepare_rename_for_dependency_imports(source, package, position) {
+        return Some(rename);
+    }
+    if let Some(rename_target) = workspace_source_dependency_prepare_rename_with_open_docs(
+        source, analysis, package, open_docs, position,
+    ) && supports_workspace_source_dependency_rename(rename_target.kind)
+    {
+        return Some(PrepareRenameResponse::RangeWithPlaceholder {
+            range: span_to_range(source, rename_target.span),
+            placeholder: rename_target.name,
+        });
+    }
+    if analysis.is_none() {
+        if let Some(rename) =
+            prepare_rename_for_workspace_source_root_symbol_from_import_in_broken_source_with_open_docs(
+                uri, source, package, open_docs, position,
+            )
+        {
+            return Some(rename);
+        }
+        if let Some(rename) = prepare_rename_for_workspace_import_in_broken_source_with_open_docs(
+            uri, source, package, open_docs, position,
+        ) {
+            return Some(rename);
+        }
+        if position_to_offset(source, position)
+            .and_then(|offset| package.dependency_hover_in_source_at(source, offset))
+            .is_some()
+        {
+            return None;
+        }
+        return None;
+    }
+    if let Some(rename) = prepare_rename_for_workspace_source_root_symbol_from_import_with_open_docs(
+        uri,
+        source,
+        analysis.expect("analysis checked above"),
+        package,
+        open_docs,
+        position,
+    ) {
+        return Some(rename);
+    }
+
+    prepare_rename_for_analysis(source, analysis.expect("analysis checked above"), position)
+}
+
 #[cfg(test)]
 fn prepare_rename_for_workspace_import_in_broken_source(
     uri: &Url,
@@ -8012,6 +8069,77 @@ fn rename_for_workspace_source_dependency_with_open_docs(
     }
 
     Ok(Some(WorkspaceEdit::new(changes)))
+}
+
+fn rename_for_workspace_context(
+    uri: &Url,
+    source: &str,
+    context: &WorkspaceRequestContext,
+    position: tower_lsp::lsp_types::Position,
+    new_name: &str,
+) -> std::result::Result<Option<WorkspaceEdit>, RenameError> {
+    let analysis = context.analysis.as_ref();
+    let package = &context.package;
+    let open_docs = &context.open_docs;
+
+    if let Some(analysis) = analysis
+        && let Some(edit) = rename_for_local_source_dependency_with_open_docs(
+            uri, source, analysis, package, open_docs, position, new_name,
+        )?
+    {
+        return Ok(Some(edit));
+    }
+    if let Some(edit) = rename_for_workspace_source_dependency_with_open_docs(
+        uri, source, analysis, package, open_docs, position, new_name,
+    )? {
+        return Ok(Some(edit));
+    }
+    if let Some(analysis) = analysis
+        && let Some(edit) = rename_for_workspace_source_root_symbol_with_open_docs(
+            uri, source, analysis, package, open_docs, position, new_name,
+        )?
+    {
+        return Ok(Some(edit));
+    }
+    if let Some(analysis) = analysis
+        && let Some(edit) = rename_for_workspace_source_root_symbol_from_import_with_open_docs(
+            uri, source, analysis, package, open_docs, position, new_name,
+        )?
+    {
+        return Ok(Some(edit));
+    }
+    if let Some(edit) = rename_for_dependency_imports(uri, source, package, position, new_name)? {
+        return Ok(Some(edit));
+    }
+    if analysis.is_none() {
+        if let Some(edit) =
+            rename_for_workspace_source_root_symbol_from_import_in_broken_source_with_open_docs(
+                uri, source, package, open_docs, position, new_name,
+            )?
+        {
+            return Ok(Some(edit));
+        }
+        if let Some(edit) = rename_for_workspace_import_in_broken_source_with_open_docs(
+            uri, source, package, open_docs, position, new_name,
+        )? {
+            return Ok(Some(edit));
+        }
+        if position_to_offset(source, position)
+            .and_then(|offset| package.dependency_hover_in_source_at(source, offset))
+            .is_some()
+        {
+            return Ok(None);
+        }
+        return Ok(None);
+    }
+
+    rename_for_analysis(
+        uri,
+        source,
+        analysis.expect("analysis checked above"),
+        position,
+        new_name,
+    )
 }
 
 fn broken_source_root_symbol_rename_edits_for_import_binding(
@@ -10734,70 +10862,12 @@ impl LanguageServer for Backend {
         let Some(source) = self.documents.get(&uri).await else {
             return Ok(None);
         };
-        if let Some(package) = self.package_analysis_for_uri(&uri) {
-            let open_docs = self.open_file_documents().await;
-            if let Some(rename) = prepare_rename_for_dependency_imports(&source, &package, position)
-            {
-                return Ok(Some(rename));
-            }
-            let analysis = analyze_source(&source).ok();
-            if let Some(rename_target) = workspace_source_dependency_prepare_rename_with_open_docs(
-                &source,
-                analysis.as_ref(),
-                &package,
-                &open_docs,
-                position,
-            ) && supports_workspace_source_dependency_rename(rename_target.kind)
-            {
-                return Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
-                    range: span_to_range(&source, rename_target.span),
-                    placeholder: rename_target.name,
-                }));
-            }
-            if analysis.is_none() {
-                if let Some(rename) =
-                    prepare_rename_for_workspace_source_root_symbol_from_import_in_broken_source_with_open_docs(
-                        &uri,
-                        &source,
-                        &package,
-                        &open_docs,
-                        position,
-                    )
-                {
-                    return Ok(Some(rename));
-                }
-                if let Some(rename) =
-                    prepare_rename_for_workspace_import_in_broken_source_with_open_docs(
-                        &uri, &source, &package, &open_docs, position,
-                    )
-                {
-                    return Ok(Some(rename));
-                }
-                if position_to_offset(&source, position)
-                    .and_then(|offset| package.dependency_hover_in_source_at(&source, offset))
-                    .is_some()
-                {
-                    return Ok(None);
-                }
-                return Ok(None);
-            }
-            if let Some(rename) =
-                prepare_rename_for_workspace_source_root_symbol_from_import_with_open_docs(
-                    &uri,
-                    &source,
-                    analysis.as_ref().expect("analysis checked above"),
-                    &package,
-                    &open_docs,
-                    position,
-                )
-            {
-                return Ok(Some(rename));
-            }
-
-            return Ok(prepare_rename_for_analysis(
-                &source,
-                analysis.as_ref().expect("analysis checked above"),
-                position,
+        if let Some(context) = self
+            .workspace_request_context_for_source(&uri, &source)
+            .await
+        {
+            return Ok(prepare_rename_for_workspace_context(
+                &uri, &source, &context, position,
             ));
         }
 
@@ -10813,110 +10883,14 @@ impl LanguageServer for Backend {
         let Some(source) = self.documents.get(&uri).await else {
             return Ok(None);
         };
-        if let Some(package) = self.package_analysis_for_uri(&uri) {
-            let analysis = analyze_source(&source).ok();
-            let open_docs = self.open_file_documents().await;
-            if let Some(analysis) = analysis.as_ref()
-                && let Some(edit) = rename_for_local_source_dependency_with_open_docs(
-                    &uri,
-                    &source,
-                    analysis,
-                    &package,
-                    &open_docs,
-                    position,
-                    &params.new_name,
-                )
-                .map_err(|error| Error::invalid_params(error.to_string()))?
-            {
-                return Ok(Some(edit));
-            }
-            if let Some(edit) = rename_for_workspace_source_dependency_with_open_docs(
+        if let Some(context) = self
+            .workspace_request_context_for_source(&uri, &source)
+            .await
+        {
+            return rename_for_workspace_context(
                 &uri,
                 &source,
-                analysis.as_ref(),
-                &package,
-                &open_docs,
-                position,
-                &params.new_name,
-            )
-            .map_err(|error| Error::invalid_params(error.to_string()))?
-            {
-                return Ok(Some(edit));
-            }
-            if let Some(analysis) = analysis.as_ref()
-                && let Some(edit) = rename_for_workspace_source_root_symbol_with_open_docs(
-                    &uri,
-                    &source,
-                    analysis,
-                    &package,
-                    &open_docs,
-                    position,
-                    &params.new_name,
-                )
-                .map_err(|error| Error::invalid_params(error.to_string()))?
-            {
-                return Ok(Some(edit));
-            }
-            if let Some(analysis) = analysis.as_ref()
-                && let Some(edit) =
-                    rename_for_workspace_source_root_symbol_from_import_with_open_docs(
-                        &uri,
-                        &source,
-                        analysis,
-                        &package,
-                        &open_docs,
-                        position,
-                        &params.new_name,
-                    )
-                    .map_err(|error| Error::invalid_params(error.to_string()))?
-            {
-                return Ok(Some(edit));
-            }
-            if let Some(edit) =
-                rename_for_dependency_imports(&uri, &source, &package, position, &params.new_name)
-                    .map_err(|error| Error::invalid_params(error.to_string()))?
-            {
-                return Ok(Some(edit));
-            }
-            if analysis.is_none() {
-                if let Some(edit) =
-                    rename_for_workspace_source_root_symbol_from_import_in_broken_source_with_open_docs(
-                        &uri,
-                        &source,
-                        &package,
-                        &open_docs,
-                        position,
-                        &params.new_name,
-                    )
-                    .map_err(|error| Error::invalid_params(error.to_string()))?
-                {
-                    return Ok(Some(edit));
-                }
-                if let Some(edit) = rename_for_workspace_import_in_broken_source_with_open_docs(
-                    &uri,
-                    &source,
-                    &package,
-                    &open_docs,
-                    position,
-                    &params.new_name,
-                )
-                .map_err(|error| Error::invalid_params(error.to_string()))?
-                {
-                    return Ok(Some(edit));
-                }
-                if position_to_offset(&source, position)
-                    .and_then(|offset| package.dependency_hover_in_source_at(&source, offset))
-                    .is_some()
-                {
-                    return Ok(None);
-                }
-                return Ok(None);
-            }
-
-            return rename_for_analysis(
-                &uri,
-                &source,
-                analysis.as_ref().expect("analysis checked above"),
+                &context,
                 position,
                 &params.new_name,
             )

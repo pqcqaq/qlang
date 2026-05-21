@@ -5,8 +5,9 @@ use common::request::{
     document_symbol_via_request, goto_declaration_via_request, goto_definition_via_request,
     goto_implementation_via_request, goto_type_definition_via_request, hover_via_request,
     initialize_service_with_workspace_roots, initialized_service_with_open_documents,
-    inlay_hint_via_request, nth_offset, offset_to_position, semantic_tokens_full_via_request,
-    semantic_tokens_range_via_request, signature_help_via_request,
+    inlay_hint_via_request, nth_offset, offset_to_position, prepare_rename_via_request,
+    rename_via_request, semantic_tokens_full_via_request, semantic_tokens_range_via_request,
+    signature_help_via_request,
 };
 use ql_lsp::Backend;
 use tower_lsp::LspService;
@@ -15,8 +16,8 @@ use tower_lsp::lsp_types::request::{
 };
 use tower_lsp::lsp_types::{
     CompletionResponse, DocumentSymbolResponse, GotoDefinitionResponse, HoverContents, Location,
-    Range, SemanticToken, SemanticTokenType, SemanticTokensRangeResult, SemanticTokensResult,
-    SymbolKind as LspSymbolKind, Url,
+    PrepareRenameResponse, Range, SemanticToken, SemanticTokenType, SemanticTokensRangeResult,
+    SemanticTokensResult, SymbolKind as LspSymbolKind, TextEdit, Url, WorkspaceEdit,
 };
 
 #[tokio::test(flavor = "current_thread")]
@@ -470,6 +471,70 @@ pub fn main(value: Config) -> Int {
     );
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn rename_workspace_requests_prefer_open_dependency_source() {
+    let fixture = setup_open_dependency_source_fixture(
+        "ql-lsp-request-rename-open-dependency-source",
+        r#"
+package demo.app
+
+use demo.dep.Config
+
+pub fn main(value: Config) -> Int {
+    return value.open_value
+}
+"#,
+    )
+    .await;
+    let OpenDependencySourceFixture {
+        _temp,
+        mut service,
+        app_source,
+        app_uri,
+        dep_uri,
+        open_dep_source,
+    } = fixture;
+    let position = offset_to_position(&app_source, nth_offset(&app_source, "open_value", 1));
+
+    let prepare = prepare_rename_via_request(&mut service, app_uri.clone(), position)
+        .await
+        .expect("prepareRename should use open dependency source field");
+    let PrepareRenameResponse::RangeWithPlaceholder { range, placeholder } = prepare else {
+        panic!("prepareRename should return range plus placeholder")
+    };
+    assert_eq!(placeholder, "open_value");
+    assert_eq!(
+        range,
+        Range::new(
+            offset_to_position(&app_source, nth_offset(&app_source, "open_value", 1)),
+            offset_to_position(
+                &app_source,
+                nth_offset(&app_source, "open_value", 1) + "open_value".len(),
+            ),
+        ),
+    );
+
+    let edit = rename_via_request(&mut service, app_uri.clone(), position, "current_value")
+        .await
+        .expect("rename should use open dependency source field references");
+    assert_workspace_edit_contains_text_edit(
+        &edit,
+        &app_uri,
+        text_edit_for_source(&app_source, "open_value", "current_value"),
+    );
+    assert_workspace_edit_contains_text_edit(
+        &edit,
+        &dep_uri,
+        text_edit_for_source(&open_dep_source, "open_value", "current_value"),
+    );
+    assert!(
+        !workspace_edit_texts(&edit)
+            .iter()
+            .any(|text| text == "disk_value"),
+        "rename should not use stale disk/interface field names: {edit:#?}",
+    );
+}
+
 struct OpenDependencySourceFixture {
     _temp: TempDir,
     service: LspService<Backend>,
@@ -658,4 +723,39 @@ fn decode_semantic_tokens(tokens: &[SemanticToken]) -> Vec<(u32, u32, u32, u32)>
         decoded.push((line, start, token.length, token.token_type));
     }
     decoded
+}
+
+fn text_edit_for_source(source: &str, needle: &str, replacement: &str) -> TextEdit {
+    let start = nth_offset(source, needle, 1);
+    TextEdit::new(
+        Range::new(
+            offset_to_position(source, start),
+            offset_to_position(source, start + needle.len()),
+        ),
+        replacement.to_owned(),
+    )
+}
+
+fn assert_workspace_edit_contains_text_edit(edit: &WorkspaceEdit, uri: &Url, expected: TextEdit) {
+    let changes = edit
+        .changes
+        .as_ref()
+        .expect("rename should return simple workspace changes");
+    let edits = changes
+        .get(uri)
+        .unwrap_or_else(|| panic!("rename should include edits for {uri}: {changes:#?}"));
+    assert!(
+        edits.contains(&expected),
+        "rename edits for {uri} should include {expected:#?}: {edits:#?}",
+    );
+}
+
+fn workspace_edit_texts(edit: &WorkspaceEdit) -> Vec<String> {
+    edit.changes
+        .as_ref()
+        .into_iter()
+        .flat_map(|changes| changes.values())
+        .flat_map(|edits| edits.iter())
+        .map(|edit| edit.new_text.clone())
+        .collect()
 }

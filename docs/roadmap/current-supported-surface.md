@@ -51,7 +51,7 @@
 ### LSP 和 VSCode
 
 - same-file：hover、keyword hover、definition、declaration、typeDefinition、references、documentHighlight、completion、semantic tokens、formatting、codeAction、codeLens、callHierarchy、typeHierarchy、rename。
-- workspace：`workspace/symbol`、`implementation`、open-doc dependency navigation、completion、signatureHelp、inlayHint、semanticTokens/full/range、保守 workspace rename；`workspace/symbol` 已用真实 `stdlib/` workspace root 覆盖当前 stdlib public symbols，并在缺失接口等包级预检失败时回退索引源码符号；`codeLens` 也已在真实 workspace consumer 场景下保持可用，包括 open-doc consumer。
+- workspace：`workspace/symbol`、`implementation`、open-doc dependency navigation、completion、signatureHelp、inlayHint、semanticTokens/full/range、保守 workspace rename/prepareRename；`workspace/symbol` 已用真实 `stdlib/` workspace root 覆盖当前 stdlib public symbols，并在缺失接口等包级预检失败时回退索引源码符号；`codeLens` 也已在真实 workspace consumer 场景下保持可用，包括 open-doc consumer。
 - dependency imports：`textDocument/documentLink` 可把已解析 dependency import 链接到对应 `.qi` 接口文件，真实 stdlib workspace 已覆盖。
 - 第三方旧接口里的 stdlib 兼容 API 会在真实 `textDocument/completion`、`textDocument/hover` 和 `textDocument/semanticTokens/full/range` 请求中提示 deprecated 并带迁移 guidance；当前 stdlib 正式 API 使用 generic carrier 和 length-generic helpers。
 - 真实 stdlib LSP smoke 已按 request family 拆分，覆盖 completion/resolve、hover、definition/declaration/typeDefinition、references/documentHighlight、implementation、documentSymbol、documentLink、workspace/symbol、signatureHelp/inlayHint、folding/selection、formatting、codeAction/resolve、codeLens/resolve、call/type hierarchy、semanticTokens full/range、rename；`diagnostics` 由独立 smoke 覆盖，其中 `diagnostics` 已覆盖 real stdlib app/package source 和 open-buffer 优先级，documentLink、`codeLens`、`workspace/symbol` 和 rich app 请求都有 real stdlib open-doc 优先级回归，workspace/symbol 已覆盖 real stdlib open/change/close 生命周期。
@@ -59,7 +59,7 @@
 - inlay hints 覆盖 same-file inferred local type，以及 same-file/dependency 调用参数名提示；方法调用会隐藏 receiver `self`。
 - folding range 覆盖代码块、块注释和连续整行 `//` 注释；字符串内注释标记不会生成注释折叠。
 - references 和 codeLens 覆盖同文件引用/实现计数，并能在 workspace package 源文件上统计可见 consumer 的引用/实现，包括 open-doc consumer。
-- `hover`、`definition`、`declaration`、`typeDefinition`、`codeLens`、`implementation`、`references`、`documentHighlight`、`completion`、`signatureHelp`、`inlayHint`、`semanticTokens/full`、`semanticTokens/range` 已共享 workspace request context，统一 package analysis、open document overlay 和当前文档 analysis 准备。
+- `hover`、`definition`、`declaration`、`typeDefinition`、`codeLens`、`implementation`、`references`、`documentHighlight`、`completion`、`signatureHelp`、`inlayHint`、`semanticTokens/full`、`semanticTokens/range`、`prepareRename`、`rename` 已共享 workspace request context，统一 package analysis、open document overlay 和当前文档 analysis 准备。
 - formatting：document/range/on-type formatting 复用 `ql fmt`。
 - VSCode 插件是 thin client，不自带 `qlsp`。
 
@@ -76,7 +76,7 @@
 
 - `ql-cli` 主链路仍过度集中；`build/run/test/check` 的入口 request-context，以及 `project emit-interface/graph/dependencies/dependents/add/status` 的 workspace member lookup 已共享并统一了 unresolved/ambiguous member reporting；`project add-dependency/remove-dependency` 的编辑逻辑已拆出。剩余重点是继续收口 reporting 细节和真实 workspace smoke。
 - `ql test` 的 package-under-test/direct-dependency bridge source override 已覆盖 package path 和直接 project test file 的 local generic 组合；剩余重点是继续抽成共享 project pipeline，并扩大到更宽 dependency-aware backend 语义。
-- LSP 还不是稳定 workspace service；主要编辑请求已开始共享 workspace request context，但 diagnostics、rename、symbols 和 workspace index/cache 生命周期仍需要继续统一。
+- LSP 还不是稳定 workspace service；主要编辑请求已开始共享 workspace request context，但 diagnostics、documentLink、symbols 和 workspace index/cache 生命周期仍需要继续统一。
 - stdlib public API 已清掉 concrete carrier、主要固定 arity 包装和 `std.test` typed facade；`std.core` package-local smoke 已覆盖公开 scalar/predicate/bool helpers，`std.result` package-local smoke 和 `project init --stdlib` starter 已直接覆盖 generic carrier 语义与 option/result assertions。剩余重点是更完整 generic backend、共享 project pipeline 和更宽 dependency-aware backend。
 - `project init --stdlib` starter 已迁到 `stdlib/examples/starter`；后续重点是让更多 stdlib examples/downstream smoke 覆盖更宽 dependency-aware backend。
 
