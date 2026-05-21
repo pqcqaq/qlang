@@ -61,7 +61,7 @@
 - references 和 codeLens 覆盖同文件引用/实现计数，并能在 workspace package 源文件上统计可见 consumer 的引用/实现，包括 open-doc consumer。
 - `hover`、`definition`、`declaration`、`typeDefinition`、`codeLens`、`implementation`、`references`、`documentHighlight`、`completion`、`signatureHelp`、`inlayHint`、`semanticTokens/full`、`semanticTokens/range`、`prepareRename`、`rename`、`documentLink` 已共享 workspace request context，统一 package analysis、open document overlay 和当前文档 analysis 准备。
 - diagnostics 已有专用 request context；当前 buffer 解析/语义诊断优先，只有 clean disk source 才发布 package preflight 诊断。
-- workspace/symbol 已拆出 request-scoped context 和扫描器 index，统一 open documents、non-file documents、workspace roots、query normalization 和 per-request 去重状态。
+- workspace/symbol 已拆出独立模块，内部使用 request-scoped context 和扫描器 index，统一 open documents、non-file documents、workspace roots、query normalization 和 per-request 去重状态。
 - formatting：document/range/on-type formatting 复用 `ql fmt`。
 - VSCode 插件是 thin client，不自带 `qlsp`。
 
