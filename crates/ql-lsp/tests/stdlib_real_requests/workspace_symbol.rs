@@ -2,7 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use crate::common::request::{
-    TempDir, did_open_via_request, offset_to_position, workspace_symbol_via_request,
+    TempDir, did_change_via_request, did_close_via_request, did_open_via_request,
+    offset_to_position, workspace_symbol_via_request,
 };
 use crate::common::stdlib_real::real_stdlib_source_path;
 use crate::support::open_real_stdlib_workspace;
@@ -60,6 +61,43 @@ pub fn main() -> Int {
                 .expect("fresh helper should exist")
         ),
         "workspace/symbol should prefer the open real stdlib source",
+    );
+
+    let changed_core_source =
+        format!("{core_disk_source}\n\npub fn changed_helper() -> Int {{\n    return 3\n}}\n");
+    did_change_via_request(
+        &mut service,
+        core_uri.clone(),
+        2,
+        changed_core_source.clone(),
+    )
+    .await;
+
+    let stale_fresh_symbols = workspace_symbol_via_request(&mut service, "fresh_helper").await;
+    assert!(
+        stale_fresh_symbols.is_empty(),
+        "workspace/symbol should remove stale open-buffer symbols after didChange: {stale_fresh_symbols:#?}",
+    );
+    let changed_symbols = workspace_symbol_via_request(&mut service, "changed_helper").await;
+    assert_eq!(changed_symbols.len(), 1);
+    assert_eq!(changed_symbols[0].name, "changed_helper");
+    assert_eq!(changed_symbols[0].location.uri, core_uri);
+    assert_eq!(
+        changed_symbols[0].location.range.start,
+        offset_to_position(
+            &changed_core_source,
+            changed_core_source
+                .find("changed_helper")
+                .expect("changed helper should exist")
+        ),
+        "workspace/symbol should update to the changed open real stdlib source",
+    );
+
+    did_close_via_request(&mut service, core_uri).await;
+    let closed_symbols = workspace_symbol_via_request(&mut service, "changed_helper").await;
+    assert!(
+        closed_symbols.is_empty(),
+        "workspace/symbol should discard unsaved real stdlib symbols after didClose: {closed_symbols:#?}",
     );
 }
 
