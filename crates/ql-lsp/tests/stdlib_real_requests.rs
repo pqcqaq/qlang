@@ -20,3 +20,5 @@ mod rich;
 mod structure;
 #[path = "stdlib_real_requests/support.rs"]
 mod support;
+#[path = "stdlib_real_requests/workspace_symbol.rs"]
+mod workspace_symbol;
