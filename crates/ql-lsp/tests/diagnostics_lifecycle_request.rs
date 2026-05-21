@@ -4,7 +4,7 @@ use common::request::{
     TempDir, did_change_via_request, did_close_via_request, did_open_via_request,
     initialize_service, initialize_service_with_workspace_roots, next_publish_diagnostics,
 };
-use common::stdlib_real::write_real_stdlib_workspace;
+use common::stdlib_real::{real_stdlib_source_path, write_real_stdlib_workspace};
 use ql_lsp::Backend;
 use tower_lsp::LspService;
 use tower_lsp::lsp_types::{DiagnosticSeverity, NumberOrString, Url};
@@ -182,6 +182,40 @@ pub fn main() -> Int {
     assert!(
         diagnostics.diagnostics.is_empty(),
         "current real stdlib API should not publish diagnostics: {diagnostics:#?}",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn diagnostics_notifications_accept_current_real_stdlib_package_sources() {
+    let temp = TempDir::new("ql-lsp-diagnostics-real-stdlib-package-source");
+    let app_source = r#"
+package demo.app
+
+use std.result.ok as result_ok
+
+pub fn main() -> Int {
+    let value = result_ok(1)
+    return 0
+}
+"#;
+    let workspace = write_real_stdlib_workspace(&temp, app_source);
+    let result_source_path = real_stdlib_source_path(&workspace.stdlib_root, "result");
+    let result_source = std::fs::read_to_string(&result_source_path)
+        .expect("temp std.result source should exist")
+        .replace("\r\n", "\n");
+    let result_uri = Url::from_file_path(&result_source_path)
+        .expect("temp std.result source path should convert to URI");
+    let workspace_root_uri = Url::from_file_path(temp.path().join("workspace"))
+        .expect("workspace root should convert to URI");
+    let (mut service, mut socket) = LspService::new(Backend::new);
+    initialize_service_with_workspace_roots(&mut service, vec![workspace_root_uri]).await;
+
+    did_open_via_request(&mut service, result_uri.clone(), result_source).await;
+    let diagnostics = next_publish_diagnostics(&mut socket);
+    assert_eq!(diagnostics.uri, result_uri);
+    assert!(
+        diagnostics.diagnostics.is_empty(),
+        "current real stdlib package source should publish no diagnostics: {diagnostics:#?}",
     );
 }
 
