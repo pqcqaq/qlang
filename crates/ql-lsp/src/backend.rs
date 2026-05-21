@@ -107,6 +107,14 @@ struct WorkspaceRequestContext {
     open_docs: OpenDocuments,
 }
 
+struct DiagnosticsRequestContext<'a> {
+    uri: &'a Url,
+    source: &'a str,
+    analysis: std::result::Result<Analysis, Vec<ql_diagnostics::Diagnostic>>,
+    package: Option<std::result::Result<ql_analysis::PackageAnalysis, PackageAnalysisError>>,
+    source_matches_disk: bool,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct FormattingEdit {
     span: Span,
@@ -156,7 +164,7 @@ impl Backend {
     }
 
     async fn publish_document_diagnostics(&self, uri: &tower_lsp::lsp_types::Url, source: &str) {
-        let diagnostics = document_diagnostics(uri, source);
+        let diagnostics = document_diagnostics(&diagnostics_request_context(uri, source));
 
         self.client
             .publish_diagnostics(uri.clone(), diagnostics, None)
@@ -485,6 +493,13 @@ fn inlay_hints_for_workspace_context(
     (!hints.is_empty()).then_some(hints)
 }
 
+fn document_links_for_workspace_context(
+    source: &str,
+    context: &WorkspaceRequestContext,
+) -> Option<Vec<DocumentLink>> {
+    document_links_for_package_imports(source, &context.package)
+}
+
 fn workspace_callable_detail_at(
     uri: &Url,
     source: &str,
@@ -541,19 +556,44 @@ fn dependency_callable_detail_at(
         .map(|info| info.detail)
 }
 
-fn document_diagnostics(uri: &Url, source: &str) -> Vec<Diagnostic> {
-    match analyze_source(source) {
-        Ok(analysis) if !analysis.diagnostics().is_empty() => {
-            diagnostics_to_lsp(uri, source, analysis.diagnostics())
-        }
-        Ok(_) => package_diagnostics_for_document(uri, source).unwrap_or_default(),
-        Err(diagnostics) => diagnostics_to_lsp(uri, source, &diagnostics),
+fn diagnostics_request_context<'a>(uri: &'a Url, source: &'a str) -> DiagnosticsRequestContext<'a> {
+    let analysis = analyze_source(source);
+    let should_run_package_preflight =
+        matches!(&analysis, Ok(analysis) if analysis.diagnostics().is_empty());
+    let package = should_run_package_preflight
+        .then(|| {
+            uri.to_file_path().ok().map(|path| {
+                let source_matches_disk = source_matches_disk_source(&path, source);
+                (Some(analyze_package(&path)), source_matches_disk)
+            })
+        })
+        .flatten();
+    let (package, source_matches_disk) = package.unwrap_or((None, false));
+
+    DiagnosticsRequestContext {
+        uri,
+        source,
+        analysis,
+        package,
+        source_matches_disk,
     }
 }
 
-fn package_diagnostics_for_document(uri: &Url, source: &str) -> Option<Vec<Diagnostic>> {
-    let path = uri.to_file_path().ok()?;
-    match analyze_package(&path) {
+fn document_diagnostics(context: &DiagnosticsRequestContext<'_>) -> Vec<Diagnostic> {
+    match &context.analysis {
+        Ok(analysis) if !analysis.diagnostics().is_empty() => {
+            diagnostics_to_lsp(context.uri, context.source, analysis.diagnostics())
+        }
+        Ok(_) => package_diagnostics_for_document(context).unwrap_or_default(),
+        Err(diagnostics) => diagnostics_to_lsp(context.uri, context.source, diagnostics),
+    }
+}
+
+fn package_diagnostics_for_document(
+    context: &DiagnosticsRequestContext<'_>,
+) -> Option<Vec<Diagnostic>> {
+    let path = context.uri.to_file_path().ok()?;
+    match context.package.as_ref()? {
         Ok(_) => None,
         Err(PackageAnalysisError::SourceDiagnostics {
             path: diagnostic_path,
@@ -562,10 +602,14 @@ fn package_diagnostics_for_document(uri: &Url, source: &str) -> Option<Vec<Diagn
         }) => {
             let current_path = canonicalize_or_clone(&path);
             let diagnostic_path = canonicalize_or_clone(&diagnostic_path);
-            if current_path != diagnostic_path || !source_matches_disk_source(&path, source) {
+            if current_path != diagnostic_path || !context.source_matches_disk {
                 return None;
             }
-            Some(diagnostics_to_lsp(uri, &diagnostic_source, &diagnostics))
+            Some(diagnostics_to_lsp(
+                context.uri,
+                diagnostic_source,
+                diagnostics,
+            ))
         }
         Err(PackageAnalysisError::Project(ql_project::ProjectError::ManifestNotFound {
             ..
@@ -10722,10 +10766,13 @@ impl LanguageServer for Backend {
         let Some(source) = self.documents.get(&uri).await else {
             return Ok(None);
         };
-        let Some(package) = self.package_analysis_for_uri(&uri) else {
+        let Some(context) = self
+            .workspace_request_context_for_source(&uri, &source)
+            .await
+        else {
             return Ok(None);
         };
-        Ok(document_links_for_package_imports(&source, &package))
+        Ok(document_links_for_workspace_context(&source, &context))
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {

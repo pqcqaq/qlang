@@ -146,6 +146,157 @@ pub fn exported() -> Int {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn diagnostics_notifications_prefer_current_source_semantic_errors_over_package_preflight() {
+    let temp = TempDir::new("ql-lsp-diagnostics-current-semantic-before-package");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return missing
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/src/lib.ql",
+        r#"
+package demo.dep
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let uri = Url::from_file_path(&source_path).expect("source path should convert to URI");
+    let source = std::fs::read_to_string(&source_path).expect("source should read");
+    let (mut service, mut socket) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+
+    did_open_via_request(&mut service, uri.clone(), source).await;
+    let diagnostics = next_publish_diagnostics(&mut socket);
+    assert_eq!(diagnostics.uri, uri);
+    assert!(
+        diagnostics
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("unresolved value `missing`")),
+        "current source semantic diagnostics should be published first: {diagnostics:#?}",
+    );
+    assert!(
+        diagnostics
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { !diagnostic.message.contains("missing interface artifact") }),
+        "package preflight diagnostics should not mask current source semantic diagnostics",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn diagnostics_notifications_do_not_publish_stale_disk_source_errors_for_clean_open_buffer() {
+    let temp = TempDir::new("ql-lsp-diagnostics-clean-open-buffer-before-disk");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main( {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let open_source = r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#;
+
+    let uri = Url::from_file_path(&source_path).expect("source path should convert to URI");
+    let (mut service, mut socket) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+
+    did_open_via_request(&mut service, uri.clone(), open_source.to_owned()).await;
+    let diagnostics = next_publish_diagnostics(&mut socket);
+    assert_eq!(diagnostics.uri, uri);
+    assert!(
+        diagnostics.diagnostics.is_empty(),
+        "clean open buffer should suppress stale disk package source diagnostics: {diagnostics:#?}",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn diagnostics_notifications_do_not_publish_sibling_source_errors_for_current_document() {
+    let temp = TempDir::new("ql-lsp-diagnostics-sibling-source-error");
+    let current_source_path = temp.write(
+        "workspace/app/src/main.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/src/broken.ql",
+        r#"
+package demo.app
+
+pub fn broken( {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+
+    let uri = Url::from_file_path(&current_source_path).expect("source path should convert to URI");
+    let source = std::fs::read_to_string(&current_source_path).expect("source should read");
+    let (mut service, mut socket) = LspService::new(Backend::new);
+    initialize_service(&mut service).await;
+
+    did_open_via_request(&mut service, uri.clone(), source).await;
+    let diagnostics = next_publish_diagnostics(&mut socket);
+    assert_eq!(diagnostics.uri, uri);
+    assert!(
+        diagnostics.diagnostics.is_empty(),
+        "sibling source diagnostics should not be published for the current document: {diagnostics:#?}",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn diagnostics_notifications_accept_current_real_stdlib_workspace() {
     let temp = TempDir::new("ql-lsp-diagnostics-real-stdlib-workspace");
     let app_source = r#"
