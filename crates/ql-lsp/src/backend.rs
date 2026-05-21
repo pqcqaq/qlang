@@ -9692,50 +9692,49 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        if let Some(package) = self.package_analysis_for_uri(&uri) {
-            let open_docs = self.open_file_documents().await;
-            let analysis = analyze_source(&source).ok();
-            if let Some(analysis) = analysis.as_ref() {
+        if let Some(context) = self
+            .workspace_request_context_for_source(&uri, &source)
+            .await
+        {
+            let analysis = context.analysis.as_ref();
+            let package = &context.package;
+            let open_docs = &context.open_docs;
+            if let Some(analysis) = analysis {
                 if let Some(hover) = workspace_source_hover_for_import_with_open_docs(
-                    &uri, &source, analysis, &package, &open_docs, position,
+                    &uri, &source, analysis, package, open_docs, position,
                 ) {
                     return Ok(Some(hover));
                 }
             } else if let Some(hover) =
                 workspace_source_hover_for_import_in_broken_source_with_open_docs(
-                    &uri, &source, &package, &open_docs, position,
+                    &uri, &source, package, open_docs, position,
                 )
             {
                 return Ok(Some(hover));
             }
             if let Some(hover) = workspace_source_hover_for_dependency_with_open_docs(
-                &uri,
-                &source,
-                analysis.as_ref(),
-                &package,
-                &open_docs,
-                position,
+                &uri, &source, analysis, package, open_docs, position,
             ) {
                 return Ok(Some(hover));
             }
-            if let Some(hover) = hover_for_dependency_imports(&source, &package, position) {
+            if let Some(hover) = hover_for_dependency_imports(&source, package, position) {
                 return Ok(Some(hover));
             }
-            if let Some(hover) = hover_for_dependency_methods(&source, &package, position) {
+            if let Some(hover) = hover_for_dependency_methods(&source, package, position) {
                 return Ok(Some(hover));
             }
-            if let Some(hover) = hover_for_dependency_struct_fields(&source, &package, position) {
+            if let Some(hover) = hover_for_dependency_struct_fields(&source, package, position) {
                 return Ok(Some(hover));
             }
-            if let Some(hover) = hover_for_dependency_variants(&source, &package, position) {
+            if let Some(hover) = hover_for_dependency_variants(&source, package, position) {
                 return Ok(Some(hover));
             }
             let Some(analysis) = analysis else {
-                return Ok(hover_for_dependency_values(&source, &package, position)
+                return Ok(hover_for_dependency_values(&source, package, position)
                     .or_else(|| hover_for_keyword(&source, position)));
             };
             return Ok(
-                hover_for_package_analysis(&source, &analysis, &package, position)
+                hover_for_package_analysis(&source, analysis, package, position)
                     .or_else(|| hover_for_keyword(&source, position)),
             );
         }
@@ -9760,7 +9759,9 @@ impl LanguageServer for Backend {
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
-            let context = self.workspace_request_context(package, Some(analysis)).await;
+            let context = self
+                .workspace_request_context(package, Some(analysis))
+                .await;
             let Some(analysis) = context.analysis.as_ref() else {
                 return Ok(None);
             };
@@ -9792,12 +9793,16 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        if let Some(package) = self.package_analysis_for_uri(&uri) {
-            let open_docs = self.open_file_documents().await;
-            let analysis = analyze_source(&source).ok();
-            if let Some(analysis) = analysis.as_ref()
+        if let Some(context) = self
+            .workspace_request_context_for_source(&uri, &source)
+            .await
+        {
+            let analysis = context.analysis.as_ref();
+            let package = &context.package;
+            let open_docs = &context.open_docs;
+            if let Some(analysis) = analysis
                 && let Some(definition) = workspace_source_definition_for_import_with_open_docs(
-                    &uri, &source, analysis, &package, &open_docs, position,
+                    &uri, &source, analysis, package, open_docs, position,
                 )
             {
                 return Ok(Some(definition));
@@ -9805,34 +9810,27 @@ impl LanguageServer for Backend {
             if analysis.is_none()
                 && let Some(definition) =
                     workspace_source_definition_for_import_in_broken_source_with_open_docs(
-                        &uri, &source, &package, &open_docs, position,
+                        &uri, &source, package, open_docs, position,
                     )
             {
                 return Ok(Some(definition));
             }
             if let Some(definition) = workspace_source_definition_for_dependency_with_open_docs(
-                &uri,
-                &source,
-                analysis.as_ref(),
-                &package,
-                &open_docs,
-                position,
+                &uri, &source, analysis, package, open_docs, position,
             ) {
                 return Ok(Some(definition));
             }
             if let Some(analysis) = analysis {
                 return Ok(definition_for_package_analysis(
-                    &uri, &source, &analysis, &package, position,
+                    &uri, &source, analysis, package, position,
                 ));
             }
             return Ok(
-                definition_for_dependency_imports(&source, &package, position)
-                    .or_else(|| definition_for_dependency_methods(&source, &package, position))
-                    .or_else(|| {
-                        definition_for_dependency_struct_fields(&source, &package, position)
-                    })
-                    .or_else(|| definition_for_dependency_variants(&source, &package, position))
-                    .or_else(|| definition_for_dependency_values(&source, &package, position)),
+                definition_for_dependency_imports(&source, package, position)
+                    .or_else(|| definition_for_dependency_methods(&source, package, position))
+                    .or_else(|| definition_for_dependency_struct_fields(&source, package, position))
+                    .or_else(|| definition_for_dependency_variants(&source, package, position))
+                    .or_else(|| definition_for_dependency_values(&source, package, position)),
             );
         }
 
@@ -9854,13 +9852,17 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        if let Some(package) = self.package_analysis_for_uri(&uri) {
-            let open_docs = self.open_file_documents().await;
-            let analysis = analyze_source(&source).ok();
-            if let Some(analysis) = analysis.as_ref()
+        if let Some(context) = self
+            .workspace_request_context_for_source(&uri, &source)
+            .await
+        {
+            let analysis = context.analysis.as_ref();
+            let package = &context.package;
+            let open_docs = &context.open_docs;
+            if let Some(analysis) = analysis
                 && let Some(GotoDefinitionResponse::Scalar(location)) =
                     workspace_source_definition_for_import_with_open_docs(
-                        &uri, &source, analysis, &package, &open_docs, position,
+                        &uri, &source, analysis, package, open_docs, position,
                     )
             {
                 return Ok(Some(GotoDeclarationResponse::Scalar(location)));
@@ -9868,36 +9870,31 @@ impl LanguageServer for Backend {
             if analysis.is_none()
                 && let Some(GotoDefinitionResponse::Scalar(location)) =
                     workspace_source_definition_for_import_in_broken_source_with_open_docs(
-                        &uri, &source, &package, &open_docs, position,
+                        &uri, &source, package, open_docs, position,
                     )
             {
                 return Ok(Some(GotoDeclarationResponse::Scalar(location)));
             }
             if let Some(GotoDefinitionResponse::Scalar(location)) =
                 workspace_source_definition_for_dependency_with_open_docs(
-                    &uri,
-                    &source,
-                    analysis.as_ref(),
-                    &package,
-                    &open_docs,
-                    position,
+                    &uri, &source, analysis, package, open_docs, position,
                 )
             {
                 return Ok(Some(GotoDeclarationResponse::Scalar(location)));
             }
             if let Some(analysis) = analysis {
                 return Ok(declaration_for_package_analysis(
-                    &uri, &source, &analysis, &package, position,
+                    &uri, &source, analysis, package, position,
                 ));
             }
             return Ok(
-                declaration_for_dependency_imports(&source, &package, position)
-                    .or_else(|| declaration_for_dependency_methods(&source, &package, position))
+                declaration_for_dependency_imports(&source, package, position)
+                    .or_else(|| declaration_for_dependency_methods(&source, package, position))
                     .or_else(|| {
-                        declaration_for_dependency_struct_fields(&source, &package, position)
+                        declaration_for_dependency_struct_fields(&source, package, position)
                     })
-                    .or_else(|| declaration_for_dependency_variants(&source, &package, position))
-                    .or_else(|| declaration_for_dependency_values(&source, &package, position)),
+                    .or_else(|| declaration_for_dependency_variants(&source, package, position))
+                    .or_else(|| declaration_for_dependency_values(&source, package, position)),
             );
         }
 
@@ -9919,49 +9916,48 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        if let Some(package) = self.package_analysis_for_uri(&uri) {
-            let open_docs = self.open_file_documents().await;
-            let analysis = analyze_source(&source).ok();
-            if let Some(analysis) = analysis.as_ref() {
+        if let Some(context) = self
+            .workspace_request_context_for_source(&uri, &source)
+            .await
+        {
+            let analysis = context.analysis.as_ref();
+            let package = &context.package;
+            let open_docs = &context.open_docs;
+            if let Some(analysis) = analysis {
                 if let Some(definition) = workspace_source_type_definition_for_import_with_open_docs(
-                    &uri, &source, analysis, &package, &open_docs, position,
+                    &uri, &source, analysis, package, open_docs, position,
                 ) {
                     return Ok(Some(definition));
                 }
             } else if let Some(definition) =
                 workspace_source_type_definition_for_import_in_broken_source_with_open_docs(
-                    &uri, &source, &package, &open_docs, position,
+                    &uri, &source, package, open_docs, position,
                 )
             {
                 return Ok(Some(definition));
             }
             if let Some(definition) = workspace_source_type_definition_for_dependency_with_open_docs(
-                &uri,
-                &source,
-                analysis.as_ref(),
-                &package,
-                &open_docs,
-                position,
+                &uri, &source, analysis, package, open_docs, position,
             ) {
                 return Ok(Some(definition));
             }
             if let Some(analysis) = analysis {
                 return Ok(type_definition_for_package_analysis(
-                    &uri, &source, &analysis, &package, position,
+                    &uri, &source, analysis, package, position,
                 ));
             }
             return Ok(
-                type_definition_for_dependency_imports(&source, &package, position).or_else(|| {
-                    type_definition_for_dependency_values(&source, &package, position).or_else(
+                type_definition_for_dependency_imports(&source, package, position).or_else(|| {
+                    type_definition_for_dependency_values(&source, package, position).or_else(
                         || {
-                            type_definition_for_dependency_variants(&source, &package, position)
+                            type_definition_for_dependency_variants(&source, package, position)
                                 .or_else(|| {
                                     type_definition_for_dependency_struct_field_types(
-                                        &source, &package, position,
+                                        &source, package, position,
                                     )
                                     .or_else(|| {
                                         type_definition_for_dependency_method_types(
-                                            &source, &package, position,
+                                            &source, package, position,
                                         )
                                     })
                                 })
@@ -9988,7 +9984,10 @@ impl LanguageServer for Backend {
         let Some(source) = self.documents.get(&uri).await else {
             return Ok(None);
         };
-        if let Some(context) = self.workspace_request_context_for_source(&uri, &source).await {
+        if let Some(context) = self
+            .workspace_request_context_for_source(&uri, &source)
+            .await
+        {
             if let Some(implementation) = workspace_source_implementation_with_open_docs(
                 &uri,
                 &source,
@@ -10023,7 +10022,10 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        if let Some(context) = self.workspace_request_context_for_source(&uri, &source).await {
+        if let Some(context) = self
+            .workspace_request_context_for_source(&uri, &source)
+            .await
+        {
             if let Some(analysis) = context.analysis.as_ref() {
                 if let Some(references) = workspace_source_references_for_root_symbol_with_open_docs(
                     &uri,
@@ -10121,7 +10123,10 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        if let Some(context) = self.workspace_request_context_for_source(&uri, &source).await {
+        if let Some(context) = self
+            .workspace_request_context_for_source(&uri, &source)
+            .await
+        {
             let Some(analysis) = context.analysis.as_ref() else {
                 return Ok(fallback_document_highlights_for_package_at_with_open_docs(
                     &uri,

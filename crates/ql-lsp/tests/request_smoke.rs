@@ -1,11 +1,14 @@
 mod common;
 
 use common::request::{
-    TempDir, code_lens_via_request, completion_via_request, document_symbol_via_request,
-    goto_declaration_via_request, goto_definition_via_request, goto_implementation_via_request,
-    goto_type_definition_via_request, hover_via_request, initialized_service_with_open_documents,
-    nth_offset, offset_to_position, semantic_tokens_full_via_request,
+    TempDir, code_lens_via_request, completion_via_request, did_open_via_request,
+    document_symbol_via_request, goto_declaration_via_request, goto_definition_via_request,
+    goto_implementation_via_request, goto_type_definition_via_request, hover_via_request,
+    initialize_service_with_workspace_roots, initialized_service_with_open_documents, nth_offset,
+    offset_to_position, semantic_tokens_full_via_request,
 };
+use ql_lsp::Backend;
+use tower_lsp::LspService;
 use tower_lsp::lsp_types::request::{
     GotoDeclarationResponse, GotoImplementationResponse, GotoTypeDefinitionResponse,
 };
@@ -199,5 +202,304 @@ fn complete(config: Config) -> Int {
     assert!(
         !tokens.data.is_empty(),
         "semanticTokens/full request should return at least one token",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn workspace_requests_prefer_open_dependency_source_for_navigation_and_hover() {
+    let fixture = setup_open_dependency_source_fixture(
+        "ql-lsp-request-open-dependency-source",
+        r#"
+package demo.app
+
+use demo.dep.Config
+use demo.dep.make as make
+
+pub fn main(value: Config) -> Config {
+    let probe = make()
+    return value
+}
+"#,
+    )
+    .await;
+    let OpenDependencySourceFixture {
+        _temp,
+        mut service,
+        app_source,
+        app_uri,
+        dep_uri,
+        open_dep_source,
+    } = fixture;
+    let function_position = offset_to_position(&app_source, nth_offset(&app_source, "make", 2));
+    let type_position = offset_to_position(&app_source, nth_offset(&app_source, "Config", 2));
+
+    let hover = hover_via_request(&mut service, app_uri.clone(), function_position)
+        .await
+        .expect("hover request should return open dependency source info");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover request should return markup contents")
+    };
+    assert!(markup.value.contains("**function** `make`"));
+    assert!(markup.value.contains("fn make() -> Bool"));
+    assert!(
+        !markup.value.contains("fn make() -> Int"),
+        "hover should use open dependency source, not disk source: {}",
+        markup.value,
+    );
+
+    assert_definition_targets_open_dependency(
+        goto_definition_via_request(&mut service, app_uri.clone(), function_position)
+            .await
+            .expect("definition request should return open dependency source location"),
+        &dep_uri,
+        &open_dep_source,
+        "make",
+    );
+    assert_declaration_targets_open_dependency(
+        goto_declaration_via_request(&mut service, app_uri.clone(), function_position)
+            .await
+            .expect("declaration request should return open dependency source location"),
+        &dep_uri,
+        &open_dep_source,
+        "make",
+    );
+    assert_type_definition_targets_open_dependency(
+        goto_type_definition_via_request(&mut service, app_uri, type_position)
+            .await
+            .expect("typeDefinition request should return open dependency source location"),
+        &dep_uri,
+        &open_dep_source,
+        "Config",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn broken_workspace_import_requests_prefer_open_dependency_source() {
+    let fixture = setup_open_dependency_source_fixture(
+        "ql-lsp-request-broken-open-dependency-source",
+        r#"
+package demo.app
+
+use demo.dep.Config
+use demo.dep.make as make
+
+pub fn main(value: Config) -> Int {
+    let probe = make()
+    let broken =
+    return 0
+}
+"#,
+    )
+    .await;
+    let OpenDependencySourceFixture {
+        _temp,
+        mut service,
+        app_source,
+        app_uri,
+        dep_uri,
+        open_dep_source,
+    } = fixture;
+    let function_position = offset_to_position(&app_source, nth_offset(&app_source, "make", 2));
+    let type_position = offset_to_position(&app_source, nth_offset(&app_source, "Config", 2));
+
+    let hover = hover_via_request(&mut service, app_uri.clone(), function_position)
+        .await
+        .expect("broken-source hover request should return open dependency source info");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover request should return markup contents")
+    };
+    assert!(markup.value.contains("fn make() -> Bool"));
+    assert!(
+        !markup.value.contains("fn make() -> Int"),
+        "broken-source hover should use open dependency source, not disk source: {}",
+        markup.value,
+    );
+
+    assert_definition_targets_open_dependency(
+        goto_definition_via_request(&mut service, app_uri.clone(), function_position)
+            .await
+            .expect(
+                "broken-source definition request should return open dependency source location",
+            ),
+        &dep_uri,
+        &open_dep_source,
+        "make",
+    );
+    assert_declaration_targets_open_dependency(
+        goto_declaration_via_request(&mut service, app_uri.clone(), function_position)
+            .await
+            .expect(
+                "broken-source declaration request should return open dependency source location",
+            ),
+        &dep_uri,
+        &open_dep_source,
+        "make",
+    );
+    assert_type_definition_targets_open_dependency(
+        goto_type_definition_via_request(&mut service, app_uri, type_position)
+            .await
+            .expect(
+                "broken-source typeDefinition request should return open dependency source location",
+            ),
+        &dep_uri,
+        &open_dep_source,
+        "Config",
+    );
+}
+
+struct OpenDependencySourceFixture {
+    _temp: TempDir,
+    service: LspService<Backend>,
+    app_source: String,
+    app_uri: Url,
+    dep_uri: Url,
+    open_dep_source: String,
+}
+
+async fn setup_open_dependency_source_fixture(
+    prefix: &str,
+    app_source: &str,
+) -> OpenDependencySourceFixture {
+    let temp = TempDir::new(prefix);
+    let workspace_root = temp.path().join("workspace");
+    let app_path = temp.write("workspace/packages/app/src/main.ql", app_source);
+    let dep_path = temp.write(
+        "workspace/packages/dep/src/lib.ql",
+        r#"
+package demo.dep
+
+pub fn make() -> Int {
+    return 1
+}
+
+pub struct Config {
+    disk_value: Int,
+}
+"#,
+    );
+    let open_dep_source = r#"
+package demo.dep
+
+pub fn make() -> Bool {
+    return true
+}
+
+pub struct Config {
+    open_value: Int,
+}
+"#
+    .to_owned();
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/dep"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/packages/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn make() -> Int
+
+pub struct Config {
+    disk_value: Int,
+}
+"#,
+    );
+
+    let workspace_root_uri =
+        Url::from_file_path(&workspace_root).expect("workspace root path should convert to URI");
+    let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+    let dep_uri = Url::from_file_path(&dep_path).expect("dependency path should convert to URI");
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service_with_workspace_roots(&mut service, vec![workspace_root_uri]).await;
+    did_open_via_request(&mut service, app_uri.clone(), app_source.to_owned()).await;
+    did_open_via_request(&mut service, dep_uri.clone(), open_dep_source.clone()).await;
+
+    OpenDependencySourceFixture {
+        _temp: temp,
+        service,
+        app_source: app_source.to_owned(),
+        app_uri,
+        dep_uri,
+        open_dep_source,
+    }
+}
+
+fn assert_definition_targets_open_dependency(
+    response: GotoDefinitionResponse,
+    dep_uri: &Url,
+    open_dep_source: &str,
+    snippet: &str,
+) {
+    let GotoDefinitionResponse::Scalar(location) = response else {
+        panic!("definition request should return one location")
+    };
+    assert_location_targets_open_dependency(location, dep_uri, open_dep_source, snippet);
+}
+
+fn assert_declaration_targets_open_dependency(
+    response: GotoDeclarationResponse,
+    dep_uri: &Url,
+    open_dep_source: &str,
+    snippet: &str,
+) {
+    let GotoDeclarationResponse::Scalar(location) = response else {
+        panic!("declaration request should return one location")
+    };
+    assert_location_targets_open_dependency(location, dep_uri, open_dep_source, snippet);
+}
+
+fn assert_type_definition_targets_open_dependency(
+    response: GotoTypeDefinitionResponse,
+    dep_uri: &Url,
+    open_dep_source: &str,
+    snippet: &str,
+) {
+    let GotoTypeDefinitionResponse::Scalar(location) = response else {
+        panic!("typeDefinition request should return one location")
+    };
+    assert_location_targets_open_dependency(location, dep_uri, open_dep_source, snippet);
+}
+
+fn assert_location_targets_open_dependency(
+    location: Location,
+    dep_uri: &Url,
+    open_dep_source: &str,
+    snippet: &str,
+) {
+    let start = nth_offset(open_dep_source, snippet, 1);
+    assert_eq!(location.uri, *dep_uri);
+    assert_eq!(
+        location.range.start,
+        offset_to_position(open_dep_source, start),
+    );
+    assert_eq!(
+        location.range.end,
+        offset_to_position(open_dep_source, start + snippet.len()),
     );
 }
