@@ -12,6 +12,36 @@ use tower_lsp::LspService;
 use tower_lsp::lsp_types::{SymbolInformation, SymbolKind, Url};
 
 #[tokio::test(flavor = "current_thread")]
+async fn workspace_symbol_request_indexes_non_file_open_documents() {
+    let source = r#"
+pub fn scratch_helper() -> Int {
+    return 1
+}
+"#;
+    let uri = Url::parse("untitled:///scratch.ql").expect("untitled URI should parse");
+    let (mut service, _) = LspService::new(Backend::new);
+    initialize_service_with_workspace_roots(&mut service, Vec::new()).await;
+    did_open_via_request(&mut service, uri.clone(), source.to_owned()).await;
+
+    let symbols = workspace_symbol_via_request(&mut service, "scratch_helper").await;
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "scratch_helper");
+    assert_eq!(symbols[0].kind, SymbolKind::FUNCTION);
+    assert_eq!(symbols[0].location.uri, uri);
+    assert_eq!(
+        symbols[0].location.range.start,
+        offset_to_position(
+            source,
+            source
+                .find("scratch_helper")
+                .expect("scratch helper should exist"),
+        ),
+        "workspace symbol should use the non-file open document source",
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn workspace_symbol_request_uses_workspace_root_without_open_documents() {
     let temp = TempDir::new("ql-lsp-workspace-symbol-request-roots");
     let workspace_root = temp.path().join("workspace");

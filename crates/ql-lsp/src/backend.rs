@@ -823,266 +823,362 @@ fn visible_manifest_paths_for_package_and_open_docs(
     manifests
 }
 
-fn append_manifest_and_workspace_symbols(
-    manifest: &ql_project::ProjectManifest,
-    open_docs: &HashMap<PathBuf, (Url, String)>,
-    searched_packages: &mut HashSet<PathBuf>,
-    covered_files: &mut HashSet<PathBuf>,
-    symbols: &mut Vec<SymbolInformation>,
-    query: &str,
-) {
-    if manifest.package.is_some() {
-        let manifest_path = manifest.manifest_path.clone();
-        if searched_packages.insert(manifest_path.clone()) {
-            append_manifest_source_workspace_symbols(
-                manifest,
-                open_docs,
-                covered_files,
-                symbols,
-                query,
-            );
-            let preferred_local_dependency_manifest_paths =
-                append_local_dependency_workspace_symbols(
-                    manifest_path.as_path(),
-                    open_docs,
-                    searched_packages,
-                    covered_files,
-                    symbols,
+impl WorkspaceSymbolIndex {
+    fn append_manifest_and_workspace_symbols(
+        &mut self,
+        manifest: &ql_project::ProjectManifest,
+        open_docs: &OpenDocuments,
+        query: &str,
+    ) {
+        if manifest.package.is_some() {
+            let manifest_path = manifest.manifest_path.clone();
+            if self.searched_packages.insert(manifest_path.clone()) {
+                self.append_manifest_source_workspace_symbols(manifest, open_docs, query);
+                let preferred_local_dependency_manifest_paths = self
+                    .append_local_dependency_workspace_symbols(
+                        manifest_path.as_path(),
+                        open_docs,
+                        query,
+                    );
+                self.append_dependency_workspace_symbols_excluding(
+                    &manifest_path,
+                    &preferred_local_dependency_manifest_paths,
                     query,
                 );
-            append_dependency_workspace_symbols_excluding(
-                &manifest_path,
-                &preferred_local_dependency_manifest_paths,
-                symbols,
-                query,
-            );
-        }
-    }
-
-    let Some(workspace) = manifest.workspace.as_ref() else {
-        return;
-    };
-
-    let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
-    let mut member_manifests = workspace
-        .members
-        .iter()
-        .filter_map(|member| load_project_manifest(&manifest_dir.join(member)).ok())
-        .map(|member_manifest| member_manifest.manifest_path)
-        .collect::<Vec<_>>();
-    member_manifests.sort();
-    member_manifests.dedup();
-
-    for member_manifest_path in member_manifests {
-        if !searched_packages.insert(member_manifest_path.clone()) {
-            continue;
-        }
-        append_workspace_member_symbols(
-            &member_manifest_path,
-            open_docs,
-            searched_packages,
-            covered_files,
-            symbols,
-            query,
-        );
-    }
-}
-
-fn append_package_workspace_symbols(
-    package: &ql_analysis::PackageAnalysis,
-    open_docs: &HashMap<PathBuf, (Url, String)>,
-    covered_files: &mut HashSet<PathBuf>,
-    symbols: &mut Vec<SymbolInformation>,
-    query: &str,
-    include_dependencies: bool,
-) {
-    for module in package.modules() {
-        let module_path = module.path().to_path_buf();
-        covered_files.insert(module_path.clone());
-
-        if let Some((open_uri, open_source)) = open_docs.get(&module_path)
-            && let Ok(analysis) = analyze_source(open_source)
-        {
-            symbols.extend(workspace_symbols_for_analysis(
-                open_uri,
-                open_source,
-                &analysis,
-                query,
-            ));
-            continue;
+            }
         }
 
-        let module_location_path = fs::canonicalize(&module_path).unwrap_or(module_path.clone());
-        let Ok(module_uri) = Url::from_file_path(&module_location_path) else {
-            continue;
+        let Some(workspace) = manifest.workspace.as_ref() else {
+            return;
         };
-        let Ok(module_source) = fs::read_to_string(&module_path) else {
-            continue;
-        };
-        symbols.extend(workspace_symbols_for_analysis(
-            &module_uri,
-            &module_source,
-            module.analysis(),
-            query,
-        ));
+
+        let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+        let mut member_manifests = workspace
+            .members
+            .iter()
+            .filter_map(|member| load_project_manifest(&manifest_dir.join(member)).ok())
+            .map(|member_manifest| member_manifest.manifest_path)
+            .collect::<Vec<_>>();
+        member_manifests.sort();
+        member_manifests.dedup();
+
+        for member_manifest_path in member_manifests {
+            if !self.searched_packages.insert(member_manifest_path.clone()) {
+                continue;
+            }
+            self.append_workspace_member_symbols(&member_manifest_path, open_docs, query);
+        }
     }
 
-    if include_dependencies {
-        symbols.extend(workspace_symbols_for_dependencies(
-            package.dependencies(),
-            query,
-        ));
-    }
-}
+    fn append_package_workspace_symbols(
+        &mut self,
+        package: &ql_analysis::PackageAnalysis,
+        open_docs: &OpenDocuments,
+        query: &str,
+        include_dependencies: bool,
+    ) {
+        for module in package.modules() {
+            let module_path = module.path().to_path_buf();
+            self.covered_files.insert(module_path.clone());
 
-fn append_manifest_source_workspace_symbols(
-    manifest: &ql_project::ProjectManifest,
-    open_docs: &HashMap<PathBuf, (Url, String)>,
-    covered_files: &mut HashSet<PathBuf>,
-    symbols: &mut Vec<SymbolInformation>,
-    query: &str,
-) {
-    let Ok(source_paths) = collect_package_sources(manifest) else {
-        return;
-    };
-
-    for source_path in source_paths {
-        covered_files.insert(source_path.clone());
-
-        if let Some((open_uri, open_source)) = open_docs.get(&source_path) {
-            if let Ok(analysis) = analyze_source(open_source) {
-                symbols.extend(workspace_symbols_for_analysis(
+            if let Some((open_uri, open_source)) = open_docs.get(&module_path)
+                && let Ok(analysis) = analyze_source(open_source)
+            {
+                self.symbols.extend(workspace_symbols_for_analysis(
                     open_uri,
                     open_source,
                     &analysis,
                     query,
                 ));
+                continue;
             }
-            continue;
+
+            let module_location_path =
+                fs::canonicalize(&module_path).unwrap_or(module_path.clone());
+            let Ok(module_uri) = Url::from_file_path(&module_location_path) else {
+                continue;
+            };
+            let Ok(module_source) = fs::read_to_string(&module_path) else {
+                continue;
+            };
+            self.symbols.extend(workspace_symbols_for_analysis(
+                &module_uri,
+                &module_source,
+                module.analysis(),
+                query,
+            ));
         }
 
-        let source_location_path = fs::canonicalize(&source_path).unwrap_or(source_path.clone());
-        let Ok(source_uri) = Url::from_file_path(&source_location_path) else {
-            continue;
-        };
-        let Ok(source) = fs::read_to_string(&source_path) else {
-            continue;
-        };
-        let Ok(analysis) = analyze_source(&source) else {
-            continue;
-        };
-        symbols.extend(workspace_symbols_for_analysis(
-            &source_uri,
-            &source,
-            &analysis,
-            query,
-        ));
-    }
-}
-
-fn append_dependency_workspace_symbols_excluding(
-    package_path: &Path,
-    excluded_manifest_paths: &HashSet<PathBuf>,
-    symbols: &mut Vec<SymbolInformation>,
-    query: &str,
-) {
-    if let Ok(dependencies) = analyze_available_package_dependencies(package_path) {
-        let filtered_dependencies = dependencies
-            .into_iter()
-            .filter(|dependency| {
-                !excluded_manifest_paths
-                    .contains(&canonicalize_or_clone(&dependency.manifest().manifest_path))
-            })
-            .collect::<Vec<_>>();
-        symbols.extend(workspace_symbols_for_dependencies(
-            &filtered_dependencies,
-            query,
-        ));
-    }
-}
-
-fn append_visible_dependency_workspace_symbols(
-    package_manifest_path: &Path,
-    open_docs: &OpenDocuments,
-    searched_packages: &mut HashSet<PathBuf>,
-    covered_files: &mut HashSet<PathBuf>,
-    symbols: &mut Vec<SymbolInformation>,
-    query: &str,
-) {
-    let preferred_local_dependency_manifest_paths = append_local_dependency_workspace_symbols(
-        package_manifest_path,
-        open_docs,
-        searched_packages,
-        covered_files,
-        symbols,
-        query,
-    );
-    append_dependency_workspace_symbols_excluding(
-        package_manifest_path,
-        &preferred_local_dependency_manifest_paths,
-        symbols,
-        query,
-    );
-}
-
-fn append_analyzed_package_workspace_symbols(
-    package: &ql_analysis::PackageAnalysis,
-    open_docs: &OpenDocuments,
-    searched_packages: &mut HashSet<PathBuf>,
-    covered_files: &mut HashSet<PathBuf>,
-    symbols: &mut Vec<SymbolInformation>,
-    query: &str,
-) {
-    append_package_workspace_symbols(package, open_docs, covered_files, symbols, query, false);
-    append_visible_dependency_workspace_symbols(
-        package.manifest().manifest_path.as_path(),
-        open_docs,
-        searched_packages,
-        covered_files,
-        symbols,
-        query,
-    );
-}
-
-fn append_manifest_fallback_workspace_symbols(
-    manifest: &ql_project::ProjectManifest,
-    open_docs: &OpenDocuments,
-    searched_packages: &mut HashSet<PathBuf>,
-    covered_files: &mut HashSet<PathBuf>,
-    symbols: &mut Vec<SymbolInformation>,
-    query: &str,
-) {
-    append_manifest_source_workspace_symbols(manifest, open_docs, covered_files, symbols, query);
-    append_visible_dependency_workspace_symbols(
-        manifest.manifest_path.as_path(),
-        open_docs,
-        searched_packages,
-        covered_files,
-        symbols,
-        query,
-    );
-}
-
-fn append_workspace_member_symbols_for_package(
-    package_manifest_path: &Path,
-    open_docs: &OpenDocuments,
-    searched_packages: &mut HashSet<PathBuf>,
-    covered_files: &mut HashSet<PathBuf>,
-    symbols: &mut Vec<SymbolInformation>,
-    query: &str,
-) {
-    for member_manifest_path in workspace_member_manifest_paths_for_package(package_manifest_path) {
-        if !searched_packages.insert(member_manifest_path.clone()) {
-            continue;
+        if include_dependencies {
+            self.symbols.extend(workspace_symbols_for_dependencies(
+                package.dependencies(),
+                query,
+            ));
         }
-        append_workspace_member_symbols(
-            &member_manifest_path,
-            open_docs,
-            searched_packages,
-            covered_files,
-            symbols,
+    }
+
+    fn append_manifest_source_workspace_symbols(
+        &mut self,
+        manifest: &ql_project::ProjectManifest,
+        open_docs: &OpenDocuments,
+        query: &str,
+    ) {
+        let Ok(source_paths) = collect_package_sources(manifest) else {
+            return;
+        };
+
+        for source_path in source_paths {
+            self.covered_files.insert(source_path.clone());
+
+            if let Some((open_uri, open_source)) = open_docs.get(&source_path) {
+                if let Ok(analysis) = analyze_source(open_source) {
+                    self.symbols.extend(workspace_symbols_for_analysis(
+                        open_uri,
+                        open_source,
+                        &analysis,
+                        query,
+                    ));
+                }
+                continue;
+            }
+
+            let source_location_path =
+                fs::canonicalize(&source_path).unwrap_or(source_path.clone());
+            let Ok(source_uri) = Url::from_file_path(&source_location_path) else {
+                continue;
+            };
+            let Ok(source) = fs::read_to_string(&source_path) else {
+                continue;
+            };
+            let Ok(analysis) = analyze_source(&source) else {
+                continue;
+            };
+            self.symbols.extend(workspace_symbols_for_analysis(
+                &source_uri,
+                &source,
+                &analysis,
+                query,
+            ));
+        }
+    }
+
+    fn append_dependency_workspace_symbols_excluding(
+        &mut self,
+        package_path: &Path,
+        excluded_manifest_paths: &HashSet<PathBuf>,
+        query: &str,
+    ) {
+        if let Ok(dependencies) = analyze_available_package_dependencies(package_path) {
+            let filtered_dependencies = dependencies
+                .into_iter()
+                .filter(|dependency| {
+                    !excluded_manifest_paths
+                        .contains(&canonicalize_or_clone(&dependency.manifest().manifest_path))
+                })
+                .collect::<Vec<_>>();
+            self.symbols.extend(workspace_symbols_for_dependencies(
+                &filtered_dependencies,
+                query,
+            ));
+        }
+    }
+
+    fn append_visible_dependency_workspace_symbols(
+        &mut self,
+        package_manifest_path: &Path,
+        open_docs: &OpenDocuments,
+        query: &str,
+    ) {
+        let preferred_local_dependency_manifest_paths =
+            self.append_local_dependency_workspace_symbols(package_manifest_path, open_docs, query);
+        self.append_dependency_workspace_symbols_excluding(
+            package_manifest_path,
+            &preferred_local_dependency_manifest_paths,
             query,
         );
+    }
+
+    fn append_analyzed_package_workspace_symbols(
+        &mut self,
+        package: &ql_analysis::PackageAnalysis,
+        open_docs: &OpenDocuments,
+        query: &str,
+    ) {
+        self.append_package_workspace_symbols(package, open_docs, query, false);
+        self.append_visible_dependency_workspace_symbols(
+            package.manifest().manifest_path.as_path(),
+            open_docs,
+            query,
+        );
+    }
+
+    fn append_manifest_fallback_workspace_symbols(
+        &mut self,
+        manifest: &ql_project::ProjectManifest,
+        open_docs: &OpenDocuments,
+        query: &str,
+    ) {
+        self.append_manifest_source_workspace_symbols(manifest, open_docs, query);
+        self.append_visible_dependency_workspace_symbols(
+            manifest.manifest_path.as_path(),
+            open_docs,
+            query,
+        );
+    }
+
+    fn append_workspace_member_symbols_for_package(
+        &mut self,
+        package_manifest_path: &Path,
+        open_docs: &OpenDocuments,
+        query: &str,
+    ) {
+        for member_manifest_path in
+            workspace_member_manifest_paths_for_package(package_manifest_path)
+        {
+            if !self.searched_packages.insert(member_manifest_path.clone()) {
+                continue;
+            }
+            self.append_workspace_member_symbols(&member_manifest_path, open_docs, query);
+        }
+    }
+
+    fn append_local_dependency_workspace_symbols(
+        &mut self,
+        package_manifest_path: &Path,
+        open_docs: &OpenDocuments,
+        query: &str,
+    ) -> HashSet<PathBuf> {
+        let mut preferred_manifest_paths = HashSet::new();
+
+        for local_dependency_manifest_path in
+            local_dependency_manifest_paths_for_package(package_manifest_path)
+        {
+            if !manifest_has_workspace_symbol_source(&local_dependency_manifest_path, open_docs) {
+                continue;
+            }
+
+            preferred_manifest_paths.insert(canonicalize_or_clone(&local_dependency_manifest_path));
+
+            if !self
+                .searched_packages
+                .insert(local_dependency_manifest_path.clone())
+            {
+                continue;
+            }
+
+            self.append_workspace_member_symbols(&local_dependency_manifest_path, open_docs, query);
+        }
+
+        preferred_manifest_paths
+    }
+
+    fn append_workspace_member_symbols(
+        &mut self,
+        member_manifest_path: &Path,
+        open_docs: &OpenDocuments,
+        query: &str,
+    ) {
+        match analyze_package(member_manifest_path) {
+            Ok(member_package) => {
+                self.append_analyzed_package_workspace_symbols(&member_package, open_docs, query);
+            }
+            Err(error) if should_fallback_to_manifest_sources(&error) => {
+                let Ok(member_manifest) = load_project_manifest(member_manifest_path) else {
+                    return;
+                };
+                self.append_manifest_fallback_workspace_symbols(&member_manifest, open_docs, query);
+            }
+            Err(_) => {}
+        }
+    }
+
+    fn append_standalone_document_workspace_symbols(
+        &mut self,
+        path: &Path,
+        uri: &Url,
+        source: &str,
+        query: &str,
+    ) {
+        self.covered_files.insert(path.to_path_buf());
+        if let Ok(analysis) = analyze_source(source) {
+            self.symbols.extend(workspace_symbols_for_analysis(
+                uri, source, &analysis, query,
+            ));
+        }
+    }
+
+    fn append_open_file_document(
+        &mut self,
+        path: &Path,
+        uri: &Url,
+        source: &str,
+        open_docs: &OpenDocuments,
+        query: &str,
+    ) {
+        if self.covered_files.contains(path) {
+            return;
+        }
+
+        match analyze_package(path) {
+            Ok(package) => {
+                let manifest_path = package.manifest().manifest_path.clone();
+                if !self.searched_packages.insert(manifest_path.clone()) {
+                    return;
+                }
+                self.append_analyzed_package_workspace_symbols(&package, open_docs, query);
+                self.append_workspace_member_symbols_for_package(&manifest_path, open_docs, query);
+            }
+            Err(error) if should_fallback_to_manifest_sources(&error) => {
+                let Ok(manifest) = load_project_manifest(path) else {
+                    self.append_standalone_document_workspace_symbols(path, uri, source, query);
+                    return;
+                };
+
+                let manifest_path = manifest.manifest_path.clone();
+                if !self.searched_packages.insert(manifest_path.clone()) {
+                    return;
+                }
+
+                self.append_manifest_fallback_workspace_symbols(&manifest, open_docs, query);
+                self.append_workspace_member_symbols_for_package(&manifest_path, open_docs, query);
+            }
+            Err(_) => {
+                self.append_standalone_document_workspace_symbols(path, uri, source, query);
+            }
+        }
+    }
+
+    fn append_workspace_root(
+        &mut self,
+        workspace_root: &Path,
+        open_docs: &OpenDocuments,
+        query: &str,
+    ) {
+        let Ok(manifest) = load_project_manifest(workspace_root) else {
+            return;
+        };
+        self.append_manifest_and_workspace_symbols(&manifest, open_docs, query);
+    }
+
+    fn append_non_file_document(&mut self, uri: &Url, source: &str, query: &str) {
+        if let Ok(analysis) = analyze_source(source) {
+            self.symbols.extend(workspace_symbols_for_analysis(
+                uri, source, &analysis, query,
+            ));
+        }
+    }
+
+    fn finish(mut self) -> Vec<SymbolInformation> {
+        self.symbols.sort_by_key(|symbol| {
+            (
+                symbol.name.to_ascii_lowercase(),
+                symbol.location.uri.to_string(),
+                symbol.location.range.start.line,
+                symbol.location.range.start.character,
+            )
+        });
+        self.symbols.dedup();
+        self.symbols
     }
 }
 
@@ -1109,78 +1205,6 @@ fn manifest_has_workspace_symbol_source(
     })
 }
 
-fn append_local_dependency_workspace_symbols(
-    package_manifest_path: &Path,
-    open_docs: &HashMap<PathBuf, (Url, String)>,
-    searched_packages: &mut HashSet<PathBuf>,
-    covered_files: &mut HashSet<PathBuf>,
-    symbols: &mut Vec<SymbolInformation>,
-    query: &str,
-) -> HashSet<PathBuf> {
-    let mut preferred_manifest_paths = HashSet::new();
-
-    for local_dependency_manifest_path in
-        local_dependency_manifest_paths_for_package(package_manifest_path)
-    {
-        if !manifest_has_workspace_symbol_source(&local_dependency_manifest_path, open_docs) {
-            continue;
-        }
-
-        preferred_manifest_paths.insert(canonicalize_or_clone(&local_dependency_manifest_path));
-
-        if !searched_packages.insert(local_dependency_manifest_path.clone()) {
-            continue;
-        }
-
-        append_workspace_member_symbols(
-            &local_dependency_manifest_path,
-            open_docs,
-            searched_packages,
-            covered_files,
-            symbols,
-            query,
-        );
-    }
-
-    preferred_manifest_paths
-}
-
-fn append_workspace_member_symbols(
-    member_manifest_path: &Path,
-    open_docs: &HashMap<PathBuf, (Url, String)>,
-    searched_packages: &mut HashSet<PathBuf>,
-    covered_files: &mut HashSet<PathBuf>,
-    symbols: &mut Vec<SymbolInformation>,
-    query: &str,
-) {
-    match analyze_package(member_manifest_path) {
-        Ok(member_package) => {
-            append_analyzed_package_workspace_symbols(
-                &member_package,
-                open_docs,
-                searched_packages,
-                covered_files,
-                symbols,
-                query,
-            );
-        }
-        Err(error) if should_fallback_to_manifest_sources(&error) => {
-            let Ok(member_manifest) = load_project_manifest(member_manifest_path) else {
-                return;
-            };
-            append_manifest_fallback_workspace_symbols(
-                &member_manifest,
-                open_docs,
-                searched_packages,
-                covered_files,
-                symbols,
-                query,
-            );
-        }
-        Err(_) => {}
-    }
-}
-
 fn should_fallback_to_manifest_sources(error: &PackageAnalysisError) -> bool {
     matches!(
         error,
@@ -1205,22 +1229,6 @@ fn workspace_symbols_for_documents(
     query: &str,
 ) -> Vec<SymbolInformation> {
     workspace_symbols_for_context(workspace_symbol_request_context(documents, &[], query))
-}
-
-fn append_standalone_document_workspace_symbols(
-    path: &Path,
-    uri: &Url,
-    source: &str,
-    covered_files: &mut HashSet<PathBuf>,
-    symbols: &mut Vec<SymbolInformation>,
-    query: &str,
-) {
-    covered_files.insert(path.to_path_buf());
-    if let Ok(analysis) = analyze_source(source) {
-        symbols.extend(workspace_symbols_for_analysis(
-            uri, source, &analysis, query,
-        ));
-    }
 }
 
 fn workspace_symbol_request_context(
@@ -1278,118 +1286,21 @@ fn workspace_symbols_for_context(context: WorkspaceSymbolRequestContext) -> Vec<
     file_paths.sort();
 
     for path in file_paths {
-        if index.covered_files.contains(&path) {
-            continue;
-        }
-
         let Some((uri, source)) = open_docs.get(&path) else {
             continue;
         };
-
-        match analyze_package(&path) {
-            Ok(package) => {
-                let manifest_path = package.manifest().manifest_path.clone();
-                if !index.searched_packages.insert(manifest_path.clone()) {
-                    continue;
-                }
-                append_analyzed_package_workspace_symbols(
-                    &package,
-                    &open_docs,
-                    &mut index.searched_packages,
-                    &mut index.covered_files,
-                    &mut index.symbols,
-                    &query,
-                );
-                append_workspace_member_symbols_for_package(
-                    &manifest_path,
-                    &open_docs,
-                    &mut index.searched_packages,
-                    &mut index.covered_files,
-                    &mut index.symbols,
-                    &query,
-                );
-            }
-            Err(error) if should_fallback_to_manifest_sources(&error) => {
-                let Ok(manifest) = load_project_manifest(&path) else {
-                    append_standalone_document_workspace_symbols(
-                        &path,
-                        uri,
-                        source,
-                        &mut index.covered_files,
-                        &mut index.symbols,
-                        &query,
-                    );
-                    continue;
-                };
-
-                let manifest_path = manifest.manifest_path.clone();
-                if !index.searched_packages.insert(manifest_path.clone()) {
-                    continue;
-                }
-
-                append_manifest_fallback_workspace_symbols(
-                    &manifest,
-                    &open_docs,
-                    &mut index.searched_packages,
-                    &mut index.covered_files,
-                    &mut index.symbols,
-                    &query,
-                );
-                append_workspace_member_symbols_for_package(
-                    &manifest_path,
-                    &open_docs,
-                    &mut index.searched_packages,
-                    &mut index.covered_files,
-                    &mut index.symbols,
-                    &query,
-                );
-            }
-            Err(_) => {
-                append_standalone_document_workspace_symbols(
-                    &path,
-                    uri,
-                    source,
-                    &mut index.covered_files,
-                    &mut index.symbols,
-                    &query,
-                );
-            }
-        }
+        index.append_open_file_document(&path, uri, source, &open_docs, &query);
     }
 
     for workspace_root in workspace_roots {
-        let Ok(manifest) = load_project_manifest(&workspace_root) else {
-            continue;
-        };
-        append_manifest_and_workspace_symbols(
-            &manifest,
-            &open_docs,
-            &mut index.searched_packages,
-            &mut index.covered_files,
-            &mut index.symbols,
-            &query,
-        );
+        index.append_workspace_root(&workspace_root, &open_docs, &query);
     }
 
     for (uri, source) in non_file_docs {
-        if let Ok(analysis) = analyze_source(&source) {
-            index.symbols.extend(workspace_symbols_for_analysis(
-                &uri, &source, &analysis, &query,
-            ));
-        }
+        index.append_non_file_document(&uri, &source, &query);
     }
 
-    let mut symbols = index.symbols;
-    symbols.sort_by_key(|symbol| {
-        (
-            symbol.name.to_ascii_lowercase(),
-            symbol.location.uri.to_string(),
-            symbol.location.range.start.line,
-            symbol.location.range.start.character,
-        )
-    });
-    symbols.dedup();
-    symbols
+    index.finish()
 }
 
 fn workspace_symbols_for_dependencies(
