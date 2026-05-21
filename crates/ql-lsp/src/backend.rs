@@ -115,6 +115,20 @@ struct DiagnosticsRequestContext<'a> {
     source_matches_disk: bool,
 }
 
+struct WorkspaceSymbolRequestContext {
+    open_docs: OpenDocuments,
+    non_file_docs: Vec<(Url, String)>,
+    workspace_roots: Vec<PathBuf>,
+    query: String,
+}
+
+#[derive(Default)]
+struct WorkspaceSymbolIndex {
+    searched_packages: HashSet<PathBuf>,
+    covered_files: HashSet<PathBuf>,
+    symbols: Vec<SymbolInformation>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct FormattingEdit {
     span: Span,
@@ -1190,7 +1204,7 @@ fn workspace_symbols_for_documents(
     documents: Vec<(Url, String)>,
     query: &str,
 ) -> Vec<SymbolInformation> {
-    workspace_symbols_for_documents_and_roots(documents, &[], query)
+    workspace_symbols_for_context(workspace_symbol_request_context(documents, &[], query))
 }
 
 fn append_standalone_document_workspace_symbols(
@@ -1209,12 +1223,11 @@ fn append_standalone_document_workspace_symbols(
     }
 }
 
-fn workspace_symbols_for_documents_and_roots(
+fn workspace_symbol_request_context(
     documents: Vec<(Url, String)>,
     workspace_roots: &[PathBuf],
     query: &str,
-) -> Vec<SymbolInformation> {
-    let normalized_query = query.trim().to_ascii_lowercase();
+) -> WorkspaceSymbolRequestContext {
     let mut open_docs = HashMap::<PathBuf, (Url, String)>::new();
     let mut non_file_docs = Vec::<(Url, String)>::new();
     for (uri, source) in documents {
@@ -1225,15 +1238,47 @@ fn workspace_symbols_for_documents_and_roots(
         }
     }
 
+    let mut workspace_roots = workspace_roots
+        .iter()
+        .map(|path| canonicalize_or_clone(path))
+        .collect::<Vec<_>>();
+    workspace_roots.sort();
+    workspace_roots.dedup();
+
+    WorkspaceSymbolRequestContext {
+        open_docs,
+        non_file_docs,
+        workspace_roots,
+        query: query.trim().to_ascii_lowercase(),
+    }
+}
+
+fn workspace_symbols_for_documents_and_roots(
+    documents: Vec<(Url, String)>,
+    workspace_roots: &[PathBuf],
+    query: &str,
+) -> Vec<SymbolInformation> {
+    workspace_symbols_for_context(workspace_symbol_request_context(
+        documents,
+        workspace_roots,
+        query,
+    ))
+}
+
+fn workspace_symbols_for_context(context: WorkspaceSymbolRequestContext) -> Vec<SymbolInformation> {
+    let WorkspaceSymbolRequestContext {
+        open_docs,
+        non_file_docs,
+        workspace_roots,
+        query,
+    } = context;
+    let mut index = WorkspaceSymbolIndex::default();
+
     let mut file_paths = open_docs.keys().cloned().collect::<Vec<_>>();
     file_paths.sort();
 
-    let mut searched_packages = HashSet::<PathBuf>::new();
-    let mut covered_files = HashSet::<PathBuf>::new();
-    let mut symbols = Vec::<SymbolInformation>::new();
-
     for path in file_paths {
-        if covered_files.contains(&path) {
+        if index.covered_files.contains(&path) {
             continue;
         }
 
@@ -1244,24 +1289,24 @@ fn workspace_symbols_for_documents_and_roots(
         match analyze_package(&path) {
             Ok(package) => {
                 let manifest_path = package.manifest().manifest_path.clone();
-                if !searched_packages.insert(manifest_path.clone()) {
+                if !index.searched_packages.insert(manifest_path.clone()) {
                     continue;
                 }
                 append_analyzed_package_workspace_symbols(
                     &package,
                     &open_docs,
-                    &mut searched_packages,
-                    &mut covered_files,
-                    &mut symbols,
-                    &normalized_query,
+                    &mut index.searched_packages,
+                    &mut index.covered_files,
+                    &mut index.symbols,
+                    &query,
                 );
                 append_workspace_member_symbols_for_package(
                     &manifest_path,
                     &open_docs,
-                    &mut searched_packages,
-                    &mut covered_files,
-                    &mut symbols,
-                    &normalized_query,
+                    &mut index.searched_packages,
+                    &mut index.covered_files,
+                    &mut index.symbols,
+                    &query,
                 );
             }
             Err(error) if should_fallback_to_manifest_sources(&error) => {
@@ -1270,33 +1315,33 @@ fn workspace_symbols_for_documents_and_roots(
                         &path,
                         uri,
                         source,
-                        &mut covered_files,
-                        &mut symbols,
-                        &normalized_query,
+                        &mut index.covered_files,
+                        &mut index.symbols,
+                        &query,
                     );
                     continue;
                 };
 
                 let manifest_path = manifest.manifest_path.clone();
-                if !searched_packages.insert(manifest_path.clone()) {
+                if !index.searched_packages.insert(manifest_path.clone()) {
                     continue;
                 }
 
                 append_manifest_fallback_workspace_symbols(
                     &manifest,
                     &open_docs,
-                    &mut searched_packages,
-                    &mut covered_files,
-                    &mut symbols,
-                    &normalized_query,
+                    &mut index.searched_packages,
+                    &mut index.covered_files,
+                    &mut index.symbols,
+                    &query,
                 );
                 append_workspace_member_symbols_for_package(
                     &manifest_path,
                     &open_docs,
-                    &mut searched_packages,
-                    &mut covered_files,
-                    &mut symbols,
-                    &normalized_query,
+                    &mut index.searched_packages,
+                    &mut index.covered_files,
+                    &mut index.symbols,
+                    &query,
                 );
             }
             Err(_) => {
@@ -1304,46 +1349,37 @@ fn workspace_symbols_for_documents_and_roots(
                     &path,
                     uri,
                     source,
-                    &mut covered_files,
-                    &mut symbols,
-                    &normalized_query,
+                    &mut index.covered_files,
+                    &mut index.symbols,
+                    &query,
                 );
             }
         }
     }
 
-    let mut sorted_workspace_roots = workspace_roots
-        .iter()
-        .map(|path| canonicalize_or_clone(path))
-        .collect::<Vec<_>>();
-    sorted_workspace_roots.sort();
-    sorted_workspace_roots.dedup();
-
-    for workspace_root in sorted_workspace_roots {
+    for workspace_root in workspace_roots {
         let Ok(manifest) = load_project_manifest(&workspace_root) else {
             continue;
         };
         append_manifest_and_workspace_symbols(
             &manifest,
             &open_docs,
-            &mut searched_packages,
-            &mut covered_files,
-            &mut symbols,
-            &normalized_query,
+            &mut index.searched_packages,
+            &mut index.covered_files,
+            &mut index.symbols,
+            &query,
         );
     }
 
     for (uri, source) in non_file_docs {
         if let Ok(analysis) = analyze_source(&source) {
-            symbols.extend(workspace_symbols_for_analysis(
-                &uri,
-                &source,
-                &analysis,
-                &normalized_query,
+            index.symbols.extend(workspace_symbols_for_analysis(
+                &uri, &source, &analysis, &query,
             ));
         }
     }
 
+    let mut symbols = index.symbols;
     symbols.sort_by_key(|symbol| {
         (
             symbol.name.to_ascii_lowercase(),
@@ -10845,11 +10881,8 @@ impl LanguageServer for Backend {
     ) -> Result<Option<Vec<SymbolInformation>>> {
         let documents = self.documents.entries().await;
         let workspace_roots = self.workspace_roots.read().await.clone();
-        Ok(Some(workspace_symbols_for_documents_and_roots(
-            documents,
-            &workspace_roots,
-            &params.query,
-        )))
+        let context = workspace_symbol_request_context(documents, &workspace_roots, &params.query);
+        Ok(Some(workspace_symbols_for_context(context)))
     }
 
     async fn semantic_tokens_full(

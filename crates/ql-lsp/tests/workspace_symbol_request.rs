@@ -267,6 +267,12 @@ pub fn fresh_helper() -> Int {
         ),
         "workspace symbol should use the open document source",
     );
+
+    let stale_symbols = workspace_symbol_via_request(&mut service, "disk_helper").await;
+    assert!(
+        stale_symbols.is_empty(),
+        "workspace symbol should not keep stale disk symbols once the dependency source is open: {stale_symbols:#?}",
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
