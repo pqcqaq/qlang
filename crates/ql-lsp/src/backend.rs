@@ -82,17 +82,18 @@ use crate::bridge::{
 };
 use crate::editor_features::{
     completion_for_keywords, folding_ranges_for_source, hover_for_keyword,
-    inlay_hints_for_analysis, parameter_name_inlay_hints_for_callable_detail,
-    resolve_completion_item, selection_ranges_for_source, signature_help_for_analysis,
-    signature_help_for_callable_detail,
+    inlay_hints_for_analysis, resolve_completion_item, selection_ranges_for_source,
+    signature_help_for_analysis,
 };
 use crate::store::DocumentStore;
 
+mod call_hints;
 mod diagnostics;
 mod document_link;
 mod formatting;
 mod workspace_symbols;
 
+use call_hints::{inlay_hints_for_workspace_context, signature_help_for_workspace_context};
 use diagnostics::document_diagnostics;
 use document_link::document_links_for_package_imports;
 use formatting::{document_formatting_edits, on_type_formatting_edits, range_formatting_edits};
@@ -286,102 +287,6 @@ fn semantic_tokens_range_result(result: SemanticTokensResult) -> SemanticTokensR
         SemanticTokensResult::Tokens(tokens) => SemanticTokensRangeResult::Tokens(tokens),
         SemanticTokensResult::Partial(partial) => SemanticTokensRangeResult::Partial(partial),
     }
-}
-
-fn signature_help_for_workspace_context(
-    uri: &Url,
-    source: &str,
-    context: &WorkspaceRequestContext,
-    position: Position,
-) -> Option<SignatureHelp> {
-    signature_help_for_callable_detail(source, position, |offset| {
-        workspace_callable_detail_at(uri, source, context, offset)
-    })
-}
-
-fn dependency_parameter_name_inlay_hints_for_workspace_context(
-    uri: &Url,
-    source: &str,
-    context: &WorkspaceRequestContext,
-    range: Range,
-) -> Vec<InlayHint> {
-    parameter_name_inlay_hints_for_callable_detail(source, range, |offset| {
-        workspace_callable_detail_at(uri, source, context, offset)
-    })
-}
-
-fn inlay_hints_for_workspace_context(
-    uri: &Url,
-    source: &str,
-    context: &WorkspaceRequestContext,
-    range: Range,
-) -> Option<Vec<InlayHint>> {
-    let mut hints = context
-        .analysis
-        .as_ref()
-        .and_then(|analysis| inlay_hints_for_analysis(source, analysis, range))
-        .unwrap_or_default();
-    hints.extend(dependency_parameter_name_inlay_hints_for_workspace_context(
-        uri, source, context, range,
-    ));
-    hints.sort_by_key(|hint| (hint.position.line, hint.position.character));
-    (!hints.is_empty()).then_some(hints)
-}
-
-fn workspace_callable_detail_at(
-    uri: &Url,
-    source: &str,
-    context: &WorkspaceRequestContext,
-    offset: usize,
-) -> Option<String> {
-    dependency_definition_target_with_open_docs_at(
-        source,
-        context.analysis.as_ref(),
-        &context.package,
-        &context.open_docs,
-        span_to_range(source, Span::new(offset, offset)).start,
-    )
-    .and_then(|target| {
-        workspace_callable_detail_for_dependency_target_with_open_docs(
-            uri,
-            source,
-            context.analysis.as_ref(),
-            &context.package,
-            &context.open_docs,
-            &target,
-        )
-    })
-    .or_else(|| {
-        dependency_callable_detail_at(source, context.analysis.as_ref(), &context.package, offset)
-    })
-    .or_else(|| {
-        context
-            .analysis
-            .as_ref()
-            .and_then(|analysis| analysis.hover_at(offset).map(|info| info.detail))
-    })
-}
-
-fn dependency_callable_detail_at(
-    source: &str,
-    analysis: Option<&Analysis>,
-    package: &ql_analysis::PackageAnalysis,
-    offset: usize,
-) -> Option<String> {
-    analysis
-        .and_then(|analysis| {
-            package
-                .dependency_method_hover_at(analysis, offset)
-                .or_else(|| package.dependency_variant_hover_at(analysis, source, offset))
-                .or_else(|| package.dependency_hover_at(analysis, offset))
-        })
-        .or_else(|| {
-            package
-                .dependency_method_hover_in_source_at(source, offset)
-                .or_else(|| package.dependency_variant_hover_in_source_at(source, offset))
-                .or_else(|| package.dependency_hover_in_source_at(source, offset))
-        })
-        .map(|info| info.detail)
 }
 
 fn canonicalize_or_clone(path: &Path) -> PathBuf {
