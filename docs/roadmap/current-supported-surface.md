@@ -60,6 +60,7 @@
 - folding range 覆盖代码块、块注释和连续整行 `//` 注释；字符串内注释标记不会生成注释折叠。
 - references 和 codeLens 覆盖同文件引用/实现计数，并能在 workspace package 源文件上统计可见 consumer 的引用/实现，包括 open-doc consumer。
 - `hover`、`definition`、`declaration`、`typeDefinition`、`codeLens`、`implementation`、`references`、`documentHighlight`、`completion`、`signatureHelp`、`inlayHint`、`semanticTokens/full`、`semanticTokens/range`、`prepareRename`、`rename`、`documentLink` 已共享 workspace request context，统一 package analysis、open document overlay 和当前文档 analysis 准备。
+- semantic tokens 已拆出独立模块；仍复用 package/open-doc/analysis 上下文和 lexical package result bridge。
 - diagnostics 已拆出独立模块；当前 buffer 解析/语义诊断优先，只有 clean disk source 才发布 package preflight 诊断。
 - codeLens 已拆出独立模块，继续复用 references 和 implementation 查询结果构造 `showReferences` command。
 - documentLink 已拆出独立模块；dependency import 链接到已解析 `.qi` 接口文件。
