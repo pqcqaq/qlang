@@ -4,8 +4,9 @@ use common::request::{
     TempDir, code_lens_via_request, completion_via_request, did_open_via_request,
     document_symbol_via_request, goto_declaration_via_request, goto_definition_via_request,
     goto_implementation_via_request, goto_type_definition_via_request, hover_via_request,
-    initialize_service_with_workspace_roots, initialized_service_with_open_documents, nth_offset,
-    offset_to_position, semantic_tokens_full_via_request,
+    initialize_service_with_workspace_roots, initialized_service_with_open_documents,
+    inlay_hint_via_request, nth_offset, offset_to_position, semantic_tokens_full_via_request,
+    semantic_tokens_range_via_request, signature_help_via_request,
 };
 use ql_lsp::Backend;
 use tower_lsp::LspService;
@@ -14,7 +15,8 @@ use tower_lsp::lsp_types::request::{
 };
 use tower_lsp::lsp_types::{
     CompletionResponse, DocumentSymbolResponse, GotoDefinitionResponse, HoverContents, Location,
-    SemanticTokensResult, SymbolKind as LspSymbolKind, Url,
+    Range, SemanticToken, SemanticTokenType, SemanticTokensRangeResult, SemanticTokensResult,
+    SymbolKind as LspSymbolKind, Url,
 };
 
 #[tokio::test(flavor = "current_thread")]
@@ -240,7 +242,7 @@ pub fn main(value: Config) -> Config {
         panic!("hover request should return markup contents")
     };
     assert!(markup.value.contains("**function** `make`"));
-    assert!(markup.value.contains("fn make() -> Bool"));
+    assert!(markup.value.contains("fn make(input: String) -> Bool"));
     assert!(
         !markup.value.contains("fn make() -> Int"),
         "hover should use open dependency source, not disk source: {}",
@@ -308,7 +310,7 @@ pub fn main(value: Config) -> Int {
     let HoverContents::Markup(markup) = hover.contents else {
         panic!("hover request should return markup contents")
     };
-    assert!(markup.value.contains("fn make() -> Bool"));
+    assert!(markup.value.contains("fn make(input: String) -> Bool"));
     assert!(
         !markup.value.contains("fn make() -> Int"),
         "broken-source hover should use open dependency source, not disk source: {}",
@@ -347,6 +349,127 @@ pub fn main(value: Config) -> Int {
     );
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn rich_workspace_requests_prefer_open_dependency_source() {
+    let fixture = setup_open_dependency_source_fixture(
+        "ql-lsp-request-rich-open-dependency-source",
+        r#"
+package demo.app
+
+use demo.dep.Config
+use demo.dep.make as make
+
+pub fn main(value: Config) -> Int {
+    let probe = make("current")
+    let picked = value.open_value
+    return 0
+}
+"#,
+    )
+    .await;
+    let OpenDependencySourceFixture {
+        _temp,
+        mut service,
+        app_source,
+        app_uri,
+        dep_uri: _,
+        open_dep_source: _,
+    } = fixture;
+
+    let completion = completion_via_request(
+        &mut service,
+        app_uri.clone(),
+        offset_to_position(
+            &app_source,
+            nth_offset(&app_source, "value.o", 1) + "value.o".len(),
+        ),
+    )
+    .await
+    .expect("completion request should use open dependency source members");
+    let labels = completion_labels(completion);
+    assert!(
+        labels.iter().any(|label| label == "open_value"),
+        "completion should include open dependency member: {labels:#?}",
+    );
+    assert!(
+        labels.iter().all(|label| label != "disk_value"),
+        "completion should not use stale disk/interface members: {labels:#?}",
+    );
+
+    let signature = signature_help_via_request(
+        &mut service,
+        app_uri.clone(),
+        offset_to_position(
+            &app_source,
+            nth_offset(&app_source, "make(\"current", 1) + "make(\"current".len(),
+        ),
+    )
+    .await
+    .expect("signatureHelp should use open dependency source signature");
+    assert_eq!(
+        signature.signatures[0].label,
+        "fn make(input: String) -> Bool"
+    );
+    assert_eq!(signature.active_parameter, Some(0));
+
+    let hints = inlay_hint_via_request(
+        &mut service,
+        app_uri.clone(),
+        full_source_range(&app_source),
+    )
+    .await
+    .expect("inlayHint should use open dependency source parameters");
+    assert!(
+        hints
+            .iter()
+            .any(|hint| format!("{:?}", hint.label).contains("input:")),
+        "inlay hints should include open dependency parameter name: {hints:#?}",
+    );
+
+    let legend = ql_lsp::bridge::semantic_tokens_legend();
+    let property_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::PROPERTY)
+        .expect("property token type should exist") as u32;
+    let member_position = offset_to_position(&app_source, nth_offset(&app_source, "open_value", 1));
+    let member_entry = (
+        member_position.line,
+        member_position.character,
+        "open_value".len() as u32,
+        property_type,
+    );
+
+    let SemanticTokensResult::Tokens(tokens) =
+        semantic_tokens_full_via_request(&mut service, app_uri.clone())
+            .await
+            .expect("semanticTokens/full should use open dependency source")
+    else {
+        panic!("semanticTokens/full should return token data")
+    };
+    assert!(
+        decode_semantic_tokens(&tokens.data).contains(&member_entry),
+        "full semantic tokens should classify open dependency member"
+    );
+
+    let SemanticTokensRangeResult::Tokens(range_tokens) = semantic_tokens_range_via_request(
+        &mut service,
+        app_uri,
+        Range::new(
+            offset_to_position(&app_source, nth_offset(&app_source, "let picked", 1)),
+            offset_to_position(&app_source, nth_offset(&app_source, "return 0", 1)),
+        ),
+    )
+    .await
+    .expect("semanticTokens/range should use open dependency source") else {
+        panic!("semanticTokens/range should return token data")
+    };
+    assert!(
+        decode_semantic_tokens(&range_tokens.data).contains(&member_entry),
+        "range semantic tokens should classify open dependency member"
+    );
+}
+
 struct OpenDependencySourceFixture {
     _temp: TempDir,
     service: LspService<Backend>,
@@ -380,7 +503,7 @@ pub struct Config {
     let open_dep_source = r#"
 package demo.dep
 
-pub fn make() -> Bool {
+pub fn make(input: String) -> Bool {
     return true
 }
 
@@ -502,4 +625,37 @@ fn assert_location_targets_open_dependency(
         location.range.end,
         offset_to_position(open_dep_source, start + snippet.len()),
     );
+}
+
+fn completion_labels(completion: CompletionResponse) -> Vec<String> {
+    match completion {
+        CompletionResponse::Array(items) => items,
+        CompletionResponse::List(list) => list.items,
+    }
+    .into_iter()
+    .map(|item| item.label)
+    .collect()
+}
+
+fn full_source_range(source: &str) -> Range {
+    Range::new(
+        offset_to_position(source, 0),
+        offset_to_position(source, source.len()),
+    )
+}
+
+fn decode_semantic_tokens(tokens: &[SemanticToken]) -> Vec<(u32, u32, u32, u32)> {
+    let mut line = 0u32;
+    let mut start = 0u32;
+    let mut decoded = Vec::new();
+    for token in tokens {
+        line += token.delta_line;
+        if token.delta_line == 0 {
+            start += token.delta_start;
+        } else {
+            start = token.delta_start;
+        }
+        decoded.push((line, start, token.length, token.token_type));
+    }
+    decoded
 }

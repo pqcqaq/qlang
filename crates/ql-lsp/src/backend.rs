@@ -445,27 +445,77 @@ fn semantic_tokens_range_result(result: SemanticTokensResult) -> SemanticTokensR
     }
 }
 
-fn signature_help_for_package_analysis(
+fn signature_help_for_workspace_context(
+    uri: &Url,
     source: &str,
-    analysis: Option<&Analysis>,
-    package: &ql_analysis::PackageAnalysis,
+    context: &WorkspaceRequestContext,
     position: Position,
 ) -> Option<SignatureHelp> {
     signature_help_for_callable_detail(source, position, |offset| {
-        dependency_callable_detail_at(source, analysis, package, offset).or_else(|| {
-            analysis.and_then(|analysis| analysis.hover_at(offset).map(|info| info.detail))
-        })
+        workspace_callable_detail_at(uri, source, context, offset)
     })
 }
 
-fn dependency_parameter_name_inlay_hints_for_package_analysis(
+fn dependency_parameter_name_inlay_hints_for_workspace_context(
+    uri: &Url,
     source: &str,
-    analysis: Option<&Analysis>,
-    package: &ql_analysis::PackageAnalysis,
+    context: &WorkspaceRequestContext,
     range: Range,
 ) -> Vec<InlayHint> {
     parameter_name_inlay_hints_for_callable_detail(source, range, |offset| {
-        dependency_callable_detail_at(source, analysis, package, offset)
+        workspace_callable_detail_at(uri, source, context, offset)
+    })
+}
+
+fn inlay_hints_for_workspace_context(
+    uri: &Url,
+    source: &str,
+    context: &WorkspaceRequestContext,
+    range: Range,
+) -> Option<Vec<InlayHint>> {
+    let mut hints = context
+        .analysis
+        .as_ref()
+        .and_then(|analysis| inlay_hints_for_analysis(source, analysis, range))
+        .unwrap_or_default();
+    hints.extend(dependency_parameter_name_inlay_hints_for_workspace_context(
+        uri, source, context, range,
+    ));
+    hints.sort_by_key(|hint| (hint.position.line, hint.position.character));
+    (!hints.is_empty()).then_some(hints)
+}
+
+fn workspace_callable_detail_at(
+    uri: &Url,
+    source: &str,
+    context: &WorkspaceRequestContext,
+    offset: usize,
+) -> Option<String> {
+    dependency_definition_target_with_open_docs_at(
+        source,
+        context.analysis.as_ref(),
+        &context.package,
+        &context.open_docs,
+        span_to_range(source, Span::new(offset, offset)).start,
+    )
+    .and_then(|target| {
+        workspace_callable_detail_for_dependency_target_with_open_docs(
+            uri,
+            source,
+            context.analysis.as_ref(),
+            &context.package,
+            &context.open_docs,
+            &target,
+        )
+    })
+    .or_else(|| {
+        dependency_callable_detail_at(source, context.analysis.as_ref(), &context.package, offset)
+    })
+    .or_else(|| {
+        context
+            .analysis
+            .as_ref()
+            .and_then(|analysis| analysis.hover_at(offset).map(|info| info.detail))
     })
 }
 
@@ -3241,6 +3291,53 @@ fn semantic_tokens_for_workspace_dependency_fallback_range_with_open_docs(
     )
 }
 
+fn semantic_tokens_for_workspace_context(
+    uri: &Url,
+    source: &str,
+    context: &WorkspaceRequestContext,
+) -> SemanticTokensResult {
+    match context.analysis.as_ref() {
+        Some(analysis) => semantic_tokens_for_workspace_package_analysis_with_open_docs(
+            uri,
+            source,
+            analysis,
+            &context.package,
+            &context.open_docs,
+        ),
+        None => semantic_tokens_for_workspace_dependency_fallback_with_open_docs(
+            uri,
+            source,
+            &context.package,
+            &context.open_docs,
+        ),
+    }
+}
+
+fn semantic_tokens_for_workspace_context_range(
+    uri: &Url,
+    source: &str,
+    context: &WorkspaceRequestContext,
+    range: Range,
+) -> SemanticTokensResult {
+    match context.analysis.as_ref() {
+        Some(analysis) => semantic_tokens_for_workspace_package_analysis_range_with_open_docs(
+            uri,
+            source,
+            analysis,
+            &context.package,
+            &context.open_docs,
+            range,
+        ),
+        None => semantic_tokens_for_workspace_dependency_fallback_range_with_open_docs(
+            uri,
+            source,
+            &context.package,
+            &context.open_docs,
+            range,
+        ),
+    }
+}
+
 fn workspace_dependency_fallback_semantic_token_occurrences_with_open_docs(
     uri: &Url,
     source: &str,
@@ -5068,6 +5165,40 @@ fn workspace_source_location_for_dependency_target_with_open_docs(
     });
     matches.dedup();
     (matches.len() == 1).then(|| matches[0].clone())
+}
+
+fn workspace_callable_detail_for_dependency_target_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    target: &DependencyDefinitionTarget,
+) -> Option<String> {
+    match target.kind {
+        ql_analysis::SymbolKind::Function
+        | ql_analysis::SymbolKind::Const
+        | ql_analysis::SymbolKind::Static
+        | ql_analysis::SymbolKind::Variant
+        | ql_analysis::SymbolKind::Method => {}
+        _ => return None,
+    }
+    let location = workspace_source_location_for_dependency_target_with_open_docs(
+        uri, source, analysis, package, open_docs, target,
+    )?;
+    let source_path = location.uri.to_file_path().ok()?;
+    let (source, analysis) = if let Some((_, open_source, open_analysis)) =
+        open_document_snapshot(open_docs, &source_path)
+    {
+        (open_source, open_analysis)
+    } else {
+        let source = fs::read_to_string(source_path).ok()?.replace("\r\n", "\n");
+        let analysis = analyze_source(&source).ok()?;
+        (source, analysis)
+    };
+    analysis
+        .hover_at(position_to_offset(&source, location.range.start)?)
+        .map(|info| info.detail)
 }
 
 fn named_type_expr_last_segment(ty: &TypeExpr) -> Option<&str> {
@@ -7034,6 +7165,57 @@ fn workspace_source_method_completions_with_open_docs(
                 .public_struct_method_completions(&target.source_path, &target.struct_name)
         },
     )
+}
+
+fn completion_for_workspace_context(
+    source: &str,
+    context: &WorkspaceRequestContext,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<CompletionResponse> {
+    let package = &context.package;
+    completion_for_dependency_imports(source, package, position)
+        .or_else(|| {
+            workspace_source_struct_field_completions_with_open_docs(
+                source,
+                package,
+                &context.open_docs,
+                position,
+            )
+        })
+        .or_else(|| completion_for_dependency_struct_fields(source, package, position))
+        .or_else(|| {
+            workspace_source_member_field_completions_with_open_docs(
+                source,
+                package,
+                &context.open_docs,
+                position,
+            )
+        })
+        .or_else(|| completion_for_dependency_member_fields(source, package, position))
+        .or_else(|| {
+            workspace_source_method_completions_with_open_docs(
+                source,
+                package,
+                &context.open_docs,
+                position,
+            )
+        })
+        .or_else(|| completion_for_dependency_methods(source, package, position))
+        .or_else(|| {
+            workspace_source_variant_completions_with_open_docs(
+                source,
+                package,
+                &context.open_docs,
+                position,
+            )
+        })
+        .or_else(|| completion_for_dependency_variants(source, package, position))
+        .or_else(|| {
+            context.analysis.as_ref().and_then(|analysis| {
+                completion_for_package_analysis(source, analysis, package, position)
+            })
+        })
+        .or_else(|| completion_for_keywords(source, position))
 }
 
 #[cfg(test)]
@@ -10281,64 +10463,18 @@ impl LanguageServer for Backend {
         let Some(source) = self.documents.get(&uri).await else {
             return Ok(None);
         };
-        let package = self.package_analysis_for_uri(&uri);
-
-        if let Some(package) = package.as_ref() {
-            let open_docs = self.open_file_documents().await;
-            if let Some(completion) = completion_for_dependency_imports(&source, package, position)
-            {
-                return Ok(Some(completion));
-            }
-            if let Some(completion) = workspace_source_struct_field_completions_with_open_docs(
-                &source, package, &open_docs, position,
-            ) {
-                return Ok(Some(completion));
-            }
-            if let Some(completion) =
-                completion_for_dependency_struct_fields(&source, package, position)
-            {
-                return Ok(Some(completion));
-            }
-            if let Some(completion) = workspace_source_member_field_completions_with_open_docs(
-                &source, package, &open_docs, position,
-            ) {
-                return Ok(Some(completion));
-            }
-            if let Some(completion) =
-                completion_for_dependency_member_fields(&source, package, position)
-            {
-                return Ok(Some(completion));
-            }
-            if let Some(completion) = workspace_source_method_completions_with_open_docs(
-                &source, package, &open_docs, position,
-            ) {
-                return Ok(Some(completion));
-            }
-            if let Some(completion) = completion_for_dependency_methods(&source, package, position)
-            {
-                return Ok(Some(completion));
-            }
-            if let Some(completion) = workspace_source_variant_completions_with_open_docs(
-                &source, package, &open_docs, position,
-            ) {
-                return Ok(Some(completion));
-            }
-            if let Some(completion) = completion_for_dependency_variants(&source, package, position)
-            {
-                return Ok(Some(completion));
-            }
+        if let Some(context) = self
+            .workspace_request_context_for_source(&uri, &source)
+            .await
+        {
+            return Ok(completion_for_workspace_context(
+                &source, &context, position,
+            ));
         }
 
         let Ok(analysis) = analyze_source(&source) else {
             return Ok(completion_for_keywords(&source, position));
         };
-
-        if let Some(package) = package.as_ref() {
-            let completion = completion_for_package_analysis(&source, &analysis, package, position)
-                .or_else(|| completion_for_keywords(&source, position));
-            return Ok(completion);
-        }
-
         Ok(completion_for_analysis(&source, &analysis, position)
             .or_else(|| completion_for_keywords(&source, position)))
     }
@@ -10353,13 +10489,16 @@ impl LanguageServer for Backend {
         let Some(source) = self.documents.get(&uri).await else {
             return Ok(None);
         };
-        let analysis = analyze_source(&source).ok();
-        if let Some(package) = self.package_analysis_for_uri(&uri)
+        if let Some(context) = self
+            .workspace_request_context_for_source(&uri, &source)
+            .await
             && let Some(signature) =
-                signature_help_for_package_analysis(&source, analysis.as_ref(), &package, position)
+                signature_help_for_workspace_context(&uri, &source, &context, position)
         {
             return Ok(Some(signature));
         }
+
+        let analysis = analyze_source(&source).ok();
         let Some(analysis) = analysis.as_ref() else {
             return Ok(None);
         };
@@ -10371,21 +10510,19 @@ impl LanguageServer for Backend {
         let Some(source) = self.documents.get(&uri).await else {
             return Ok(None);
         };
-        let analysis = analyze_source(&source).ok();
-        if let Some(package) = self.package_analysis_for_uri(&uri) {
-            let mut hints = analysis
-                .as_ref()
-                .and_then(|analysis| inlay_hints_for_analysis(&source, analysis, params.range))
-                .unwrap_or_default();
-            hints.extend(dependency_parameter_name_inlay_hints_for_package_analysis(
+        if let Some(context) = self
+            .workspace_request_context_for_source(&uri, &source)
+            .await
+        {
+            return Ok(inlay_hints_for_workspace_context(
+                &uri,
                 &source,
-                analysis.as_ref(),
-                &package,
+                &context,
                 params.range,
             ));
-            hints.sort_by_key(|hint| (hint.position.line, hint.position.character));
-            return Ok((!hints.is_empty()).then_some(hints));
         }
+
+        let analysis = analyze_source(&source).ok();
         let Some(analysis) = analysis.as_ref() else {
             return Ok(None);
         };
@@ -10549,20 +10686,13 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        if let Some(package) = self.package_analysis_for_uri(&uri) {
-            let open_docs = self.open_file_documents().await;
-            if let Ok(analysis) = analyze_source(&source) {
-                return Ok(Some(
-                    semantic_tokens_for_workspace_package_analysis_with_open_docs(
-                        &uri, &source, &analysis, &package, &open_docs,
-                    ),
-                ));
-            }
-            return Ok(Some(
-                semantic_tokens_for_workspace_dependency_fallback_with_open_docs(
-                    &uri, &source, &package, &open_docs,
-                ),
-            ));
+        if let Some(context) = self
+            .workspace_request_context_for_source(&uri, &source)
+            .await
+        {
+            return Ok(Some(semantic_tokens_for_workspace_context(
+                &uri, &source, &context,
+            )));
         }
 
         let Ok(analysis) = analyze_source(&source) else {
@@ -10579,28 +10709,12 @@ impl LanguageServer for Backend {
         let Some(source) = self.documents.get(&uri).await else {
             return Ok(None);
         };
-        if let Some(package) = self.package_analysis_for_uri(&uri) {
-            let open_docs = self.open_file_documents().await;
-            if let Ok(analysis) = analyze_source(&source) {
-                return Ok(Some(semantic_tokens_range_result(
-                    semantic_tokens_for_workspace_package_analysis_range_with_open_docs(
-                        &uri,
-                        &source,
-                        &analysis,
-                        &package,
-                        &open_docs,
-                        params.range,
-                    ),
-                )));
-            }
+        if let Some(context) = self
+            .workspace_request_context_for_source(&uri, &source)
+            .await
+        {
             return Ok(Some(semantic_tokens_range_result(
-                semantic_tokens_for_workspace_dependency_fallback_range_with_open_docs(
-                    &uri,
-                    &source,
-                    &package,
-                    &open_docs,
-                    params.range,
-                ),
+                semantic_tokens_for_workspace_context_range(&uri, &source, &context, params.range),
             )));
         }
         let Ok(analysis) = analyze_source(&source) else {
