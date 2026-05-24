@@ -5356,6 +5356,118 @@ fn project_init_refuses_to_overwrite_existing_manifest() {
 }
 
 #[test]
+fn project_init_serializes_concurrent_scaffold_creation() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-init-concurrent-create");
+    let project_root = temp.path().join("demo-concurrent");
+    let manifest_path = project_root.join("qlang.toml");
+
+    let mut children = Vec::new();
+    for index in 0..4 {
+        let mut init = ql_command(&workspace_root);
+        init.current_dir(temp.path());
+        init.args(["project", "init", &project_root.to_string_lossy()]);
+        init.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let child = init
+            .spawn()
+            .unwrap_or_else(|error| panic!("spawn concurrent ql project init #{index}: {error}"));
+        children.push((index, child));
+    }
+
+    let mut success_count = 0;
+    let mut conflict_count = 0;
+    for (index, child) in children {
+        let output = child.wait_with_output().unwrap_or_else(|error| {
+            panic!("wait for concurrent ql project init #{index}: {error}")
+        });
+        if output.status.success() {
+            success_count += 1;
+            let (stdout, stderr) = expect_success(
+                "project-init-concurrent-create",
+                &format!("concurrent package init #{index}"),
+                &output,
+            )
+            .unwrap_or_else(|message| panic!("{message}"));
+            expect_empty_stderr(
+                "project-init-concurrent-create",
+                &format!("concurrent package init #{index}"),
+                &stderr,
+            )
+            .unwrap_or_else(|message| panic!("{message}"));
+            expect_stdout_contains_all(
+                "project-init-concurrent-create",
+                &stdout.replace('\\', "/"),
+                &[&format!(
+                    "created: {}",
+                    manifest_path.to_string_lossy().replace('\\', "/")
+                )],
+            )
+            .unwrap_or_else(|message| panic!("{message}"));
+        } else {
+            conflict_count += 1;
+            let (stdout, stderr) = expect_exit_code(
+                "project-init-concurrent-create",
+                &format!("concurrent package init #{index}"),
+                &output,
+                1,
+            )
+            .unwrap_or_else(|message| panic!("{message}"));
+            expect_empty_stdout(
+                "project-init-concurrent-create",
+                &format!("concurrent package init #{index}"),
+                &stdout,
+            )
+            .unwrap_or_else(|message| panic!("{message}"));
+            expect_stderr_contains(
+                "project-init-concurrent-create",
+                &format!("concurrent package init #{index}"),
+                &stderr.replace('\\', "/"),
+                &format!(
+                    "error: `ql project init` would overwrite existing path `{}`",
+                    manifest_path.to_string_lossy().replace('\\', "/")
+                ),
+            )
+            .unwrap_or_else(|message| panic!("{message}"));
+        }
+    }
+
+    assert_eq!(
+        success_count, 1,
+        "exactly one concurrent project init should create the scaffold"
+    );
+    assert_eq!(
+        conflict_count, 3,
+        "remaining concurrent project init commands should refuse overwrite"
+    );
+    assert_eq!(
+        read_normalized_file(&manifest_path, "concurrent package manifest"),
+        "[package]\nname = \"demo-concurrent\"\n"
+    );
+    expect_file_exists(
+        "project-init-concurrent-create",
+        &project_root.join("src/lib.ql"),
+        "concurrent package lib source",
+        "concurrent package init",
+    )
+    .unwrap();
+    expect_file_exists(
+        "project-init-concurrent-create",
+        &project_root.join("src/main.ql"),
+        "concurrent package main source",
+        "concurrent package init",
+    )
+    .unwrap();
+    expect_file_exists(
+        "project-init-concurrent-create",
+        &project_root.join("tests/smoke.ql"),
+        "concurrent package smoke test",
+        "concurrent package init",
+    )
+    .unwrap();
+    assert_no_build_lock_directories("project-init-concurrent-create", &project_root);
+}
+
+#[test]
 fn project_add_creates_workspace_member_from_member_source_path() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-add-success");

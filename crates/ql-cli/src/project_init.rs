@@ -1,4 +1,6 @@
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use ql_project::{load_project_manifest, package_name};
@@ -146,12 +148,6 @@ fn create_package_scaffold_with_sources(
 }
 
 pub(crate) fn write_new_file(path: &Path, contents: &str) -> Result<(), String> {
-    if path.exists() {
-        return Err(format!(
-            "would overwrite existing path `{}`",
-            normalize_path(path)
-        ));
-    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             format!(
@@ -160,7 +156,17 @@ pub(crate) fn write_new_file(path: &Path, contents: &str) -> Result<(), String> 
             )
         })?;
     }
-    fs::write(path, contents)
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| match error.kind() {
+            ErrorKind::AlreadyExists => {
+                format!("would overwrite existing path `{}`", normalize_path(path))
+            }
+            _ => format!("failed to write `{}`: {error}", normalize_path(path)),
+        })?;
+    file.write_all(contents.as_bytes())
         .map_err(|error| format!("failed to write `{}`: {error}", normalize_path(path)))
 }
 
