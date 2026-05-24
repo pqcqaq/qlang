@@ -16,8 +16,8 @@ use ql_ast::{
 use ql_diagnostics::{Diagnostic, render_diagnostics};
 use ql_driver::{
     BuildArtifact, BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile,
-    CHeaderError, CHeaderOptions, CHeaderSurface, ToolchainError, build_source_with_link_inputs,
-    default_output_path, emit_c_header,
+    CHeaderError, CHeaderOptions, CHeaderSurface, ToolchainError, acquire_build_output_locks,
+    build_source_with_link_inputs, default_output_path, emit_c_header,
 };
 use ql_fmt::format_source;
 use ql_parser::parse_source;
@@ -12996,6 +12996,27 @@ fn emit_package_interface_path_impl(
     }
 
     let rendered = render_interface_artifact(package_name, &rendered_modules);
+    let _output_locks = acquire_build_output_locks(vec![output_path.clone()]).map_err(|error| {
+        let message = match error {
+            BuildError::Io { path, error } => format!(
+                "failed to acquire interface output lock `{}`: {error}",
+                normalize_path(&path)
+            ),
+            BuildError::InvalidInput(message) => message,
+            BuildError::Diagnostics { .. } => {
+                "failed to acquire interface output lock due to diagnostics".to_owned()
+            }
+            BuildError::Toolchain { error, .. } => format!("{error}"),
+        };
+        if report_failure {
+            eprintln!("error: {message}");
+        }
+        EmitPackageInterfaceError::OutputPathFailure {
+            manifest_path: Some(manifest.manifest_path.clone()),
+            output_path: output_path.clone(),
+            message,
+        }
+    })?;
     fs::write(&output_path, rendered).map_err(|error| {
         if report_failure {
             eprintln!(

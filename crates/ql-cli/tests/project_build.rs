@@ -1,12 +1,13 @@
 mod support;
 
 use std::path::PathBuf;
+use std::process::Stdio;
 
 use serde_json::Value as JsonValue;
 use support::{
-    expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_file_exists,
+    TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_file_exists,
     expect_stdout_contains_all, expect_success, ql_command, read_normalized_file,
-    run_command_capture, static_library_output_path, workspace_root, TempDir,
+    run_command_capture, static_library_output_path, workspace_root,
 };
 
 fn normalize_output_text(text: &str) -> String {
@@ -16,6 +17,30 @@ fn normalize_output_text(text: &str) -> String {
 fn parse_json_output(case_name: &str, stdout: &str) -> JsonValue {
     serde_json::from_str(&normalize_output_text(stdout))
         .unwrap_or_else(|error| panic!("[{case_name}] parse json stdout: {error}\n{stdout}"))
+}
+
+fn assert_no_build_lock_directories(case_name: &str, root: &std::path::Path) {
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            assert!(
+                !file_name.ends_with(".ql-build.lock"),
+                "[{case_name}] build output lock directory leaked at `{}`",
+                path.display()
+            );
+            if path.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
 }
 
 fn write_mock_clang_failure_script(temp: &TempDir) -> std::path::PathBuf {
@@ -7951,6 +7976,90 @@ fn build_workspace_package_selector_json_reports_dependency_closure() {
     assert!(
         !fixture.tool_output.exists(),
         "workspace package selector dependency closure build json should not build unrelated package artifacts"
+    );
+}
+
+#[test]
+fn build_workspace_package_selector_json_allows_concurrent_dependency_closure_builds() {
+    let workspace_root = workspace_root();
+    let fixture = workspace_dependency_closure_fixture(
+        "ql-project-build-workspace-concurrent-dependency-closure-json",
+    );
+
+    let mut children = Vec::new();
+    for index in 0..3 {
+        let mut command = ql_command(&workspace_root);
+        command.current_dir(fixture.temp.path());
+        command
+            .args(["build"])
+            .arg(&fixture.project_root)
+            .args(["--package", "app", "--json"]);
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let child = command
+            .spawn()
+            .unwrap_or_else(|error| panic!("spawn concurrent ql build #{index}: {error}"));
+        children.push((index, child));
+    }
+
+    for (index, child) in children {
+        let output = child
+            .wait_with_output()
+            .unwrap_or_else(|error| panic!("wait for concurrent ql build #{index}: {error}"));
+        let (stdout, stderr) = expect_success(
+            "project-build-workspace-concurrent-dependency-closure-json",
+            &format!("concurrent workspace dependency closure build #{index}"),
+            &output,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+        expect_empty_stderr(
+            "project-build-workspace-concurrent-dependency-closure-json",
+            &format!("concurrent workspace dependency closure build #{index}"),
+            &stderr,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+
+        let json = parse_json_output(
+            "project-build-workspace-concurrent-dependency-closure-json",
+            &stdout,
+        );
+        assert_eq!(
+            json["status"], "ok",
+            "concurrent build #{index} failed: {json}"
+        );
+        assert_eq!(json["failure"], JsonValue::Null);
+        assert_eq!(
+            json["built_targets"]
+                .as_array()
+                .expect("concurrent build should report built targets")
+                .len(),
+            2
+        );
+    }
+
+    expect_file_exists(
+        "project-build-workspace-concurrent-dependency-closure-json",
+        &fixture.core_output,
+        "workspace dependency artifact",
+        "concurrent workspace dependency closure build",
+    )
+    .expect("concurrent builds should emit dependency artifact");
+    expect_file_exists(
+        "project-build-workspace-concurrent-dependency-closure-json",
+        &fixture.app_output,
+        "workspace selected package artifact",
+        "concurrent workspace dependency closure build",
+    )
+    .expect("concurrent builds should emit selected package artifact");
+    expect_file_exists(
+        "project-build-workspace-concurrent-dependency-closure-json",
+        &fixture.app_interface_output,
+        "workspace selected package interface",
+        "concurrent workspace dependency closure build",
+    )
+    .expect("concurrent builds should emit selected package interface");
+    assert_no_build_lock_directories(
+        "project-build-workspace-concurrent-dependency-closure-json",
+        &fixture.project_root,
     );
 }
 

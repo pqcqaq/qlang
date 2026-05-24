@@ -3,8 +3,9 @@ mod ffi;
 mod toolchain;
 
 pub use build::{
-    BuildArtifact, BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile,
-    build_file, build_file_with_link_inputs, build_source_with_link_inputs, default_output_path,
+    BuildArtifact, BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildOutputLock,
+    BuildProfile, acquire_build_output_locks, build_file, build_file_with_link_inputs,
+    build_source_with_link_inputs, default_output_path,
 };
 pub use ffi::{
     CHeaderArtifact, CHeaderError, CHeaderOptions, CHeaderSurface, default_c_header_output_path,

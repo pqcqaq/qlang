@@ -1,19 +1,24 @@
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ql_analysis::analyze_source;
-use ql_codegen_llvm::{emit_module, CodegenInput, CodegenMode};
+use ql_codegen_llvm::{CodegenInput, CodegenMode, emit_module};
 use ql_diagnostics::{Diagnostic, Label};
-use ql_runtime::{collect_runtime_hook_signatures, RuntimeCapability};
+use ql_runtime::{RuntimeCapability, collect_runtime_hook_signatures};
 
 use crate::ffi::{
-    emit_c_header_from_analysis, exported_c_symbol_names, CHeaderArtifact, CHeaderError,
-    CHeaderOptions, CHeaderSurface,
+    CHeaderArtifact, CHeaderError, CHeaderOptions, CHeaderSurface, emit_c_header_from_analysis,
+    exported_c_symbol_names,
 };
-use crate::toolchain::{discover_toolchain, ToolchainError, ToolchainOptions};
+use crate::toolchain::{ToolchainError, ToolchainOptions, discover_toolchain};
+
+const BUILD_OUTPUT_LOCK_TIMEOUT: Duration = Duration::from_secs(120);
+const BUILD_OUTPUT_LOCK_RETRY: Duration = Duration::from_millis(25);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuildEmit {
@@ -317,6 +322,15 @@ pub fn build_source_with_link_inputs(
         })?;
     }
 
+    let mut locked_paths = vec![output_path.clone()];
+    locked_paths.extend(additional_link_inputs.iter().cloned());
+    if let Some(header_options) = c_header_options.as_ref()
+        && let Some(header_path) = header_options.output.as_ref()
+    {
+        locked_paths.push(header_path.clone());
+    }
+    let _output_locks = acquire_build_output_locks(locked_paths)?;
+
     match options.emit {
         BuildEmit::LlvmIr => {
             fs::write(&output_path, ir).map_err(|error| BuildError::Io {
@@ -375,6 +389,109 @@ pub fn build_source_with_link_inputs(
         path: output_path,
         c_header,
     })
+}
+
+pub struct BuildOutputLock {
+    path: PathBuf,
+}
+
+impl BuildOutputLock {
+    fn acquire(path: PathBuf) -> Result<Self, BuildError> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| BuildError::Io {
+                path: parent.to_path_buf(),
+                error,
+            })?;
+        }
+
+        let started = Instant::now();
+        loop {
+            match fs::create_dir(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    if started.elapsed() >= BUILD_OUTPUT_LOCK_TIMEOUT {
+                        return Err(BuildError::Io {
+                            path,
+                            error: io::Error::new(
+                                io::ErrorKind::WouldBlock,
+                                format!(
+                                    "timed out waiting for ql build output lock after {}s",
+                                    BUILD_OUTPUT_LOCK_TIMEOUT.as_secs()
+                                ),
+                            ),
+                        });
+                    }
+                    thread::sleep(BUILD_OUTPUT_LOCK_RETRY);
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    if started.elapsed() >= BUILD_OUTPUT_LOCK_TIMEOUT {
+                        return Err(BuildError::Io { path, error });
+                    }
+                    if let Some(parent) = path.parent() {
+                        fs::create_dir_all(parent).map_err(|error| BuildError::Io {
+                            path: parent.to_path_buf(),
+                            error,
+                        })?;
+                    }
+                    thread::sleep(BUILD_OUTPUT_LOCK_RETRY);
+                }
+                Err(error) => {
+                    return Err(BuildError::Io { path, error });
+                }
+            }
+        }
+    }
+}
+
+impl Drop for BuildOutputLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir(&self.path);
+    }
+}
+
+pub fn acquire_build_output_locks(
+    paths: impl IntoIterator<Item = PathBuf>,
+) -> Result<Vec<BuildOutputLock>, BuildError> {
+    let lock_paths = paths
+        .into_iter()
+        .map(|path| build_output_lock_path(&path))
+        .collect::<BTreeSet<_>>();
+    let mut locks = Vec::with_capacity(lock_paths.len());
+    for path in lock_paths {
+        locks.push(BuildOutputLock::acquire(path)?);
+    }
+    Ok(locks)
+}
+
+fn build_output_lock_path(path: &Path) -> PathBuf {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("artifact");
+    parent.join(format!(
+        ".{}.ql-build.lock",
+        sanitize_lock_file_name(file_name)
+    ))
+}
+
+fn sanitize_lock_file_name(file_name: &str) -> String {
+    let sanitized = file_name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "artifact".to_owned()
+    } else {
+        sanitized
+    }
 }
 
 fn runtime_requirement_diagnostics(
@@ -789,11 +906,7 @@ fn sanitize_symbol(raw: &str) -> String {
 }
 
 fn object_extension() -> &'static str {
-    if cfg!(windows) {
-        "obj"
-    } else {
-        "o"
-    }
+    if cfg!(windows) { "obj" } else { "o" }
 }
 
 fn executable_name(stem: &str) -> String {
@@ -839,6 +952,96 @@ fn codegen_mode(emit: BuildEmit) -> CodegenMode {
             CodegenMode::Program
         }
         BuildEmit::DynamicLibrary | BuildEmit::StaticLibrary => CodegenMode::Library,
+    }
+}
+
+#[cfg(test)]
+mod build_output_lock_tests {
+    use std::env;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use super::{acquire_build_output_locks, build_output_lock_path};
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new(prefix: &str) -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos();
+            let path = env::temp_dir().join(format!("{prefix}-{unique}"));
+            fs::create_dir_all(&path).expect("create temporary test directory");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn output_lock_uses_artifact_scoped_lock_directory() {
+        let dir = TestDir::new("ql-driver-output-lock-path");
+        let artifact = dir.path().join("target/ql/debug/lib.core.lib");
+        let lock_path = build_output_lock_path(&artifact);
+
+        let locks = acquire_build_output_locks(vec![artifact]).expect("acquire build output lock");
+
+        assert!(lock_path.is_dir(), "lock directory should be created");
+        drop(locks);
+        assert!(
+            !lock_path.exists(),
+            "lock directory should be removed when the guard drops"
+        );
+    }
+
+    #[test]
+    fn output_lock_serializes_same_artifact_path() {
+        let dir = TestDir::new("ql-driver-output-lock-serial");
+        let artifact = dir.path().join("target/ql/debug/lib.lib");
+        let lock_path = build_output_lock_path(&artifact);
+        let first = acquire_build_output_locks(vec![artifact.clone()])
+            .expect("acquire first build output lock");
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            started_tx.send(()).expect("send worker started");
+            let _second =
+                acquire_build_output_locks(vec![artifact]).expect("acquire second output lock");
+            done_tx.send(()).expect("send worker done");
+        });
+
+        started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("worker should start");
+        assert!(
+            done_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "second lock acquisition should wait while first guard is alive"
+        );
+
+        drop(first);
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("second lock should acquire after first guard drops");
+        worker.join().expect("worker should finish");
+        assert!(
+            !lock_path.exists(),
+            "lock directory should be removed after both guards drop"
+        );
     }
 }
 
