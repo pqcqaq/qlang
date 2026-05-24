@@ -1,12 +1,13 @@
 mod support;
 
 use std::path::PathBuf;
+use std::process::Stdio;
 
 use serde_json::Value as JsonValue;
 use support::{
-    TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_snapshot_matches,
-    expect_stderr_contains, expect_stdout_contains_all, expect_success, ql_command,
-    read_normalized_file, run_command_capture, workspace_root,
+    TempDir, assert_no_build_lock_directories, expect_empty_stderr, expect_empty_stdout,
+    expect_exit_code, expect_snapshot_matches, expect_stderr_contains, expect_stdout_contains_all,
+    expect_success, ql_command, read_normalized_file, run_command_capture, workspace_root,
 };
 
 fn normalize_output_text(text: &str) -> String {
@@ -428,6 +429,90 @@ name = "app"
         ],
     )
     .expect("package target discovery after binary add should include preserved and newly added binaries");
+}
+
+#[test]
+fn project_target_add_serializes_concurrent_package_manifest_writes() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-target-add-concurrent-writes");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+
+    let manifest_path = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn util() -> Int { return 1 }\n");
+    temp.write("app/src/main.ql", "fn main() -> Int { return 0 }\n");
+
+    let mut children = Vec::new();
+    for binary_name in ["worker", "admin"] {
+        let mut add = ql_command(&workspace_root);
+        add.current_dir(temp.path());
+        add.args(["project", "target", "add", "--bin", binary_name])
+            .arg(&project_root);
+        add.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let child = add
+            .spawn()
+            .unwrap_or_else(|error| panic!("spawn concurrent target add `{binary_name}`: {error}"));
+        children.push((binary_name, child));
+    }
+
+    for (binary_name, child) in children {
+        let output = child.wait_with_output().unwrap_or_else(|error| {
+            panic!("wait for concurrent target add `{binary_name}`: {error}")
+        });
+        let (stdout, stderr) = expect_success(
+            "project-target-add-concurrent-writes",
+            &format!("concurrent target add `{binary_name}`"),
+            &output,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+        expect_empty_stderr(
+            "project-target-add-concurrent-writes",
+            &format!("concurrent target add `{binary_name}`"),
+            &stderr,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+        expect_stdout_contains_all(
+            "project-target-add-concurrent-writes",
+            &stdout.replace('\\', "/"),
+            &[
+                &format!(
+                    "updated: {}",
+                    manifest_path.to_string_lossy().replace('\\', "/")
+                ),
+                &format!(
+                    "created: {}",
+                    project_root
+                        .join(format!("src/bin/{binary_name}.ql"))
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                ),
+            ],
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+    }
+
+    let manifest = read_normalized_file(
+        &manifest_path,
+        "package manifest after concurrent target adds",
+    );
+    assert!(
+        manifest.contains("[[bin]]\npath = \"src/main.ql\"\n")
+            && manifest.contains("[[bin]]\npath = \"src/bin/admin.ql\"\n")
+            && manifest.contains("[[bin]]\npath = \"src/bin/worker.ql\"\n"),
+        "concurrent target add should keep both new targets and the conventional main target, got:\n{manifest}"
+    );
+    assert!(
+        project_root.join("src/bin/admin.ql").is_file()
+            && project_root.join("src/bin/worker.ql").is_file(),
+        "concurrent target add should create both binary source files"
+    );
+    assert_no_build_lock_directories("project-target-add-concurrent-writes", &project_root);
 }
 
 #[test]

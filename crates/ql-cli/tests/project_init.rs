@@ -5510,6 +5510,108 @@ fn project_add_creates_workspace_member_from_member_source_path() {
 }
 
 #[test]
+fn project_member_updates_serialize_concurrent_workspace_manifest_writes() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-member-concurrent-writes");
+    let project_root = temp.path().join("workspace");
+    let workspace_manifest_path = project_root.join("qlang.toml");
+
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/app\", \"packages/core\"]\n",
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        "[package]\nname = \"app\"\n",
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        "[package]\nname = \"core\"\n",
+    );
+
+    let mut children = Vec::new();
+
+    let mut add_util = ql_command(&workspace_root);
+    add_util.current_dir(temp.path());
+    add_util.args([
+        "project",
+        "add",
+        &project_root.to_string_lossy(),
+        "--name",
+        "util",
+    ]);
+    add_util.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let add_child = add_util
+        .spawn()
+        .unwrap_or_else(|error| panic!("spawn concurrent ql project add: {error}"));
+    children.push(("add util", add_child));
+
+    let mut remove_core = ql_command(&workspace_root);
+    remove_core.current_dir(temp.path());
+    remove_core.args([
+        "project",
+        "remove",
+        &project_root.to_string_lossy(),
+        "--name",
+        "core",
+    ]);
+    remove_core.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let remove_child = remove_core
+        .spawn()
+        .unwrap_or_else(|error| panic!("spawn concurrent ql project remove: {error}"));
+    children.push(("remove core", remove_child));
+
+    for (action, child) in children {
+        let output = child.wait_with_output().unwrap_or_else(|error| {
+            panic!("wait for concurrent ql project member edit `{action}`: {error}")
+        });
+        let (stdout, stderr) = expect_success(
+            "project-member-concurrent-writes",
+            &format!("concurrent project member edit `{action}`"),
+            &output,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+        expect_empty_stderr(
+            "project-member-concurrent-writes",
+            &format!("concurrent project member edit `{action}`"),
+            &stderr,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+        expect_stdout_contains_all(
+            "project-member-concurrent-writes",
+            &stdout.replace('\\', "/"),
+            &[&format!(
+                "updated: {}",
+                workspace_manifest_path.to_string_lossy().replace('\\', "/")
+            )],
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+    }
+
+    let workspace_manifest = read_normalized_file(
+        &workspace_manifest_path,
+        "workspace manifest after concurrent member edits",
+    );
+    assert!(
+        workspace_manifest.contains("packages/app"),
+        "concurrent workspace edit should keep app: {workspace_manifest}"
+    );
+    assert!(
+        workspace_manifest.contains("packages/util"),
+        "concurrent workspace edit should add util: {workspace_manifest}"
+    );
+    assert!(
+        !workspace_manifest.contains("packages/core"),
+        "concurrent workspace edit should remove core: {workspace_manifest}"
+    );
+    assert!(
+        project_root.join("packages/util/qlang.toml").is_file(),
+        "concurrent add should create the util package scaffold"
+    );
+    assert_no_build_lock_directories("project-member-concurrent-writes", &project_root);
+}
+
+#[test]
 fn project_add_refuses_duplicate_workspace_package_name() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-add-duplicate");

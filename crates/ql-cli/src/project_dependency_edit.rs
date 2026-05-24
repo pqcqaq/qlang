@@ -1,13 +1,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use ql_driver::{BuildError, BuildOutputLock, acquire_build_output_locks};
 use ql_project::{
     load_project_manifest, package_name, render_manifest_with_added_local_dependency,
     render_manifest_with_removed_local_dependency,
 };
 
 use crate::project_dependencies::{ProjectDependentMember, find_workspace_member_dependents};
+use crate::project_manifest_edit::{
+    acquire_locked_project_manifest_edits, write_locked_project_manifest,
+};
 use crate::project_workspace::{
     render_workspace_member_lookup_error, resolve_project_selected_package_manifest,
     resolve_project_workspace_manifest, resolve_workspace_member_entry_by_package_name,
@@ -246,37 +248,6 @@ fn edit_locked_project_manifest(
         );
         1
     })
-}
-
-fn acquire_locked_project_manifest_edits(
-    manifest_paths: impl IntoIterator<Item = PathBuf>,
-) -> Result<Vec<BuildOutputLock>, String> {
-    acquire_build_output_locks(manifest_paths)
-        .map_err(dependency_manifest_output_lock_error_message)
-}
-
-fn write_locked_project_manifest(
-    manifest_path: &Path,
-    contents: String,
-) -> Result<(), std::io::Error> {
-    fs::write(manifest_path, contents)
-}
-
-fn dependency_manifest_output_lock_error_message(error: BuildError) -> String {
-    match error {
-        BuildError::Io { path, error } => {
-            format!(
-                "failed to acquire manifest output lock `{}`: {error}",
-                normalize_path(&path)
-            )
-        }
-        BuildError::InvalidInput(message) => message,
-        BuildError::Diagnostics { path, .. } => format!(
-            "failed to acquire manifest output lock while diagnostics were reported for `{}`",
-            normalize_path(&path)
-        ),
-        BuildError::Toolchain { error, .. } => format!("{error}"),
-    }
 }
 
 fn resolve_project_existing_dependency_entry(

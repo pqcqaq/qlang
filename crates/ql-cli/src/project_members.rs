@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use ql_project::{package_name, render_manifest_with_added_binary_target};
+use ql_project::{load_project_manifest, package_name, render_manifest_with_added_binary_target};
 use toml::Value as TomlValue;
 
 use super::{
@@ -14,6 +14,9 @@ use super::{
 
 use crate::project_dependencies::find_workspace_member_dependents;
 use crate::project_dependency_edit::detach_workspace_member_dependents;
+use crate::project_manifest_edit::{
+    acquire_locked_project_manifest_edits, write_locked_project_manifest,
+};
 
 pub(crate) fn project_add_path(
     path: &Path,
@@ -29,18 +32,13 @@ pub(crate) fn project_add_path(
         eprintln!("error: `ql project add` {message}");
         1
     })?;
-    let dependency_entries =
-        resolve_project_add_dependency_entries(&workspace_manifest, package_name, dependencies)
-            .map_err(|message| {
-                eprintln!("error: `ql project add` {message}");
-                1
-            })?;
     let (updated_manifest_path, created_paths) =
-        add_workspace_project_member(&workspace_manifest, package_name, &dependency_entries)
-            .map_err(|message| {
+        add_workspace_project_member(&workspace_manifest, package_name, dependencies).map_err(
+            |message| {
                 eprintln!("error: `ql project add` {message}");
                 1
-            })?;
+            },
+        )?;
 
     println!("updated: {}", normalize_path(&updated_manifest_path));
     for path in created_paths {
@@ -126,6 +124,23 @@ pub(crate) fn project_add_binary_target_path(
         .join("src")
         .join("bin")
         .join(format!("{binary_name}.ql"));
+    let _locks =
+        acquire_locked_project_manifest_edits(vec![package_manifest.manifest_path.clone()])
+            .map_err(|message| {
+                eprintln!(
+                    "error: `ql project target add` failed to lock manifest `{}`: {message}",
+                    normalize_path(&package_manifest.manifest_path)
+                );
+                1
+            })?;
+    let package_manifest =
+        load_project_manifest(&package_manifest.manifest_path).map_err(|error| {
+            eprintln!(
+                "error: `ql project target add` failed to read `{}`: {error}",
+                normalize_path(&package_manifest.manifest_path)
+            );
+            1
+        })?;
     let preserved_binary_paths = if package_manifest.bins.is_empty() {
         collect_conventional_binary_target_relative_paths(&package_manifest)?
     } else {
@@ -154,13 +169,14 @@ pub(crate) fn project_add_binary_target_path(
             eprintln!("error: `ql project target add` {message}");
             1
         })?;
-    fs::write(&package_manifest.manifest_path, updated_package_manifest).map_err(|error| {
-        eprintln!(
-            "error: `ql project target add` failed to write `{}`: {error}",
-            normalize_path(&package_manifest.manifest_path)
-        );
-        1
-    })?;
+    write_locked_project_manifest(&package_manifest.manifest_path, updated_package_manifest)
+        .map_err(|error| {
+            eprintln!(
+                "error: `ql project target add` failed to write `{}`: {error}",
+                normalize_path(&package_manifest.manifest_path)
+            );
+            1
+        })?;
 
     println!(
         "updated: {}",
@@ -173,14 +189,12 @@ pub(crate) fn project_add_binary_target_path(
 fn add_workspace_project_member(
     workspace_manifest: &ql_project::ProjectManifest,
     package_name: &str,
-    dependencies: &[(String, String)],
+    dependencies: &[String],
 ) -> Result<(PathBuf, Vec<PathBuf>), String> {
-    let Some(workspace) = workspace_manifest.workspace.as_ref() else {
-        return Err(format!(
-            "manifest `{}` is not a workspace",
-            normalize_path(&workspace_manifest.manifest_path)
-        ));
-    };
+    let _locks =
+        acquire_locked_project_manifest_edits(vec![workspace_manifest.manifest_path.clone()])?;
+    let workspace_manifest = reload_project_manifest_for_edit(&workspace_manifest.manifest_path)?;
+    let workspace = require_workspace_manifest(&workspace_manifest)?;
 
     let workspace_root = workspace_manifest
         .manifest_path
@@ -200,7 +214,7 @@ fn add_workspace_project_member(
             normalize_path(&workspace_manifest.manifest_path)
         ));
     }
-    match resolve_workspace_member_entry_by_package_name(workspace_manifest, package_name) {
+    match resolve_workspace_member_entry_by_package_name(&workspace_manifest, package_name) {
         Ok((_, existing_package_manifest)) => {
             return Err(format!(
                 "workspace manifest `{}` already contains package `{package_name}` at `{}`",
@@ -234,6 +248,8 @@ fn add_workspace_project_member(
             normalize_path(&member_root)
         ));
     }
+    let dependency_entries =
+        resolve_project_add_dependency_entries(&workspace_manifest, package_name, dependencies)?;
 
     let workspace_manifest_source =
         fs::read_to_string(&workspace_manifest.manifest_path).map_err(|error| {
@@ -245,7 +261,7 @@ fn add_workspace_project_member(
     let updated_workspace_manifest =
         append_workspace_manifest_member(&workspace_manifest_source, &member_relative_path)?;
 
-    fs::write(
+    write_locked_project_manifest(
         &workspace_manifest.manifest_path,
         updated_workspace_manifest,
     )
@@ -256,7 +272,7 @@ fn add_workspace_project_member(
         )
     })?;
     let created_paths =
-        project_init::create_package_scaffold(&member_root, package_name, dependencies)?;
+        project_init::create_package_scaffold(&member_root, package_name, &dependency_entries)?;
 
     Ok((workspace_manifest.manifest_path.clone(), created_paths))
 }
@@ -265,12 +281,10 @@ fn add_existing_workspace_project_member(
     workspace_manifest: &ql_project::ProjectManifest,
     package_manifest: &ql_project::ProjectManifest,
 ) -> Result<(PathBuf, PathBuf), String> {
-    let Some(workspace) = workspace_manifest.workspace.as_ref() else {
-        return Err(format!(
-            "manifest `{}` is not a workspace",
-            normalize_path(&workspace_manifest.manifest_path)
-        ));
-    };
+    let _locks =
+        acquire_locked_project_manifest_edits(vec![workspace_manifest.manifest_path.clone()])?;
+    let workspace_manifest = reload_project_manifest_for_edit(&workspace_manifest.manifest_path)?;
+    let workspace = require_workspace_manifest(&workspace_manifest)?;
 
     if normalize_path(&workspace_manifest.manifest_path)
         == normalize_path(&package_manifest.manifest_path)
@@ -304,7 +318,7 @@ fn add_existing_workspace_project_member(
             normalize_path(&workspace_manifest.manifest_path)
         ));
     }
-    match resolve_workspace_member_entry_by_package_name(workspace_manifest, package_name) {
+    match resolve_workspace_member_entry_by_package_name(&workspace_manifest, package_name) {
         Ok((_, existing_package_manifest)) => {
             return Err(format!(
                 "workspace manifest `{}` already contains package `{package_name}` at `{}`",
@@ -336,7 +350,7 @@ fn add_existing_workspace_project_member(
         })?;
     let updated_workspace_manifest =
         append_workspace_manifest_member(&workspace_manifest_source, &member_relative_path)?;
-    fs::write(
+    write_locked_project_manifest(
         &workspace_manifest.manifest_path,
         updated_workspace_manifest,
     )
@@ -355,15 +369,13 @@ fn remove_workspace_project_member(
     package_name: &str,
     cascade: bool,
 ) -> Result<(PathBuf, Vec<PathBuf>, PathBuf), String> {
-    let Some(_workspace) = workspace_manifest.workspace.as_ref() else {
-        return Err(format!(
-            "manifest `{}` is not a workspace",
-            normalize_path(&workspace_manifest.manifest_path)
-        ));
-    };
+    let _locks =
+        acquire_locked_project_manifest_edits(vec![workspace_manifest.manifest_path.clone()])?;
+    let workspace_manifest = reload_project_manifest_for_edit(&workspace_manifest.manifest_path)?;
+    require_workspace_manifest(&workspace_manifest)?;
 
     let (member_entry, member_manifest_path) = resolve_workspace_member_entry_by_package_name(
-        workspace_manifest,
+        &workspace_manifest,
         package_name,
     )
     .map_err(|error| match error {
@@ -381,7 +393,7 @@ fn remove_workspace_project_member(
         }
     })?;
     let dependent_members =
-        find_workspace_member_dependents(workspace_manifest, &member_manifest_path)?;
+        find_workspace_member_dependents(&workspace_manifest, &member_manifest_path)?;
     if !dependent_members.is_empty() {
         if cascade {
             let updated_dependency_manifests = detach_workspace_member_dependents(
@@ -398,7 +410,7 @@ fn remove_workspace_project_member(
             })?;
             let updated_workspace_manifest =
                 remove_workspace_manifest_member(&workspace_manifest_source, &member_entry)?;
-            fs::write(
+            write_locked_project_manifest(
                 &workspace_manifest.manifest_path,
                 updated_workspace_manifest,
             )
@@ -438,7 +450,7 @@ fn remove_workspace_project_member(
         })?;
     let updated_workspace_manifest =
         remove_workspace_manifest_member(&workspace_manifest_source, &member_entry)?;
-    fs::write(
+    write_locked_project_manifest(
         &workspace_manifest.manifest_path,
         updated_workspace_manifest,
     )
@@ -457,6 +469,28 @@ fn remove_workspace_project_member(
             .unwrap_or(Path::new("."))
             .to_path_buf(),
     ))
+}
+
+fn reload_project_manifest_for_edit(
+    manifest_path: &Path,
+) -> Result<ql_project::ProjectManifest, String> {
+    load_project_manifest(manifest_path).map_err(|error| {
+        format!(
+            "failed to read `{}`: {error}",
+            normalize_path(manifest_path)
+        )
+    })
+}
+
+fn require_workspace_manifest(
+    manifest: &ql_project::ProjectManifest,
+) -> Result<&ql_project::WorkspaceManifest, String> {
+    manifest.workspace.as_ref().ok_or_else(|| {
+        format!(
+            "manifest `{}` is not a workspace",
+            normalize_path(&manifest.manifest_path)
+        )
+    })
 }
 
 fn append_workspace_manifest_member(source: &str, member: &str) -> Result<String, String> {

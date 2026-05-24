@@ -39,6 +39,7 @@ mod project_dependency_edit;
 mod project_graph;
 mod project_init;
 mod project_lock;
+mod project_manifest_edit;
 mod project_members;
 mod project_status;
 mod project_targets;
