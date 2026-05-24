@@ -2,14 +2,15 @@ mod support;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 
-use ql_driver::{discover_toolchain, ToolchainOptions};
+use ql_driver::{ToolchainOptions, discover_toolchain};
 use serde_json::Value as JsonValue;
 use support::{
-    executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
-    expect_file_exists, expect_silent_output, expect_stderr_contains, expect_stdout_contains_all,
-    expect_success, ql_command, read_normalized_file, run_command_capture,
-    static_library_output_path, workspace_root, TempDir,
+    TempDir, assert_no_build_lock_directories, executable_output_path, expect_empty_stderr,
+    expect_empty_stdout, expect_exit_code, expect_file_exists, expect_silent_output,
+    expect_stderr_contains, expect_stdout_contains_all, expect_success, ql_command,
+    read_normalized_file, run_command_capture, static_library_output_path, workspace_root,
 };
 
 fn toolchain_available(context: &str) -> bool {
@@ -6156,6 +6157,108 @@ fn project_add_dependency_updates_existing_package_manifest_from_member_source_p
         ),
         "[dependencies]\ncore = \"../core\"\n\n[package]\nname = \"app\"\n"
     );
+}
+
+#[test]
+fn project_dependency_updates_serialize_concurrent_manifest_writes() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependency-concurrent-writes");
+    let project_root = temp.path().join("workspace");
+    let app_manifest_path = project_root.join("packages/app/qlang.toml");
+
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/app\", \"packages/core\", \"packages/util\"]\n",
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        "[package]\nname = \"app\"\n\n[dependencies]\ncore = \"../core\"\n",
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        "[package]\nname = \"core\"\n",
+    );
+    temp.write(
+        "workspace/packages/util/qlang.toml",
+        "[package]\nname = \"util\"\n",
+    );
+
+    let mut children = Vec::new();
+
+    let mut add_util = ql_command(&workspace_root);
+    add_util.current_dir(temp.path());
+    add_util.args([
+        "project",
+        "add-dependency",
+        &project_root.to_string_lossy(),
+        "--package",
+        "app",
+        "--name",
+        "util",
+    ]);
+    add_util.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let add_child = add_util
+        .spawn()
+        .unwrap_or_else(|error| panic!("spawn concurrent ql project add-dependency: {error}"));
+    children.push(("add util", add_child));
+
+    let mut remove_core = ql_command(&workspace_root);
+    remove_core.current_dir(temp.path());
+    remove_core.args([
+        "project",
+        "remove-dependency",
+        &project_root.to_string_lossy(),
+        "--package",
+        "app",
+        "--name",
+        "core",
+    ]);
+    remove_core.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let remove_child = remove_core
+        .spawn()
+        .unwrap_or_else(|error| panic!("spawn concurrent ql project remove-dependency: {error}"));
+    children.push(("remove core", remove_child));
+
+    for (action, child) in children {
+        let output = child.wait_with_output().unwrap_or_else(|error| {
+            panic!("wait for concurrent ql project dependency edit `{action}`: {error}")
+        });
+        let (stdout, stderr) = expect_success(
+            "project-dependency-concurrent-writes",
+            &format!("concurrent dependency edit `{action}`"),
+            &output,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+        expect_empty_stderr(
+            "project-dependency-concurrent-writes",
+            &format!("concurrent dependency edit `{action}`"),
+            &stderr,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+        expect_stdout_contains_all(
+            "project-dependency-concurrent-writes",
+            &stdout.replace('\\', "/"),
+            &[&format!(
+                "updated: {}",
+                app_manifest_path.to_string_lossy().replace('\\', "/")
+            )],
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+    }
+
+    let actual = read_normalized_file(
+        &app_manifest_path,
+        "workspace member manifest after concurrent dependency edits",
+    );
+    assert!(
+        !actual.contains("core = \"../core\""),
+        "concurrent dependency edit should remove `core`: {actual}"
+    );
+    assert!(
+        actual.contains("util = \"../util\""),
+        "concurrent dependency edit should keep added `util`: {actual}"
+    );
+    assert_no_build_lock_directories("project-dependency-concurrent-writes", &project_root);
 }
 
 #[test]

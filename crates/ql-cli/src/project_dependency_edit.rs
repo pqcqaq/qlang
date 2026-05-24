@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use ql_driver::{BuildError, BuildOutputLock, acquire_build_output_locks};
 use ql_project::{
     load_project_manifest, package_name, render_manifest_with_added_local_dependency,
     render_manifest_with_removed_local_dependency,
@@ -48,30 +49,17 @@ pub(crate) fn project_add_dependency_path(
         eprintln!("error: `ql project add-dependency` {message}");
         1
     })?;
-    let package_manifest_source =
-        fs::read_to_string(&package_manifest.manifest_path).map_err(|error| {
-            eprintln!(
-                "error: `ql project add-dependency` failed to read `{}`: {error}",
-                normalize_path(&package_manifest.manifest_path)
-            );
-            1
-        })?;
-    let updated_package_manifest = render_manifest_with_added_local_dependency(
-        &package_manifest_source,
-        &dependency_entry.0,
-        &dependency_entry.1,
-    )
-    .map_err(|message| {
-        eprintln!("error: `ql project add-dependency` {message}");
-        1
-    })?;
-    fs::write(&package_manifest.manifest_path, updated_package_manifest).map_err(|error| {
-        eprintln!(
-            "error: `ql project add-dependency` failed to write `{}`: {error}",
-            normalize_path(&package_manifest.manifest_path)
-        );
-        1
-    })?;
+    edit_locked_project_manifest(
+        "`ql project add-dependency`",
+        &package_manifest.manifest_path,
+        |package_manifest_source| {
+            render_manifest_with_added_local_dependency(
+                package_manifest_source,
+                &dependency_entry.0,
+                &dependency_entry.1,
+            )
+        },
+    )?;
 
     println!(
         "updated: {}",
@@ -115,30 +103,17 @@ pub(crate) fn project_remove_dependency_path(
         eprintln!("error: `ql project remove-dependency` {message}");
         1
     })?;
-    let package_manifest_source =
-        fs::read_to_string(&package_manifest.manifest_path).map_err(|error| {
-            eprintln!(
-                "error: `ql project remove-dependency` failed to read `{}`: {error}",
-                normalize_path(&package_manifest.manifest_path)
-            );
-            1
-        })?;
-    let updated_package_manifest = render_manifest_with_removed_local_dependency(
-        &package_manifest_source,
-        &dependency_entry.0,
-        &dependency_entry.1,
-    )
-    .map_err(|message| {
-        eprintln!("error: `ql project remove-dependency` {message}");
-        1
-    })?;
-    fs::write(&package_manifest.manifest_path, updated_package_manifest).map_err(|error| {
-        eprintln!(
-            "error: `ql project remove-dependency` failed to write `{}`: {error}",
-            normalize_path(&package_manifest.manifest_path)
-        );
-        1
-    })?;
+    edit_locked_project_manifest(
+        "`ql project remove-dependency`",
+        &package_manifest.manifest_path,
+        |package_manifest_source| {
+            render_manifest_with_removed_local_dependency(
+                package_manifest_source,
+                &dependency_entry.0,
+                &dependency_entry.1,
+            )
+        },
+    )?;
 
     println!(
         "updated: {}",
@@ -196,6 +171,11 @@ pub(crate) fn detach_workspace_member_dependents(
     dependents: &[ProjectDependentMember],
 ) -> Result<Vec<PathBuf>, String> {
     let dependency_root = dependency_manifest_path.parent().unwrap_or(Path::new("."));
+    let _locks = acquire_locked_project_manifest_edits(
+        dependents
+            .iter()
+            .map(|dependent| dependent.manifest_path.clone()),
+    )?;
     let mut updated_manifests = Vec::with_capacity(dependents.len());
 
     for dependent in dependents {
@@ -219,17 +199,84 @@ pub(crate) fn detach_workspace_member_dependents(
                 normalize_path(&dependent.manifest_path)
             )
         })?;
-        fs::write(&dependent.manifest_path, updated_manifest).map_err(|error| {
-            format!(
-                "failed to write `{}` while detaching dependent `{}`: {error}",
-                normalize_path(&dependent.manifest_path),
-                dependent.package_name
-            )
-        })?;
+        write_locked_project_manifest(&dependent.manifest_path, updated_manifest).map_err(
+            |error| {
+                format!(
+                    "failed to write `{}` while detaching dependent `{}`: {error}",
+                    normalize_path(&dependent.manifest_path),
+                    dependent.package_name
+                )
+            },
+        )?;
         updated_manifests.push(dependent.manifest_path.clone());
     }
 
     Ok(updated_manifests)
+}
+
+fn edit_locked_project_manifest(
+    command_label: &str,
+    manifest_path: &Path,
+    edit: impl FnOnce(&str) -> Result<String, String>,
+) -> Result<(), u8> {
+    let _locks = acquire_locked_project_manifest_edits(vec![manifest_path.to_path_buf()]).map_err(
+        |message| {
+            eprintln!(
+                "error: {command_label} failed to lock manifest `{}`: {message}",
+                normalize_path(manifest_path)
+            );
+            1
+        },
+    )?;
+    let manifest_source = fs::read_to_string(manifest_path).map_err(|error| {
+        eprintln!(
+            "error: {command_label} failed to read `{}`: {error}",
+            normalize_path(manifest_path)
+        );
+        1
+    })?;
+    let updated_manifest = edit(&manifest_source).map_err(|message| {
+        eprintln!("error: {command_label} {message}");
+        1
+    })?;
+    write_locked_project_manifest(manifest_path, updated_manifest).map_err(|error| {
+        eprintln!(
+            "error: {command_label} failed to write `{}`: {error}",
+            normalize_path(manifest_path)
+        );
+        1
+    })
+}
+
+fn acquire_locked_project_manifest_edits(
+    manifest_paths: impl IntoIterator<Item = PathBuf>,
+) -> Result<Vec<BuildOutputLock>, String> {
+    acquire_build_output_locks(manifest_paths)
+        .map_err(dependency_manifest_output_lock_error_message)
+}
+
+fn write_locked_project_manifest(
+    manifest_path: &Path,
+    contents: String,
+) -> Result<(), std::io::Error> {
+    fs::write(manifest_path, contents)
+}
+
+fn dependency_manifest_output_lock_error_message(error: BuildError) -> String {
+    match error {
+        BuildError::Io { path, error } => {
+            format!(
+                "failed to acquire manifest output lock `{}`: {error}",
+                normalize_path(&path)
+            )
+        }
+        BuildError::InvalidInput(message) => message,
+        BuildError::Diagnostics { path, .. } => format!(
+            "failed to acquire manifest output lock while diagnostics were reported for `{}`",
+            normalize_path(&path)
+        ),
+        BuildError::Toolchain { error, .. } => format!("{error}"),
+    }
 }
 
 fn resolve_project_existing_dependency_entry(
