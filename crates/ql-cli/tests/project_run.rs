@@ -1,11 +1,15 @@
 mod support;
 
-use ql_driver::{discover_toolchain, ToolchainOptions};
+use std::process::Stdio;
+use std::time::{Duration, Instant};
+
+use ql_driver::{ToolchainOptions, discover_toolchain};
 use serde_json::Value as JsonValue;
 use support::{
-    executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
-    expect_file_exists, expect_silent_output, expect_stderr_contains, expect_success, ql_command,
-    run_command_capture, static_library_output_path, workspace_root, TempDir,
+    TempDir, assert_no_build_lock_directories, executable_output_path, expect_empty_stderr,
+    expect_empty_stdout, expect_exit_code, expect_file_exists, expect_silent_output,
+    expect_stderr_contains, expect_success, ql_command, run_command_capture, sleep_program_source,
+    static_library_output_path, wait_for_path_exists, workspace_root,
 };
 
 fn toolchain_available(context: &str) -> bool {
@@ -2058,6 +2062,10 @@ fn run_workspace_package_selector_executes_dependency_generic_member() {
         !fixture.tool_output.exists(),
         "workspace package selector run should not build unselected runnable workspace members"
     );
+    assert_no_build_lock_directories(
+        "project-run-workspace-package-dependency-generic",
+        &fixture.project_root,
+    );
 }
 
 struct WorkspacePackageRelativeTargetRunFixture {
@@ -2681,6 +2689,184 @@ fn run_workspace_package_selector_json_reports_dependency_generic_member() {
 }
 
 #[test]
+fn run_workspace_package_selector_json_allows_concurrent_dependency_generic_runs() {
+    if !toolchain_available("concurrent `ql run --json --package` workspace dependency test") {
+        return;
+    }
+
+    let fixture = write_workspace_dependency_generic_run_project(
+        "ql-project-run-json-workspace-concurrent-dependency-generic",
+    );
+    let workspace_root = workspace_root();
+    let mut children = Vec::new();
+    for index in 0..3 {
+        let mut command = ql_command(&workspace_root);
+        command.current_dir(fixture.temp.path());
+        command
+            .args(["run"])
+            .arg(&fixture.project_root)
+            .args(["--package", "app", "--json"]);
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let child = command
+            .spawn()
+            .unwrap_or_else(|error| panic!("spawn concurrent ql run #{index}: {error}"));
+        children.push((index, child));
+    }
+
+    for (index, child) in children {
+        let output = child
+            .wait_with_output()
+            .unwrap_or_else(|error| panic!("wait for concurrent ql run #{index}: {error}"));
+        let (stdout, stderr) = expect_exit_code(
+            "project-run-json-workspace-concurrent-dependency-generic",
+            &format!("concurrent workspace dependency generic run #{index}"),
+            &output,
+            12,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+        expect_empty_stderr(
+            "project-run-json-workspace-concurrent-dependency-generic",
+            &format!("concurrent workspace dependency generic run #{index}"),
+            &stderr,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+
+        let json = parse_json_output(
+            "project-run-json-workspace-concurrent-dependency-generic",
+            &stdout,
+        );
+        assert_eq!(json["schema"], "ql.run.v1");
+        assert_eq!(
+            json["status"], "completed",
+            "concurrent run #{index} failed: {json}"
+        );
+        assert_eq!(json["failure"], JsonValue::Null);
+        assert_eq!(json["execution"]["exit_code"], 12);
+        assert_eq!(json["built_target"]["package_name"], "app");
+    }
+
+    expect_file_exists(
+        "project-run-json-workspace-concurrent-dependency-generic",
+        &fixture.core_interface_output,
+        "synced core interface",
+        "concurrent workspace dependency generic run",
+    )
+    .expect("concurrent run should sync the selected dependency interface");
+    expect_file_exists(
+        "project-run-json-workspace-concurrent-dependency-generic",
+        &fixture.core_output,
+        "core dependency artifact",
+        "concurrent workspace dependency generic run",
+    )
+    .expect("concurrent run should build selected member dependencies");
+    expect_file_exists(
+        "project-run-json-workspace-concurrent-dependency-generic",
+        &fixture.app_output,
+        "selected app executable",
+        "concurrent workspace dependency generic run",
+    )
+    .expect("concurrent run should emit the selected app executable");
+    assert!(
+        !fixture.tool_output.exists(),
+        "concurrent run should not build unselected runnable workspace members"
+    );
+    assert_no_build_lock_directories(
+        "project-run-json-workspace-concurrent-dependency-generic",
+        &fixture.project_root,
+    );
+}
+
+#[test]
+fn run_project_json_holds_executable_lock_while_program_runs() {
+    if !toolchain_available("`ql run --json` executable lock during execution test") {
+        return;
+    }
+
+    let temp = TempDir::new("ql-project-run-json-executable-lock-during-execution");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source tree for executable lock run test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/main.ql", &sleep_program_source(900));
+    let executable_output = executable_output_path(&project_root.join("target/ql/debug"), "main");
+    let workspace_root = workspace_root();
+
+    let mut first = ql_command(&workspace_root);
+    first.current_dir(temp.path());
+    first.args(["run", "--json"]).arg(&project_root);
+    first.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut first = first
+        .spawn()
+        .expect("spawn first long-running `ql run --json`");
+    wait_for_path_exists(
+        "project-run-json-executable-lock-during-execution",
+        "first long-running run executable",
+        &executable_output,
+        Duration::from_secs(20),
+    )
+    .expect("first long-running run should create the executable before execution");
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(
+        first
+            .try_wait()
+            .expect("poll first long-running `ql run --json`")
+            .is_none(),
+        "first long-running run should still hold the executable while the second run starts"
+    );
+
+    let mut second = ql_command(&workspace_root);
+    second.current_dir(temp.path());
+    second.args(["run", "--json"]).arg(&project_root);
+    second.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let second_started = Instant::now();
+    let second = second
+        .spawn()
+        .expect("spawn second `ql run --json` against same executable");
+
+    let second_output = second
+        .wait_with_output()
+        .expect("wait for second executable-lock `ql run --json`");
+    let second_elapsed = second_started.elapsed();
+    let first_output = first
+        .wait_with_output()
+        .expect("wait for first executable-lock `ql run --json`");
+
+    for (label, output) in [("first", first_output), ("second", second_output)] {
+        let (stdout, stderr) = expect_success(
+            "project-run-json-executable-lock-during-execution",
+            &format!("{label} long-running executable-lock run"),
+            &output,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+        expect_empty_stderr(
+            "project-run-json-executable-lock-during-execution",
+            &format!("{label} long-running executable-lock run"),
+            &stderr,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+        let json = parse_json_output("project-run-json-executable-lock-during-execution", &stdout);
+        assert_eq!(json["schema"], "ql.run.v1");
+        assert_eq!(json["status"], "completed");
+        assert_eq!(json["execution"]["exit_code"], 0);
+    }
+
+    assert!(
+        second_elapsed >= Duration::from_millis(1000),
+        "second run should wait for the first execution lock before rebuilding the same executable; elapsed {second_elapsed:?}"
+    );
+    assert_no_build_lock_directories(
+        "project-run-json-executable-lock-during-execution",
+        &project_root,
+    );
+}
+
+#[test]
 fn run_project_source_file_list_uses_workspace_context_and_only_reports_runnable_targets() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-run-list-workspace-source");
@@ -2930,6 +3116,7 @@ fn run_preserves_large_exit_code() {
         "large-exit-code run",
     )
     .expect("large-exit-code `ql run` should still leave the built executable in place");
+    assert_no_build_lock_directories("project-run-large-exit", temp.path());
 }
 
 #[test]

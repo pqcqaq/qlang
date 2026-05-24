@@ -2,15 +2,18 @@ mod support;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 use ql_analysis::analyze_source;
 use ql_diagnostics::render_diagnostics;
 use ql_driver::{ToolchainOptions, discover_toolchain};
 use serde_json::Value as JsonValue;
 use support::{
-    TempDir, executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
-    expect_file_exists, expect_stderr_contains, expect_stdout_contains_all, expect_success,
-    ql_command, run_command_capture, static_library_output_path, workspace_root,
+    TempDir, assert_no_build_lock_directories, executable_output_path, expect_empty_stderr,
+    expect_empty_stdout, expect_exit_code, expect_file_exists, expect_stderr_contains,
+    expect_stdout_contains_all, expect_success, ql_command, run_command_capture,
+    sleep_program_source, static_library_output_path, wait_for_path_exists, workspace_root,
 };
 
 fn toolchain_available(context: &str) -> bool {
@@ -8376,6 +8379,199 @@ fn main() -> Int {
         "`ql test --json` direct project smoke file dependency generic bridge",
     )
     .expect("direct project dependency generic json bridge should emit the smoke executable");
+}
+
+#[test]
+fn test_project_path_json_allows_concurrent_dependency_generic_smoke_tests() {
+    if !toolchain_available("concurrent `ql test --json` dependency generic smoke test") {
+        return;
+    }
+
+    let fixture = write_dependency_smoke_project(
+        "ql-project-test-json-concurrent-dependency-generic",
+        r#"
+pub fn identity[T](value: T) -> T {
+    return value
+}
+
+pub fn first[T, N](values: [T; N]) -> T {
+    return values[0]
+}
+"#,
+        r#"
+use dep.identity as identity
+use dep.first as first
+
+fn main() -> Int {
+    let value: Int = identity(7)
+    let picked: Int = first([5, 8, 13])
+    return value + picked - 12
+}
+"#,
+    );
+    let workspace_root = workspace_root();
+    let mut children = Vec::new();
+    for index in 0..3 {
+        let mut command = ql_command(&workspace_root);
+        command.current_dir(fixture.temp.path());
+        command.args(["test", "--json"]).arg(&fixture.project_root);
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let child = command
+            .spawn()
+            .unwrap_or_else(|error| panic!("spawn concurrent ql test #{index}: {error}"));
+        children.push((index, child));
+    }
+
+    for (index, child) in children {
+        let output = child
+            .wait_with_output()
+            .unwrap_or_else(|error| panic!("wait for concurrent ql test #{index}: {error}"));
+        let (stdout, stderr) = expect_success(
+            "project-test-json-concurrent-dependency-generic",
+            &format!("concurrent dependency generic smoke test #{index}"),
+            &output,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+        expect_empty_stderr(
+            "project-test-json-concurrent-dependency-generic",
+            &format!("concurrent dependency generic smoke test #{index}"),
+            &stderr,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+
+        let json = parse_json_output("project-test-json-concurrent-dependency-generic", &stdout);
+        assert_eq!(json["schema"], "ql.test.v1");
+        assert_eq!(
+            json["status"], "ok",
+            "concurrent test #{index} failed: {json}"
+        );
+        assert_eq!(json["passed"], 1);
+        assert_eq!(json["failed"], 0);
+        assert_eq!(json["failures"], serde_json::json!([]));
+    }
+
+    expect_file_exists(
+        "project-test-json-concurrent-dependency-generic",
+        &fixture.interface_output,
+        "synced dependency interface",
+        "concurrent dependency generic smoke test",
+    )
+    .expect("concurrent dependency generic smoke tests should emit the dependency interface");
+    expect_file_exists(
+        "project-test-json-concurrent-dependency-generic",
+        &fixture.dependency_output,
+        "dependency package artifact",
+        "concurrent dependency generic smoke test",
+    )
+    .expect("concurrent dependency generic smoke tests should build the dependency artifact");
+    expect_file_exists(
+        "project-test-json-concurrent-dependency-generic",
+        &fixture.smoke_output,
+        "dependency generic smoke executable",
+        "concurrent dependency generic smoke test",
+    )
+    .expect("concurrent dependency generic smoke tests should emit the smoke executable");
+    assert_no_build_lock_directories(
+        "project-test-json-concurrent-dependency-generic",
+        &fixture.project_root,
+    );
+}
+
+#[test]
+fn test_project_path_json_holds_executable_lock_while_smoke_test_runs() {
+    if !toolchain_available("`ql test --json` executable lock during smoke execution test") {
+        return;
+    }
+
+    let temp = TempDir::new("ql-project-test-json-executable-lock-during-execution");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source tree for executable lock test");
+    std::fs::create_dir_all(project_root.join("tests"))
+        .expect("create package test tree for executable lock test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    temp.write("app/tests/smoke.ql", &sleep_program_source(900));
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+    let workspace_root = workspace_root();
+
+    let mut first = ql_command(&workspace_root);
+    first.current_dir(temp.path());
+    first.args(["test", "--json"]).arg(&project_root);
+    first.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut first = first
+        .spawn()
+        .expect("spawn first long-running `ql test --json`");
+    wait_for_path_exists(
+        "project-test-json-executable-lock-during-execution",
+        "first long-running smoke test executable",
+        &smoke_output,
+        Duration::from_secs(20),
+    )
+    .expect("first long-running smoke test should create the executable before execution");
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(
+        first
+            .try_wait()
+            .expect("poll first long-running `ql test --json`")
+            .is_none(),
+        "first long-running smoke test should still hold the executable while the second test starts"
+    );
+
+    let mut second = ql_command(&workspace_root);
+    second.current_dir(temp.path());
+    second.args(["test", "--json"]).arg(&project_root);
+    second.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let second_started = Instant::now();
+    let second = second
+        .spawn()
+        .expect("spawn second `ql test --json` against same smoke executable");
+
+    let second_output = second
+        .wait_with_output()
+        .expect("wait for second executable-lock `ql test --json`");
+    let second_elapsed = second_started.elapsed();
+    let first_output = first
+        .wait_with_output()
+        .expect("wait for first executable-lock `ql test --json`");
+
+    for (label, output) in [("first", first_output), ("second", second_output)] {
+        let (stdout, stderr) = expect_success(
+            "project-test-json-executable-lock-during-execution",
+            &format!("{label} long-running executable-lock test"),
+            &output,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+        expect_empty_stderr(
+            "project-test-json-executable-lock-during-execution",
+            &format!("{label} long-running executable-lock test"),
+            &stderr,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+        let json = parse_json_output(
+            "project-test-json-executable-lock-during-execution",
+            &stdout,
+        );
+        assert_eq!(json["schema"], "ql.test.v1");
+        assert_eq!(json["status"], "ok");
+        assert_eq!(json["passed"], 1);
+        assert_eq!(json["failed"], 0);
+    }
+
+    assert!(
+        second_elapsed >= Duration::from_millis(1000),
+        "second test should wait for the first execution lock before rebuilding the same executable; elapsed {second_elapsed:?}"
+    );
+    assert_no_build_lock_directories(
+        "project-test-json-executable-lock-during-execution",
+        &project_root,
+    );
 }
 
 #[test]

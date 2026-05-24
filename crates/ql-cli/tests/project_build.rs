@@ -5,9 +5,9 @@ use std::process::Stdio;
 
 use serde_json::Value as JsonValue;
 use support::{
-    TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_file_exists,
-    expect_stdout_contains_all, expect_success, ql_command, read_normalized_file,
-    run_command_capture, static_library_output_path, workspace_root,
+    TempDir, assert_no_build_lock_directories, expect_empty_stderr, expect_empty_stdout,
+    expect_exit_code, expect_file_exists, expect_stdout_contains_all, expect_success, ql_command,
+    read_normalized_file, run_command_capture, static_library_output_path, workspace_root,
 };
 
 fn normalize_output_text(text: &str) -> String {
@@ -17,30 +17,6 @@ fn normalize_output_text(text: &str) -> String {
 fn parse_json_output(case_name: &str, stdout: &str) -> JsonValue {
     serde_json::from_str(&normalize_output_text(stdout))
         .unwrap_or_else(|error| panic!("[{case_name}] parse json stdout: {error}\n{stdout}"))
-}
-
-fn assert_no_build_lock_directories(case_name: &str, root: &std::path::Path) {
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(path) = pending.pop() {
-        let Ok(entries) = std::fs::read_dir(&path) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let file_name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("");
-            assert!(
-                !file_name.ends_with(".ql-build.lock"),
-                "[{case_name}] build output lock directory leaked at `{}`",
-                path.display()
-            );
-            if path.is_dir() {
-                pending.push(path);
-            }
-        }
-    }
 }
 
 fn write_mock_clang_failure_script(temp: &TempDir) -> std::path::PathBuf {

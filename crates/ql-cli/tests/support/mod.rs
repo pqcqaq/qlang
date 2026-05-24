@@ -4,7 +4,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub struct TempDir {
     path: PathBuf,
@@ -155,6 +156,80 @@ pub fn expect_file_exists(
         ));
     }
     Ok(())
+}
+
+pub fn assert_no_build_lock_directories(case_name: &str, root: &Path) {
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            assert!(
+                !file_name.ends_with(".ql-build.lock"),
+                "[{case_name}] build output lock directory leaked at `{}`",
+                path.display()
+            );
+            if path.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
+}
+
+pub fn wait_for_path_exists(
+    case_name: &str,
+    action: &str,
+    path: &Path,
+    timeout: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if path.exists() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    Err(format!(
+        "[{case_name}] expected {action} to create `{}` within {} ms",
+        path.display(),
+        timeout.as_millis()
+    ))
+}
+
+pub fn sleep_program_source(milliseconds: u64) -> String {
+    if cfg!(windows) {
+        format!(
+            r#"
+extern "c" {{
+    fn Sleep(milliseconds: Int)
+}}
+
+fn main() -> Int {{
+    Sleep({milliseconds})
+    return 0
+}}
+"#
+        )
+    } else {
+        let microseconds = milliseconds * 1000;
+        format!(
+            r#"
+extern "c" {{
+    fn usleep(microseconds: Int) -> Int
+}}
+
+fn main() -> Int {{
+    return usleep({microseconds})
+}}
+"#
+        )
+    }
 }
 
 pub fn expect_empty_stderr(case_name: &str, action: &str, stderr: &str) -> Result<(), String> {

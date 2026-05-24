@@ -4182,6 +4182,15 @@ fn select_runnable_project_target_for_run_json(
 fn run_built_executable(executable_path: &Path, program_args: &[String]) -> Result<(), u8> {
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
+    let execution_lock =
+        acquire_build_output_locks(vec![executable_path.to_path_buf()]).map_err(|error| {
+            eprintln!(
+                "error: failed to lock built executable `{}`: {}",
+                normalize_path(executable_path),
+                build_output_lock_error_message(error)
+            );
+            1
+        })?;
     let mut command = Command::new(executable_path);
     command.args(program_args);
     let status = command.status().map_err(|error| {
@@ -4194,7 +4203,10 @@ fn run_built_executable(executable_path: &Path, program_args: &[String]) -> Resu
 
     match status.code() {
         Some(0) => Ok(()),
-        Some(code) => std::process::exit(code),
+        Some(code) => {
+            drop(execution_lock);
+            std::process::exit(code);
+        }
         None => {
             eprintln!(
                 "error: built executable `{}` terminated without an exit code",
@@ -4216,6 +4228,8 @@ fn run_built_executable_capture(
     executable_path: &Path,
     program_args: &[String],
 ) -> Result<CapturedExecutableRun, String> {
+    let _execution_lock = acquire_build_output_locks(vec![executable_path.to_path_buf()])
+        .map_err(build_output_lock_error_message)?;
     let mut command = Command::new(executable_path);
     command.args(program_args);
     let output = command.output().map_err(|error| {
@@ -4230,6 +4244,21 @@ fn run_built_executable_capture(
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     })
+}
+
+fn build_output_lock_error_message(error: BuildError) -> String {
+    match error {
+        BuildError::Io { path, error } => format!(
+            "failed to acquire build output lock `{}`: {error}",
+            normalize_path(&path)
+        ),
+        BuildError::InvalidInput(message) => message,
+        BuildError::Diagnostics { path, .. } => format!(
+            "failed to acquire build output lock while diagnostics were reported for `{}`",
+            normalize_path(&path)
+        ),
+        BuildError::Toolchain { error, .. } => format!("{error}"),
+    }
 }
 
 fn emit_run_json_execution(
@@ -5417,6 +5446,8 @@ fn execute_test_binary(
     executable_path: &Path,
     working_directory: &Path,
 ) -> Result<(Option<i32>, String, String), String> {
+    let _execution_lock = acquire_build_output_locks(vec![executable_path.to_path_buf()])
+        .map_err(build_output_lock_error_message)?;
     let output = Command::new(executable_path)
         .current_dir(working_directory)
         .output()
