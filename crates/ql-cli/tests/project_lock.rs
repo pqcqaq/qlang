@@ -1,12 +1,13 @@
 mod support;
 
 use std::path::PathBuf;
+use std::process::Stdio;
 
 use serde_json::Value as JsonValue;
 use support::{
-    TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_snapshot_matches,
-    expect_stderr_contains, expect_stdout_contains_all, expect_success, ql_command,
-    read_normalized_file, run_command_capture, workspace_root,
+    TempDir, assert_no_build_lock_directories, expect_empty_stderr, expect_empty_stdout,
+    expect_exit_code, expect_snapshot_matches, expect_stderr_contains, expect_stdout_contains_all,
+    expect_success, ql_command, read_normalized_file, run_command_capture, workspace_root,
 };
 
 fn normalize_output_text(text: &str) -> String {
@@ -484,6 +485,86 @@ fn project_lock_json_writes_workspace_lockfile() {
     let actual_json: JsonValue =
         serde_json::from_str(&actual).expect("written workspace lockfile should remain valid json");
     assert_eq!(json["lockfile"], actual_json);
+}
+
+#[test]
+fn project_lock_json_allows_concurrent_workspace_lockfile_read_write() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-lock-json-concurrent-workspace");
+    let fixture = write_workspace_lock_fixture(&temp);
+    let project_root = fixture.project_root;
+    let workspace_manifest = fixture.workspace_manifest;
+    let lockfile_path = fixture.workspace_lockfile_path;
+
+    let mut initial = ql_command(&workspace_root);
+    initial
+        .args(["project", "lock"])
+        .arg(&project_root)
+        .arg("--json");
+    let initial_output =
+        run_command_capture(&mut initial, "`ql project lock --json` initial workspace");
+    let (_, initial_stderr) = expect_success(
+        "project-lock-json-concurrent-workspace",
+        "initial workspace lockfile generation",
+        &initial_output,
+    )
+    .expect("initial workspace lockfile generation should succeed");
+    expect_empty_stderr(
+        "project-lock-json-concurrent-workspace",
+        "initial workspace lockfile generation",
+        &initial_stderr,
+    )
+    .expect("initial workspace lockfile generation should keep stderr empty");
+
+    let mut children = Vec::new();
+    for index in 0..4 {
+        let check_only = index % 2 == 1;
+        let mut command = ql_command(&workspace_root);
+        command.current_dir(temp.path());
+        command.args(["project", "lock"]);
+        if check_only {
+            command.arg("--check");
+        }
+        command.arg(&project_root).arg("--json");
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let child = command
+            .spawn()
+            .unwrap_or_else(|error| panic!("spawn concurrent ql project lock #{index}: {error}"));
+        children.push((index, check_only, child));
+    }
+
+    for (index, check_only, child) in children {
+        let output = child.wait_with_output().unwrap_or_else(|error| {
+            panic!("wait for concurrent ql project lock #{index}: {error}")
+        });
+        let (stdout, stderr) = expect_success(
+            "project-lock-json-concurrent-workspace",
+            &format!("concurrent workspace lockfile command #{index}"),
+            &output,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+        expect_empty_stderr(
+            "project-lock-json-concurrent-workspace",
+            &format!("concurrent workspace lockfile command #{index}"),
+            &stderr,
+        )
+        .unwrap_or_else(|message| panic!("{message}"));
+
+        let json = parse_json_output("project-lock-json-concurrent-workspace", &stdout);
+        expect_workspace_lock_json_result(
+            &json,
+            &project_root,
+            &workspace_manifest,
+            &lockfile_path,
+            check_only,
+            if check_only { "up-to-date" } else { "wrote" },
+        );
+    }
+
+    let actual = read_normalized_file(&lockfile_path, "concurrent workspace lockfile");
+    serde_json::from_str::<JsonValue>(&actual)
+        .expect("concurrently written workspace lockfile should remain valid json");
+    assert_no_build_lock_directories("project-lock-json-concurrent-workspace", &project_root);
 }
 
 #[test]

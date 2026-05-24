@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+use ql_driver::{BuildError, acquire_build_output_locks};
 use ql_project::{load_project_manifest, project_lockfile_path, render_project_lockfile};
 use serde_json::{Value as JsonValue, json};
 
@@ -147,6 +148,16 @@ pub(crate) fn project_lock_path(path: &Path, check_only: bool, json: bool) -> Re
         let mut report =
             ProjectLockJsonReport::new(path, &manifest, &lockfile_path, check_only, &rendered);
         let rerun_command = format_project_lock_command(&manifest.manifest_path, false);
+        let _lock = match acquire_build_output_locks(vec![lockfile_path.clone()])
+            .map_err(|error| project_lock_output_lock_error_message(&lockfile_path, error))
+        {
+            Ok(lock) => lock,
+            Err(message) => {
+                report.record_failure("lock", message, Some(rerun_command));
+                print!("{}", report.into_json());
+                return Err(1);
+            }
+        };
 
         if check_only {
             match project_lockfile_check_status(&lockfile_path, &rendered) {
@@ -204,6 +215,16 @@ pub(crate) fn project_lock_path(path: &Path, check_only: bool, json: bool) -> Re
         return Ok(());
     }
 
+    let _lock = acquire_build_output_locks(vec![lockfile_path.clone()]).map_err(|error| {
+        report_project_lock_output_lock_error(
+            command_label,
+            &manifest.manifest_path,
+            &lockfile_path,
+            error,
+        );
+        1
+    })?;
+
     if check_only {
         return check_project_lockfile(&manifest, &lockfile_path, &rendered);
     }
@@ -226,6 +247,43 @@ pub(crate) fn project_lock_path(path: &Path, check_only: bool, json: bool) -> Re
 
     println!("wrote lockfile: {}", normalize_path(&lockfile_path));
     Ok(())
+}
+
+fn project_lock_output_lock_error_message(lockfile_path: &Path, error: BuildError) -> String {
+    match error {
+        BuildError::Io { path, error } => format!(
+            "failed to acquire lockfile output lock `{}` for `{}`: {error}",
+            normalize_path(&path),
+            normalize_path(lockfile_path)
+        ),
+        BuildError::InvalidInput(message) => message,
+        BuildError::Diagnostics { path, .. } => format!(
+            "failed to acquire lockfile output lock while diagnostics were reported for `{}`",
+            normalize_path(&path)
+        ),
+        BuildError::Toolchain { error, .. } => format!("{error}"),
+    }
+}
+
+fn report_project_lock_output_lock_error(
+    command_label: &str,
+    manifest_path: &Path,
+    lockfile_path: &Path,
+    error: BuildError,
+) {
+    eprintln!(
+        "error: {command_label} failed to lock lockfile `{}`: {}",
+        normalize_path(lockfile_path),
+        project_lock_output_lock_error_message(lockfile_path, error)
+    );
+    eprintln!(
+        "note: failing package manifest: {}",
+        normalize_path(manifest_path)
+    );
+    eprintln!(
+        "hint: rerun `ql project lock {}` after the lockfile is no longer in use",
+        normalize_path(manifest_path)
+    );
 }
 
 fn report_project_lock_load_error(
