@@ -7,10 +7,11 @@ use std::process::Stdio;
 use ql_driver::{ToolchainOptions, discover_toolchain};
 use serde_json::Value as JsonValue;
 use support::{
-    TempDir, assert_no_build_lock_directories, executable_output_path, expect_empty_stderr,
-    expect_empty_stdout, expect_exit_code, expect_file_exists, expect_silent_output,
-    expect_stderr_contains, expect_stdout_contains_all, expect_success, ql_command,
-    read_normalized_file, run_command_capture, static_library_output_path, workspace_root,
+    TempDir, assert_no_atomic_write_temp_files, assert_no_build_lock_directories,
+    executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
+    expect_file_exists, expect_silent_output, expect_stderr_contains, expect_stdout_contains_all,
+    expect_success, ql_command, read_normalized_file, run_command_capture,
+    static_library_output_path, workspace_root,
 };
 
 fn toolchain_available(context: &str) -> bool {
@@ -61,10 +62,12 @@ fn assert_stdlib_check_json(
     assert_eq!(check_json["written_interfaces"], serde_json::json!([]));
     assert_eq!(
         check_json["checked_files"],
-        serde_json::json!(checked_files
-            .iter()
-            .map(|path| json_path(path))
-            .collect::<Vec<_>>()),
+        serde_json::json!(
+            checked_files
+                .iter()
+                .map(|path| json_path(path))
+                .collect::<Vec<_>>()
+        ),
         "{context} should report the initialized package sources"
     );
     assert_eq!(
@@ -5721,6 +5724,7 @@ fn project_member_updates_serialize_concurrent_workspace_manifest_writes() {
         "concurrent add should create the util package scaffold"
     );
     assert_no_build_lock_directories("project-member-concurrent-writes", &project_root);
+    assert_no_atomic_write_temp_files("project-member-concurrent-writes", &project_root);
 }
 
 #[test]
@@ -6473,6 +6477,7 @@ fn project_dependency_updates_serialize_concurrent_manifest_writes() {
         "concurrent dependency edit should keep added `util`: {actual}"
     );
     assert_no_build_lock_directories("project-dependency-concurrent-writes", &project_root);
+    assert_no_atomic_write_temp_files("project-dependency-concurrent-writes", &project_root);
 }
 
 #[test]

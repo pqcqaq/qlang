@@ -5,9 +5,10 @@ use std::process::Stdio;
 
 use serde_json::Value as JsonValue;
 use support::{
-    TempDir, assert_no_build_lock_directories, expect_empty_stderr, expect_empty_stdout,
-    expect_exit_code, expect_snapshot_matches, expect_stderr_contains, expect_stdout_contains_all,
-    expect_success, ql_command, read_normalized_file, run_command_capture, workspace_root,
+    TempDir, assert_no_atomic_write_temp_files, assert_no_build_lock_directories,
+    expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_snapshot_matches,
+    expect_stderr_contains, expect_stdout_contains_all, expect_success, ql_command,
+    read_normalized_file, run_command_capture, workspace_root,
 };
 
 fn normalize_output_text(text: &str) -> String {
@@ -565,6 +566,7 @@ fn project_lock_json_allows_concurrent_workspace_lockfile_read_write() {
     serde_json::from_str::<JsonValue>(&actual)
         .expect("concurrently written workspace lockfile should remain valid json");
     assert_no_build_lock_directories("project-lock-json-concurrent-workspace", &project_root);
+    assert_no_atomic_write_temp_files("project-lock-json-concurrent-workspace", &project_root);
 }
 
 #[test]

@@ -1,9 +1,8 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use ql_driver::{BuildError, BuildOutputLock, acquire_build_output_locks};
 
-use super::normalize_path;
+use super::{atomic_write::write_file_atomically, normalize_path};
 
 pub(crate) fn acquire_locked_project_manifest_edits(
     manifest_paths: impl IntoIterator<Item = PathBuf>,
@@ -15,7 +14,7 @@ pub(crate) fn write_locked_project_manifest(
     manifest_path: &Path,
     contents: String,
 ) -> Result<(), std::io::Error> {
-    fs::write(manifest_path, contents)
+    write_file_atomically(manifest_path, contents)
 }
 
 fn project_manifest_output_lock_error_message(error: BuildError) -> String {

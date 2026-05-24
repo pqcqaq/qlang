@@ -1,10 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::fs::{self, OpenOptions};
-use std::io::{self, ErrorKind, Write};
+use std::fs;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitCode};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_analysis::{
     PackageAnalysisError, analyze_package, analyze_source as analyze_semantics,
@@ -34,6 +33,7 @@ use ql_runtime::{collect_runtime_hook_signatures, collect_runtime_hooks};
 use ql_span::locate;
 use serde_json::{Value as JsonValue, json};
 
+mod atomic_write;
 mod dependency_generic_bridge;
 mod project_dependencies;
 mod project_dependency_edit;
@@ -76,15 +76,6 @@ use project_workspace::{
 
 const CLI_NAME: &str = "ql";
 const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
-const FORMATTER_TEMP_FILE_ATTEMPTS: u32 = 16;
-
-#[cfg(windows)]
-#[link(name = "Kernel32")]
-unsafe extern "system" {
-    #[link_name = "MoveFileExW"]
-    fn move_file_ex_w(existing_file_name: *const u16, new_file_name: *const u16, flags: u32)
-    -> i32;
-}
 
 fn main() -> ExitCode {
     match run() {
@@ -2190,7 +2181,7 @@ fn format_path(path: &Path, write: bool) -> Result<(), u8> {
     match format_source(&source) {
         Ok(formatted) => {
             if write {
-                write_formatter_output_atomically(path, &formatted).map_err(|error| {
+                atomic_write::write_file_atomically(path, &formatted).map_err(|error| {
                     eprintln!(
                         "error: failed to write formatted source `{}` atomically: {error}",
                         normalize_path(path)
@@ -2221,105 +2212,6 @@ fn format_source_lock_error_message(error: BuildError) -> String {
             normalize_path(&path)
         ),
         BuildError::Toolchain { error, .. } => format!("{error}"),
-    }
-}
-
-fn write_formatter_output_atomically(path: &Path, contents: &str) -> std::io::Result<()> {
-    let temp_path = create_formatter_temp_file(path, contents)?;
-    match replace_formatter_output(path, &temp_path) {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            let _ = fs::remove_file(&temp_path);
-            Err(error)
-        }
-    }
-}
-
-fn create_formatter_temp_file(path: &Path, contents: &str) -> std::io::Result<PathBuf> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or("source.ql");
-
-    for attempt in 0..FORMATTER_TEMP_FILE_ATTEMPTS {
-        let temp_path = parent.join(format!(
-            ".{file_name}.{}.{}.ql-fmt.tmp",
-            std::process::id(),
-            unique_timestamp_nanos() + u128::from(attempt)
-        ));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp_path)
-        {
-            Ok(mut file) => {
-                if let Err(error) = file.write_all(contents.as_bytes()) {
-                    let _ = fs::remove_file(&temp_path);
-                    return Err(error);
-                }
-                if let Err(error) = file.sync_all() {
-                    let _ = fs::remove_file(&temp_path);
-                    return Err(error);
-                }
-                return Ok(temp_path);
-            }
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error),
-        }
-    }
-
-    Err(io::Error::new(
-        ErrorKind::AlreadyExists,
-        format!(
-            "failed to reserve a unique temporary formatter output next to `{}`",
-            normalize_path(path)
-        ),
-    ))
-}
-
-fn unique_timestamp_nanos() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock should be after unix epoch")
-        .as_nanos()
-}
-
-#[cfg(not(windows))]
-fn replace_formatter_output(path: &Path, temp_path: &Path) -> std::io::Result<()> {
-    fs::rename(temp_path, path)
-}
-
-#[cfg(windows)]
-fn replace_formatter_output(path: &Path, temp_path: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-
-    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
-    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
-
-    let old = temp_path
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let new = path
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-
-    let result = unsafe {
-        move_file_ex_w(
-            old.as_ptr(),
-            new.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
     }
 }
 
@@ -13192,7 +13084,7 @@ fn emit_package_interface_path_impl(
             message,
         }
     })?;
-    fs::write(&output_path, rendered).map_err(|error| {
+    atomic_write::write_file_atomically(&output_path, &rendered).map_err(|error| {
         if report_failure {
             eprintln!(
                 "error: failed to write interface `{}`: {error}",

@@ -3,8 +3,9 @@ mod support;
 use std::process::Stdio;
 
 use support::{
-    TempDir, assert_no_build_lock_directories, expect_empty_stderr, expect_empty_stdout,
-    expect_success, ql_command, read_normalized_file, run_command_capture, workspace_root,
+    TempDir, assert_no_atomic_write_temp_files, assert_no_build_lock_directories,
+    expect_empty_stderr, expect_empty_stdout, expect_success, ql_command, read_normalized_file,
+    run_command_capture, workspace_root,
 };
 
 #[test]
@@ -75,4 +76,5 @@ return value
     let actual = read_normalized_file(&source_path, "concurrently formatted source");
     assert_eq!(actual, expected);
     assert_no_build_lock_directories("fmt-write-concurrent", temp.path());
+    assert_no_atomic_write_temp_files("fmt-write-concurrent", temp.path());
 }

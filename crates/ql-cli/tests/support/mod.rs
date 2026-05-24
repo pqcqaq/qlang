@@ -159,6 +159,19 @@ pub fn expect_file_exists(
 }
 
 pub fn assert_no_build_lock_directories(case_name: &str, root: &Path) {
+    assert_no_path_suffix(
+        case_name,
+        root,
+        ".ql-build.lock",
+        "build output lock directory",
+    );
+}
+
+pub fn assert_no_atomic_write_temp_files(case_name: &str, root: &Path) {
+    assert_no_path_suffix(case_name, root, ".ql.tmp", "atomic write temp file");
+}
+
+fn assert_no_path_suffix(case_name: &str, root: &Path, suffix: &str, subject: &str) {
     let mut pending = vec![root.to_path_buf()];
     while let Some(path) = pending.pop() {
         let Ok(entries) = fs::read_dir(&path) else {
@@ -171,8 +184,8 @@ pub fn assert_no_build_lock_directories(case_name: &str, root: &Path) {
                 .and_then(|name| name.to_str())
                 .unwrap_or("");
             assert!(
-                !file_name.ends_with(".ql-build.lock"),
-                "[{case_name}] build output lock directory leaked at `{}`",
+                !file_name.ends_with(suffix),
+                "[{case_name}] {subject} leaked at `{}`",
                 path.display()
             );
             if path.is_dir() {

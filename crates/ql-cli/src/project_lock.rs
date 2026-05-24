@@ -6,7 +6,8 @@ use ql_project::{load_project_manifest, project_lockfile_path, render_project_lo
 use serde_json::{Value as JsonValue, json};
 
 use super::{
-    normalize_line_endings, normalize_path, package_check_manifest_path_from_project_error,
+    atomic_write::write_file_atomically, normalize_line_endings, normalize_path,
+    package_check_manifest_path_from_project_error,
     package_missing_name_manifest_path_from_project_error,
     resolve_project_workspace_member_command_request_root,
 };
@@ -198,7 +199,7 @@ pub(crate) fn project_lock_path(path: &Path, check_only: bool, json: bool) -> Re
             }
         }
 
-        if let Err(error) = fs::write(&lockfile_path, rendered) {
+        if let Err(error) = write_file_atomically(&lockfile_path, &rendered) {
             report.record_failure(
                 "write",
                 format!(
@@ -229,7 +230,7 @@ pub(crate) fn project_lock_path(path: &Path, check_only: bool, json: bool) -> Re
         return check_project_lockfile(&manifest, &lockfile_path, &rendered);
     }
 
-    fs::write(&lockfile_path, rendered).map_err(|error| {
+    write_file_atomically(&lockfile_path, rendered).map_err(|error| {
         eprintln!(
             "error: {command_label} failed to write lockfile `{}`: {error}",
             normalize_path(&lockfile_path)
