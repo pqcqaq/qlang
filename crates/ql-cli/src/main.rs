@@ -41,6 +41,7 @@ mod project_init;
 mod project_lock;
 mod project_manifest_edit;
 mod project_members;
+mod project_query_commands;
 mod project_status;
 mod project_targets;
 mod project_workspace;
@@ -53,18 +54,16 @@ pub(crate) use analysis_commands::{
 };
 use project_dependencies::{project_dependencies_path, project_dependents_path};
 use project_dependency_edit::{project_add_dependency_path, project_remove_dependency_path};
-use project_graph::project_graph_path;
 use project_lock::project_lock_path;
 use project_members::{
     project_add_binary_target_path, project_add_existing_path, project_add_path,
     project_remove_path,
 };
-use project_status::project_status_path;
 use project_targets::{
     ProjectCheckCommandScope, ProjectCommandPathError, ProjectCommandScope, ProjectTargetSelector,
     ResolvedProjectCommandPath, display_relative_to_root, is_runnable_project_target,
     list_build_targets_path, list_runnable_targets_path, parse_project_target_selector_option,
-    project_request_root, project_target_display_path, project_targets_path,
+    project_request_root, project_target_display_path,
     report_project_source_path_rejects_target_selector,
     report_project_target_selector_requires_project_context, resolve_project_check_command_scope,
     resolve_project_command_path, resolve_project_command_scope,
@@ -121,102 +120,8 @@ fn run() -> Result<(), u8> {
             };
 
             match subcommand.as_str() {
-                "status" => {
-                    let remaining = args.collect::<Vec<_>>();
-                    let mut path = None;
-                    let mut package_name = None;
-                    let mut json = false;
-                    let mut index = 0;
-
-                    while index < remaining.len() {
-                        match remaining[index].as_str() {
-                            "--package" => {
-                                index += 1;
-                                let Some(value) = remaining.get(index) else {
-                                    eprintln!(
-                                        "error: `ql project status --package` expects a package name"
-                                    );
-                                    return Err(1);
-                                };
-                                if package_name.is_some() {
-                                    eprintln!(
-                                        "error: `ql project status` received `--package` more than once"
-                                    );
-                                    return Err(1);
-                                }
-                                package_name = Some(value.clone());
-                            }
-                            "--json" => {
-                                json = true;
-                            }
-                            other if other.starts_with('-') => {
-                                eprintln!("error: unknown `ql project status` option `{other}`");
-                                return Err(1);
-                            }
-                            other => {
-                                if path.is_some() {
-                                    eprintln!(
-                                        "error: unknown `ql project status` argument `{other}`"
-                                    );
-                                    return Err(1);
-                                }
-                                path = Some(PathBuf::from(other));
-                            }
-                        }
-
-                        index += 1;
-                    }
-
-                    let path = path
-                        .or_else(|| env::current_dir().ok())
-                        .unwrap_or_else(|| PathBuf::from("."));
-                    project_status_path(&path, package_name.as_deref(), json)
-                }
-                "targets" => {
-                    let remaining = args.collect::<Vec<_>>();
-                    let mut path = None;
-                    let mut selector = ProjectTargetSelector::default();
-                    let mut json = false;
-                    let mut index = 0;
-
-                    while index < remaining.len() {
-                        if parse_project_target_selector_option(
-                            "`ql project targets`",
-                            &remaining,
-                            &mut index,
-                            &mut selector,
-                        )? {
-                            index += 1;
-                            continue;
-                        }
-
-                        match remaining[index].as_str() {
-                            "--json" => {
-                                json = true;
-                            }
-                            other if other.starts_with('-') => {
-                                eprintln!("error: unknown `ql project targets` option `{other}`");
-                                return Err(1);
-                            }
-                            other => {
-                                if path.is_some() {
-                                    eprintln!(
-                                        "error: unknown `ql project targets` argument `{other}`"
-                                    );
-                                    return Err(1);
-                                }
-                                path = Some(PathBuf::from(other));
-                            }
-                        }
-
-                        index += 1;
-                    }
-
-                    let path = path
-                        .or_else(|| env::current_dir().ok())
-                        .unwrap_or_else(|| PathBuf::from("."));
-                    project_targets_path(&path, &selector, json)
-                }
+                "status" => project_query_commands::project_status_cli_path(&mut args),
+                "targets" => project_query_commands::project_targets_cli_path(&mut args),
                 "target" => {
                     let Some(target_subcommand) = args.next() else {
                         eprintln!("error: `ql project target` expects a subcommand");
@@ -304,57 +209,7 @@ fn run() -> Result<(), u8> {
                         }
                     }
                 }
-                "graph" => {
-                    let remaining = args.collect::<Vec<_>>();
-                    let mut path = None;
-                    let mut package_name = None;
-                    let mut json = false;
-                    let mut index = 0;
-
-                    while index < remaining.len() {
-                        match remaining[index].as_str() {
-                            "--package" => {
-                                index += 1;
-                                let Some(value) = remaining.get(index) else {
-                                    eprintln!(
-                                        "error: `ql project graph --package` expects a package name"
-                                    );
-                                    return Err(1);
-                                };
-                                if package_name.is_some() {
-                                    eprintln!(
-                                        "error: `ql project graph` received `--package` more than once"
-                                    );
-                                    return Err(1);
-                                }
-                                package_name = Some(value.clone());
-                            }
-                            "--json" => {
-                                json = true;
-                            }
-                            other if other.starts_with('-') => {
-                                eprintln!("error: unknown `ql project graph` option `{other}`");
-                                return Err(1);
-                            }
-                            other => {
-                                if path.is_some() {
-                                    eprintln!(
-                                        "error: unknown `ql project graph` argument `{other}`"
-                                    );
-                                    return Err(1);
-                                }
-                                path = Some(PathBuf::from(other));
-                            }
-                        }
-
-                        index += 1;
-                    }
-
-                    let path = path
-                        .or_else(|| env::current_dir().ok())
-                        .unwrap_or_else(|| PathBuf::from("."));
-                    project_graph_path(&path, package_name.as_deref(), json)
-                }
+                "graph" => project_query_commands::project_graph_cli_path(&mut args),
                 "dependents" => {
                     let remaining = args.collect::<Vec<_>>();
                     let mut path = None;
