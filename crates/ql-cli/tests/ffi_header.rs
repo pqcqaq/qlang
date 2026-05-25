@@ -190,6 +190,75 @@ extern "c" pub fn q_add(left: Int, right: Int) -> Int {
 }
 
 #[test]
+fn ffi_header_serializes_concurrent_default_output_writes() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-ffi-header-concurrent-default-write");
+    let source = temp.write(
+        "math_default.ql",
+        r#"
+extern "c" pub fn q_mul(left: Int, right: Int) -> Int {
+    return left * right
+}
+"#,
+    );
+    let header = temp.path().join("target/ql/ffi/math_default.h");
+    let working_dir = temp.path().to_path_buf();
+
+    let handles = (0..4)
+        .map(|index| {
+            let workspace_root = workspace_root.clone();
+            let source = source.clone();
+            let working_dir = working_dir.clone();
+            thread::spawn(move || {
+                let mut command = ql_command(&workspace_root);
+                command.current_dir(&working_dir);
+                command.args(["ffi", "header"]).arg(&source);
+                run_command_capture(
+                    &mut command,
+                    format!("concurrent default-output ql ffi header #{index}"),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for (index, handle) in handles.into_iter().enumerate() {
+        let output = handle.join().unwrap_or_else(|_| {
+            panic!("wait for concurrent default-output ql ffi header #{index}")
+        });
+        let (stdout, stderr) = expect_success(
+            "ffi-header-concurrent-default-write",
+            &format!("concurrent default-output ql ffi header #{index}"),
+            &output,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+        expect_stdout_contains_all(
+            "ffi-header-concurrent-default-write",
+            &stdout,
+            &["wrote c-header:", "math_default.h"],
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+        expect_empty_stderr(
+            "ffi-header-concurrent-default-write",
+            &format!("concurrent default-output ql ffi header #{index}"),
+            &stderr,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    expect_file_exists(
+        "ffi-header-concurrent-default-write",
+        &header,
+        "default-output header artifact",
+        "concurrent default-output header generation",
+    )
+    .expect("concurrent default-output header generation should produce a header artifact");
+    let rendered = read_normalized_file(&header, "concurrently generated default ffi header");
+    assert!(rendered.contains("int64_t q_mul(int64_t left, int64_t right);"));
+    assert_no_build_lock_directories("ffi-header-concurrent-default-write", temp.path());
+    assert_no_atomic_write_temp_files("ffi-header-concurrent-default-write", temp.path());
+}
+
+#[test]
 fn ffi_header_preserves_deferred_multi_segment_type_paths_in_unsupported_diagnostics() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-ffi-header-deferred-type");
