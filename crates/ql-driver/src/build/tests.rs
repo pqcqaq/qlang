@@ -4520,6 +4520,44 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_preserves_existing_object_on_toolchain_failure() {
+        let dir = TestDir::new("ql-driver-object-fail-preserve-existing");
+        let source = dir.write(
+            "sample.ql",
+            r#"
+fn main() -> Int {
+    return 1
+}
+"#,
+        );
+        let output_relative = if cfg!(windows) {
+            "artifacts/stale.obj"
+        } else {
+            "artifacts/stale.o"
+        };
+        let output = dir.path().join(output_relative);
+        dir.write(output_relative, "old-object");
+        let options = BuildOptions {
+            emit: BuildEmit::Object,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_failure_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let error = build_file(&source, &options).expect_err("object build should fail");
+
+        assert!(matches!(&error, BuildError::Toolchain { .. }));
+        assert_eq!(
+            fs::read_to_string(&output).expect("read preserved object artifact"),
+            "old-object"
+        );
+    }
+
+    #[test]
     fn build_file_preserves_ir_and_object_on_link_failure() {
         let dir = TestDir::new("ql-driver-link-fail");
         let source = dir.write(
@@ -4569,6 +4607,44 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_preserves_existing_executable_on_link_failure() {
+        let dir = TestDir::new("ql-driver-link-fail-preserve-existing");
+        let source = dir.write(
+            "sample.ql",
+            r#"
+fn main() -> Int {
+    return 1
+}
+"#,
+        );
+        let output_relative = if cfg!(windows) {
+            "artifacts/stale.exe"
+        } else {
+            "artifacts/stale"
+        };
+        let output = dir.path().join(output_relative);
+        dir.write(output_relative, "old-executable");
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_link_failure_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let error = build_file(&source, &options).expect_err("executable build should fail");
+
+        assert!(matches!(&error, BuildError::Toolchain { .. }));
+        assert_eq!(
+            fs::read_to_string(&output).expect("read preserved executable artifact"),
+            "old-executable"
+        );
+    }
+
+    #[test]
     fn build_file_preserves_ir_and_object_on_archive_failure() {
         let dir = TestDir::new("ql-driver-archive-fail");
         let source = dir.write(
@@ -4614,6 +4690,84 @@ fn add_one(value: Int) -> Int {
                 && path.extension().and_then(|ext| ext.to_str())
                     == Some(if cfg!(windows) { "obj" } else { "o" })
         }));
+    }
+
+    #[test]
+    fn build_file_preserves_existing_static_library_on_archive_failure() {
+        let dir = TestDir::new("ql-driver-archive-fail-preserve-existing");
+        let source = dir.write(
+            "math.ql",
+            r#"
+fn add_one(value: Int) -> Int {
+    return value + 1
+}
+"#,
+        );
+        let output_relative = if cfg!(windows) {
+            "artifacts/stale.lib"
+        } else {
+            "artifacts/libstale.a"
+        };
+        let output = dir.path().join(output_relative);
+        dir.write(output_relative, "old-staticlib");
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_archive_failure_invocation(&dir)),
+            },
+        };
+
+        let error = build_file(&source, &options).expect_err("static library build should fail");
+
+        assert!(matches!(&error, BuildError::Toolchain { .. }));
+        assert_eq!(
+            fs::read_to_string(&output).expect("read preserved static library artifact"),
+            "old-staticlib"
+        );
+    }
+
+    #[test]
+    fn build_file_preserves_existing_dynamic_library_on_link_failure() {
+        let dir = TestDir::new("ql-driver-dylib-link-fail-preserve-existing");
+        let source = dir.write(
+            "ffi_export.ql",
+            r#"
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+        );
+        let output_relative = if cfg!(windows) {
+            "artifacts/stale.dll"
+        } else if cfg!(target_os = "macos") {
+            "artifacts/libstale.dylib"
+        } else {
+            "artifacts/libstale.so"
+        };
+        let output = dir.path().join(output_relative);
+        dir.write(output_relative, "old-dylib");
+        let options = BuildOptions {
+            emit: BuildEmit::DynamicLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_link_failure_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let error = build_file(&source, &options).expect_err("dynamic library build should fail");
+
+        assert!(matches!(&error, BuildError::Toolchain { .. }));
+        assert_eq!(
+            fs::read_to_string(&output).expect("read preserved dynamic library artifact"),
+            "old-dylib"
+        );
     }
 
     #[test]

@@ -16,7 +16,7 @@ use crate::ffi::{
     exported_c_symbol_names,
 };
 use crate::toolchain::{ToolchainError, ToolchainOptions, discover_toolchain};
-use crate::write_file_atomically;
+use crate::{replace_file_atomically, write_file_atomically};
 
 const BUILD_OUTPUT_LOCK_TIMEOUT: Duration = Duration::from_secs(120);
 const BUILD_OUTPUT_LOCK_RETRY: Duration = Duration::from_millis(25);
@@ -674,6 +674,7 @@ fn build_assembly_file(
     toolchain_options: &ToolchainOptions,
 ) -> Result<(), BuildError> {
     let intermediate_ir = intermediate_ir_path(output_path);
+    let temp_output_path = final_artifact_temp_path(output_path);
     fs::write(&intermediate_ir, ir).map_err(|error| BuildError::Io {
         path: intermediate_ir.clone(),
         error,
@@ -682,11 +683,12 @@ fn build_assembly_file(
     let toolchain = discover_toolchain(toolchain_options)
         .map_err(|error| toolchain_failure(error, vec![intermediate_ir.clone()]))?;
 
-    if let Err(error) = toolchain.compile_llvm_ir_to_assembly(&intermediate_ir, output_path) {
-        let _ = fs::remove_file(output_path);
+    if let Err(error) = toolchain.compile_llvm_ir_to_assembly(&intermediate_ir, &temp_output_path) {
+        let _ = fs::remove_file(&temp_output_path);
         return Err(toolchain_failure(error, vec![intermediate_ir]));
     }
 
+    promote_final_artifact(output_path, &temp_output_path, &[intermediate_ir.clone()])?;
     cleanup_artifacts(&[intermediate_ir]);
     Ok(())
 }
@@ -697,6 +699,7 @@ fn build_object_file(
     toolchain_options: &ToolchainOptions,
 ) -> Result<(), BuildError> {
     let intermediate_ir = intermediate_ir_path(output_path);
+    let temp_output_path = final_artifact_temp_path(output_path);
     fs::write(&intermediate_ir, ir).map_err(|error| BuildError::Io {
         path: intermediate_ir.clone(),
         error,
@@ -705,11 +708,12 @@ fn build_object_file(
     let toolchain = discover_toolchain(toolchain_options)
         .map_err(|error| toolchain_failure(error, vec![intermediate_ir.clone()]))?;
 
-    if let Err(error) = toolchain.compile_llvm_ir_to_object(&intermediate_ir, output_path) {
-        let _ = fs::remove_file(output_path);
+    if let Err(error) = toolchain.compile_llvm_ir_to_object(&intermediate_ir, &temp_output_path) {
+        let _ = fs::remove_file(&temp_output_path);
         return Err(toolchain_failure(error, vec![intermediate_ir]));
     }
 
+    promote_final_artifact(output_path, &temp_output_path, &[intermediate_ir.clone()])?;
     cleanup_artifacts(&[intermediate_ir]);
     Ok(())
 }
@@ -721,6 +725,7 @@ fn build_executable_file(
     toolchain_options: &ToolchainOptions,
 ) -> Result<(), BuildError> {
     let intermediate_ir = intermediate_ir_path(output_path);
+    let temp_output_path = final_artifact_temp_path(output_path);
     fs::write(&intermediate_ir, ir).map_err(|error| BuildError::Io {
         path: intermediate_ir.clone(),
         error,
@@ -733,22 +738,27 @@ fn build_executable_file(
     if let Err(error) = toolchain.compile_llvm_ir_to_object(&intermediate_ir, &intermediate_object)
     {
         let _ = fs::remove_file(&intermediate_object);
-        let _ = fs::remove_file(output_path);
+        let _ = fs::remove_file(&temp_output_path);
         return Err(toolchain_failure(error, vec![intermediate_ir]));
     }
 
     if let Err(error) = toolchain.link_object_to_executable_with_inputs(
         &intermediate_object,
-        output_path,
+        &temp_output_path,
         additional_link_inputs,
     ) {
-        let _ = fs::remove_file(output_path);
+        let _ = fs::remove_file(&temp_output_path);
         return Err(toolchain_failure(
             error,
             vec![intermediate_ir, intermediate_object],
         ));
     }
 
+    promote_final_artifact(
+        output_path,
+        &temp_output_path,
+        &[intermediate_ir.clone(), intermediate_object.clone()],
+    )?;
     cleanup_artifacts(&[intermediate_ir, intermediate_object]);
     Ok(())
 }
@@ -759,6 +769,7 @@ fn build_static_library_file(
     toolchain_options: &ToolchainOptions,
 ) -> Result<(), BuildError> {
     let intermediate_ir = intermediate_ir_path(output_path);
+    let temp_output_path = final_artifact_temp_path(output_path);
     fs::write(&intermediate_ir, ir).map_err(|error| BuildError::Io {
         path: intermediate_ir.clone(),
         error,
@@ -774,32 +785,25 @@ fn build_static_library_file(
     if let Err(error) = toolchain.compile_llvm_ir_to_object(&intermediate_ir, &intermediate_object)
     {
         let _ = fs::remove_file(&intermediate_object);
-        let _ = fs::remove_file(output_path);
+        let _ = fs::remove_file(&temp_output_path);
         return Err(toolchain_failure(error, vec![intermediate_ir]));
     }
 
-    match fs::remove_file(output_path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => {
-            let _ = fs::remove_file(&intermediate_object);
-            return Err(BuildError::Io {
-                path: output_path.to_path_buf(),
-                error,
-            });
-        }
-    }
-
     if let Err(error) =
-        toolchain.archive_object_to_static_library(&intermediate_object, output_path)
+        toolchain.archive_object_to_static_library(&intermediate_object, &temp_output_path)
     {
-        let _ = fs::remove_file(output_path);
+        let _ = fs::remove_file(&temp_output_path);
         return Err(toolchain_failure(
             error,
             vec![intermediate_ir, intermediate_object],
         ));
     }
 
+    promote_final_artifact(
+        output_path,
+        &temp_output_path,
+        &[intermediate_ir.clone(), intermediate_object.clone()],
+    )?;
     cleanup_artifacts(&[intermediate_ir, intermediate_object]);
     Ok(())
 }
@@ -812,6 +816,7 @@ fn build_dynamic_library_file(
     toolchain_options: &ToolchainOptions,
 ) -> Result<(), BuildError> {
     let intermediate_ir = intermediate_ir_path(output_path);
+    let temp_output_path = final_artifact_temp_path(output_path);
     fs::write(&intermediate_ir, ir).map_err(|error| BuildError::Io {
         path: intermediate_ir.clone(),
         error,
@@ -824,25 +829,44 @@ fn build_dynamic_library_file(
     if let Err(error) = toolchain.compile_llvm_ir_to_object(&intermediate_ir, &intermediate_object)
     {
         let _ = fs::remove_file(&intermediate_object);
-        let _ = fs::remove_file(output_path);
+        let _ = fs::remove_file(&temp_output_path);
         return Err(toolchain_failure(error, vec![intermediate_ir]));
     }
 
     if let Err(error) = toolchain.link_object_to_dynamic_library_with_inputs(
         &intermediate_object,
-        output_path,
+        &temp_output_path,
         exported_symbols,
         additional_link_inputs,
     ) {
-        let _ = fs::remove_file(output_path);
+        let _ = fs::remove_file(&temp_output_path);
         return Err(toolchain_failure(
             error,
             vec![intermediate_ir, intermediate_object],
         ));
     }
 
+    promote_final_artifact(
+        output_path,
+        &temp_output_path,
+        &[intermediate_ir.clone(), intermediate_object.clone()],
+    )?;
     cleanup_artifacts(&[intermediate_ir, intermediate_object]);
     Ok(())
+}
+
+fn promote_final_artifact(
+    output_path: &Path,
+    temp_output_path: &Path,
+    cleanup_on_error: &[PathBuf],
+) -> Result<(), BuildError> {
+    replace_file_atomically(output_path, temp_output_path).map_err(|error| {
+        cleanup_artifacts(cleanup_on_error);
+        BuildError::Io {
+            path: output_path.to_path_buf(),
+            error,
+        }
+    })
 }
 
 fn intermediate_ir_path(output_path: &Path) -> PathBuf {
@@ -851,6 +875,15 @@ fn intermediate_ir_path(output_path: &Path) -> PathBuf {
 
 fn intermediate_object_path(output_path: &Path) -> PathBuf {
     intermediate_artifact_path(output_path, object_extension())
+}
+
+fn final_artifact_temp_path(output_path: &Path) -> PathBuf {
+    let extension = output_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .filter(|extension| !extension.is_empty())
+        .unwrap_or("artifact");
+    intermediate_artifact_path(output_path, extension)
 }
 
 fn intermediate_artifact_path(output_path: &Path, extension: &str) -> PathBuf {

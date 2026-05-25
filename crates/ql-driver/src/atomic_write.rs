@@ -7,10 +7,23 @@ const TEMP_FILE_ATTEMPTS: u32 = 16;
 
 pub fn write_file_atomically(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
     let temp_path = create_temp_file(path, contents.as_ref())?;
+    replace_file_atomically(path, &temp_path)
+}
+
+pub(crate) fn replace_file_atomically(path: &Path, temp_path: &Path) -> io::Result<()> {
+    if let Err(error) = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(temp_path)
+        .and_then(|file| file.sync_all())
+    {
+        let _ = fs::remove_file(temp_path);
+        return Err(error);
+    }
     match replace_file(path, &temp_path) {
         Ok(()) => Ok(()),
         Err(error) => {
-            let _ = fs::remove_file(&temp_path);
+            let _ = fs::remove_file(temp_path);
             Err(error)
         }
     }
@@ -119,7 +132,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::write_file_atomically;
+    use super::{replace_file_atomically, write_file_atomically};
 
     struct TestDir {
         path: PathBuf,
@@ -165,5 +178,25 @@ mod tests {
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .find(|name| name.ends_with(".ql.tmp"));
         assert_eq!(leaked, None, "atomic write temp file should be removed");
+    }
+
+    #[test]
+    fn atomic_replace_promotes_existing_temp_file_without_leaking_it() {
+        let dir = TestDir::new("ql-driver-atomic-replace");
+        let path = dir.path().join("artifact.bin");
+        let temp_path = dir.path().join("artifact.tmp");
+        fs::write(&path, "old").expect("write initial file");
+        fs::write(&temp_path, "new").expect("write temp file");
+
+        replace_file_atomically(&path, &temp_path).expect("replace file atomically");
+
+        assert_eq!(
+            fs::read_to_string(&path).expect("read replaced file"),
+            "new"
+        );
+        assert!(
+            !temp_path.exists(),
+            "promoted temp artifact should be removed"
+        );
     }
 }

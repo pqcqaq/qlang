@@ -3,6 +3,7 @@ mod build;
 mod ffi;
 mod toolchain;
 
+pub(crate) use atomic_write::replace_file_atomically;
 pub use atomic_write::write_file_atomically;
 pub use build::{
     BuildArtifact, BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildOutputLock,
