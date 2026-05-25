@@ -5,10 +5,7 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use ql_analysis::{
-    PackageAnalysisError, analyze_package, analyze_source as analyze_semantics,
-    parse_errors_to_diagnostics,
-};
+use ql_analysis::{PackageAnalysisError, analyze_package, analyze_source as analyze_semantics};
 use ql_ast::{
     CallArg, Expr, ExprKind, FunctionDecl, GlobalDecl, ItemKind, Module, Param, ReceiverKind,
     Visibility,
@@ -19,7 +16,6 @@ use ql_driver::{
     CHeaderSurface, ToolchainError, acquire_build_output_locks, build_source_with_link_inputs,
     default_output_path, write_file_atomically,
 };
-use ql_fmt::format_source;
 use ql_parser::parse_source;
 use ql_project::{
     BuildTarget, BuildTargetKind, InterfaceArtifactStaleReason, InterfaceArtifactStatus,
@@ -35,6 +31,7 @@ use serde_json::{Value as JsonValue, json};
 mod analysis_commands;
 mod dependency_generic_bridge;
 mod ffi_command;
+mod fmt_command;
 mod project_dependencies;
 mod project_dependency_edit;
 mod project_graph;
@@ -157,24 +154,7 @@ fn run() -> Result<(), u8> {
                 package_name.as_deref(),
             )
         }
-        "fmt" => {
-            let mut write = false;
-            let mut path = None;
-            for arg in args {
-                if arg == "--write" {
-                    write = true;
-                } else {
-                    path = Some(arg);
-                }
-            }
-
-            let Some(path) = path else {
-                eprintln!("error: `ql fmt` expects a file path");
-                return Err(1);
-            };
-
-            format_path(Path::new(&path), write)
-        }
+        "fmt" => fmt_command::fmt_path(args),
         "mir" => analysis_commands::mir_path(&mut args),
         "ownership" => analysis_commands::ownership_path(&mut args),
         "runtime" => analysis_commands::runtime_path(&mut args),
@@ -2075,65 +2055,6 @@ fn report_package_check_reference_failure(manifest_path: &Path, sync_interfaces:
     eprintln!(
         "hint: rerun `{rerun_command}` after fixing the referenced package or reference manifest"
     );
-}
-
-fn format_path(path: &Path, write: bool) -> Result<(), u8> {
-    let _source_lock = if write {
-        Some(
-            acquire_build_output_locks(vec![path.to_path_buf()])
-                .map_err(format_source_lock_error_message)
-                .map_err(|message| {
-                    eprintln!(
-                        "error: `ql fmt --write` failed to lock source `{}`: {message}",
-                        normalize_path(path)
-                    );
-                    1
-                })?,
-        )
-    } else {
-        None
-    };
-
-    let source = fs::read_to_string(path).map_err(|error| {
-        eprintln!("error: failed to read `{}`: {error}", path.display());
-        1
-    })?;
-
-    match format_source(&source) {
-        Ok(formatted) => {
-            if write {
-                write_file_atomically(path, &formatted).map_err(|error| {
-                    eprintln!(
-                        "error: failed to write formatted source `{}` atomically: {error}",
-                        normalize_path(path)
-                    );
-                    1
-                })?;
-            } else {
-                print!("{formatted}");
-            }
-            Ok(())
-        }
-        Err(errors) => {
-            print_diagnostics(path, &source, &parse_errors_to_diagnostics(errors));
-            Err(1)
-        }
-    }
-}
-
-fn format_source_lock_error_message(error: BuildError) -> String {
-    match error {
-        BuildError::Io { path, error } => format!(
-            "failed to acquire source file lock `{}`: {error}",
-            normalize_path(&path)
-        ),
-        BuildError::InvalidInput(message) => message,
-        BuildError::Diagnostics { path, .. } => format!(
-            "failed to acquire source file lock while diagnostics were reported for `{}`",
-            normalize_path(&path)
-        ),
-        BuildError::Toolchain { error, .. } => format!("{error}"),
-    }
 }
 
 fn build_path(

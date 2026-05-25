@@ -4,8 +4,8 @@ use std::process::Stdio;
 
 use support::{
     TempDir, assert_no_atomic_write_temp_files, assert_no_build_lock_directories,
-    expect_empty_stderr, expect_empty_stdout, expect_success, ql_command, read_normalized_file,
-    run_command_capture, workspace_root,
+    expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_stderr_contains,
+    expect_success, ql_command, read_normalized_file, run_command_capture, workspace_root,
 };
 
 #[test]
@@ -77,4 +77,76 @@ return value
     assert_eq!(actual, expected);
     assert_no_build_lock_directories("fmt-write-concurrent", temp.path());
     assert_no_atomic_write_temp_files("fmt-write-concurrent", temp.path());
+}
+
+#[test]
+fn fmt_rejects_unexpected_arguments_and_options() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-fmt-args");
+    let source_path = temp.write(
+        "src/main.ql",
+        r#"
+fn main()->Int{
+return 0
+}
+"#,
+    );
+
+    let mut extra_arg_command = ql_command(&workspace_root);
+    extra_arg_command
+        .arg("fmt")
+        .arg(&source_path)
+        .arg("unexpected.ql");
+    let extra_arg_output = run_command_capture(
+        &mut extra_arg_command,
+        "`ql fmt` with unexpected extra argument",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "fmt-argument-validation",
+        "`ql fmt` with unexpected extra argument",
+        &extra_arg_output,
+        1,
+    )
+    .expect("extra argument should fail");
+    expect_empty_stdout(
+        "fmt-argument-validation",
+        "`ql fmt` with unexpected extra argument",
+        &stdout,
+    )
+    .expect("extra argument failure should not print stdout");
+    expect_stderr_contains(
+        "fmt-argument-validation",
+        "`ql fmt` with unexpected extra argument",
+        &stderr,
+        "error: unknown `ql fmt` argument `unexpected.ql`",
+    )
+    .expect("extra argument failure should identify the rejected argument");
+
+    let mut unknown_option_command = ql_command(&workspace_root);
+    unknown_option_command
+        .arg("fmt")
+        .arg(&source_path)
+        .arg("--unknown");
+    let unknown_option_output =
+        run_command_capture(&mut unknown_option_command, "`ql fmt` with unknown option");
+    let (stdout, stderr) = expect_exit_code(
+        "fmt-argument-validation",
+        "`ql fmt` with unknown option",
+        &unknown_option_output,
+        1,
+    )
+    .expect("unknown option should fail");
+    expect_empty_stdout(
+        "fmt-argument-validation",
+        "`ql fmt` with unknown option",
+        &stdout,
+    )
+    .expect("unknown option failure should not print stdout");
+    expect_stderr_contains(
+        "fmt-argument-validation",
+        "`ql fmt` with unknown option",
+        &stderr,
+        "error: unknown `ql fmt` option `--unknown`",
+    )
+    .expect("unknown option failure should identify the rejected option");
 }
