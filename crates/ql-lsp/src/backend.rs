@@ -89,6 +89,7 @@ mod code_lens;
 mod diagnostics;
 mod document_link;
 mod formatting;
+mod request_context;
 mod semantic_tokens;
 mod workspace_symbols;
 
@@ -97,6 +98,9 @@ use code_lens::{code_lenses_for_analysis, code_lenses_for_workspace_package_anal
 use diagnostics::document_diagnostics;
 use document_link::document_links_for_package_imports;
 use formatting::{document_formatting_edits, on_type_formatting_edits, range_formatting_edits};
+use request_context::{
+    OpenDocuments, WorkspaceRequestContext, file_open_documents, open_document_snapshot,
+};
 use semantic_tokens::{
     semantic_tokens_for_workspace_context, semantic_tokens_for_workspace_context_range,
     semantic_tokens_range_result,
@@ -118,14 +122,6 @@ pub struct Backend {
     documents: DocumentStore,
     workspace_roots: RwLock<Vec<PathBuf>>,
     type_hierarchy_dynamic_registration: RwLock<bool>,
-}
-
-type OpenDocuments = HashMap<PathBuf, (Url, String)>;
-
-struct WorkspaceRequestContext {
-    analysis: Option<Analysis>,
-    package: ql_analysis::PackageAnalysis,
-    open_docs: OpenDocuments,
 }
 
 impl Backend {
@@ -225,17 +221,6 @@ impl Backend {
         let analysis = analyze_source(source).ok();
         Some(self.workspace_request_context_from_parts(package, analysis, open_docs))
     }
-}
-
-fn file_open_documents(documents: Vec<(Url, String)>) -> OpenDocuments {
-    let mut open_docs = HashMap::new();
-    for (uri, source) in documents {
-        let Ok(path) = uri.to_file_path() else {
-            continue;
-        };
-        open_docs.insert(canonicalize_or_clone(&path), (uri, source));
-    }
-    open_docs
 }
 
 fn full_line_spans(source: &str) -> Vec<(Span, &str)> {
@@ -1240,16 +1225,6 @@ fn package_module_matches_dependency_source_path(
     };
     normalized_relative_source_path(relative_path)
         == normalized_dependency_source_path(dependency_source_path)
-}
-
-fn open_document_snapshot(
-    open_docs: &OpenDocuments,
-    path: &Path,
-) -> Option<(Url, String, Analysis)> {
-    let canonical_path = canonicalize_or_clone(path);
-    let (uri, source) = open_docs.get(&canonical_path)?;
-    let analysis = analyze_source(source).ok()?;
-    Some((uri.clone(), source.clone(), analysis))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
