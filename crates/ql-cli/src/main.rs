@@ -44,6 +44,7 @@ mod project_members;
 mod project_status;
 mod project_targets;
 mod project_workspace;
+mod run_command;
 
 #[cfg(test)]
 pub(crate) use analysis_commands::{
@@ -110,97 +111,7 @@ fn run() -> Result<(), u8> {
         "ownership" => analysis_commands::ownership_path(&mut args),
         "runtime" => analysis_commands::runtime_path(&mut args),
         "build" => build_command::build_cli_path(&mut args),
-        "run" => {
-            let remaining = args.collect::<Vec<_>>();
-            let mut path = None;
-            let mut profile_override = None;
-            let mut selector = ProjectTargetSelector::default();
-            let mut program_args = Vec::new();
-            let mut json = false;
-            let mut list = false;
-            let mut passthrough = false;
-            let mut index = 0;
-
-            while index < remaining.len() {
-                let argument = &remaining[index];
-                if passthrough {
-                    program_args.push(argument.clone());
-                    index += 1;
-                    continue;
-                }
-
-                if parse_project_target_selector_option(
-                    "`ql run`",
-                    &remaining,
-                    &mut index,
-                    &mut selector,
-                )? {
-                    index += 1;
-                    continue;
-                }
-
-                match argument.as_str() {
-                    "--" => {
-                        passthrough = true;
-                    }
-                    "--json" => {
-                        json = true;
-                    }
-                    "--list" => {
-                        list = true;
-                    }
-                    "--release" => {
-                        set_cli_build_profile(
-                            "`ql run`",
-                            &mut profile_override,
-                            BuildProfile::Release,
-                        )?;
-                    }
-                    "--profile" => {
-                        index += 1;
-                        let Some(value) = remaining.get(index) else {
-                            eprintln!("error: `ql run --profile` expects `debug` or `release`");
-                            return Err(1);
-                        };
-                        let parsed = parse_cli_build_profile("`ql run`", value)?;
-                        set_cli_build_profile("`ql run`", &mut profile_override, parsed)?;
-                    }
-                    other if other.starts_with('-') => {
-                        eprintln!("error: unknown `ql run` option `{other}`");
-                        return Err(1);
-                    }
-                    other => {
-                        if path.is_some() {
-                            eprintln!("error: unknown `ql run` argument `{other}`");
-                            eprintln!(
-                                "hint: use `ql run <file-or-dir> -- <args...>` to pass arguments to the built executable"
-                            );
-                            return Err(1);
-                        }
-                        path = Some(other.to_owned());
-                    }
-                }
-
-                index += 1;
-            }
-
-            let Some(path) = path else {
-                eprintln!("error: `ql run` expects a file or directory path");
-                return Err(1);
-            };
-
-            if list {
-                return list_runnable_targets_path(Path::new(&path), &selector, json);
-            }
-            run_path(
-                Path::new(&path),
-                profile_override.unwrap_or_default(),
-                profile_override.is_some(),
-                &selector,
-                &program_args,
-                json,
-            )
-        }
+        "run" => run_command::run_cli_path(&mut args),
         "test" => {
             let remaining = args.collect::<Vec<_>>();
             let mut path = None;
