@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use ql_driver::{BuildError, BuildOutputLock, acquire_build_output_locks, write_file_atomically};
 
-use super::normalize_path;
+use crate::cli_utils::normalize_path;
 
 pub(crate) fn acquire_locked_project_manifest_edits(
     manifest_paths: impl IntoIterator<Item = PathBuf>,

@@ -5,10 +5,13 @@ use std::path::{Path, PathBuf};
 
 use ql_project::{load_project_manifest, package_name};
 
+use crate::cli_utils::{
+    absolute_user_path, normalize_path, relative_path_from, validate_project_package_name,
+};
+
 use super::{
     EmitPackageInterfaceError, ReferenceInterfacePrepError, ReferenceInterfacePrepFailureKind,
-    absolute_user_path, normalize_path, prepare_reference_interfaces_for_manifests_quiet,
-    relative_path_from,
+    prepare_reference_interfaces_for_manifests_quiet,
 };
 
 mod templates;
@@ -195,7 +198,7 @@ fn project_init_package_name(
             })?,
     };
 
-    super::validate_project_package_name(&package_name)?;
+    validate_project_package_name(&package_name)?;
     Ok(package_name)
 }
 

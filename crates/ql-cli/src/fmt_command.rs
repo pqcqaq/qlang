@@ -5,7 +5,9 @@ use ql_analysis::parse_errors_to_diagnostics;
 use ql_driver::{BuildError, acquire_build_output_locks, write_file_atomically};
 use ql_fmt::format_source;
 
-use super::{normalize_path, print_diagnostics};
+use crate::cli_utils::normalize_path;
+
+use super::print_diagnostics;
 
 pub(crate) fn fmt_path(args: impl Iterator<Item = String>) -> Result<(), u8> {
     let (path, write) = parse_fmt_args(args)?;

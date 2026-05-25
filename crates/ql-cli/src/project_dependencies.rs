@@ -4,14 +4,14 @@ use std::path::{Path, PathBuf};
 use ql_project::{ProjectManifest, load_project_manifest, load_reference_manifests, package_name};
 use serde_json::{Value as JsonValue, json};
 
+use crate::cli_utils::{normalize_path, relative_path_from, validate_project_package_name};
 use crate::project_workspace::{
     WorkspacePackageSelectionFailure, resolve_selected_workspace_member_manifest_for_json,
 };
 
 use super::{
-    normalize_path, relative_path_from, resolve_project_package_manifest,
-    resolve_project_workspace_manifest, resolve_project_workspace_member_package_name,
-    resolve_selected_workspace_member_manifest, validate_project_package_name,
+    resolve_project_package_manifest, resolve_project_workspace_manifest,
+    resolve_project_workspace_member_package_name, resolve_selected_workspace_member_manifest,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]

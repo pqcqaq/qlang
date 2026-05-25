@@ -6,6 +6,9 @@ use ql_project::{
     render_manifest_with_removed_local_dependency,
 };
 
+use crate::cli_utils::{
+    absolute_user_path, normalize_path, relative_path_from, validate_project_package_name,
+};
 use crate::project_dependencies::{ProjectDependentMember, find_workspace_member_dependents};
 use crate::project_manifest_edit::{
     acquire_locked_project_manifest_edits, write_locked_project_manifest,
@@ -13,10 +16,6 @@ use crate::project_manifest_edit::{
 use crate::project_workspace::{
     render_workspace_member_lookup_error, resolve_project_selected_package_manifest,
     resolve_project_workspace_manifest, resolve_workspace_member_entry_by_package_name,
-};
-
-use super::{
-    absolute_user_path, normalize_path, relative_path_from, validate_project_package_name,
 };
 
 pub(crate) fn project_add_dependency_path(

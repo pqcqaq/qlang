@@ -2,9 +2,9 @@ use std::path::Path;
 
 use ql_driver::BuildProfile;
 
-use super::{
-    TestCommandOptions, normalize_path, parse_cli_build_profile, set_cli_build_profile, test_path,
-};
+use crate::cli_utils::normalize_path;
+
+use super::{TestCommandOptions, parse_cli_build_profile, set_cli_build_profile, test_path};
 
 pub(crate) fn test_cli_path(args: &mut impl Iterator<Item = String>) -> Result<(), u8> {
     let options = parse_test_args(args)?;

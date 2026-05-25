@@ -2,10 +2,12 @@ use std::path::{Path, PathBuf};
 
 use ql_project::{ProjectError, ProjectManifest, load_project_manifest, package_name};
 
-use super::{
+use crate::cli_utils::{
     normalize_path, package_missing_name_manifest_path_from_project_error,
-    resolve_project_member_request_root, validate_project_package_name,
+    validate_project_package_name,
 };
+
+use super::resolve_project_member_request_root;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum WorkspaceMemberLookupError {

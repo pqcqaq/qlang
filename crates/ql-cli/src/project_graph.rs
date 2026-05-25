@@ -6,15 +6,17 @@ use ql_project::{
 };
 use serde_json::json;
 
+use crate::cli_utils::{
+    normalize_path, package_check_manifest_path_from_project_error,
+    package_missing_name_manifest_path_from_project_error, validate_project_package_name,
+};
 use crate::project_workspace::{
     WorkspacePackageSelectionFailure, resolve_selected_workspace_member_manifest_for_json,
 };
 
 use super::{
-    normalize_path, package_check_manifest_path_from_project_error,
-    package_missing_name_manifest_path_from_project_error,
     resolve_project_workspace_member_command_request_root,
-    resolve_selected_workspace_member_manifest, validate_project_package_name,
+    resolve_selected_workspace_member_manifest,
 };
 
 pub(crate) fn project_graph_path(

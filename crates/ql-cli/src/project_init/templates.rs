@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use super::normalize_path;
+use crate::cli_utils::normalize_path;
 
 pub(super) struct PackageSources {
     pub(super) package_source: String,

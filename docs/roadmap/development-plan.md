@@ -24,7 +24,7 @@
 
 ## 当前工作项
 
-- 继续收口 `ql-cli` project pipeline，优先扩真实 workspace/package smoke，而不是堆只测内部函数的单元测试。
+- 继续收口 `ql-cli` project pipeline；共享路径归一化、相对路径、JSON 字符串转义、包名校验和 project manifest error helper 已从 `main.rs` 抽到 `cli_utils`，后续继续拆 request-context/reporting。
 - 已补输出路径级跨进程锁，覆盖 build artifact、链接输入、standalone/build-side C header、`.qi` 输出写入、`fmt --write` 源文件写入，以及 `run/test` 执行期 executable；driver/CLI 的 artifact/header/source/manifest/lockfile/interface 关键写入已统一走同目录临时文件替换，非 `llvm-ir` artifact 在 toolchain 成功后才原子替换最终路径，失败会保留旧产物。真实 CLI smoke 已覆盖并发 `build`、`ql ffi header` 显式/default 输出、`run`、`test`、`fmt --write`、manifest 编辑和 lockfile 读写；`ql check/build/run/test/fmt`、`ql ffi`、`ql mir/ownership/runtime`、`ql project status/targets/graph/dependencies/dependents/lock/target add/emit-interface/init/add/remove/add-dependency/remove-dependency` CLI 解析和错误上报已从主入口拆出。后续并发问题继续按“先保护真实产物，再补 CLI smoke”的顺序处理。
 - `project init --stdlib` starter 已覆盖 package/workspace 的 `check/build/run/test`、`emit-interface`、`emit-interface --check`、package `graph/status --json`、package `dependencies` 文本、JSON 和 `--name` JSON、package `dependents --name --json`、workspace `graph/status --json --package`、workspace `dependencies --name` 文本和 JSON、以及关键 JSON 输出；`ql project lock` 读写、dependency manifest 编辑、workspace member 编辑和 target manifest 编辑已纳入输出路径锁，`project init` scaffold 创建已改为 create-new 语义。下一步继续把 starter 作为 downstream 可用性入口维护。
 - `ql project emit-interface` 的 standalone package source-path 正向回归已覆盖普通、`--check`、`--changed-only` 和 `--changed-only --check` 组合；后续只在实际回归暴露新的 selector/reporting 缺口时继续补强，确保接口产物入口和 `check/build` 共用的包解析合同一致。

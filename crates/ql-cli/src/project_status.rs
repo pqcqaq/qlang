@@ -8,6 +8,10 @@ use ql_project::{
 };
 use serde_json::{Value as JsonValue, json};
 
+use crate::cli_utils::{
+    normalize_path, package_check_manifest_path_from_project_error,
+    package_missing_name_manifest_path_from_project_error, validate_project_package_name,
+};
 use crate::project_dependencies::{
     ProjectDependencyMember, find_workspace_member_dependencies, project_dependency_json,
 };
@@ -16,10 +20,8 @@ use crate::project_workspace::{
 };
 
 use super::{
-    normalize_path, package_check_manifest_path_from_project_error,
-    package_missing_name_manifest_path_from_project_error, project_target_display_path,
-    resolve_project_workspace_member_command_request_root,
-    resolve_selected_workspace_member_manifest, validate_project_package_name,
+    project_target_display_path, resolve_project_workspace_member_command_request_root,
+    resolve_selected_workspace_member_manifest,
 };
 
 struct ProjectStatusMember {

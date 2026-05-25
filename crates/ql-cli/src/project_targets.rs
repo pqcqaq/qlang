@@ -6,11 +6,12 @@ use ql_project::{
 };
 use serde_json::json;
 
-use super::{
-    is_ql_source_file, json_string, load_workspace_build_targets_for_command_from_request_root,
-    normalize_path, package_check_manifest_path_from_project_error,
+use crate::cli_utils::{
+    json_string, normalize_path, package_check_manifest_path_from_project_error,
     package_missing_name_manifest_path_from_project_error,
 };
+
+use super::{is_ql_source_file, load_workspace_build_targets_for_command_from_request_root};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ProjectTargetSelector {
