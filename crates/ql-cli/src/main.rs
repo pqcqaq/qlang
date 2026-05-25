@@ -45,6 +45,7 @@ mod project_status;
 mod project_targets;
 mod project_workspace;
 mod run_command;
+mod test_command;
 
 #[cfg(test)]
 pub(crate) use analysis_commands::{
@@ -112,94 +113,7 @@ fn run() -> Result<(), u8> {
         "runtime" => analysis_commands::runtime_path(&mut args),
         "build" => build_command::build_cli_path(&mut args),
         "run" => run_command::run_cli_path(&mut args),
-        "test" => {
-            let remaining = args.collect::<Vec<_>>();
-            let mut path = None;
-            let mut options = TestCommandOptions::default();
-            let mut profile_override = None;
-            let mut index = 0;
-
-            while index < remaining.len() {
-                match remaining[index].as_str() {
-                    "--release" => {
-                        set_cli_build_profile(
-                            "`ql test`",
-                            &mut profile_override,
-                            BuildProfile::Release,
-                        )?;
-                    }
-                    "--profile" => {
-                        index += 1;
-                        let Some(value) = remaining.get(index) else {
-                            eprintln!("error: `ql test --profile` expects `debug` or `release`");
-                            return Err(1);
-                        };
-                        let parsed = parse_cli_build_profile("`ql test`", value)?;
-                        set_cli_build_profile("`ql test`", &mut profile_override, parsed)?;
-                    }
-                    "--package" => {
-                        index += 1;
-                        let Some(value) = remaining.get(index) else {
-                            eprintln!("error: `ql test --package` expects a package name");
-                            return Err(1);
-                        };
-                        if options.package_name.is_some() {
-                            eprintln!("error: `ql test` received multiple `--package` selectors");
-                            return Err(1);
-                        }
-                        options.package_name = Some(value.to_owned());
-                    }
-                    "--list" => {
-                        options.list_only = true;
-                    }
-                    "--json" => {
-                        options.json = true;
-                    }
-                    "--filter" => {
-                        index += 1;
-                        let Some(value) = remaining.get(index) else {
-                            eprintln!("error: `ql test --filter` expects a substring");
-                            return Err(1);
-                        };
-                        options.filter = Some(value.to_owned());
-                    }
-                    "--target" => {
-                        index += 1;
-                        let Some(value) = remaining.get(index) else {
-                            eprintln!("error: `ql test --target` expects a test path");
-                            return Err(1);
-                        };
-                        if options.target_path.is_some() {
-                            eprintln!("error: `ql test` received multiple `--target` selectors");
-                            return Err(1);
-                        }
-                        options.target_path = Some(normalize_path(Path::new(value)));
-                    }
-                    other if other.starts_with('-') => {
-                        eprintln!("error: unknown `ql test` option `{other}`");
-                        return Err(1);
-                    }
-                    other => {
-                        if path.is_some() {
-                            eprintln!("error: unknown `ql test` argument `{other}`");
-                            return Err(1);
-                        }
-                        path = Some(other.to_owned());
-                    }
-                }
-
-                index += 1;
-            }
-
-            let Some(path) = path else {
-                eprintln!("error: `ql test` expects a file or directory path");
-                return Err(1);
-            };
-
-            options.profile = profile_override.unwrap_or_default();
-            options.profile_overridden = profile_override.is_some();
-            test_path(Path::new(&path), &options)
-        }
+        "test" => test_command::test_cli_path(&mut args),
         "project" => {
             let Some(subcommand) = args.next() else {
                 eprintln!("error: `ql project` expects a subcommand");
