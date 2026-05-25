@@ -12,9 +12,9 @@ use ql_ast::{
 };
 use ql_diagnostics::{Diagnostic, render_diagnostics};
 use ql_driver::{
-    BuildArtifact, BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile,
-    CHeaderSurface, ToolchainError, acquire_build_output_locks, build_source_with_link_inputs,
-    default_output_path, write_file_atomically,
+    BuildArtifact, BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderSurface,
+    ToolchainError, acquire_build_output_locks, build_source_with_link_inputs, default_output_path,
+    write_file_atomically,
 };
 use ql_parser::parse_source;
 use ql_project::{
@@ -29,6 +29,7 @@ use ql_span::locate;
 use serde_json::{Value as JsonValue, json};
 
 mod analysis_commands;
+mod build_command;
 mod check_command;
 mod dependency_generic_bridge;
 mod ffi_command;
@@ -108,146 +109,7 @@ fn run() -> Result<(), u8> {
         "mir" => analysis_commands::mir_path(&mut args),
         "ownership" => analysis_commands::ownership_path(&mut args),
         "runtime" => analysis_commands::runtime_path(&mut args),
-        "build" => {
-            let Some(path) = args.next() else {
-                eprintln!("error: `ql build` expects a file or directory path");
-                return Err(1);
-            };
-
-            let mut options = BuildOptions::default();
-            let mut profile_override = None;
-            let mut emit_overridden = false;
-            let mut emit_interface = false;
-            let mut json = false;
-            let mut list = false;
-            let mut selector = ProjectTargetSelector::default();
-            let remaining = args.collect::<Vec<_>>();
-            let mut index = 0;
-
-            while index < remaining.len() {
-                if parse_project_target_selector_option(
-                    "`ql build`",
-                    &remaining,
-                    &mut index,
-                    &mut selector,
-                )? {
-                    index += 1;
-                    continue;
-                }
-
-                match remaining[index].as_str() {
-                    "--emit" => {
-                        index += 1;
-                        let Some(value) = remaining.get(index) else {
-                            eprintln!("error: `ql build --emit` expects a value");
-                            return Err(1);
-                        };
-                        emit_overridden = true;
-                        match value.as_str() {
-                            "llvm-ir" => options.emit = BuildEmit::LlvmIr,
-                            "asm" => options.emit = BuildEmit::Assembly,
-                            "obj" => options.emit = BuildEmit::Object,
-                            "exe" => options.emit = BuildEmit::Executable,
-                            "dylib" => options.emit = BuildEmit::DynamicLibrary,
-                            "staticlib" => options.emit = BuildEmit::StaticLibrary,
-                            other => {
-                                eprintln!("error: unsupported build emit target `{other}`");
-                                return Err(1);
-                            }
-                        }
-                    }
-                    "--release" => {
-                        set_cli_build_profile(
-                            "`ql build`",
-                            &mut profile_override,
-                            BuildProfile::Release,
-                        )?;
-                    }
-                    "--profile" => {
-                        index += 1;
-                        let Some(value) = remaining.get(index) else {
-                            eprintln!("error: `ql build --profile` expects `debug` or `release`");
-                            return Err(1);
-                        };
-                        let parsed = parse_cli_build_profile("`ql build`", value)?;
-                        set_cli_build_profile("`ql build`", &mut profile_override, parsed)?;
-                    }
-                    "-o" | "--output" => {
-                        index += 1;
-                        let Some(value) = remaining.get(index) else {
-                            eprintln!("error: `ql build --output` expects a file path");
-                            return Err(1);
-                        };
-                        options.output = Some(PathBuf::from(value));
-                    }
-                    "--header" => {
-                        options
-                            .c_header
-                            .get_or_insert_with(BuildCHeaderOptions::default);
-                    }
-                    "--emit-interface" => {
-                        emit_interface = true;
-                    }
-                    "--json" => {
-                        json = true;
-                    }
-                    "--list" => {
-                        list = true;
-                    }
-                    "--header-surface" => {
-                        index += 1;
-                        let Some(value) = remaining.get(index) else {
-                            eprintln!(
-                                "error: `ql build --header-surface` expects `exports`, `imports`, or `both`"
-                            );
-                            return Err(1);
-                        };
-                        let Some(surface) = CHeaderSurface::parse(value) else {
-                            eprintln!("error: unsupported `ql build` header surface `{value}`");
-                            return Err(1);
-                        };
-                        let header = options
-                            .c_header
-                            .get_or_insert_with(BuildCHeaderOptions::default);
-                        header.surface = surface;
-                    }
-                    "--header-output" => {
-                        index += 1;
-                        let Some(value) = remaining.get(index) else {
-                            eprintln!("error: `ql build --header-output` expects a file path");
-                            return Err(1);
-                        };
-                        let header = options
-                            .c_header
-                            .get_or_insert_with(BuildCHeaderOptions::default);
-                        header.output = Some(PathBuf::from(value));
-                    }
-                    other => {
-                        eprintln!("error: unknown `ql build` option `{other}`");
-                        return Err(1);
-                    }
-                }
-
-                index += 1;
-            }
-
-            let profile_overridden = profile_override.is_some();
-            if let Some(profile) = profile_override {
-                options.profile = profile;
-            }
-            if list {
-                return list_build_targets_path(Path::new(&path), &selector, json);
-            }
-            build_path(
-                Path::new(&path),
-                &options,
-                &selector,
-                emit_interface,
-                emit_overridden,
-                profile_overridden,
-                json,
-            )
-        }
+        "build" => build_command::build_cli_path(&mut args),
         "run" => {
             let remaining = args.collect::<Vec<_>>();
             let mut path = None;
