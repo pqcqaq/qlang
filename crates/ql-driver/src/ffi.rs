@@ -172,7 +172,7 @@ pub(crate) fn emit_c_header_from_analysis(
     write_c_header_artifact(output_path, options.surface, &functions)
 }
 
-fn resolve_c_header_output_path(
+pub fn resolve_c_header_output_path(
     path: &Path,
     options: &CHeaderOptions,
 ) -> Result<PathBuf, CHeaderError> {

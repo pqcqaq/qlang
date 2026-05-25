@@ -12,7 +12,7 @@ pub use build::{
 };
 pub use ffi::{
     CHeaderArtifact, CHeaderError, CHeaderOptions, CHeaderSurface, default_c_header_output_path,
-    default_c_header_output_path_for_surface, emit_c_header,
+    default_c_header_output_path_for_surface, emit_c_header, resolve_c_header_output_path,
 };
 pub use toolchain::{
     ArchiverFlavor, ArchiverInvocation, DiscoveredToolchain, ProgramInvocation, ToolchainError,

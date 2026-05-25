@@ -17,7 +17,8 @@ use ql_diagnostics::{Diagnostic, render_diagnostics};
 use ql_driver::{
     BuildArtifact, BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile,
     CHeaderError, CHeaderOptions, CHeaderSurface, ToolchainError, acquire_build_output_locks,
-    build_source_with_link_inputs, default_output_path, emit_c_header, write_file_atomically,
+    build_source_with_link_inputs, default_output_path, emit_c_header,
+    resolve_c_header_output_path, write_file_atomically,
 };
 use ql_fmt::format_source;
 use ql_parser::parse_source;
@@ -11967,27 +11968,59 @@ fn report_build_interface_output_failure(
 }
 
 fn emit_c_header_path(path: &Path, options: &CHeaderOptions) -> Result<(), u8> {
+    let output_path = match resolve_c_header_output_path(path, options) {
+        Ok(path) => path,
+        Err(error) => return report_c_header_error(error),
+    };
+    let _output_lock = acquire_build_output_locks(vec![output_path])
+        .map_err(c_header_output_lock_error_message)
+        .map_err(|message| {
+            eprintln!("error: {message}");
+            1
+        })?;
+
     match emit_c_header(path, options) {
         Ok(artifact) => {
             println!("wrote c-header: {}", artifact.path.display());
             Ok(())
         }
-        Err(CHeaderError::InvalidInput(message)) => {
+        Err(error) => report_c_header_error(error),
+    }
+}
+
+fn report_c_header_error(error: CHeaderError) -> Result<(), u8> {
+    match error {
+        CHeaderError::InvalidInput(message) => {
             eprintln!("error: {message}");
             Err(1)
         }
-        Err(CHeaderError::Io { path, error }) => {
+        CHeaderError::Io { path, error } => {
             eprintln!("error: failed to access `{}`: {error}", path.display());
             Err(1)
         }
-        Err(CHeaderError::Diagnostics {
+        CHeaderError::Diagnostics {
             path,
             source,
             diagnostics,
-        }) => {
+        } => {
             print_diagnostics(&path, &source, &diagnostics);
             Err(1)
         }
+    }
+}
+
+fn c_header_output_lock_error_message(error: BuildError) -> String {
+    match error {
+        BuildError::Io { path, error } => format!(
+            "failed to acquire c-header output lock `{}`: {error}",
+            normalize_path(&path)
+        ),
+        BuildError::InvalidInput(message) => message,
+        BuildError::Diagnostics { path, .. } => format!(
+            "failed to acquire c-header output lock while diagnostics were reported for `{}`",
+            normalize_path(&path)
+        ),
+        BuildError::Toolchain { error, .. } => format!("{error}"),
     }
 }
 

@@ -1,7 +1,10 @@
 mod support;
 
+use std::thread;
+
 use support::{
-    TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_file_exists,
+    TempDir, assert_no_atomic_write_temp_files, assert_no_build_lock_directories,
+    expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_file_exists,
     expect_snapshot_matches, expect_stderr_contains, expect_stderr_not_contains,
     expect_stdout_contains_all, expect_success, ql_command, read_normalized_file,
     run_command_capture, workspace_root,
@@ -123,6 +126,67 @@ extern "c" pub fn q_echo(message: String) -> String {
     assert!(rendered.contains("const uint8_t* ptr;"));
     assert!(rendered.contains("int64_t len;"));
     assert!(rendered.contains("ql_string q_echo(ql_string message);"));
+}
+
+#[test]
+fn ffi_header_serializes_concurrent_output_writes() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-ffi-header-concurrent-write");
+    let source = temp.write(
+        "math_export.ql",
+        r#"
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+    );
+    let header = temp.path().join("math_export.h");
+
+    let handles = (0..4)
+        .map(|index| {
+            let workspace_root = workspace_root.clone();
+            let source = source.clone();
+            let header = header.clone();
+            thread::spawn(move || {
+                let mut command = ql_command(&workspace_root);
+                command
+                    .args(["ffi", "header"])
+                    .arg(&source)
+                    .arg("-o")
+                    .arg(&header);
+                run_command_capture(&mut command, format!("concurrent ql ffi header #{index}"))
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for (index, handle) in handles.into_iter().enumerate() {
+        let output = handle
+            .join()
+            .unwrap_or_else(|_| panic!("wait for concurrent ql ffi header #{index}"));
+        let (stdout, stderr) = expect_success(
+            "ffi-header-concurrent-write",
+            &format!("concurrent ql ffi header #{index}"),
+            &output,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+        expect_stdout_contains_all(
+            "ffi-header-concurrent-write",
+            &stdout,
+            &["wrote c-header:", "math_export.h"],
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+        expect_empty_stderr(
+            "ffi-header-concurrent-write",
+            &format!("concurrent ql ffi header #{index}"),
+            &stderr,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    let rendered = read_normalized_file(&header, "concurrently generated ffi header");
+    assert!(rendered.contains("int64_t q_add(int64_t left, int64_t right);"));
+    assert_no_build_lock_directories("ffi-header-concurrent-write", temp.path());
+    assert_no_atomic_write_temp_files("ffi-header-concurrent-write", temp.path());
 }
 
 #[test]
