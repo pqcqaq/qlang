@@ -3,12 +3,14 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use ql_analysis::{analyze_source, Analysis};
+use ql_analysis::{Analysis, analyze_source};
 use ql_ast::Visibility;
 use ql_diagnostics::{Diagnostic, Label};
 use ql_hir::{self as hir, ItemKind, Param};
 use ql_resolve::{BuiltinType, ResolutionMap};
-use ql_typeck::{lower_type, Ty};
+use ql_typeck::{Ty, lower_type};
+
+use crate::write_file_atomically;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CHeaderSurface {
@@ -201,7 +203,7 @@ fn write_c_header_artifact(
     }
 
     let rendered = render_c_header(&output_path, functions);
-    fs::write(&output_path, rendered).map_err(|error| CHeaderError::Io {
+    write_file_atomically(&output_path, rendered).map_err(|error| CHeaderError::Io {
         path: output_path.clone(),
         error,
     })?;

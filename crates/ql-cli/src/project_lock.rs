@@ -1,13 +1,12 @@
 use std::fs;
 use std::path::Path;
 
-use ql_driver::{BuildError, acquire_build_output_locks};
+use ql_driver::{BuildError, acquire_build_output_locks, write_file_atomically};
 use ql_project::{load_project_manifest, project_lockfile_path, render_project_lockfile};
 use serde_json::{Value as JsonValue, json};
 
 use super::{
-    atomic_write::write_file_atomically, normalize_line_endings, normalize_path,
-    package_check_manifest_path_from_project_error,
+    normalize_line_endings, normalize_path, package_check_manifest_path_from_project_error,
     package_missing_name_manifest_path_from_project_error,
     resolve_project_workspace_member_command_request_root,
 };

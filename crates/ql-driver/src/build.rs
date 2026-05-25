@@ -16,6 +16,7 @@ use crate::ffi::{
     exported_c_symbol_names,
 };
 use crate::toolchain::{ToolchainError, ToolchainOptions, discover_toolchain};
+use crate::write_file_atomically;
 
 const BUILD_OUTPUT_LOCK_TIMEOUT: Duration = Duration::from_secs(120);
 const BUILD_OUTPUT_LOCK_RETRY: Duration = Duration::from_millis(25);
@@ -333,7 +334,7 @@ pub fn build_source_with_link_inputs(
 
     match options.emit {
         BuildEmit::LlvmIr => {
-            fs::write(&output_path, ir).map_err(|error| BuildError::Io {
+            write_file_atomically(&output_path, ir).map_err(|error| BuildError::Io {
                 path: output_path.clone(),
                 error,
             })?;

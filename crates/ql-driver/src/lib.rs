@@ -1,7 +1,9 @@
+mod atomic_write;
 mod build;
 mod ffi;
 mod toolchain;
 
+pub use atomic_write::write_file_atomically;
 pub use build::{
     BuildArtifact, BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildOutputLock,
     BuildProfile, acquire_build_output_locks, build_file, build_file_with_link_inputs,

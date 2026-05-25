@@ -5,9 +5,10 @@ use std::process::Stdio;
 
 use serde_json::Value as JsonValue;
 use support::{
-    TempDir, assert_no_build_lock_directories, expect_empty_stderr, expect_empty_stdout,
-    expect_exit_code, expect_file_exists, expect_stdout_contains_all, expect_success, ql_command,
-    read_normalized_file, run_command_capture, static_library_output_path, workspace_root,
+    TempDir, assert_no_atomic_write_temp_files, assert_no_build_lock_directories,
+    expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_file_exists,
+    expect_stdout_contains_all, expect_success, ql_command, read_normalized_file,
+    run_command_capture, static_library_output_path, workspace_root,
 };
 
 fn normalize_output_text(text: &str) -> String {
@@ -8034,6 +8035,10 @@ fn build_workspace_package_selector_json_allows_concurrent_dependency_closure_bu
     )
     .expect("concurrent builds should emit selected package interface");
     assert_no_build_lock_directories(
+        "project-build-workspace-concurrent-dependency-closure-json",
+        &fixture.project_root,
+    );
+    assert_no_atomic_write_temp_files(
         "project-build-workspace-concurrent-dependency-closure-json",
         &fixture.project_root,
     );

@@ -17,7 +17,7 @@ use ql_diagnostics::{Diagnostic, render_diagnostics};
 use ql_driver::{
     BuildArtifact, BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile,
     CHeaderError, CHeaderOptions, CHeaderSurface, ToolchainError, acquire_build_output_locks,
-    build_source_with_link_inputs, default_output_path, emit_c_header,
+    build_source_with_link_inputs, default_output_path, emit_c_header, write_file_atomically,
 };
 use ql_fmt::format_source;
 use ql_parser::parse_source;
@@ -33,7 +33,6 @@ use ql_runtime::{collect_runtime_hook_signatures, collect_runtime_hooks};
 use ql_span::locate;
 use serde_json::{Value as JsonValue, json};
 
-mod atomic_write;
 mod dependency_generic_bridge;
 mod project_dependencies;
 mod project_dependency_edit;
@@ -2181,7 +2180,7 @@ fn format_path(path: &Path, write: bool) -> Result<(), u8> {
     match format_source(&source) {
         Ok(formatted) => {
             if write {
-                atomic_write::write_file_atomically(path, &formatted).map_err(|error| {
+                write_file_atomically(path, &formatted).map_err(|error| {
                     eprintln!(
                         "error: failed to write formatted source `{}` atomically: {error}",
                         normalize_path(path)
@@ -13084,7 +13083,7 @@ fn emit_package_interface_path_impl(
             message,
         }
     })?;
-    atomic_write::write_file_atomically(&output_path, &rendered).map_err(|error| {
+    write_file_atomically(&output_path, &rendered).map_err(|error| {
         if report_failure {
             eprintln!(
                 "error: failed to write interface `{}`: {error}",

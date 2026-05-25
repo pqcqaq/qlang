@@ -3,11 +3,9 @@ use std::io::{self, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::normalize_path;
-
 const TEMP_FILE_ATTEMPTS: u32 = 16;
 
-pub(crate) fn write_file_atomically(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
+pub fn write_file_atomically(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
     let temp_path = create_temp_file(path, contents.as_ref())?;
     match replace_file(path, &temp_path) {
         Ok(()) => Ok(()),
@@ -57,7 +55,7 @@ fn create_temp_file(path: &Path, contents: &[u8]) -> io::Result<PathBuf> {
         ErrorKind::AlreadyExists,
         format!(
             "failed to reserve a unique temporary output next to `{}`",
-            normalize_path(path)
+            path.display()
         ),
     ))
 }
@@ -112,4 +110,60 @@ unsafe extern "system" {
     #[link_name = "MoveFileExW"]
     fn move_file_ex_w(existing_file_name: *const u16, new_file_name: *const u16, flags: u32)
     -> i32;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::env;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::write_file_atomically;
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new(prefix: &str) -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos();
+            let path = env::temp_dir().join(format!("{prefix}-{unique}"));
+            fs::create_dir_all(&path).expect("create temporary test directory");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn atomic_write_replaces_existing_file_without_leaking_temp_file() {
+        let dir = TestDir::new("ql-driver-atomic-write");
+        let path = dir.path().join("artifact.txt");
+        fs::write(&path, "old").expect("write initial file");
+
+        write_file_atomically(&path, "new").expect("replace file atomically");
+
+        assert_eq!(
+            fs::read_to_string(&path).expect("read replaced file"),
+            "new"
+        );
+        let leaked = fs::read_dir(dir.path())
+            .expect("read temp dir")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .find(|name| name.ends_with(".ql.tmp"));
+        assert_eq!(leaked, None, "atomic write temp file should be removed");
+    }
 }
