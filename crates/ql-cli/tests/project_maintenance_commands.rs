@@ -3,8 +3,8 @@ mod support;
 use serde_json::Value as JsonValue;
 use support::{
     TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_file_exists,
-    expect_stderr_contains, expect_stdout_contains_all, expect_success, ql_command,
-    read_normalized_file, run_command_capture, workspace_root,
+    expect_snapshot_matches, expect_stderr_contains, expect_stdout_contains_all, expect_success,
+    ql_command, read_normalized_file, run_command_capture, workspace_root,
 };
 
 fn write_maintenance_package(prefix: &str) -> TempDir {
@@ -110,6 +110,49 @@ fn project_maintenance_commands_use_current_directory_by_default() {
         manifest.contains("[[bin]]\npath = \"src/main.ql\"\n")
             && manifest.contains("[[bin]]\npath = \"src/bin/worker.ql\"\n"),
         "project target add default cwd should preserve and append binary targets, got:\n{manifest}"
+    );
+
+    let mut emit_interface = ql_command(&workspace_root);
+    emit_interface.current_dir(temp.path());
+    emit_interface.args(["project", "emit-interface"]);
+    let output = run_command_capture(
+        &mut emit_interface,
+        "`ql project emit-interface` default cwd",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-maintenance-default-cwd",
+        "`ql project emit-interface` default cwd",
+        &output,
+    )
+    .expect("project emit-interface should use the current directory by default");
+    expect_empty_stderr(
+        "project-maintenance-default-cwd",
+        "`ql project emit-interface` default cwd",
+        &stderr,
+    )
+    .expect("project emit-interface default cwd should keep stderr empty");
+    let interface_path = temp.path().join("app.qi");
+    expect_snapshot_matches(
+        "project-maintenance-default-cwd",
+        "project emit-interface default cwd stdout",
+        &format!(
+            "wrote interface: {}\n",
+            interface_path.display().to_string().replace('\\', "/")
+        ),
+        &stdout.replace('\\', "/"),
+    )
+    .expect("project emit-interface default cwd should report the generated interface");
+    expect_file_exists(
+        "project-maintenance-default-cwd",
+        &interface_path,
+        "interface artifact",
+        "`ql project emit-interface` default cwd",
+    )
+    .expect("project emit-interface default cwd should create the interface artifact");
+    let interface = read_normalized_file(&interface_path, "generated interface artifact");
+    assert!(
+        interface.contains("// qlang interface v1\n// package: app\n"),
+        "project emit-interface default cwd should generate the package interface, got:\n{interface}"
     );
 }
 
@@ -281,5 +324,109 @@ fn project_target_cli_rejects_invalid_arguments() {
             expected_error,
         )
         .expect("project target invalid args should report the parser error");
+    }
+}
+
+#[test]
+fn project_emit_interface_cli_rejects_invalid_arguments() {
+    let workspace_root = workspace_root();
+    let temp = write_maintenance_package("ql-project-emit-interface-cli-invalid");
+    let path = temp.path().display().to_string();
+
+    let cases = [
+        (
+            vec![
+                "project".to_owned(),
+                "emit-interface".to_owned(),
+                path.clone(),
+                "--package".to_owned(),
+            ],
+            "error: `ql project emit-interface --package` expects a package name",
+        ),
+        (
+            vec![
+                "project".to_owned(),
+                "emit-interface".to_owned(),
+                path.clone(),
+                "--package".to_owned(),
+                "app".to_owned(),
+                "--package".to_owned(),
+                "core".to_owned(),
+            ],
+            "error: `ql project emit-interface` received `--package` more than once",
+        ),
+        (
+            vec![
+                "project".to_owned(),
+                "emit-interface".to_owned(),
+                path.clone(),
+                "--output".to_owned(),
+            ],
+            "error: `ql project emit-interface --output` expects a file path",
+        ),
+        (
+            vec![
+                "project".to_owned(),
+                "emit-interface".to_owned(),
+                path.clone(),
+                "-o".to_owned(),
+            ],
+            "error: `ql project emit-interface --output` expects a file path",
+        ),
+        (
+            vec![
+                "project".to_owned(),
+                "emit-interface".to_owned(),
+                path.clone(),
+                "--unknown".to_owned(),
+            ],
+            "error: unknown `ql project emit-interface` option `--unknown`",
+        ),
+        (
+            vec![
+                "project".to_owned(),
+                "emit-interface".to_owned(),
+                path.clone(),
+                "extra".to_owned(),
+            ],
+            "error: unknown `ql project emit-interface` argument `extra`",
+        ),
+        (
+            vec![
+                "project".to_owned(),
+                "emit-interface".to_owned(),
+                path,
+                "--check".to_owned(),
+                "--output".to_owned(),
+                "app.qi".to_owned(),
+            ],
+            "error: `ql project emit-interface --check` does not support `--output`",
+        ),
+    ];
+
+    for (args, expected_error) in cases {
+        let mut command = ql_command(&workspace_root);
+        command.args(args);
+        let output = run_command_capture(&mut command, "`ql project emit-interface` invalid args");
+        let (stdout, stderr) = expect_exit_code(
+            "project-emit-interface-cli-invalid",
+            "`ql project emit-interface` invalid args",
+            &output,
+            1,
+        )
+        .expect("project emit-interface should reject invalid arguments");
+        expect_empty_stdout(
+            "project-emit-interface-cli-invalid",
+            "`ql project emit-interface` invalid args",
+            &stdout,
+        )
+        .expect("project emit-interface invalid args should keep stdout empty");
+        expect_stderr_contains(
+            "project-emit-interface-cli-invalid",
+            "`ql project emit-interface` invalid args",
+            &stderr,
+            expected_error,
+        )
+        .expect("project emit-interface invalid args should report the parser error");
     }
 }

@@ -124,78 +124,7 @@ fn run() -> Result<(), u8> {
                 "dependencies" => project_query_commands::project_dependencies_cli_path(&mut args),
                 "lock" => project_maintenance_commands::project_lock_cli_path(&mut args),
                 "emit-interface" => {
-                    let remaining = args.collect::<Vec<_>>();
-                    let mut path = None;
-                    let mut output = None;
-                    let mut package_name = None;
-                    let mut changed_only = false;
-                    let mut check_only = false;
-                    let mut index = 0;
-
-                    while index < remaining.len() {
-                        match remaining[index].as_str() {
-                            "--package" => {
-                                index += 1;
-                                let Some(value) = remaining.get(index) else {
-                                    eprintln!(
-                                        "error: `ql project emit-interface --package` expects a package name"
-                                    );
-                                    return Err(1);
-                                };
-                                if package_name.is_some() {
-                                    eprintln!(
-                                        "error: `ql project emit-interface` received `--package` more than once"
-                                    );
-                                    return Err(1);
-                                }
-                                package_name = Some(value.clone());
-                            }
-                            "-o" | "--output" => {
-                                index += 1;
-                                let Some(value) = remaining.get(index) else {
-                                    eprintln!(
-                                        "error: `ql project emit-interface --output` expects a file path"
-                                    );
-                                    return Err(1);
-                                };
-                                output = Some(PathBuf::from(value));
-                            }
-                            "--changed-only" => {
-                                changed_only = true;
-                            }
-                            "--check" => {
-                                check_only = true;
-                            }
-                            other if other.starts_with('-') => {
-                                eprintln!(
-                                    "error: unknown `ql project emit-interface` option `{other}`"
-                                );
-                                return Err(1);
-                            }
-                            other => {
-                                if path.is_some() {
-                                    eprintln!(
-                                        "error: unknown `ql project emit-interface` argument `{other}`"
-                                    );
-                                    return Err(1);
-                                }
-                                path = Some(PathBuf::from(other));
-                            }
-                        }
-
-                        index += 1;
-                    }
-
-                    let path = path
-                        .or_else(|| env::current_dir().ok())
-                        .unwrap_or_else(|| PathBuf::from("."));
-                    project_emit_interface_path(
-                        &path,
-                        output.as_deref(),
-                        package_name.as_deref(),
-                        changed_only,
-                        check_only,
-                    )
+                    project_maintenance_commands::project_emit_interface_cli_path(&mut args)
                 }
                 "init" => {
                     let remaining = args.collect::<Vec<_>>();
@@ -11116,7 +11045,7 @@ fn load_workspace_build_targets_for_command_from_request_root(
     })
 }
 
-fn project_emit_interface_path(
+pub(crate) fn project_emit_interface_path(
     path: &Path,
     output: Option<&Path>,
     selected_package_name: Option<&str>,
