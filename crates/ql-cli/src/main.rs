@@ -29,10 +29,10 @@ use ql_project::{
     load_interface_artifact, load_project_manifest, load_reference_manifests, package_name,
     package_source_root, render_module_interface,
 };
-use ql_runtime::{collect_runtime_hook_signatures, collect_runtime_hooks};
 use ql_span::locate;
 use serde_json::{Value as JsonValue, json};
 
+mod analysis_commands;
 mod dependency_generic_bridge;
 mod ffi_command;
 mod project_dependencies;
@@ -46,6 +46,10 @@ mod project_status;
 mod project_targets;
 mod project_workspace;
 
+#[cfg(test)]
+pub(crate) use analysis_commands::{
+    render_mir_path, render_ownership_path, render_runtime_requirements,
+};
 use project_dependencies::{project_dependencies_path, project_dependents_path};
 use project_dependency_edit::{project_add_dependency_path, project_remove_dependency_path};
 use project_graph::project_graph_path;
@@ -171,30 +175,9 @@ fn run() -> Result<(), u8> {
 
             format_path(Path::new(&path), write)
         }
-        "mir" => {
-            let Some(path) = args.next() else {
-                eprintln!("error: `ql mir` expects a file path");
-                return Err(1);
-            };
-
-            render_mir_path(Path::new(&path))
-        }
-        "ownership" => {
-            let Some(path) = args.next() else {
-                eprintln!("error: `ql ownership` expects a file path");
-                return Err(1);
-            };
-
-            render_ownership_path(Path::new(&path))
-        }
-        "runtime" => {
-            let Some(path) = args.next() else {
-                eprintln!("error: `ql runtime` expects a file path");
-                return Err(1);
-            };
-
-            render_runtime_requirements_path(Path::new(&path))
-        }
+        "mir" => analysis_commands::mir_path(&mut args),
+        "ownership" => analysis_commands::ownership_path(&mut args),
+        "runtime" => analysis_commands::runtime_path(&mut args),
         "build" => {
             let Some(path) = args.next() else {
                 eprintln!("error: `ql build` expects a file or directory path");
@@ -2150,75 +2133,6 @@ fn format_source_lock_error_message(error: BuildError) -> String {
             normalize_path(&path)
         ),
         BuildError::Toolchain { error, .. } => format!("{error}"),
-    }
-}
-
-fn render_mir_path(path: &Path) -> Result<(), u8> {
-    let source = fs::read_to_string(path).map_err(|error| {
-        eprintln!("error: failed to read `{}`: {error}", path.display());
-        1
-    })?;
-
-    match analyze_semantics(&source) {
-        Ok(analysis) => {
-            print!("{}", analysis.render_mir());
-            if analysis.has_errors() {
-                print_diagnostics(path, &source, analysis.diagnostics());
-                Err(1)
-            } else {
-                Ok(())
-            }
-        }
-        Err(diagnostics) => {
-            print_diagnostics(path, &source, &diagnostics);
-            Err(1)
-        }
-    }
-}
-
-fn render_ownership_path(path: &Path) -> Result<(), u8> {
-    let source = fs::read_to_string(path).map_err(|error| {
-        eprintln!("error: failed to read `{}`: {error}", path.display());
-        1
-    })?;
-
-    match analyze_semantics(&source) {
-        Ok(analysis) => {
-            print!("{}", analysis.render_borrowck());
-            if analysis.has_errors() {
-                print_diagnostics(path, &source, analysis.diagnostics());
-                Err(1)
-            } else {
-                Ok(())
-            }
-        }
-        Err(diagnostics) => {
-            print_diagnostics(path, &source, &diagnostics);
-            Err(1)
-        }
-    }
-}
-
-fn render_runtime_requirements_path(path: &Path) -> Result<(), u8> {
-    let source = fs::read_to_string(path).map_err(|error| {
-        eprintln!("error: failed to read `{}`: {error}", path.display());
-        1
-    })?;
-
-    match analyze_semantics(&source) {
-        Ok(analysis) => {
-            print!("{}", render_runtime_requirements(&analysis));
-            if analysis.has_errors() {
-                print_diagnostics(path, &source, analysis.diagnostics());
-                Err(1)
-            } else {
-                Ok(())
-            }
-        }
-        Err(diagnostics) => {
-            print_diagnostics(path, &source, &diagnostics);
-            Err(1)
-        }
     }
 }
 
@@ -14141,43 +14055,6 @@ fn analyze_source(source: &str) -> Result<(), Vec<Diagnostic>> {
     } else {
         Ok(())
     }
-}
-
-fn render_runtime_requirements(analysis: &ql_analysis::Analysis) -> String {
-    if analysis.runtime_requirements().is_empty() {
-        return "runtime requirements: none\n".to_owned();
-    }
-
-    let mut rendered = String::new();
-    for requirement in analysis.runtime_requirements() {
-        rendered.push_str(&format!(
-            "runtime requirement: {} @ {} ({})\n",
-            requirement.capability.stable_name(),
-            requirement.span,
-            requirement.capability.description(),
-        ));
-    }
-    let capabilities = analysis
-        .runtime_requirements()
-        .iter()
-        .map(|requirement| requirement.capability)
-        .collect::<Vec<_>>();
-    for hook in collect_runtime_hooks(capabilities.iter().copied()) {
-        rendered.push_str(&format!(
-            "runtime hook: {} -> {} ({})\n",
-            hook.stable_name(),
-            hook.symbol_name(),
-            hook.description(),
-        ));
-    }
-    for signature in collect_runtime_hook_signatures(capabilities.iter().copied()) {
-        rendered.push_str(&format!(
-            "runtime hook abi: {} {}\n",
-            signature.hook.stable_name(),
-            signature.render_contract(),
-        ));
-    }
-    rendered
 }
 
 fn collect_ql_files(path: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
