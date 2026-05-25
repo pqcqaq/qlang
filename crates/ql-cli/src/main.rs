@@ -39,6 +39,7 @@ mod project_dependency_edit;
 mod project_graph;
 mod project_init;
 mod project_lock;
+mod project_maintenance_commands;
 mod project_manifest_edit;
 mod project_members;
 mod project_query_commands;
@@ -53,11 +54,7 @@ pub(crate) use analysis_commands::{
     render_mir_path, render_ownership_path, render_runtime_requirements,
 };
 use project_dependency_edit::{project_add_dependency_path, project_remove_dependency_path};
-use project_lock::project_lock_path;
-use project_members::{
-    project_add_binary_target_path, project_add_existing_path, project_add_path,
-    project_remove_path,
-};
+use project_members::{project_add_existing_path, project_add_path, project_remove_path};
 use project_targets::{
     ProjectCheckCommandScope, ProjectCommandPathError, ProjectCommandScope, ProjectTargetSelector,
     ResolvedProjectCommandPath, display_relative_to_root, is_runnable_project_target,
@@ -121,134 +118,11 @@ fn run() -> Result<(), u8> {
             match subcommand.as_str() {
                 "status" => project_query_commands::project_status_cli_path(&mut args),
                 "targets" => project_query_commands::project_targets_cli_path(&mut args),
-                "target" => {
-                    let Some(target_subcommand) = args.next() else {
-                        eprintln!("error: `ql project target` expects a subcommand");
-                        return Err(1);
-                    };
-
-                    match target_subcommand.as_str() {
-                        "add" => {
-                            let remaining = args.collect::<Vec<_>>();
-                            let mut path = None;
-                            let mut target_package_name = None;
-                            let mut binary_name = None;
-                            let mut index = 0;
-
-                            while index < remaining.len() {
-                                match remaining[index].as_str() {
-                                    "--package" => {
-                                        index += 1;
-                                        let Some(value) = remaining.get(index) else {
-                                            eprintln!(
-                                                "error: `ql project target add --package` expects a package name"
-                                            );
-                                            return Err(1);
-                                        };
-                                        if target_package_name.is_some() {
-                                            eprintln!(
-                                                "error: `ql project target add` received `--package` more than once"
-                                            );
-                                            return Err(1);
-                                        }
-                                        target_package_name = Some(value.clone());
-                                    }
-                                    "--bin" => {
-                                        index += 1;
-                                        let Some(value) = remaining.get(index) else {
-                                            eprintln!(
-                                                "error: `ql project target add --bin` expects a target name"
-                                            );
-                                            return Err(1);
-                                        };
-                                        if binary_name.is_some() {
-                                            eprintln!(
-                                                "error: `ql project target add` received `--bin` more than once"
-                                            );
-                                            return Err(1);
-                                        }
-                                        binary_name = Some(value.clone());
-                                    }
-                                    other if other.starts_with('-') => {
-                                        eprintln!(
-                                            "error: unknown `ql project target add` option `{other}`"
-                                        );
-                                        return Err(1);
-                                    }
-                                    other => {
-                                        if path.is_some() {
-                                            eprintln!(
-                                                "error: unknown `ql project target add` argument `{other}`"
-                                            );
-                                            return Err(1);
-                                        }
-                                        path = Some(PathBuf::from(other));
-                                    }
-                                }
-
-                                index += 1;
-                            }
-
-                            let Some(binary_name) = binary_name else {
-                                eprintln!("error: `ql project target add` expects `--bin <name>`");
-                                return Err(1);
-                            };
-                            let path = path
-                                .or_else(|| env::current_dir().ok())
-                                .unwrap_or_else(|| PathBuf::from("."));
-                            project_add_binary_target_path(
-                                &path,
-                                target_package_name.as_deref(),
-                                &binary_name,
-                            )
-                        }
-                        other => {
-                            eprintln!("error: unknown `ql project target` subcommand `{other}`");
-                            Err(1)
-                        }
-                    }
-                }
+                "target" => project_maintenance_commands::project_target_cli_path(&mut args),
                 "graph" => project_query_commands::project_graph_cli_path(&mut args),
                 "dependents" => project_query_commands::project_dependents_cli_path(&mut args),
                 "dependencies" => project_query_commands::project_dependencies_cli_path(&mut args),
-                "lock" => {
-                    let remaining = args.collect::<Vec<_>>();
-                    let mut path = None;
-                    let mut check_only = false;
-                    let mut json = false;
-                    let mut index = 0;
-
-                    while index < remaining.len() {
-                        match remaining[index].as_str() {
-                            "--check" => {
-                                check_only = true;
-                            }
-                            "--json" => {
-                                json = true;
-                            }
-                            other if other.starts_with('-') => {
-                                eprintln!("error: unknown `ql project lock` option `{other}`");
-                                return Err(1);
-                            }
-                            other => {
-                                if path.is_some() {
-                                    eprintln!(
-                                        "error: unknown `ql project lock` argument `{other}`"
-                                    );
-                                    return Err(1);
-                                }
-                                path = Some(PathBuf::from(other));
-                            }
-                        }
-
-                        index += 1;
-                    }
-
-                    let path = path
-                        .or_else(|| env::current_dir().ok())
-                        .unwrap_or_else(|| PathBuf::from("."));
-                    project_lock_path(&path, check_only, json)
-                }
+                "lock" => project_maintenance_commands::project_lock_cli_path(&mut args),
                 "emit-interface" => {
                     let remaining = args.collect::<Vec<_>>();
                     let mut path = None;
