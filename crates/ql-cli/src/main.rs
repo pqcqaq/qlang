@@ -52,7 +52,6 @@ mod test_command;
 pub(crate) use analysis_commands::{
     render_mir_path, render_ownership_path, render_runtime_requirements,
 };
-use project_dependencies::{project_dependencies_path, project_dependents_path};
 use project_dependency_edit::{project_add_dependency_path, project_remove_dependency_path};
 use project_lock::project_lock_path;
 use project_members::{
@@ -210,114 +209,8 @@ fn run() -> Result<(), u8> {
                     }
                 }
                 "graph" => project_query_commands::project_graph_cli_path(&mut args),
-                "dependents" => {
-                    let remaining = args.collect::<Vec<_>>();
-                    let mut path = None;
-                    let mut package_name = None;
-                    let mut json = false;
-                    let mut index = 0;
-
-                    while index < remaining.len() {
-                        match remaining[index].as_str() {
-                            "--name" | "--package" => {
-                                let selector_option = remaining[index].clone();
-                                index += 1;
-                                let Some(value) = remaining.get(index) else {
-                                    eprintln!(
-                                        "error: `ql project dependents {selector_option}` expects a package name"
-                                    );
-                                    return Err(1);
-                                };
-                                if package_name.is_some() {
-                                    eprintln!(
-                                        "error: `ql project dependents` received package selector more than once"
-                                    );
-                                    return Err(1);
-                                }
-                                package_name = Some(value.clone());
-                            }
-                            "--json" => {
-                                json = true;
-                            }
-                            other if other.starts_with('-') => {
-                                eprintln!(
-                                    "error: unknown `ql project dependents` option `{other}`"
-                                );
-                                return Err(1);
-                            }
-                            other => {
-                                if path.is_some() {
-                                    eprintln!(
-                                        "error: unknown `ql project dependents` argument `{other}`"
-                                    );
-                                    return Err(1);
-                                }
-                                path = Some(PathBuf::from(other));
-                            }
-                        }
-
-                        index += 1;
-                    }
-
-                    let path = path
-                        .or_else(|| env::current_dir().ok())
-                        .unwrap_or_else(|| PathBuf::from("."));
-                    project_dependents_path(&path, package_name.as_deref(), json)
-                }
-                "dependencies" => {
-                    let remaining = args.collect::<Vec<_>>();
-                    let mut path = None;
-                    let mut package_name = None;
-                    let mut json = false;
-                    let mut index = 0;
-
-                    while index < remaining.len() {
-                        match remaining[index].as_str() {
-                            "--name" | "--package" => {
-                                let selector_option = remaining[index].clone();
-                                index += 1;
-                                let Some(value) = remaining.get(index) else {
-                                    eprintln!(
-                                        "error: `ql project dependencies {selector_option}` expects a package name"
-                                    );
-                                    return Err(1);
-                                };
-                                if package_name.is_some() {
-                                    eprintln!(
-                                        "error: `ql project dependencies` received package selector more than once"
-                                    );
-                                    return Err(1);
-                                }
-                                package_name = Some(value.clone());
-                            }
-                            "--json" => {
-                                json = true;
-                            }
-                            other if other.starts_with('-') => {
-                                eprintln!(
-                                    "error: unknown `ql project dependencies` option `{other}`"
-                                );
-                                return Err(1);
-                            }
-                            other => {
-                                if path.is_some() {
-                                    eprintln!(
-                                        "error: unknown `ql project dependencies` argument `{other}`"
-                                    );
-                                    return Err(1);
-                                }
-                                path = Some(PathBuf::from(other));
-                            }
-                        }
-
-                        index += 1;
-                    }
-
-                    let path = path
-                        .or_else(|| env::current_dir().ok())
-                        .unwrap_or_else(|| PathBuf::from("."));
-                    project_dependencies_path(&path, package_name.as_deref(), json)
-                }
+                "dependents" => project_query_commands::project_dependents_cli_path(&mut args),
+                "dependencies" => project_query_commands::project_dependencies_cli_path(&mut args),
                 "lock" => {
                     let remaining = args.collect::<Vec<_>>();
                     let mut path = None;

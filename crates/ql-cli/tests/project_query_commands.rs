@@ -19,6 +19,35 @@ name = "app"
     temp
 }
 
+fn write_dependency_workspace(prefix: &str) -> TempDir {
+    let temp = TempDir::new(prefix);
+    temp.write(
+        "qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+    );
+    temp.write(
+        "packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+core = "../core"
+"#,
+    );
+    temp.write(
+        "packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp
+}
+
 #[test]
 fn project_query_commands_use_current_directory_by_default() {
     let workspace_root = workspace_root();
@@ -106,6 +135,64 @@ fn project_targets_command_applies_target_selectors() {
         !stdout.contains("lib: src/lib.ql"),
         "binary selector should exclude the library target, got:\n{stdout}"
     );
+}
+
+#[test]
+fn project_dependency_query_commands_apply_package_selectors() {
+    let workspace_root = workspace_root();
+    let temp = write_dependency_workspace("ql-project-query-dependency-selector");
+
+    let mut dependencies = ql_command(&workspace_root);
+    dependencies
+        .arg("project")
+        .arg("dependencies")
+        .arg(temp.path())
+        .args(["--name", "app"]);
+    let output = run_command_capture(&mut dependencies, "`ql project dependencies --name app`");
+    let (stdout, stderr) = expect_success(
+        "project-query-dependencies-selector",
+        "`ql project dependencies --name app`",
+        &output,
+    )
+    .expect("project dependencies should apply the package selector");
+    expect_empty_stderr(
+        "project-query-dependencies-selector",
+        "`ql project dependencies --name app`",
+        &stderr,
+    )
+    .expect("project dependencies selector should keep stderr empty");
+    expect_stdout_contains_all(
+        "project-query-dependencies-selector",
+        &stdout.replace('\\', "/"),
+        &["package: app", "packages/core (core)"],
+    )
+    .expect("project dependencies selector should render selected package dependencies");
+
+    let mut dependents = ql_command(&workspace_root);
+    dependents
+        .arg("project")
+        .arg("dependents")
+        .arg(temp.path())
+        .args(["--package", "core"]);
+    let output = run_command_capture(&mut dependents, "`ql project dependents --package core`");
+    let (stdout, stderr) = expect_success(
+        "project-query-dependents-selector",
+        "`ql project dependents --package core`",
+        &output,
+    )
+    .expect("project dependents should apply the package selector alias");
+    expect_empty_stderr(
+        "project-query-dependents-selector",
+        "`ql project dependents --package core`",
+        &stderr,
+    )
+    .expect("project dependents selector should keep stderr empty");
+    expect_stdout_contains_all(
+        "project-query-dependents-selector",
+        &stdout.replace('\\', "/"),
+        &["package: core", "packages/app (app)"],
+    )
+    .expect("project dependents selector should render selected package dependents");
 }
 
 #[test]
@@ -206,6 +293,84 @@ fn project_query_commands_reject_invalid_arguments() {
                 "--bin".to_owned(),
             ],
             "error: `ql project targets` --bin expects a target name",
+        ),
+        (
+            vec![
+                "project".to_owned(),
+                "dependencies".to_owned(),
+                temp.path().display().to_string(),
+                "--unknown".to_owned(),
+            ],
+            "error: unknown `ql project dependencies` option `--unknown`",
+        ),
+        (
+            vec![
+                "project".to_owned(),
+                "dependencies".to_owned(),
+                temp.path().display().to_string(),
+                "extra".to_owned(),
+            ],
+            "error: unknown `ql project dependencies` argument `extra`",
+        ),
+        (
+            vec![
+                "project".to_owned(),
+                "dependencies".to_owned(),
+                temp.path().display().to_string(),
+                "--name".to_owned(),
+            ],
+            "error: `ql project dependencies` --name expects a package name",
+        ),
+        (
+            vec![
+                "project".to_owned(),
+                "dependencies".to_owned(),
+                temp.path().display().to_string(),
+                "--name".to_owned(),
+                "app".to_owned(),
+                "--package".to_owned(),
+                "core".to_owned(),
+            ],
+            "error: `ql project dependencies` received package selector more than once",
+        ),
+        (
+            vec![
+                "project".to_owned(),
+                "dependents".to_owned(),
+                temp.path().display().to_string(),
+                "--unknown".to_owned(),
+            ],
+            "error: unknown `ql project dependents` option `--unknown`",
+        ),
+        (
+            vec![
+                "project".to_owned(),
+                "dependents".to_owned(),
+                temp.path().display().to_string(),
+                "extra".to_owned(),
+            ],
+            "error: unknown `ql project dependents` argument `extra`",
+        ),
+        (
+            vec![
+                "project".to_owned(),
+                "dependents".to_owned(),
+                temp.path().display().to_string(),
+                "--package".to_owned(),
+            ],
+            "error: `ql project dependents` --package expects a package name",
+        ),
+        (
+            vec![
+                "project".to_owned(),
+                "dependents".to_owned(),
+                temp.path().display().to_string(),
+                "--package".to_owned(),
+                "app".to_owned(),
+                "--name".to_owned(),
+                "core".to_owned(),
+            ],
+            "error: `ql project dependents` received package selector more than once",
         ),
     ];
 
