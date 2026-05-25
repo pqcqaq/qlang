@@ -31,6 +31,7 @@ use serde_json::{Value as JsonValue, json};
 mod analysis_commands;
 mod build_command;
 mod check_command;
+mod cli_build_profile;
 mod cli_utils;
 mod dependency_generic_bridge;
 mod ffi_command;
@@ -2274,31 +2275,6 @@ fn check_json_label(source: &str, label: &ql_diagnostics::Label) -> JsonValue {
             },
         },
     })
-}
-
-fn parse_cli_build_profile(command_label: &str, value: &str) -> Result<BuildProfile, u8> {
-    match value {
-        "debug" => Ok(BuildProfile::Debug),
-        "release" => Ok(BuildProfile::Release),
-        other => {
-            eprintln!("error: {command_label} unsupported profile `{other}`");
-            eprintln!("hint: supported profiles are `debug` and `release`");
-            Err(1)
-        }
-    }
-}
-
-fn set_cli_build_profile(
-    command_label: &str,
-    current: &mut Option<BuildProfile>,
-    profile: BuildProfile,
-) -> Result<(), u8> {
-    if current.is_some() {
-        eprintln!("error: {command_label} received multiple profile selectors");
-        return Err(1);
-    }
-    *current = Some(profile);
-    Ok(())
 }
 
 fn run_path(
