@@ -24,6 +24,7 @@ use serde_json::{Value as JsonValue, json};
 
 mod analysis_commands;
 mod build_command;
+mod build_pipeline;
 mod check_command;
 mod check_reporting;
 mod cli_analysis;

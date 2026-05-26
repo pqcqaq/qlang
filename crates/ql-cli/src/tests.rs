@@ -12,7 +12,7 @@ use ql_parser::parse_source;
 use crate::analysis_commands::{
     render_mir_path, render_ownership_path, render_runtime_requirements,
 };
-use crate::build_command::build_path;
+use crate::build_pipeline::build_path;
 use crate::project_targets::ProjectTargetSelector;
 use crate::{
     analyze_source, dependency_public_struct_method_bridge_candidates,
