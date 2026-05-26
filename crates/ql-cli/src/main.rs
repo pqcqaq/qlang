@@ -80,6 +80,7 @@ use project_workspace::{
     resolve_selected_workspace_member_manifest, resolve_workspace_member_entry_by_package_name,
     select_workspace_members,
 };
+use test_command::TestCommandOptions;
 
 const CLI_NAME: &str = "ql";
 const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -2862,17 +2863,6 @@ enum TestTargetKind {
         diagnostic_path: PathBuf,
         snapshot_path: PathBuf,
     },
-}
-
-#[derive(Clone, Debug, Default)]
-struct TestCommandOptions {
-    profile: BuildProfile,
-    profile_overridden: bool,
-    list_only: bool,
-    json: bool,
-    filter: Option<String>,
-    package_name: Option<String>,
-    target_path: Option<String>,
 }
 
 #[derive(Clone, Debug)]
