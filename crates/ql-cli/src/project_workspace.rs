@@ -6,8 +6,7 @@ use crate::cli_utils::{
     normalize_path, package_missing_name_manifest_path_from_project_error,
     validate_project_package_name,
 };
-
-use super::resolve_project_member_request_root;
+use crate::project_targets::resolve_project_member_request_root;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum WorkspaceMemberLookupError {

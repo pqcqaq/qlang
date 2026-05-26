@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::io::Write;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use ql_analysis::{PackageAnalysisError, analyze_package, analyze_source as analyze_semantics};
@@ -32,7 +32,9 @@ mod build_command;
 mod check_command;
 mod cli_build_profile;
 mod cli_diagnostics;
+mod cli_scan;
 mod cli_utils;
+mod cli_version;
 mod dependency_generic_bridge;
 mod ffi_command;
 mod fmt_command;
@@ -54,15 +56,13 @@ mod project_workspace;
 mod run_command;
 mod test_command;
 
-#[cfg(test)]
-pub(crate) use analysis_commands::{
-    render_mir_path, render_ownership_path, render_runtime_requirements,
-};
 use cli_diagnostics::print_diagnostics;
+use cli_scan::collect_ql_files;
 use cli_utils::{
     normalize_path, package_check_manifest_path_from_project_error,
     package_missing_name_manifest_path_from_project_error, validate_project_package_name,
 };
+use cli_version::{CLI_NAME, CLI_VERSION, is_version_command, version_text};
 use project_interfaces::{
     EmitPackageInterfaceError, EmitPackageInterfaceResult, ReferenceInterfacePrepError,
     ReferenceInterfacePrepFailureKind, emit_package_interface_path,
@@ -75,8 +75,7 @@ use project_targets::{
     project_target_display_path, report_project_source_path_rejects_target_selector,
     report_project_target_selector_requires_project_context, resolve_project_check_command_scope,
     resolve_project_command_path, resolve_project_command_scope,
-    resolve_project_member_request_root, resolve_project_workspace_member_command_request_root,
-    select_workspace_build_targets,
+    resolve_project_workspace_member_command_request_root, select_workspace_build_targets,
 };
 use project_workspace::{
     WorkspaceMemberLookupError, render_workspace_member_lookup_error,
@@ -84,9 +83,6 @@ use project_workspace::{
     select_workspace_members,
 };
 use test_command::TestCommandOptions;
-
-const CLI_NAME: &str = "ql";
-const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() -> ExitCode {
     match run() {
@@ -4198,7 +4194,12 @@ fn is_project_ui_test(package_root: &Path, source_path: &Path) -> bool {
     let Ok(relative) = source_path.strip_prefix(package_root) else {
         return false;
     };
-    let mut components = relative.components().filter_map(component_name);
+    let mut components = relative
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(segment) => segment.to_str(),
+            _ => None,
+        });
     matches!(components.next(), Some("tests")) && matches!(components.next(), Some("ui"))
 }
 
@@ -12114,96 +12115,6 @@ fn analyze_source(source: &str) -> Result<(), Vec<Diagnostic>> {
     }
 }
 
-fn collect_ql_files(path: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
-    if path.is_file() {
-        return Ok(vec![path.to_path_buf()]);
-    }
-
-    let mut files = Vec::new();
-    collect_ql_files_recursive(path, path, &mut files)?;
-    files.sort();
-    Ok(files)
-}
-
-fn collect_ql_files_recursive(
-    root: &Path,
-    path: &Path,
-    files: &mut Vec<PathBuf>,
-) -> Result<(), std::io::Error> {
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        let entry_path = entry.path();
-        if entry_path.is_dir() {
-            if should_skip_directory(root, &entry_path) {
-                continue;
-            }
-            collect_ql_files_recursive(root, &entry_path, files)?;
-        } else if is_ql_file(&entry_path) && !should_skip_file(root, &entry_path) {
-            files.push(entry_path);
-        }
-    }
-    Ok(())
-}
-
-fn is_ql_file(path: &Path) -> bool {
-    path.extension().and_then(|ext| ext.to_str()) == Some("ql")
-}
-
-fn should_skip_directory(root: &Path, path: &Path) -> bool {
-    if path == root {
-        return false;
-    }
-
-    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-        return false;
-    };
-
-    name.starts_with('.')
-        || matches!(
-            name,
-            "target" | "node_modules" | "dist" | "build" | "coverage" | "fixtures" | "ramdon_tests"
-        )
-        || is_negative_fixture_path(root, path)
-}
-
-fn should_skip_file(root: &Path, path: &Path) -> bool {
-    if path == root {
-        return false;
-    }
-
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.starts_with('.'))
-        || is_negative_fixture_path(root, path)
-}
-
-fn is_negative_fixture_path(root: &Path, path: &Path) -> bool {
-    let Ok(relative) = path.strip_prefix(root) else {
-        return false;
-    };
-
-    let mut saw_fixtures = false;
-    for component in relative.components().filter_map(component_name) {
-        if component == "fixtures" {
-            saw_fixtures = true;
-            continue;
-        }
-
-        if saw_fixtures && component == "fail" {
-            return true;
-        }
-    }
-
-    false
-}
-
-fn component_name(component: Component<'_>) -> Option<&str> {
-    match component {
-        Component::Normal(segment) => segment.to_str(),
-        _ => None,
-    }
-}
-
 fn print_package_analysis_error(error: &PackageAnalysisError) {
     match error {
         PackageAnalysisError::Project(error) => eprintln!("error: {error}"),
@@ -12225,14 +12136,6 @@ fn print_package_analysis_error(error: &PackageAnalysisError) {
             eprintln!("error: invalid interface `{}`: {message}", path.display());
         }
     }
-}
-
-fn is_version_command(command: &str) -> bool {
-    matches!(command, "--version" | "-V" | "version")
-}
-
-fn version_text(binary_name: &str) -> String {
-    format!("{binary_name} {CLI_VERSION}")
 }
 
 fn print_usage() {

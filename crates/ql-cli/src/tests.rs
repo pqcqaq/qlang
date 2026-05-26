@@ -7,13 +7,17 @@ use ql_driver::{
     ArchiverFlavor, ArchiverInvocation, BuildEmit, BuildOptions, BuildProfile, ProgramInvocation,
     ToolchainOptions,
 };
+use ql_parser::parse_source;
 
-use super::{
-    ProjectTargetSelector, analyze_semantics, analyze_source, build_path, collect_ql_files,
-    dependency_public_struct_method_bridge_candidates, dependency_public_type_bridge_candidates,
-    dependency_public_type_bridge_order, is_version_command, parse_source, render_mir_path,
-    render_ownership_path, render_runtime_requirements, version_text,
+use crate::analysis_commands::{
+    render_mir_path, render_ownership_path, render_runtime_requirements,
 };
+use crate::project_targets::ProjectTargetSelector;
+use crate::{
+    analyze_source, build_path, dependency_public_struct_method_bridge_candidates,
+    dependency_public_type_bridge_candidates, dependency_public_type_bridge_order,
+};
+use ql_analysis::analyze_source as analyze_semantics;
 
 struct TestDir {
     path: PathBuf,
@@ -48,64 +52,6 @@ impl Drop for TestDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
     }
-}
-
-fn relative_paths(root: &Path, files: Vec<PathBuf>) -> Vec<String> {
-    files
-        .into_iter()
-        .map(|path| {
-            path.strip_prefix(root)
-                .expect("file should be under test root")
-                .to_string_lossy()
-                .replace('\\', "/")
-        })
-        .collect()
-}
-
-#[test]
-fn version_text_includes_workspace_package_version() {
-    assert_eq!(
-        version_text("ql"),
-        format!("ql {}", env!("CARGO_PKG_VERSION"))
-    );
-}
-
-#[test]
-fn version_command_recognizes_global_aliases() {
-    for command in ["--version", "-V", "version"] {
-        assert!(
-            is_version_command(command),
-            "expected {command} to be recognized"
-        );
-    }
-    assert!(!is_version_command("check"));
-}
-
-#[test]
-fn collect_ql_files_skips_tooling_and_negative_fixture_dirs() {
-    let dir = TestDir::new("ql-cli-scan");
-    dir.write("src/main.ql", "fn main() {}");
-    dir.write("fixtures/parser/pass/good.ql", "fn good() {}");
-    dir.write("fixtures/parser/fail/bad.ql", "fn");
-    dir.write("ramdon_tests/scratch.ql", "fn scratch() {}");
-    dir.write("target/generated.ql", "fn generated() {}");
-    dir.write("node_modules/pkg/index.ql", "fn dep() {}");
-    dir.write(".git/hooks/pre-commit.ql", "fn hook() {}");
-
-    let files = collect_ql_files(dir.path()).expect("collect ql files");
-
-    assert_eq!(relative_paths(dir.path(), files), vec!["src/main.ql"]);
-}
-
-#[test]
-fn collect_ql_files_respects_explicit_negative_fixture_roots() {
-    let dir = TestDir::new("ql-cli-explicit-fail");
-    dir.write("fixtures/parser/fail/bad.ql", "fn");
-
-    let root = dir.path().join("fixtures/parser/fail");
-    let files = collect_ql_files(&root).expect("collect explicit fail fixture files");
-
-    assert_eq!(relative_paths(&root, files), vec!["bad.ql"]);
 }
 
 #[test]

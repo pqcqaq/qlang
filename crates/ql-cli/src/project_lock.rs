@@ -9,8 +9,7 @@ use crate::cli_utils::{
     normalize_line_endings, normalize_path, package_check_manifest_path_from_project_error,
     package_missing_name_manifest_path_from_project_error,
 };
-
-use super::resolve_project_workspace_member_command_request_root;
+use crate::project_targets::resolve_project_workspace_member_command_request_root;
 
 #[derive(Debug)]
 struct ProjectLockJsonReport {
