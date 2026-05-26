@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use ql_analysis::{PackageAnalysisError, analyze_package, analyze_source as analyze_semantics};
+use ql_analysis::{PackageAnalysisError, analyze_package};
 use ql_ast::{
     CallArg, Expr, ExprKind, FunctionDecl, GlobalDecl, ItemKind, Module, Param, ReceiverKind,
     Visibility,
@@ -30,6 +30,7 @@ mod analysis_commands;
 mod build_command;
 mod check_command;
 mod check_reporting;
+mod cli_analysis;
 mod cli_build_profile;
 mod cli_diagnostics;
 mod cli_json_diagnostics;
@@ -62,6 +63,7 @@ mod test_command;
 use check_command::CheckJsonReport;
 use check_reporting::{
     format_check_command_label, format_workspace_member_check_rerun_command,
+    report_check_package_selector_requires_workspace_context,
     report_package_check_manifest_failure, report_package_check_no_sources_failure,
     report_package_check_reference_failure, report_package_check_source_diagnostics_failure,
     report_package_check_source_root_failure,
@@ -71,6 +73,7 @@ use check_reporting::{
     report_workspace_member_package_check_source_diagnostics_failure,
     report_workspace_member_package_check_source_root_failure,
 };
+use cli_analysis::{analyze_source, print_package_analysis_error};
 use cli_diagnostics::print_diagnostics;
 use cli_json_diagnostics::diagnostics_json;
 use cli_scan::collect_ql_files;
@@ -3831,11 +3834,6 @@ fn report_test_failure(failure: &TestFailure) {
 
 fn report_test_package_selector_requires_project_context(package_name: &str) {
     eprintln!("error: `ql test` package selectors require a package or workspace path");
-    eprintln!("note: selector: package `{package_name}`");
-}
-
-fn report_check_package_selector_requires_workspace_context(package_name: &str) {
-    eprintln!("error: `ql check` package selectors require a workspace path");
     eprintln!("note: selector: package `{package_name}`");
 }
 
@@ -11785,38 +11783,6 @@ fn report_reference_interface_artifact_issue(
         &notes,
         &hint_line,
     );
-}
-
-fn analyze_source(source: &str) -> Result<(), Vec<Diagnostic>> {
-    let analysis = analyze_semantics(source)?;
-    if analysis.has_errors() {
-        Err(analysis.diagnostics().to_vec())
-    } else {
-        Ok(())
-    }
-}
-
-fn print_package_analysis_error(error: &PackageAnalysisError) {
-    match error {
-        PackageAnalysisError::Project(error) => eprintln!("error: {error}"),
-        PackageAnalysisError::Read { path, error } => {
-            eprintln!("error: failed to read `{}`: {error}", path.display());
-        }
-        PackageAnalysisError::SourceDiagnostics {
-            path,
-            source,
-            diagnostics,
-        } => print_diagnostics(path, source, diagnostics),
-        PackageAnalysisError::InterfaceNotFound { package_name, path } => {
-            eprintln!(
-                "error: referenced package `{package_name}` is missing interface artifact `{}`",
-                path.display()
-            );
-        }
-        PackageAnalysisError::InterfaceParse { path, message } => {
-            eprintln!("error: invalid interface `{}`: {message}", path.display());
-        }
-    }
 }
 
 #[cfg(test)]

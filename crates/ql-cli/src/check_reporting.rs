@@ -164,3 +164,8 @@ pub(crate) fn report_package_check_reference_failure(manifest_path: &Path, sync_
         "hint: rerun `{rerun_command}` after fixing the referenced package or reference manifest"
     );
 }
+
+pub(crate) fn report_check_package_selector_requires_workspace_context(package_name: &str) {
+    eprintln!("error: `ql check` package selectors require a workspace path");
+    eprintln!("note: selector: package `{package_name}`");
+}

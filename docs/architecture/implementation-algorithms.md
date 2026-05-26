@@ -248,7 +248,7 @@
 - invalid struct-literal root diagnostics
 - invalid pattern-root shape diagnostics
 - invalid path-pattern root diagnostics
-- same-file const bare path-pattern literal folding + unsupported static/non-scalar path-pattern diagnostics
+- same-file const/static bare path-pattern literal folding + unsupported non-scalar path-pattern diagnostics
 - pattern root / literal compatibility
 - calling non-callable values
 
@@ -266,7 +266,7 @@
 - deferred multi-segment `impl` / `extend` target 也不参与 concrete local receiver 的成员投影；只有真实 receiver type 自己的稳定 field / method candidate 会继续出现在 typing 与 completion surface 上
 - pattern-root shape diagnostics 也先只覆盖“pattern root 已解析成功且构造形状已知必错”的 case；same-file 已解析二段 enum variant path 的 unknown variant 现在也会升级成显式错误，但 path-pattern semantics / deeper module-path 仍不提前下结论
 - bare path-pattern diagnostics 也先只覆盖“path root 已解析成功且 bare path 形状已知必错”的 case；unit variant 保持允许，同文件已解析二段 enum variant path 的 unknown variant 与 const/static pattern 语义现在会显式报错，但 cross-file / deeper module-path 仍继续保守
-- const/static bare path-pattern diagnostics 也先只覆盖 same-file root 与 same-file local import alias，不把 cross-file constant semantics 误写成已完成
+- const/static bare path-pattern literal folding 只覆盖 same-file root 与 same-file local import alias，不把 cross-file constant semantics 误写成已完成；非标量 const/static 仍显式报 unsupported
 - 还没建立完整 import/module/member/索引协议前，不把每个未知都提前升级成硬错误
 
 ### Unified Analysis And Query Index

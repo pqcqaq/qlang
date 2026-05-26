@@ -61,7 +61,7 @@ Phase 2 的目标不是一次做完完整类型系统，而是建立统一语义
 - member existence
 - invalid pattern-root shape diagnostics
 - invalid path-pattern root diagnostics
-- unsupported const/static path-pattern diagnostics
+- same-file const/static path-pattern literal folding and unsupported non-scalar path-pattern diagnostics
 - pattern root / literal compatibility
 - bare mutable binding assignment diagnostics
 
@@ -72,7 +72,7 @@ Phase 2 的目标不是一次做完完整类型系统，而是建立统一语义
 - 只在已有稳定语义身份处收紧规则，不提前宣称完整 place/index protocol
 - pattern root shape 也只在“已解析且已知必错”时显式报错；same-file 已解析二段 enum variant path 的 unknown variant 现在也显式报错，path-pattern semantics / deeper module-path 继续保守
 - bare path pattern 也只在“已解析且已知 bare path 形状必错”时显式报错；unit variant 保持允许
-- const/static bare path pattern 现在也显式报 unsupported，但只限 same-file root / same-file local import alias；更广义 constant-pattern 语义继续保守
+- const/static bare path pattern 现在支持 same-file root / same-file local import alias 的 `Bool` / `Int` literal folding；非标量与更广义 constant-pattern 语义继续保守
 - unsupported 或仍 deferred 的 struct literal root 现在也回退成 `unknown`，避免继续制造级联 type mismatch
 - deferred multi-segment type path 现在也保持 source-backed `Named`，避免 same-file local item / import alias 的首段解析结果继续污染 type/query truth surface
 - deferred multi-segment `impl` / `extend` target 也不会被投影到 concrete local receiver surface；同文件 concrete item 的 member typing/completion 只继续接真实 receiver 自己的字段/方法，不把 `Counter.Scope.Config` 这类 deferred path 的方法伪装成 `Counter` 的能力
