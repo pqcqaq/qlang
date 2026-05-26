@@ -6,9 +6,8 @@ use ql_driver::{
 };
 
 use crate::cli_diagnostics::print_diagnostics;
+use crate::cli_usage::print_usage;
 use crate::cli_utils::normalize_path;
-
-use super::print_usage;
 
 pub(crate) fn ffi_path(args: &mut impl Iterator<Item = String>) -> Result<(), u8> {
     let Some(subcommand) = args.next() else {

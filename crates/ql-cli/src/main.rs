@@ -33,6 +33,7 @@ mod check_command;
 mod cli_build_profile;
 mod cli_diagnostics;
 mod cli_scan;
+mod cli_usage;
 mod cli_utils;
 mod cli_version;
 mod dependency_generic_bridge;
@@ -58,11 +59,12 @@ mod test_command;
 
 use cli_diagnostics::print_diagnostics;
 use cli_scan::collect_ql_files;
+use cli_usage::print_usage;
 use cli_utils::{
     normalize_path, package_check_manifest_path_from_project_error,
     package_missing_name_manifest_path_from_project_error, validate_project_package_name,
 };
-use cli_version::{CLI_NAME, CLI_VERSION, is_version_command, version_text};
+use cli_version::{CLI_NAME, is_version_command, version_text};
 use project_interfaces::{
     EmitPackageInterfaceError, EmitPackageInterfaceResult, ReferenceInterfacePrepError,
     ReferenceInterfacePrepFailureKind, emit_package_interface_path,
@@ -12136,52 +12138,6 @@ fn print_package_analysis_error(error: &PackageAnalysisError) {
             eprintln!("error: invalid interface `{}`: {message}", path.display());
         }
     }
-}
-
-fn print_usage() {
-    eprintln!("Qlang CLI {}", CLI_VERSION);
-    eprintln!("usage:");
-    eprintln!("  ql --version");
-    eprintln!("  ql version");
-    eprintln!("  ql check <file-or-dir> [--sync-interfaces] [--json]");
-    eprintln!(
-        "  ql build <file-or-dir> [--emit llvm-ir|asm|obj|exe|dylib|staticlib] [--profile debug|release|--release] [--package <name>] [--lib|--bin <name>|--target <path>] [--list] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>] [--json]"
-    );
-    eprintln!(
-        "  ql run <file-or-dir> [--profile debug|release|--release] [--package <name>] [--bin <name>|--target <path>] [--list] [--json] [-- <args...>]"
-    );
-    eprintln!(
-        "  ql test <file-or-dir> [--profile debug|release|--release] [--package <name>] [--target <tests/...ql>] [--list] [--filter <substring>] [--json]"
-    );
-    eprintln!(
-        "  ql project targets [file-or-dir] [--package <name>] [--lib|--bin <name>|--target <path>] [--json]"
-    );
-    eprintln!("  ql project status [file-or-dir] [--package <name>] [--json]");
-    eprintln!("  ql project target add [file-or-dir] [--package <name>] --bin <name>");
-    eprintln!("  ql project graph [file-or-dir] [--package <name>] [--json]");
-    eprintln!("  ql project dependents [file-or-dir] [--name <package>|--package <name>] [--json]");
-    eprintln!(
-        "  ql project dependencies [file-or-dir] [--name <package>|--package <name>] [--json]"
-    );
-    eprintln!("  ql project lock [file-or-dir] [--check] [--json]");
-    eprintln!("  ql project init [dir] [--workspace] [--name <package>] [--stdlib <path>]");
-    eprintln!("  ql project add [file-or-dir] --name <package> [--dependency <package> ...]");
-    eprintln!("  ql project add [file-or-dir] --existing <file-or-dir>");
-    eprintln!("  ql project remove [file-or-dir] --name <package> [--cascade]");
-    eprintln!(
-        "  ql project add-dependency [file-or-dir] [--package <name>] (--name <package> | --path <file-or-dir>)"
-    );
-    eprintln!(
-        "  ql project remove-dependency [file-or-dir] [--package <name>] [--name <package>] [--all]"
-    );
-    eprintln!(
-        "  ql project emit-interface [file-or-dir] [--package <name>] [-o <output>] [--changed-only] [--check]"
-    );
-    eprintln!("  ql ffi header <file> [--surface exports|imports|both] [-o <output>]");
-    eprintln!("  ql fmt <file> [--write]");
-    eprintln!("  ql mir <file>");
-    eprintln!("  ql ownership <file>");
-    eprintln!("  ql runtime <file>");
 }
 
 #[cfg(test)]

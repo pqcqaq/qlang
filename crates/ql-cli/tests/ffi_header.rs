@@ -75,6 +75,44 @@ fn ffi_header_rejects_unknown_surface() {
 }
 
 #[test]
+fn ffi_rejects_unknown_subcommand_and_prints_usage() {
+    let workspace_root = workspace_root();
+    let mut command = ql_command(&workspace_root);
+    command.args(["ffi", "unknown"]);
+    let output = run_command_capture(&mut command, "`ql ffi unknown`");
+    let (stdout, stderr) = expect_exit_code(
+        "ffi-unknown-subcommand",
+        "unknown ffi subcommand",
+        &output,
+        1,
+    )
+    .expect("unknown ffi subcommand should fail with exit code 1");
+    expect_empty_stdout("ffi-unknown-subcommand", "unknown ffi subcommand", &stdout)
+        .expect("unknown ffi subcommand should not print stdout");
+    expect_stderr_contains(
+        "ffi-unknown-subcommand",
+        "unknown ffi subcommand",
+        &stderr,
+        "error: unknown `ql ffi` subcommand `unknown`",
+    )
+    .expect("unknown ffi subcommand diagnostic should mention the rejected subcommand");
+    expect_stderr_contains(
+        "ffi-unknown-subcommand",
+        "unknown ffi subcommand",
+        &stderr,
+        "Qlang CLI",
+    )
+    .expect("unknown ffi subcommand should print usage header");
+    expect_stderr_contains(
+        "ffi-unknown-subcommand",
+        "unknown ffi subcommand",
+        &stderr,
+        "ql ffi header <file> [--surface exports|imports|both] [-o <output>]",
+    )
+    .expect("unknown ffi subcommand should print ffi usage line");
+}
+
+#[test]
 fn ffi_header_supports_string_export_signatures() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-ffi-header-string");
