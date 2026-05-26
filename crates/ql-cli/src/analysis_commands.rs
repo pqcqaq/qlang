@@ -1,9 +1,10 @@
 use std::fs;
 use std::path::Path;
 
+use ql_analysis::analyze_source as analyze_semantics;
 use ql_runtime::{collect_runtime_hook_signatures, collect_runtime_hooks};
 
-use super::{analyze_semantics, print_diagnostics};
+use crate::cli_diagnostics::print_diagnostics;
 
 pub(crate) fn mir_path(args: &mut impl Iterator<Item = String>) -> Result<(), u8> {
     let path = single_path_argument("mir", args)?;

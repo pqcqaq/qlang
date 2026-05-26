@@ -32,6 +32,7 @@ mod analysis_commands;
 mod build_command;
 mod check_command;
 mod cli_build_profile;
+mod cli_diagnostics;
 mod cli_utils;
 mod dependency_generic_bridge;
 mod ffi_command;
@@ -57,6 +58,7 @@ mod test_command;
 pub(crate) use analysis_commands::{
     render_mir_path, render_ownership_path, render_runtime_requirements,
 };
+use cli_diagnostics::print_diagnostics;
 use cli_utils::{
     normalize_path, package_check_manifest_path_from_project_error,
     package_missing_name_manifest_path_from_project_error, validate_project_package_name,
@@ -12761,14 +12763,6 @@ fn render_interface_artifact(package_name: &str, modules: &[(String, String)]) -
     }
 
     rendered
-}
-
-fn print_diagnostics(path: &Path, source: &str, diagnostics: &[Diagnostic]) {
-    let normalized_path = normalize_path(path);
-    eprint!(
-        "{}",
-        render_diagnostics(Path::new(&normalized_path), source, diagnostics)
-    );
 }
 
 fn print_package_analysis_error(error: &PackageAnalysisError) {

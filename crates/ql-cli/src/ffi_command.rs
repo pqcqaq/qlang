@@ -5,9 +5,10 @@ use ql_driver::{
     emit_c_header, resolve_c_header_output_path,
 };
 
+use crate::cli_diagnostics::print_diagnostics;
 use crate::cli_utils::normalize_path;
 
-use super::{print_diagnostics, print_usage};
+use super::print_usage;
 
 pub(crate) fn ffi_path(args: &mut impl Iterator<Item = String>) -> Result<(), u8> {
     let Some(subcommand) = args.next() else {
