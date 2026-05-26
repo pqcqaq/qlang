@@ -198,117 +198,8 @@ fn report_package_interface_check_manifest_failure(manifest_path: &Path, changed
     eprintln!("hint: rerun `{rerun_command}` after fixing the package manifest");
 }
 
-fn build_path(
-    path: &Path,
-    options: &BuildOptions,
-    selector: &ProjectTargetSelector,
-    emit_interface: bool,
-    emit_overridden: bool,
-    profile_overridden: bool,
-    json: bool,
-) -> Result<(), u8> {
-    match resolve_project_command_path(path, selector) {
-        Ok(ResolvedProjectCommandPath::Project {
-            request_root_manifest_path,
-            selector,
-        }) => {
-            return build_project_path(
-                path,
-                options,
-                &selector,
-                emit_interface,
-                emit_overridden,
-                profile_overridden,
-                json,
-                request_root_manifest_path.as_deref(),
-            );
-        }
-        Ok(ResolvedProjectCommandPath::DirectSource) => {}
-        Err(ProjectCommandPathError::SourcePathRejectsSelector) => {
-            if json {
-                let mut report =
-                    BuildJsonReport::new(path, None, options, profile_overridden, emit_interface);
-                report.record_preflight_failure(build_json_preflight_failure(
-                    path,
-                    None,
-                    None,
-                    None,
-                    "selector",
-                    "project-context",
-                    "direct project source paths do not support target selectors".to_owned(),
-                    Some(selector.describe()),
-                    None,
-                    None,
-                ));
-                print!("{}", report.into_json());
-            } else {
-                report_project_source_path_rejects_target_selector("`ql build`", path, selector);
-            }
-            return Err(1);
-        }
-        Err(ProjectCommandPathError::SelectorRequiresProjectContext) => {
-            if json {
-                let mut report =
-                    BuildJsonReport::new(path, None, options, profile_overridden, emit_interface);
-                report.record_preflight_failure(build_json_preflight_failure(
-                    path,
-                    None,
-                    None,
-                    None,
-                    "selector",
-                    "project-context",
-                    "target selectors require a package or workspace path".to_owned(),
-                    Some(selector.describe()),
-                    None,
-                    None,
-                ));
-                print!("{}", report.into_json());
-            } else {
-                report_project_target_selector_requires_project_context("`ql build`", selector);
-            }
-            return Err(1);
-        }
-    }
-
-    if json {
-        let mut report =
-            BuildJsonReport::new(path, None, options, profile_overridden, emit_interface);
-        let artifact = match build_single_source_target_result(path, options) {
-            Ok(artifact) => artifact,
-            Err(error) => {
-                report.record_source_failure(path, &error);
-                print!("{}", report.into_json());
-                return Err(1);
-            }
-        };
-        report.record_source_target(path, &artifact);
-        if emit_interface {
-            match emit_built_package_interface_quiet(path, path, options, &artifact.path, &[]) {
-                Ok(interface_result) => {
-                    report.record_interface_result(None, None, true, interface_result);
-                }
-                Err(error) => {
-                    report.record_preflight_failure(build_json_emit_interface_failure(
-                        path, None, None, &error,
-                    ));
-                    print!("{}", report.into_json());
-                    return Err(1);
-                }
-            }
-        }
-        print!("{}", report.into_json());
-        return Ok(());
-    }
-
-    let artifact = build_single_source_target(path, options, emit_interface)?;
-    if emit_interface {
-        emit_built_package_interface(path, path, options, &artifact.path, &[])?;
-    }
-    Ok(())
-}
-
 #[derive(Debug)]
-struct BuildJsonReport {
+pub(crate) struct BuildJsonReport {
     scope: &'static str,
     path: String,
     project_manifest_path: Option<String>,
@@ -322,7 +213,7 @@ struct BuildJsonReport {
 }
 
 impl BuildJsonReport {
-    fn new(
+    pub(crate) fn new(
         path: &Path,
         project_request_root: Option<&Path>,
         options: &BuildOptions,
@@ -369,7 +260,7 @@ impl BuildJsonReport {
         }
     }
 
-    fn record_source_target(&mut self, path: &Path, artifact: &BuildArtifact) {
+    pub(crate) fn record_source_target(&mut self, path: &Path, artifact: &BuildArtifact) {
         self.built_targets.push(build_json_target(
             None,
             None,
@@ -397,7 +288,7 @@ impl BuildJsonReport {
         ));
     }
 
-    fn record_source_failure(&mut self, path: &Path, error: &BuildError) {
+    pub(crate) fn record_source_failure(&mut self, path: &Path, error: &BuildError) {
         self.failure = Some(build_json_failure(
             None,
             None,
@@ -408,7 +299,7 @@ impl BuildJsonReport {
         ));
     }
 
-    fn record_preflight_failure(&mut self, failure: JsonValue) {
+    pub(crate) fn record_preflight_failure(&mut self, failure: JsonValue) {
         self.failure = Some(failure);
     }
 
@@ -429,7 +320,7 @@ impl BuildJsonReport {
         ));
     }
 
-    fn record_interface_result(
+    pub(crate) fn record_interface_result(
         &mut self,
         manifest_path: Option<&Path>,
         package_name: Option<&str>,
@@ -449,7 +340,7 @@ impl BuildJsonReport {
         }));
     }
 
-    fn into_json(self) -> String {
+    pub(crate) fn into_json(self) -> String {
         let rendered = serde_json::to_string_pretty(&json!({
             "schema": "ql.build.v1",
             "path": self.path,
@@ -736,7 +627,7 @@ fn build_json_failure(
     }
 }
 
-fn build_json_preflight_failure(
+pub(crate) fn build_json_preflight_failure(
     request_path: &Path,
     manifest_path: Option<&Path>,
     package_name: Option<&str>,
@@ -869,7 +760,7 @@ fn build_json_interface_failure(
     })
 }
 
-fn build_json_emit_interface_failure(
+pub(crate) fn build_json_emit_interface_failure(
     request_path: &Path,
     manifest_path: Option<&Path>,
     package_name: Option<&str>,
@@ -3447,7 +3338,7 @@ fn normalize_output_text(text: &str) -> String {
     text.replace("\r\n", "\n")
 }
 
-fn build_project_path(
+pub(crate) fn build_project_path(
     path: &Path,
     options: &BuildOptions,
     selector: &ProjectTargetSelector,
@@ -8595,7 +8486,7 @@ fn span_text(source: &str, span: ql_span::Span) -> String {
         .to_owned()
 }
 
-fn build_single_source_target(
+pub(crate) fn build_single_source_target(
     path: &Path,
     options: &BuildOptions,
     emit_interface: bool,
@@ -8611,7 +8502,7 @@ fn build_single_source_target_silent(
     build_single_source_target_impl(path, options, emit_interface, false, true)
 }
 
-fn build_single_source_target_result(
+pub(crate) fn build_single_source_target_result(
     path: &Path,
     options: &BuildOptions,
 ) -> Result<BuildArtifact, BuildError> {
@@ -8810,7 +8701,7 @@ fn build_single_source_target_with_inputs_result(
     }
 }
 
-fn emit_built_package_interface(
+pub(crate) fn emit_built_package_interface(
     request_path: &Path,
     package_context_path: &Path,
     options: &BuildOptions,
@@ -8828,7 +8719,7 @@ fn emit_built_package_interface(
     Ok(())
 }
 
-fn emit_built_package_interface_quiet(
+pub(crate) fn emit_built_package_interface_quiet(
     request_path: &Path,
     package_context_path: &Path,
     options: &BuildOptions,
