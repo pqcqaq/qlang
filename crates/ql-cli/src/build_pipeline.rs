@@ -1,16 +1,30 @@
 use std::path::Path;
 
 use ql_driver::BuildOptions;
+use ql_project::BuildTargetKind;
 
+use crate::cli_utils::normalize_path;
+use crate::project_interfaces::prepare_reference_interfaces_for_manifests_quiet;
+use crate::project_reference_interfaces::prepare_reference_interfaces_for_manifests;
 use crate::project_targets::{
     ProjectCommandPathError, ProjectTargetSelector, ResolvedProjectCommandPath,
+    load_workspace_build_targets_for_command_from_request_root,
     report_project_source_path_rejects_target_selector,
     report_project_target_selector_requires_project_context, resolve_project_command_path,
+    select_workspace_build_targets,
 };
 use crate::{
-    BuildJsonReport, build_json_emit_interface_failure, build_json_preflight_failure,
-    build_project_path, build_single_source_target, build_single_source_target_result,
-    emit_built_package_interface, emit_built_package_interface_quiet,
+    BuildJsonReport, BuildTargetJsonError, build_json_build_plan_failure,
+    build_json_dependency_interface_prep_failure, build_json_emit_interface_failure,
+    build_json_preflight_failure, build_json_target_prep_failure, build_project_source_target,
+    build_project_source_target_result, build_single_source_target,
+    build_single_source_target_result, emit_built_package_interface,
+    emit_built_package_interface_quiet, first_colliding_project_build_header_output_path,
+    first_colliding_project_build_output_path,
+    load_workspace_build_targets_for_build_json_from_request_root,
+    project_dependency_target_build_options, project_target_build_options,
+    resolve_project_build_plan_members, resolve_project_build_plan_members_quiet,
+    select_workspace_build_targets_for_build_json,
 };
 
 pub(crate) fn build_path(
@@ -119,5 +133,496 @@ pub(crate) fn build_path(
     if emit_interface {
         emit_built_package_interface(path, path, options, &artifact.path, &[])?;
     }
+    Ok(())
+}
+
+fn emit_build_json_failure(
+    json_report: &mut Option<BuildJsonReport>,
+    failure: serde_json::Value,
+) -> Result<(), u8> {
+    let mut report = json_report
+        .take()
+        .expect("json report should exist for `ql build --json` failure reporting");
+    report.record_preflight_failure(failure);
+    print!("{}", report.into_json());
+    Err(1)
+}
+
+fn build_project_path(
+    path: &Path,
+    options: &BuildOptions,
+    selector: &ProjectTargetSelector,
+    emit_interface: bool,
+    emit_overridden: bool,
+    profile_overridden: bool,
+    json: bool,
+    project_request_root: Option<&Path>,
+) -> Result<(), u8> {
+    let mut json_report = json.then(|| {
+        BuildJsonReport::new(
+            path,
+            project_request_root,
+            options,
+            profile_overridden,
+            emit_interface,
+        )
+    });
+    let request_root = project_request_root.unwrap_or(path);
+
+    let members = if json {
+        match load_workspace_build_targets_for_build_json_from_request_root(path, request_root) {
+            Ok(members) => members,
+            Err(failure) => return emit_build_json_failure(&mut json_report, failure),
+        }
+    } else {
+        load_workspace_build_targets_for_command_from_request_root(
+            path,
+            request_root,
+            "`ql build`",
+        )?
+    };
+    let selected_members = if json {
+        match select_workspace_build_targets_for_build_json(
+            path,
+            &members,
+            selector,
+            "build targets",
+        ) {
+            Ok(selected) => selected,
+            Err(failure) => return emit_build_json_failure(&mut json_report, failure),
+        }
+    } else {
+        select_workspace_build_targets(path, &members, selector, "`ql build`", "build targets")?
+    };
+    let total_targets = selected_members
+        .iter()
+        .map(|member| member.targets.len())
+        .sum::<usize>();
+    if total_targets == 0 {
+        let normalized_path = normalize_path(path);
+        if json {
+            return emit_build_json_failure(
+                &mut json_report,
+                build_json_preflight_failure(
+                    path,
+                    None,
+                    None,
+                    None,
+                    "project",
+                    "target-discovery",
+                    format!("found no discovered build targets under `{normalized_path}`"),
+                    None,
+                    None,
+                    Some(0),
+                ),
+            );
+        }
+        eprintln!("error: `ql build` found no discovered build targets under `{normalized_path}`");
+        eprintln!(
+            "hint: rerun `ql project targets {normalized_path}` to inspect the discovered build targets"
+        );
+        return Err(1);
+    }
+
+    if total_targets > 1 {
+        let normalized_path = normalize_path(path);
+        if options.output.is_some() {
+            if json {
+                return emit_build_json_failure(
+                    &mut json_report,
+                    build_json_preflight_failure(
+                        path,
+                        None,
+                        None,
+                        None,
+                        "output-conflict",
+                        "output-planning",
+                        "`ql build --output` only supports a single discovered build target"
+                            .to_owned(),
+                        None,
+                        None,
+                        Some(total_targets),
+                    ),
+                );
+            }
+            eprintln!("error: `ql build --output` only supports a single discovered build target");
+            eprintln!("note: `{normalized_path}` resolved to {total_targets} build targets");
+            return Err(1);
+        }
+        if options
+            .c_header
+            .as_ref()
+            .and_then(|header| header.output.as_ref())
+            .is_some()
+        {
+            if json {
+                return emit_build_json_failure(
+                    &mut json_report,
+                    build_json_preflight_failure(
+                        path,
+                        None,
+                        None,
+                        None,
+                        "output-conflict",
+                        "output-planning",
+                        "`ql build --header-output` only supports a single discovered build target"
+                            .to_owned(),
+                        None,
+                        None,
+                        Some(total_targets),
+                    ),
+                );
+            }
+            eprintln!(
+                "error: `ql build --header-output` only supports a single discovered build target"
+            );
+            eprintln!("note: `{normalized_path}` resolved to {total_targets} build targets");
+            return Err(1);
+        }
+    }
+
+    if let Some(output_path) = first_colliding_project_build_output_path(
+        &selected_members,
+        options,
+        emit_overridden,
+        profile_overridden,
+    ) {
+        if json {
+            return emit_build_json_failure(
+                &mut json_report,
+                build_json_preflight_failure(
+                    path,
+                    None,
+                    None,
+                    None,
+                    "output-conflict",
+                    "output-planning",
+                    format!(
+                        "resolved multiple build targets to the same output path `{}`",
+                        normalize_path(&output_path)
+                    ),
+                    None,
+                    Some(normalize_path(&output_path)),
+                    None,
+                ),
+            );
+        }
+        eprintln!(
+            "error: `ql build` resolved multiple build targets to the same output path `{}`",
+            normalize_path(&output_path)
+        );
+        eprintln!(
+            "hint: rerun a single package/target path or rename the conflicting build target stems"
+        );
+        return Err(1);
+    }
+    if let Some(output_path) = first_colliding_project_build_header_output_path(
+        &selected_members,
+        options,
+        emit_overridden,
+        profile_overridden,
+    ) {
+        if json {
+            return emit_build_json_failure(
+                &mut json_report,
+                build_json_preflight_failure(
+                    path,
+                    None,
+                    None,
+                    None,
+                    "output-conflict",
+                    "output-planning",
+                    format!(
+                        "resolved multiple build targets to the same header output path `{}`",
+                        normalize_path(&output_path)
+                    ),
+                    None,
+                    Some(normalize_path(&output_path)),
+                    None,
+                ),
+            );
+        }
+        eprintln!(
+            "error: `ql build` resolved multiple build targets to the same header output path `{}`",
+            normalize_path(&output_path)
+        );
+        eprintln!(
+            "hint: rerun a single package/target path or rename the conflicting build target stems"
+        );
+        return Err(1);
+    }
+
+    let member_manifest_paths = selected_members
+        .iter()
+        .map(|member| member.member_manifest_path.clone())
+        .collect::<Vec<_>>();
+    if json {
+        if let Err(failure) =
+            prepare_reference_interfaces_for_manifests_quiet(&member_manifest_paths)
+        {
+            return emit_build_json_failure(
+                &mut json_report,
+                build_json_dependency_interface_prep_failure(path, &failure),
+            );
+        }
+    } else {
+        prepare_reference_interfaces_for_manifests(&member_manifest_paths, "`ql build`", true)?;
+    }
+
+    let build_plan = if json {
+        match resolve_project_build_plan_members_quiet(&members, &selected_members) {
+            Ok(build_plan) => build_plan,
+            Err(failure) => {
+                return emit_build_json_failure(
+                    &mut json_report,
+                    build_json_build_plan_failure(path, &failure),
+                );
+            }
+        }
+    } else {
+        resolve_project_build_plan_members(&members, &selected_members, "`ql build`")?
+    };
+
+    for plan_member in &build_plan {
+        if plan_member.require_targets && plan_member.member.targets.is_empty() {
+            if json {
+                return emit_build_json_failure(
+                    &mut json_report,
+                    build_json_preflight_failure(
+                        path,
+                        Some(&plan_member.member.member_manifest_path),
+                        Some(plan_member.member.package_name.as_str()),
+                        Some(true),
+                        "project",
+                        "build-plan",
+                        format!(
+                            "package `{}` has no discovered build targets",
+                            plan_member.member.package_name
+                        ),
+                        None,
+                        None,
+                        Some(0),
+                    ),
+                );
+            }
+            eprintln!(
+                "error: `ql build` package `{}` has no discovered build targets",
+                plan_member.member.package_name
+            );
+            eprintln!(
+                "note: failing package manifest: {}",
+                normalize_path(&plan_member.member.member_manifest_path)
+            );
+            eprintln!(
+                "hint: rerun `ql project targets {}` to inspect the discovered build targets",
+                normalize_path(&plan_member.member.member_manifest_path)
+            );
+            return Err(1);
+        }
+        if plan_member.member.targets.is_empty() {
+            continue;
+        }
+
+        let mut built_targets = plan_member.member.targets.iter();
+        let first_target = built_targets
+            .next()
+            .expect("member targets emptiness checked above");
+        let first_options = if plan_member.require_targets {
+            project_target_build_options(
+                &plan_member.member,
+                first_target,
+                options,
+                emit_overridden,
+                profile_overridden,
+            )
+        } else {
+            project_dependency_target_build_options(
+                &plan_member.member,
+                first_target,
+                options,
+                emit_overridden,
+                profile_overridden,
+            )
+        };
+        let first_artifact = if json {
+            match build_project_source_target_result(
+                &build_plan,
+                &plan_member.member.member_manifest_path,
+                &first_target.path,
+                &first_options,
+                options,
+                profile_overridden,
+                !plan_member.require_targets && first_target.kind == BuildTargetKind::Library,
+            ) {
+                Ok(artifact) => artifact,
+                Err(BuildTargetJsonError::Early(error)) => {
+                    return emit_build_json_failure(
+                        &mut json_report,
+                        build_json_target_prep_failure(
+                            &plan_member.member,
+                            first_target,
+                            plan_member.require_targets,
+                            &error,
+                        ),
+                    );
+                }
+                Err(BuildTargetJsonError::Build(error)) => {
+                    let mut report = json_report
+                        .take()
+                        .expect("json report should exist for `ql build --json`");
+                    report.record_project_failure(
+                        &plan_member.member,
+                        first_target,
+                        &error,
+                        plan_member.require_targets,
+                    );
+                    print!("{}", report.into_json());
+                    return Err(1);
+                }
+            }
+        } else {
+            build_project_source_target(
+                &members,
+                "`ql build`",
+                &plan_member.member.member_manifest_path,
+                &first_target.path,
+                &first_options,
+                options,
+                profile_overridden,
+                emit_interface,
+                !plan_member.require_targets && first_target.kind == BuildTargetKind::Library,
+            )?
+        };
+        if let Some(report) = json_report.as_mut() {
+            report.record_project_target(
+                &plan_member.member,
+                first_target,
+                &first_artifact,
+                plan_member.require_targets,
+            );
+        }
+        let mut additional_artifacts = Vec::new();
+        for target in built_targets {
+            let target_options = if plan_member.require_targets {
+                project_target_build_options(
+                    &plan_member.member,
+                    target,
+                    options,
+                    emit_overridden,
+                    profile_overridden,
+                )
+            } else {
+                project_dependency_target_build_options(
+                    &plan_member.member,
+                    target,
+                    options,
+                    emit_overridden,
+                    profile_overridden,
+                )
+            };
+            let artifact = if json {
+                match build_project_source_target_result(
+                    &build_plan,
+                    &plan_member.member.member_manifest_path,
+                    &target.path,
+                    &target_options,
+                    options,
+                    profile_overridden,
+                    !plan_member.require_targets && target.kind == BuildTargetKind::Library,
+                ) {
+                    Ok(artifact) => artifact,
+                    Err(BuildTargetJsonError::Early(error)) => {
+                        return emit_build_json_failure(
+                            &mut json_report,
+                            build_json_target_prep_failure(
+                                &plan_member.member,
+                                target,
+                                plan_member.require_targets,
+                                &error,
+                            ),
+                        );
+                    }
+                    Err(BuildTargetJsonError::Build(error)) => {
+                        let mut report = json_report
+                            .take()
+                            .expect("json report should exist for `ql build --json`");
+                        report.record_project_failure(
+                            &plan_member.member,
+                            target,
+                            &error,
+                            plan_member.require_targets,
+                        );
+                        print!("{}", report.into_json());
+                        return Err(1);
+                    }
+                }
+            } else {
+                build_project_source_target(
+                    &members,
+                    "`ql build`",
+                    &plan_member.member.member_manifest_path,
+                    &target.path,
+                    &target_options,
+                    options,
+                    profile_overridden,
+                    emit_interface,
+                    !plan_member.require_targets && target.kind == BuildTargetKind::Library,
+                )?
+            };
+            if let Some(report) = json_report.as_mut() {
+                report.record_project_target(
+                    &plan_member.member,
+                    target,
+                    &artifact,
+                    plan_member.require_targets,
+                );
+            }
+            additional_artifacts.push(artifact.path);
+        }
+
+        if plan_member.emit_interface {
+            if let Some(report) = json_report.as_mut() {
+                let interface_result = match emit_built_package_interface_quiet(
+                    path,
+                    &plan_member.member.member_manifest_path,
+                    options,
+                    &first_artifact.path,
+                    &additional_artifacts,
+                ) {
+                    Ok(result) => result,
+                    Err(error) => {
+                        return emit_build_json_failure(
+                            &mut json_report,
+                            build_json_emit_interface_failure(
+                                path,
+                                Some(&plan_member.member.member_manifest_path),
+                                Some(plan_member.member.package_name.as_str()),
+                                &error,
+                            ),
+                        );
+                    }
+                };
+                report.record_interface_result(
+                    Some(&plan_member.member.member_manifest_path),
+                    Some(plan_member.member.package_name.as_str()),
+                    true,
+                    interface_result,
+                );
+            } else {
+                emit_built_package_interface(
+                    path,
+                    &plan_member.member.member_manifest_path,
+                    options,
+                    &first_artifact.path,
+                    &additional_artifacts,
+                )?;
+            }
+        }
+    }
+
+    if let Some(report) = json_report {
+        print!("{}", report.into_json());
+    }
+
     Ok(())
 }
