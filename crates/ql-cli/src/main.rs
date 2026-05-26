@@ -89,13 +89,10 @@ use project_manifest_paths::{
 use project_reference_interfaces::prepare_reference_interfaces_for_manifests;
 use project_reporting::report_workspace_member_failure;
 use project_targets::{
-    ProjectCommandPathError, ProjectCommandScope, ProjectTargetSelector,
-    ResolvedProjectCommandPath, display_relative_to_root, is_runnable_project_target,
-    load_workspace_build_targets_for_command_from_request_root, project_request_root,
-    project_target_display_path, report_project_source_path_rejects_target_selector,
-    report_project_target_selector_requires_project_context, resolve_project_command_path,
-    resolve_project_command_scope, resolve_project_workspace_member_command_request_root,
-    select_workspace_build_targets,
+    ProjectCommandScope, ProjectTargetSelector, display_relative_to_root,
+    is_runnable_project_target, load_workspace_build_targets_for_command_from_request_root,
+    project_request_root, project_target_display_path, resolve_project_command_scope,
+    resolve_project_workspace_member_command_request_root, select_workspace_build_targets,
 };
 use project_workspace::{
     WorkspaceMemberLookupError, render_workspace_member_lookup_error,
@@ -361,7 +358,7 @@ impl BuildJsonReport {
 }
 
 #[derive(Debug)]
-struct RunJsonReport {
+pub(crate) struct RunJsonReport {
     scope: &'static str,
     path: String,
     project_manifest_path: Option<String>,
@@ -374,7 +371,7 @@ struct RunJsonReport {
 }
 
 impl RunJsonReport {
-    fn new(
+    pub(crate) fn new(
         path: &Path,
         project_request_root: Option<&Path>,
         options: &BuildOptions,
@@ -401,7 +398,7 @@ impl RunJsonReport {
         }
     }
 
-    fn record_source_target(&mut self, path: &Path, artifact: &BuildArtifact) {
+    pub(crate) fn record_source_target(&mut self, path: &Path, artifact: &BuildArtifact) {
         self.built_target = Some(build_json_target(
             None,
             None,
@@ -428,7 +425,7 @@ impl RunJsonReport {
         ));
     }
 
-    fn record_source_build_failure(&mut self, path: &Path, error: &BuildError) {
+    pub(crate) fn record_source_build_failure(&mut self, path: &Path, error: &BuildError) {
         self.failure = Some(json!({
             "kind": "build",
             "build_failure": build_json_failure(
@@ -473,7 +470,7 @@ impl RunJsonReport {
         }));
     }
 
-    fn record_preflight_failure(&mut self, failure: JsonValue) {
+    pub(crate) fn record_preflight_failure(&mut self, failure: JsonValue) {
         self.failure = Some(json!({
             "kind": "preflight",
             "preflight_failure": failure,
@@ -512,7 +509,7 @@ impl RunJsonReport {
         }));
     }
 
-    fn into_json(self) -> String {
+    pub(crate) fn into_json(self) -> String {
         let rendered = serde_json::to_string_pretty(&json!({
             "schema": "ql.run.v1",
             "path": self.path,
@@ -1407,115 +1404,7 @@ struct RunnableProjectTarget {
     target: BuildTarget,
 }
 
-fn run_path(
-    path: &Path,
-    profile: BuildProfile,
-    profile_overridden: bool,
-    selector: &ProjectTargetSelector,
-    program_args: &[String],
-    json: bool,
-) -> Result<(), u8> {
-    let options = run_build_options(profile);
-    match resolve_project_command_path(path, selector) {
-        Ok(ResolvedProjectCommandPath::Project {
-            request_root_manifest_path,
-            selector,
-        }) => {
-            if json {
-                return run_project_path_json(
-                    path,
-                    request_root_manifest_path.as_deref().unwrap_or(path),
-                    &options,
-                    profile_overridden,
-                    &selector,
-                    program_args,
-                );
-            }
-            return run_project_path(
-                path,
-                &options,
-                profile_overridden,
-                &selector,
-                program_args,
-                request_root_manifest_path.as_deref(),
-            );
-        }
-        Ok(ResolvedProjectCommandPath::DirectSource) => {}
-        Err(ProjectCommandPathError::SourcePathRejectsSelector) => {
-            if json {
-                let mut report =
-                    RunJsonReport::new(path, None, &options, profile_overridden, program_args);
-                report.record_preflight_failure(build_json_preflight_failure(
-                    path,
-                    None,
-                    None,
-                    None,
-                    "selector",
-                    "project-context",
-                    "direct project source paths do not support target selectors".to_owned(),
-                    Some(selector.describe()),
-                    None,
-                    None,
-                ));
-                print!("{}", report.into_json());
-            } else {
-                report_project_source_path_rejects_target_selector("`ql run`", path, selector);
-            }
-            return Err(1);
-        }
-        Err(ProjectCommandPathError::SelectorRequiresProjectContext) => {
-            if json {
-                let mut report =
-                    RunJsonReport::new(path, None, &options, profile_overridden, program_args);
-                report.record_preflight_failure(build_json_preflight_failure(
-                    path,
-                    None,
-                    None,
-                    None,
-                    "selector",
-                    "project-context",
-                    "target selectors require a package or workspace path".to_owned(),
-                    Some(selector.describe()),
-                    None,
-                    None,
-                ));
-                print!("{}", report.into_json());
-            } else {
-                report_project_target_selector_requires_project_context("`ql run`", selector);
-            }
-            return Err(1);
-        }
-    }
-
-    if json {
-        return run_path_json(path, &options, profile_overridden, program_args);
-    }
-
-    let artifact = build_single_source_target_silent(path, &options, false)?;
-    run_built_executable(&artifact.path, program_args)
-}
-
-fn run_path_json(
-    path: &Path,
-    options: &BuildOptions,
-    profile_overridden: bool,
-    program_args: &[String],
-) -> Result<(), u8> {
-    let mut report = RunJsonReport::new(path, None, options, profile_overridden, program_args);
-    match build_single_source_target_result(path, options) {
-        Ok(artifact) => {
-            report.record_source_target(path, &artifact);
-            emit_run_json_execution(report, &artifact.path, program_args)
-        }
-        Err(error) => {
-            report.record_source_build_failure(path, &error);
-            print!("{}", report.into_json());
-            Err(1)
-        }
-    }
-}
-
-fn run_project_path_json(
+pub(crate) fn run_project_path_json(
     path: &Path,
     project_request_root: &Path,
     options: &BuildOptions,
@@ -1625,16 +1514,7 @@ fn run_project_path_json(
     }
 }
 
-fn run_build_options(profile: BuildProfile) -> BuildOptions {
-    let mut options = BuildOptions {
-        emit: BuildEmit::Executable,
-        ..BuildOptions::default()
-    };
-    options.profile = profile;
-    options
-}
-
-fn run_project_path(
+pub(crate) fn run_project_path(
     path: &Path,
     options: &BuildOptions,
     profile_overridden: bool,
@@ -1853,7 +1733,10 @@ fn select_runnable_project_target_for_run_json(
     }
 }
 
-fn run_built_executable(executable_path: &Path, program_args: &[String]) -> Result<(), u8> {
+pub(crate) fn run_built_executable(
+    executable_path: &Path,
+    program_args: &[String],
+) -> Result<(), u8> {
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
     let execution_lock =
@@ -1935,7 +1818,7 @@ fn build_output_lock_error_message(error: BuildError) -> String {
     }
 }
 
-fn emit_run_json_execution(
+pub(crate) fn emit_run_json_execution(
     mut report: RunJsonReport,
     executable_path: &Path,
     program_args: &[String],
@@ -8494,7 +8377,7 @@ pub(crate) fn build_single_source_target(
     build_single_source_target_impl(path, options, emit_interface, true, true)
 }
 
-fn build_single_source_target_silent(
+pub(crate) fn build_single_source_target_silent(
     path: &Path,
     options: &BuildOptions,
     emit_interface: bool,
