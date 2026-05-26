@@ -9,7 +9,7 @@ use crate::cli_utils::{
     absolute_user_path, normalize_path, relative_path_from, validate_project_package_name,
 };
 
-use super::{
+use crate::project_interfaces::{
     EmitPackageInterfaceError, ReferenceInterfacePrepError, ReferenceInterfacePrepFailureKind,
     prepare_reference_interfaces_for_manifests_quiet,
 };
