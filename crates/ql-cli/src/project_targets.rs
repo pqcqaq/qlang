@@ -11,8 +11,6 @@ use crate::cli_utils::{
     package_missing_name_manifest_path_from_project_error,
 };
 
-use super::{is_ql_source_file, load_workspace_build_targets_for_command_from_request_root};
-
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ProjectTargetSelector {
     pub(crate) package_name: Option<String>,
@@ -540,6 +538,61 @@ fn load_project_target_members_for_workspace_member_path(
     load_workspace_build_targets_for_command_from_request_root(path, request_root, command_label)
 }
 
+pub(crate) fn load_workspace_build_targets_for_command_from_request_root(
+    _request_path: &Path,
+    request_root: &Path,
+    command_label: &str,
+) -> Result<Vec<WorkspaceBuildTargets>, u8> {
+    let manifest = load_project_manifest(request_root).map_err(|error| {
+        if let ql_project::ProjectError::ManifestNotFound { start } = &error {
+            eprintln!(
+                "error: {command_label} requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
+                normalize_path(start)
+            );
+        } else if let Some(manifest_path) =
+            package_missing_name_manifest_path_from_project_error(&error)
+        {
+            eprintln!(
+                "error: {command_label} manifest `{}` does not declare `[package].name`",
+                normalize_path(manifest_path)
+            );
+        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error)
+        {
+            eprintln!("error: {command_label} {error}");
+            eprintln!(
+                "note: failing package manifest: {}",
+                normalize_path(manifest_path)
+            );
+        } else {
+            eprintln!("error: {command_label} {error}");
+        }
+        1
+    })?;
+
+    discover_workspace_build_targets(&manifest).map_err(|error| {
+        if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error) {
+            eprintln!(
+                "error: {command_label} manifest `{}` does not declare `[package].name`",
+                normalize_path(manifest_path)
+            );
+        } else if let ql_project::ProjectError::PackageSourceRootNotFound { path } = &error {
+            eprintln!(
+                "error: {command_label} package source directory `{}` does not exist",
+                normalize_path(path)
+            );
+        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error) {
+            eprintln!("error: {command_label} {error}");
+            eprintln!(
+                "note: failing package manifest: {}",
+                normalize_path(manifest_path)
+            );
+        } else {
+            eprintln!("error: {command_label} {error}");
+        }
+        1
+    })
+}
+
 fn load_project_target_members_for_json(
     path: &Path,
     request_root: &Path,
@@ -898,9 +951,18 @@ fn project_targets_error_manifest_path(error: &ql_project::ProjectError) -> Opti
         .or_else(|| package_check_manifest_path_from_project_error(error))
 }
 
+fn is_ql_source_file(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("ql"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::PathBuf;
 
     fn member_with_targets(targets: Vec<BuildTarget>) -> WorkspaceBuildTargets {
@@ -927,6 +989,24 @@ mod tests {
 
         assert!(selector.matches(Path::new("packages/app/qlang.toml"), "app", &target));
         assert!(!selector.matches(Path::new("packages/app/qlang.toml"), "other", &target));
+    }
+
+    #[test]
+    fn ql_source_file_detection_requires_existing_ql_file() {
+        let test_root =
+            std::env::temp_dir().join(format!("ql-source-file-detection-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&test_root);
+        fs::create_dir_all(&test_root).expect("create temp test root");
+        let ql_file = test_root.join("main.QL");
+        let text_file = test_root.join("main.txt");
+        fs::write(&ql_file, "fn main() -> Int { return 0 }\n").expect("write ql file");
+        fs::write(&text_file, "not qlang").expect("write text file");
+
+        assert!(is_ql_source_file(&ql_file));
+        assert!(!is_ql_source_file(&text_file));
+        assert!(!is_ql_source_file(&test_root.join("missing.ql")));
+
+        let _ = fs::remove_dir_all(test_root);
     }
 
     #[test]

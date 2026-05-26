@@ -66,8 +66,8 @@ use cli_utils::{
 use project_targets::{
     ProjectCheckCommandScope, ProjectCommandPathError, ProjectCommandScope, ProjectTargetSelector,
     ResolvedProjectCommandPath, display_relative_to_root, is_runnable_project_target,
-    project_request_root, project_target_display_path,
-    report_project_source_path_rejects_target_selector,
+    load_workspace_build_targets_for_command_from_request_root, project_request_root,
+    project_target_display_path, report_project_source_path_rejects_target_selector,
     report_project_target_selector_requires_project_context, resolve_project_check_command_scope,
     resolve_project_command_path, resolve_project_command_scope,
     resolve_project_member_request_root, resolve_project_workspace_member_command_request_root,
@@ -10466,58 +10466,6 @@ fn report_build_interface_output_failure(
     );
 }
 
-fn load_workspace_build_targets_for_command_from_request_root(
-    _request_path: &Path,
-    request_root: &Path,
-    command_label: &str,
-) -> Result<Vec<WorkspaceBuildTargets>, u8> {
-    let manifest = load_project_manifest(request_root).map_err(|error| {
-        if let ql_project::ProjectError::ManifestNotFound { start } = &error {
-            eprintln!(
-                "error: {command_label} requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
-                normalize_path(start)
-            );
-        } else if let Some(manifest_path) =
-            package_missing_name_manifest_path_from_project_error(&error)
-        {
-            eprintln!(
-                "error: {command_label} manifest `{}` does not declare `[package].name`",
-                normalize_path(manifest_path)
-            );
-        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error)
-        {
-            eprintln!("error: {command_label} {error}");
-            eprintln!("note: failing package manifest: {}", normalize_path(manifest_path));
-        } else {
-            eprintln!("error: {command_label} {error}");
-        }
-        1
-    })?;
-
-    discover_workspace_build_targets(&manifest).map_err(|error| {
-        if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error) {
-            eprintln!(
-                "error: {command_label} manifest `{}` does not declare `[package].name`",
-                normalize_path(manifest_path)
-            );
-        } else if let ql_project::ProjectError::PackageSourceRootNotFound { path } = &error {
-            eprintln!(
-                "error: {command_label} package source directory `{}` does not exist",
-                normalize_path(path)
-            );
-        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error) {
-            eprintln!("error: {command_label} {error}");
-            eprintln!(
-                "note: failing package manifest: {}",
-                normalize_path(manifest_path)
-            );
-        } else {
-            eprintln!("error: {command_label} {error}");
-        }
-        1
-    })
-}
-
 pub(crate) fn project_emit_interface_path(
     path: &Path,
     output: Option<&Path>,
@@ -12727,14 +12675,6 @@ fn component_name(component: Component<'_>) -> Option<&str> {
         Component::Normal(segment) => segment.to_str(),
         _ => None,
     }
-}
-
-fn is_ql_source_file(path: &Path) -> bool {
-    path.is_file()
-        && path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("ql"))
 }
 
 fn render_interface_artifact(package_name: &str, modules: &[(String, String)]) -> String {
