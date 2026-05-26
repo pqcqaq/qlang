@@ -54,6 +54,7 @@ mod project_manifest_edit;
 mod project_manifest_paths;
 mod project_members;
 mod project_query_commands;
+mod project_reporting;
 mod project_status;
 mod project_targets;
 mod project_workspace;
@@ -91,6 +92,7 @@ use project_interfaces::{
 use project_manifest_paths::{
     record_reference_failure_manifest, reference_manifest_path, workspace_member_manifest_path,
 };
+use project_reporting::{report_interface_artifact_failure, report_workspace_member_failure};
 use project_targets::{
     ProjectCheckCommandScope, ProjectCommandPathError, ProjectCommandScope, ProjectTargetSelector,
     ResolvedProjectCommandPath, display_relative_to_root, is_runnable_project_target,
@@ -672,16 +674,6 @@ fn check_workspace_manifest(
     }
 
     Ok(())
-}
-
-fn report_workspace_member_failure(manifest_path: &Path, hint_line: Option<&str>) {
-    eprintln!(
-        "note: failing workspace member manifest: {}",
-        normalize_path(manifest_path)
-    );
-    if let Some(hint_line) = hint_line {
-        eprintln!("{hint_line}");
-    }
 }
 
 fn report_workspace_member_package_interface_check_manifest_failure(
@@ -10961,24 +10953,6 @@ fn report_emit_interface_result(result: EmitPackageInterfaceResult) {
     }
 }
 
-fn report_interface_artifact_failure(
-    error_line: &str,
-    detail: Option<&str>,
-    stale_reasons: &[InterfaceArtifactStaleReason],
-    notes: &[&str],
-    hint_line: &str,
-) {
-    eprintln!("{error_line}");
-    if let Some(detail) = detail {
-        eprintln!("detail: {detail}");
-    }
-    report_interface_stale_reasons(stale_reasons);
-    for note in notes {
-        eprintln!("{note}");
-    }
-    eprintln!("{hint_line}");
-}
-
 fn format_emit_interface_rerun_command(
     manifest_path: &str,
     requested_output_path: Option<&Path>,
@@ -11132,25 +11106,6 @@ fn report_package_interface_check(
                 &hint_line,
             );
             Err(1)
-        }
-    }
-}
-
-fn report_interface_stale_reasons(stale_reasons: &[InterfaceArtifactStaleReason]) {
-    for reason in stale_reasons {
-        match reason {
-            InterfaceArtifactStaleReason::ManifestNewer { path } => {
-                eprintln!(
-                    "reason: manifest newer than artifact: {}",
-                    normalize_path(path)
-                );
-            }
-            InterfaceArtifactStaleReason::SourceNewer { path } => {
-                eprintln!(
-                    "reason: source newer than artifact: {}",
-                    normalize_path(path)
-                );
-            }
         }
     }
 }
