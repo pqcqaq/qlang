@@ -10,7 +10,8 @@ use ql_span::Span;
 
 pub use ids::{BasicBlockId, BodyId, CleanupId, ClosureId, LocalId, ScopeId, StatementId};
 pub use lower::{
-    lower_module, lower_module_with_typeck, lower_standalone_non_capturing_closure_body,
+    NonCapturingClosureBody, lower_module, lower_module_with_typeck,
+    lower_standalone_non_capturing_closure_body,
 };
 pub use render::render_module;
 

@@ -1804,11 +1804,13 @@ impl<'a> ModuleEmitter<'a> {
             self.input.hir,
             self.input.resolution,
             self.input.typeck,
-            BodyOwner::Item(item_id),
-            format!("{}::closure0", global.name),
-            self.input.hir.expr(closure_expr).span,
-            params.clone(),
-            *body,
+            ql_mir::NonCapturingClosureBody {
+                owner: BodyOwner::Item(item_id),
+                name: format!("{}::closure0", global.name),
+                span: self.input.hir.expr(closure_expr).span,
+                params: params.clone(),
+                body_expr: *body,
+            },
         );
         let mut prepared = self.prepare_body(
             FunctionSignature {

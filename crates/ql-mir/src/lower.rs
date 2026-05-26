@@ -99,28 +99,43 @@ pub fn lower_module_with_typeck(
     mir
 }
 
+pub struct NonCapturingClosureBody {
+    pub owner: BodyOwner,
+    pub name: String,
+    pub span: ql_span::Span,
+    pub params: Vec<hir::LocalId>,
+    pub body_expr: ExprId,
+}
+
 pub fn lower_standalone_non_capturing_closure_body(
     hir: &hir::Module,
     resolution: &ResolutionMap,
     typeck: &TypeckResult,
-    owner: BodyOwner,
-    name: String,
-    span: ql_span::Span,
-    params: Vec<hir::LocalId>,
-    body_expr: ExprId,
+    closure: NonCapturingClosureBody,
 ) -> MirBody {
     BodyBuilder::new_closure(
         hir,
         resolution,
         typeck,
-        owner,
-        name,
-        span,
-        Vec::new(),
-        params,
-        body_expr,
+        ClosureBodySpec {
+            owner: closure.owner,
+            name: closure.name,
+            span: closure.span,
+            capture_bindings: Vec::new(),
+            params: closure.params,
+            body_expr: closure.body_expr,
+        },
     )
     .lower()
+}
+
+struct ClosureBodySpec {
+    owner: BodyOwner,
+    name: String,
+    span: ql_span::Span,
+    capture_bindings: Vec<hir::LocalId>,
+    params: Vec<hir::LocalId>,
+    body_expr: ExprId,
 }
 
 fn lower_function_body(
@@ -641,9 +656,7 @@ fn local_item_for_import_binding(
     module: &hir::Module,
     import_binding: &ImportBinding,
 ) -> Option<ItemId> {
-    let Some(name) = import_binding.path.segments.last() else {
-        return None;
-    };
+    let name = import_binding.path.segments.last()?;
 
     module
         .items
@@ -735,13 +748,16 @@ impl<'a> BodyBuilder<'a> {
         hir: &'a hir::Module,
         resolution: &'a ResolutionMap,
         typeck: &'a TypeckResult,
-        owner: BodyOwner,
-        name: String,
-        span: ql_span::Span,
-        capture_bindings: Vec<hir::LocalId>,
-        params: Vec<hir::LocalId>,
-        body_expr: ExprId,
+        spec: ClosureBodySpec,
     ) -> Self {
+        let ClosureBodySpec {
+            owner,
+            name,
+            span,
+            capture_bindings,
+            params,
+            body_expr,
+        } = spec;
         let placeholder_block = BasicBlockId::from_index(0);
         let placeholder_scope = ScopeId::from_index(0);
         let placeholder_local = LocalId::from_index(0);
@@ -909,16 +925,18 @@ impl<'a> BodyBuilder<'a> {
             self.hir,
             self.resolution,
             self.typeck,
-            self.body.owner,
-            format!(
-                "{}::closure{}",
-                self.callable_name,
-                self.body.closure_ids().count()
-            ),
-            span,
-            capture_bindings,
-            params,
-            body_expr,
+            ClosureBodySpec {
+                owner: self.body.owner,
+                name: format!(
+                    "{}::closure{}",
+                    self.callable_name,
+                    self.body.closure_ids().count()
+                ),
+                span,
+                capture_bindings,
+                params,
+                body_expr,
+            },
         )
         .lower()
     }

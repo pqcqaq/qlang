@@ -452,9 +452,7 @@ pub(crate) fn local_item_for_import_binding(
     module: &Module,
     import_binding: &ImportBinding,
 ) -> Option<ItemId> {
-    let Some(name) = import_binding.path.segments.last() else {
-        return None;
-    };
+    let name = import_binding.path.segments.last()?;
 
     module
         .items

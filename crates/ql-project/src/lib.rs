@@ -1334,13 +1334,12 @@ pub fn interface_artifact_stale_reasons(
         });
     }
 
-    if let Ok(source_paths) = collect_package_sources(manifest) {
-        if let Some(path) = source_paths
+    if let Ok(source_paths) = collect_package_sources(manifest)
+        && let Some(path) = source_paths
             .into_iter()
             .find(|path| file_modified(path).is_some_and(|modified| modified > interface_modified))
-        {
-            stale_reasons.push(InterfaceArtifactStaleReason::SourceNewer { path });
-        }
+    {
+        stale_reasons.push(InterfaceArtifactStaleReason::SourceNewer { path });
     }
 
     stale_reasons
