@@ -15,6 +15,7 @@ use crate::cli_utils::{
     normalize_path, package_check_manifest_path_from_project_error,
     package_missing_name_manifest_path_from_project_error,
 };
+use crate::project_manifest_paths::{record_reference_failure_manifest, reference_manifest_path};
 
 #[derive(Debug)]
 pub(crate) enum EmitPackageInterfaceResult {
@@ -561,28 +562,10 @@ fn record_reference_interface_prep_failure(
     }
 }
 
-fn record_reference_failure_manifest(slot: &mut Option<PathBuf>, path: PathBuf) {
-    if slot.is_none() {
-        *slot = Some(path);
-    }
-}
-
 fn record_first_failing_path(slot: &mut Option<PathBuf>, path: &Path) {
     if slot.is_none() {
         *slot = Some(path.to_path_buf());
     }
-}
-
-fn reference_manifest_path(
-    owner_manifest: &ql_project::ProjectManifest,
-    reference: &str,
-) -> PathBuf {
-    owner_manifest
-        .manifest_path
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join(reference)
-        .join("qlang.toml")
 }
 
 fn render_interface_artifact(package_name: &str, modules: &[(String, String)]) -> String {
