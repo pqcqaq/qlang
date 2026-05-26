@@ -26,6 +26,11 @@ const STDLIB_PACKAGES: [(&str, &str); 5] = [
     ("std.test", "test"),
 ];
 
+struct ScaffoldFile {
+    path: PathBuf,
+    contents: String,
+}
+
 pub(crate) fn resolve_stdlib_dependencies(
     package_root: &Path,
     stdlib_path: Option<&Path>,
@@ -136,18 +141,59 @@ fn create_package_scaffold_with_sources(
     dependencies: &[(String, String)],
     sources: &templates::PackageSources,
 ) -> Result<Vec<PathBuf>, String> {
+    let files = package_scaffold_files(target_root, package_name, dependencies, sources);
+    write_scaffold_files(&files)
+}
+
+fn package_scaffold_files(
+    target_root: &Path,
+    package_name: &str,
+    dependencies: &[(String, String)],
+    sources: &templates::PackageSources,
+) -> Vec<ScaffoldFile> {
     let manifest_path = target_root.join("qlang.toml");
     let source_path = target_root.join("src").join("lib.ql");
     let main_path = target_root.join("src").join("main.ql");
     let test_path = target_root.join("tests").join("smoke.ql");
     let manifest = render_package_manifest(package_name, dependencies);
+    vec![
+        ScaffoldFile {
+            path: manifest_path,
+            contents: manifest,
+        },
+        ScaffoldFile {
+            path: source_path,
+            contents: sources.package_source.clone(),
+        },
+        ScaffoldFile {
+            path: main_path,
+            contents: sources.main_source.clone(),
+        },
+        ScaffoldFile {
+            path: test_path,
+            contents: sources.test_source.clone(),
+        },
+    ]
+}
 
-    write_new_file(&manifest_path, &manifest)?;
-    write_new_file(&source_path, &sources.package_source)?;
-    write_new_file(&main_path, &sources.main_source)?;
-    write_new_file(&test_path, &sources.test_source)?;
+fn write_scaffold_files(files: &[ScaffoldFile]) -> Result<Vec<PathBuf>, String> {
+    ensure_new_file_paths(files.iter().map(|file| file.path.as_path()))?;
+    for file in files {
+        write_new_file(&file.path, &file.contents)?;
+    }
+    Ok(files.iter().map(|file| file.path.clone()).collect())
+}
 
-    Ok(vec![manifest_path, source_path, main_path, test_path])
+fn ensure_new_file_paths<'a>(paths: impl IntoIterator<Item = &'a Path>) -> Result<(), String> {
+    for path in paths {
+        if path.exists() {
+            return Err(format!(
+                "would overwrite existing path `{}`",
+                normalize_path(path)
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn write_new_file(path: &Path, contents: &str) -> Result<(), String> {
@@ -230,15 +276,24 @@ fn init_workspace_project(
     let workspace_manifest = render_workspace_manifest(package_name);
     let dependencies = resolve_stdlib_dependencies(&member_dir, stdlib_path)?;
     let stdlib_sources = stdlib_path.map(load_stdlib_package_sources).transpose()?;
-
-    write_new_file(&workspace_manifest_path, &workspace_manifest)?;
-    let mut created_paths = vec![workspace_manifest_path];
-    let member_paths = if let Some(sources) = &stdlib_sources {
-        create_package_scaffold_with_sources(&member_dir, package_name, &dependencies, sources)?
+    let package_sources;
+    let sources = if let Some(sources) = &stdlib_sources {
+        sources
     } else {
-        create_package_scaffold(&member_dir, package_name, &dependencies)?
+        package_sources = templates::default_package_sources();
+        &package_sources
     };
-    created_paths.extend(member_paths);
+    let mut files = vec![ScaffoldFile {
+        path: workspace_manifest_path,
+        contents: workspace_manifest,
+    }];
+    files.extend(package_scaffold_files(
+        &member_dir,
+        package_name,
+        &dependencies,
+        sources,
+    ));
+    let created_paths = write_scaffold_files(&files)?;
     sync_stdlib_interfaces(&[member_dir.join("qlang.toml")], stdlib_path)?;
     Ok(created_paths)
 }

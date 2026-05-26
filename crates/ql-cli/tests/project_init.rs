@@ -5359,6 +5359,123 @@ fn project_init_refuses_to_overwrite_existing_manifest() {
 }
 
 #[test]
+fn project_init_refuses_existing_source_without_partial_manifest() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-init-source-conflict");
+    let project_root = temp.path().join("demo-conflict");
+    let existing_source = temp.write(
+        "demo-conflict/src/main.ql",
+        "fn old() -> Int { return 1 }\n",
+    );
+
+    let mut init = ql_command(&workspace_root);
+    init.args(["project", "init", &project_root.to_string_lossy()]);
+    let output = run_command_capture(&mut init, "`ql project init` conflicting source");
+    let (stdout, stderr) = expect_exit_code(
+        "project-init-source-conflict",
+        "conflicting package source init",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-init-source-conflict",
+        "conflicting package source init",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-init-source-conflict",
+        "conflicting package source init",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project init` would overwrite existing path `{}`",
+            existing_source.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+    assert!(
+        !project_root.join("qlang.toml").exists(),
+        "package init should not leave a partial manifest when a later scaffold file conflicts"
+    );
+    assert!(
+        !project_root.join("src/lib.ql").exists(),
+        "package init should not create earlier scaffold files after preflight failure"
+    );
+    assert_eq!(
+        read_normalized_file(&existing_source, "existing source after failed init"),
+        "fn old() -> Int { return 1 }\n"
+    );
+}
+
+#[test]
+fn project_init_workspace_refuses_existing_member_source_without_partial_manifest() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-init-workspace-source-conflict");
+    let project_root = temp.path().join("workspace");
+    let existing_source = temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn old() -> Int { return 1 }\n",
+    );
+
+    let mut init = ql_command(&workspace_root);
+    init.args([
+        "project",
+        "init",
+        &project_root.to_string_lossy(),
+        "--workspace",
+        "--name",
+        "app",
+    ]);
+    let output = run_command_capture(
+        &mut init,
+        "`ql project init --workspace` conflicting source",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-init-workspace-source-conflict",
+        "conflicting workspace member source init",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-init-workspace-source-conflict",
+        "conflicting workspace member source init",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-init-workspace-source-conflict",
+        "conflicting workspace member source init",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project init` would overwrite existing path `{}`",
+            existing_source.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+    assert!(
+        !project_root.join("qlang.toml").exists(),
+        "workspace init should not leave a partial workspace manifest when a member file conflicts"
+    );
+    assert!(
+        !project_root.join("packages/app/qlang.toml").exists(),
+        "workspace init should not create a partial member manifest after preflight failure"
+    );
+    assert!(
+        !project_root.join("packages/app/src/main.ql").exists(),
+        "workspace init should not create sibling source files after preflight failure"
+    );
+    assert_eq!(
+        read_normalized_file(
+            &existing_source,
+            "existing member source after failed workspace init"
+        ),
+        "pub fn old() -> Int { return 1 }\n"
+    );
+}
+
+#[test]
 fn project_init_serializes_concurrent_scaffold_creation() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-init-concurrent-create");
