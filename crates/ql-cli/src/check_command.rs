@@ -30,10 +30,12 @@ use crate::cli_utils::{
 use crate::project_manifest_paths::{
     record_reference_failure_manifest, workspace_member_manifest_path,
 };
+use crate::project_reference_interfaces::{
+    ensure_reference_interfaces_current, sync_reference_interfaces,
+};
 use crate::project_reporting::report_workspace_member_failure;
 use crate::project_targets::{ProjectCheckCommandScope, resolve_project_check_command_scope};
 use crate::project_workspace::select_workspace_members;
-use crate::{ensure_reference_interfaces_current, sync_reference_interfaces};
 
 pub(crate) fn check_cli_path(args: impl Iterator<Item = String>) -> Result<(), u8> {
     let options = parse_check_args(args)?;
