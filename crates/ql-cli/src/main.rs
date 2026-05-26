@@ -50,6 +50,7 @@ mod project_lifecycle_commands;
 mod project_lock;
 mod project_maintenance_commands;
 mod project_manifest_edit;
+mod project_manifest_paths;
 mod project_members;
 mod project_query_commands;
 mod project_status;
@@ -83,6 +84,9 @@ use project_interfaces::{
     EmitPackageInterfaceError, EmitPackageInterfaceResult, ReferenceInterfacePrepError,
     ReferenceInterfacePrepFailureKind, emit_package_interface_path,
     emit_package_interface_path_quiet, prepare_reference_interfaces_for_manifests_quiet,
+};
+use project_manifest_paths::{
+    record_reference_failure_manifest, reference_manifest_path, workspace_member_manifest_path,
 };
 use project_targets::{
     ProjectCheckCommandScope, ProjectCommandPathError, ProjectCommandScope, ProjectTargetSelector,
@@ -11548,12 +11552,6 @@ fn ensure_reference_interfaces_current_recursive(
     result
 }
 
-fn record_reference_failure_manifest(slot: &mut Option<PathBuf>, path: PathBuf) {
-    if slot.is_none() {
-        *slot = Some(path);
-    }
-}
-
 fn load_reference_manifest_for_interfaces(
     owner_manifest: &ql_project::ProjectManifest,
     reference: &str,
@@ -11600,25 +11598,6 @@ fn load_reference_manifest_for_sync(
             1
         })?;
     Ok((dependency_manifest, reference_manifest_path))
-}
-
-fn reference_manifest_path(
-    owner_manifest: &ql_project::ProjectManifest,
-    reference: &str,
-) -> PathBuf {
-    let manifest_dir = owner_manifest
-        .manifest_path
-        .parent()
-        .unwrap_or(Path::new("."));
-    let reference_path = manifest_dir.join(reference);
-    if reference_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("qlang.toml"))
-    {
-        return reference_path;
-    }
-    reference_path.join("qlang.toml")
 }
 
 fn reference_package_name_for_interfaces(
@@ -11741,18 +11720,6 @@ fn test_target_manifest_paths(targets: &[TestTarget]) -> Vec<PathBuf> {
         }
     }
     manifest_paths
-}
-
-fn workspace_member_manifest_path(path: &Path) -> PathBuf {
-    if path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("qlang.toml"))
-    {
-        return path.to_path_buf();
-    }
-
-    path.join("qlang.toml")
 }
 
 fn report_reference_interface_artifact_issue(
