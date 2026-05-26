@@ -1856,7 +1856,7 @@ pub(crate) fn emit_run_json_execution(
 }
 
 #[derive(Clone, Debug)]
-struct TestTarget {
+pub(crate) struct TestTarget {
     display_path: String,
     kind: TestTargetKind,
 }
@@ -1898,23 +1898,27 @@ enum TestFailure {
 }
 
 #[derive(Clone, Debug, Default)]
-struct TestExecutionReport {
+pub(crate) struct TestExecutionReport {
     passed: usize,
     failed: usize,
     failures: Vec<TestFailure>,
 }
 
 impl TestExecutionReport {
-    fn status(&self) -> &'static str {
+    pub(crate) fn status(&self) -> &'static str {
         if self.failures.is_empty() {
             "ok"
         } else {
             "failed"
         }
     }
+
+    pub(crate) fn is_success(&self) -> bool {
+        self.failures.is_empty()
+    }
 }
 
-fn render_test_json_report(
+pub(crate) fn render_test_json_report(
     path: &Path,
     command_options: &TestCommandOptions,
     status: &'static str,
@@ -2000,7 +2004,7 @@ fn render_test_json_preflight_message_report(
     )
 }
 
-fn render_test_json_selection_failure_report(
+pub(crate) fn render_test_json_selection_failure_report(
     path: &Path,
     command_options: &TestCommandOptions,
     status: &'static str,
@@ -2090,160 +2094,7 @@ fn test_json_failure(failure: &TestFailure) -> JsonValue {
     }
 }
 
-fn test_path(path: &Path, command_options: &TestCommandOptions) -> Result<(), u8> {
-    let build_options = test_build_options(command_options.profile);
-    let command_scope = resolve_project_command_scope(path);
-    let discovered_targets =
-        discover_test_targets(path, &build_options, command_options, &command_scope)?;
-    let discovered_total = discovered_targets.len();
-
-    if discovered_targets.is_empty() {
-        if command_options.json {
-            print!(
-                "{}",
-                render_test_json_selection_failure_report(
-                    path,
-                    command_options,
-                    "no-tests",
-                    discovered_total,
-                    "test-discovery",
-                    test_no_tests_message(path, command_options.package_name.as_deref()),
-                    command_options
-                        .package_name
-                        .as_deref()
-                        .map(|package_name| format!("package `{package_name}`")),
-                )
-            );
-        } else {
-            report_no_tests_discovered(path, command_options.package_name.as_deref());
-        }
-        return Err(1);
-    }
-
-    let targets = if let Some(target_path) = command_options.target_path.as_deref() {
-        let selected = select_test_targets_by_path(
-            discovered_targets,
-            target_path,
-            command_options.package_name.as_deref(),
-        );
-        if selected.is_empty() {
-            if command_options.json {
-                print!(
-                    "{}",
-                    render_test_json_selection_failure_report(
-                        path,
-                        command_options,
-                        "no-match",
-                        discovered_total,
-                        "target-selection",
-                        test_no_matching_target_message(
-                            path,
-                            target_path,
-                            command_options.package_name.as_deref(),
-                        ),
-                        Some(format!("target `{target_path}`")),
-                    )
-                );
-            } else {
-                report_no_matching_test_target(
-                    path,
-                    target_path,
-                    command_options.package_name.as_deref(),
-                );
-            }
-            return Err(1);
-        }
-        selected
-    } else {
-        discovered_targets
-    };
-
-    let targets = filter_test_targets(targets, command_options.filter.as_deref());
-    if targets.is_empty() {
-        if command_options.json {
-            print!(
-                "{}",
-                render_test_json_selection_failure_report(
-                    path,
-                    command_options,
-                    "no-match",
-                    discovered_total,
-                    "filter-selection",
-                    test_no_matching_filter_message(
-                        path,
-                        command_options.filter.as_deref().unwrap_or_default(),
-                        command_options.package_name.as_deref(),
-                    ),
-                    command_options
-                        .filter
-                        .as_deref()
-                        .map(|filter| format!("filter `{filter}`")),
-                )
-            );
-        } else {
-            report_no_matching_tests(
-                path,
-                command_options.filter.as_deref().unwrap_or_default(),
-                command_options.package_name.as_deref(),
-            );
-        }
-        return Err(1);
-    }
-
-    if command_options.list_only {
-        if command_options.json {
-            print!(
-                "{}",
-                render_test_json_report(
-                    path,
-                    command_options,
-                    "listed",
-                    discovered_total,
-                    &targets,
-                    None,
-                )
-            );
-        } else {
-            list_test_targets(&targets);
-        }
-        return Ok(());
-    }
-
-    let execution_report = execute_test_targets(
-        path,
-        match &command_scope {
-            ProjectCommandScope::ProjectTestFile(request) => {
-                Some(request.request_root_manifest_path.as_path())
-            }
-            _ => None,
-        },
-        &targets,
-        command_options.json,
-        &build_options,
-        command_options.profile_overridden,
-    )?;
-    if command_options.json {
-        print!(
-            "{}",
-            render_test_json_report(
-                path,
-                command_options,
-                execution_report.status(),
-                discovered_total,
-                &targets,
-                Some(&execution_report),
-            )
-        );
-    }
-
-    if execution_report.failures.is_empty() {
-        Ok(())
-    } else {
-        Err(1)
-    }
-}
-
-fn discover_test_targets(
+pub(crate) fn discover_test_targets(
     path: &Path,
     options: &BuildOptions,
     command_options: &TestCommandOptions,
@@ -2318,7 +2169,7 @@ fn discover_test_targets(
     }
 }
 
-fn test_build_options(profile: BuildProfile) -> BuildOptions {
+pub(crate) fn test_build_options(profile: BuildProfile) -> BuildOptions {
     let mut options = BuildOptions {
         emit: BuildEmit::Executable,
         ..BuildOptions::default()
@@ -2765,7 +2616,10 @@ fn project_test_output_path(
     output_path.join(file_name)
 }
 
-fn filter_test_targets(targets: Vec<TestTarget>, filter: Option<&str>) -> Vec<TestTarget> {
+pub(crate) fn filter_test_targets(
+    targets: Vec<TestTarget>,
+    filter: Option<&str>,
+) -> Vec<TestTarget> {
     let Some(filter) = filter else {
         return targets;
     };
@@ -2775,7 +2629,7 @@ fn filter_test_targets(targets: Vec<TestTarget>, filter: Option<&str>) -> Vec<Te
         .collect()
 }
 
-fn select_test_targets_by_path(
+pub(crate) fn select_test_targets_by_path(
     targets: Vec<TestTarget>,
     target_path: &str,
     package_name: Option<&str>,
@@ -2811,7 +2665,7 @@ fn test_target_matches_path(
     }
 }
 
-fn list_test_targets(targets: &[TestTarget]) {
+pub(crate) fn list_test_targets(targets: &[TestTarget]) {
     for target in targets {
         println!("{}", target.display_path);
     }
@@ -2819,7 +2673,7 @@ fn list_test_targets(targets: &[TestTarget]) {
     println!("test listing: {} discovered", targets.len());
 }
 
-fn execute_test_targets(
+pub(crate) fn execute_test_targets(
     path: &Path,
     project_request_root: Option<&Path>,
     targets: &[TestTarget],
@@ -3110,7 +2964,7 @@ fn report_test_target_selector_requires_project_context(target_path: &str) {
     eprintln!("note: selector: target `{target_path}`");
 }
 
-fn test_no_tests_message(path: &Path, package_name: Option<&str>) -> String {
+pub(crate) fn test_no_tests_message(path: &Path, package_name: Option<&str>) -> String {
     let normalized_path = normalize_path(path);
     if let Some(package_name) = package_name {
         return format!(
@@ -3120,7 +2974,7 @@ fn test_no_tests_message(path: &Path, package_name: Option<&str>) -> String {
     format!("`ql test` found no `.ql` test files under `{normalized_path}`")
 }
 
-fn test_no_matching_filter_message(
+pub(crate) fn test_no_matching_filter_message(
     path: &Path,
     filter: &str,
     package_name: Option<&str>,
@@ -3134,7 +2988,7 @@ fn test_no_matching_filter_message(
     format!("`ql test` found no test files matching `{filter}` under `{normalized_path}`")
 }
 
-fn test_no_matching_target_message(
+pub(crate) fn test_no_matching_target_message(
     path: &Path,
     target_path: &str,
     package_name: Option<&str>,
@@ -3148,7 +3002,7 @@ fn test_no_matching_target_message(
     format!("`ql test` found no test target `{target_path}` under `{normalized_path}`")
 }
 
-fn report_no_tests_discovered(path: &Path, package_name: Option<&str>) {
+pub(crate) fn report_no_tests_discovered(path: &Path, package_name: Option<&str>) {
     let normalized_path = normalize_path(path);
     eprintln!("error: {}", test_no_tests_message(path, package_name));
     if let Some(package_name) = package_name {
@@ -3162,7 +3016,7 @@ fn report_no_tests_discovered(path: &Path, package_name: Option<&str>) {
     );
 }
 
-fn report_no_matching_tests(path: &Path, filter: &str, package_name: Option<&str>) {
+pub(crate) fn report_no_matching_tests(path: &Path, filter: &str, package_name: Option<&str>) {
     let normalized_path = normalize_path(path);
     eprintln!(
         "error: {}",
@@ -3179,7 +3033,11 @@ fn report_no_matching_tests(path: &Path, filter: &str, package_name: Option<&str
     );
 }
 
-fn report_no_matching_test_target(path: &Path, target_path: &str, package_name: Option<&str>) {
+pub(crate) fn report_no_matching_test_target(
+    path: &Path,
+    target_path: &str,
+    package_name: Option<&str>,
+) {
     let normalized_path = normalize_path(path);
     eprintln!(
         "error: {}",

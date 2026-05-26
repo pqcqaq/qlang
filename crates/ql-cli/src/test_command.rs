@@ -4,8 +4,14 @@ use ql_driver::BuildProfile;
 
 use crate::cli_build_profile::{parse_cli_build_profile, set_cli_build_profile};
 use crate::cli_utils::normalize_path;
-
-use super::test_path;
+use crate::project_targets::{ProjectCommandScope, resolve_project_command_scope};
+use crate::{
+    discover_test_targets, execute_test_targets, filter_test_targets, list_test_targets,
+    render_test_json_report, render_test_json_selection_failure_report,
+    report_no_matching_test_target, report_no_matching_tests, report_no_tests_discovered,
+    select_test_targets_by_path, test_build_options, test_no_matching_filter_message,
+    test_no_matching_target_message, test_no_tests_message,
+};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TestCommandOptions {
@@ -21,6 +27,159 @@ pub(crate) struct TestCommandOptions {
 pub(crate) fn test_cli_path(args: &mut impl Iterator<Item = String>) -> Result<(), u8> {
     let options = parse_test_args(args)?;
     test_path(Path::new(&options.path), &options.command_options)
+}
+
+fn test_path(path: &Path, command_options: &TestCommandOptions) -> Result<(), u8> {
+    let build_options = test_build_options(command_options.profile);
+    let command_scope = resolve_project_command_scope(path);
+    let discovered_targets =
+        discover_test_targets(path, &build_options, command_options, &command_scope)?;
+    let discovered_total = discovered_targets.len();
+
+    if discovered_targets.is_empty() {
+        if command_options.json {
+            print!(
+                "{}",
+                render_test_json_selection_failure_report(
+                    path,
+                    command_options,
+                    "no-tests",
+                    discovered_total,
+                    "test-discovery",
+                    test_no_tests_message(path, command_options.package_name.as_deref()),
+                    command_options
+                        .package_name
+                        .as_deref()
+                        .map(|package_name| format!("package `{package_name}`")),
+                )
+            );
+        } else {
+            report_no_tests_discovered(path, command_options.package_name.as_deref());
+        }
+        return Err(1);
+    }
+
+    let targets = if let Some(target_path) = command_options.target_path.as_deref() {
+        let selected = select_test_targets_by_path(
+            discovered_targets,
+            target_path,
+            command_options.package_name.as_deref(),
+        );
+        if selected.is_empty() {
+            if command_options.json {
+                print!(
+                    "{}",
+                    render_test_json_selection_failure_report(
+                        path,
+                        command_options,
+                        "no-match",
+                        discovered_total,
+                        "target-selection",
+                        test_no_matching_target_message(
+                            path,
+                            target_path,
+                            command_options.package_name.as_deref(),
+                        ),
+                        Some(format!("target `{target_path}`")),
+                    )
+                );
+            } else {
+                report_no_matching_test_target(
+                    path,
+                    target_path,
+                    command_options.package_name.as_deref(),
+                );
+            }
+            return Err(1);
+        }
+        selected
+    } else {
+        discovered_targets
+    };
+
+    let targets = filter_test_targets(targets, command_options.filter.as_deref());
+    if targets.is_empty() {
+        if command_options.json {
+            print!(
+                "{}",
+                render_test_json_selection_failure_report(
+                    path,
+                    command_options,
+                    "no-match",
+                    discovered_total,
+                    "filter-selection",
+                    test_no_matching_filter_message(
+                        path,
+                        command_options.filter.as_deref().unwrap_or_default(),
+                        command_options.package_name.as_deref(),
+                    ),
+                    command_options
+                        .filter
+                        .as_deref()
+                        .map(|filter| format!("filter `{filter}`")),
+                )
+            );
+        } else {
+            report_no_matching_tests(
+                path,
+                command_options.filter.as_deref().unwrap_or_default(),
+                command_options.package_name.as_deref(),
+            );
+        }
+        return Err(1);
+    }
+
+    if command_options.list_only {
+        if command_options.json {
+            print!(
+                "{}",
+                render_test_json_report(
+                    path,
+                    command_options,
+                    "listed",
+                    discovered_total,
+                    &targets,
+                    None,
+                )
+            );
+        } else {
+            list_test_targets(&targets);
+        }
+        return Ok(());
+    }
+
+    let execution_report = execute_test_targets(
+        path,
+        match &command_scope {
+            ProjectCommandScope::ProjectTestFile(request) => {
+                Some(request.request_root_manifest_path.as_path())
+            }
+            _ => None,
+        },
+        &targets,
+        command_options.json,
+        &build_options,
+        command_options.profile_overridden,
+    )?;
+    if command_options.json {
+        print!(
+            "{}",
+            render_test_json_report(
+                path,
+                command_options,
+                execution_report.status(),
+                discovered_total,
+                &targets,
+                Some(&execution_report),
+            )
+        );
+    }
+
+    if execution_report.is_success() {
+        Ok(())
+    } else {
+        Err(1)
+    }
 }
 
 struct TestCliOptions {
