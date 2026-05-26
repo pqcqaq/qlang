@@ -15,13 +15,12 @@ use crate::cli_utils::{
 use crate::project_dependencies::{
     ProjectDependencyMember, find_workspace_member_dependencies, project_dependency_json,
 };
-use crate::project_workspace::{
-    WorkspacePackageSelectionFailure, resolve_selected_workspace_member_manifest_for_json,
-};
-
-use super::{
+use crate::project_targets::{
     project_target_display_path, resolve_project_workspace_member_command_request_root,
-    resolve_selected_workspace_member_manifest,
+};
+use crate::project_workspace::{
+    WorkspacePackageSelectionFailure, resolve_selected_workspace_member_manifest,
+    resolve_selected_workspace_member_manifest_for_json,
 };
 
 struct ProjectStatusMember {

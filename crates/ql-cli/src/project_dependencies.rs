@@ -6,12 +6,10 @@ use serde_json::{Value as JsonValue, json};
 
 use crate::cli_utils::{normalize_path, relative_path_from, validate_project_package_name};
 use crate::project_workspace::{
-    WorkspacePackageSelectionFailure, resolve_selected_workspace_member_manifest_for_json,
-};
-
-use super::{
-    resolve_project_package_manifest, resolve_project_workspace_manifest,
-    resolve_project_workspace_member_package_name, resolve_selected_workspace_member_manifest,
+    WorkspacePackageSelectionFailure, resolve_project_package_manifest,
+    resolve_project_workspace_manifest, resolve_project_workspace_member_package_name,
+    resolve_selected_workspace_member_manifest,
+    resolve_selected_workspace_member_manifest_for_json,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
