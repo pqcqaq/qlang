@@ -1,10 +1,13 @@
 mod support;
 
+use std::thread;
+
 use support::{
+    TempDir, assert_no_atomic_write_temp_files, assert_no_build_lock_directories,
     dynamic_library_output_path, expect_empty_stdout, expect_exit_code, expect_file_exists,
     expect_snapshot_matches, expect_stderr_contains, expect_stderr_not_contains,
     expect_stdout_contains_all, expect_success, ql_command, read_normalized_file,
-    run_command_capture, static_library_output_path, workspace_root, TempDir,
+    run_command_capture, static_library_output_path, workspace_root,
 };
 
 #[cfg(windows)]
@@ -420,6 +423,90 @@ pub type Pair = (Int, Int)
         &actual,
     )
     .expect("generated qi artifact should match the public interface snapshot");
+}
+
+#[test]
+fn project_emit_interface_serializes_concurrent_default_output_writes() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-concurrent-write");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for concurrent interface emit test");
+    let interface_path = project_root.join("app.qi");
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.concurrent
+
+pub fn exported(value: Int) -> Int {
+    return value + 1
+}
+"#,
+    );
+
+    let handles = (0..4)
+        .map(|index| {
+            let workspace_root = workspace_root.clone();
+            let project_root = project_root.clone();
+            thread::spawn(move || {
+                let mut command = ql_command(&workspace_root);
+                command
+                    .args(["project", "emit-interface"])
+                    .arg(&project_root);
+                run_command_capture(
+                    &mut command,
+                    format!("concurrent ql project emit-interface #{index}"),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for (index, handle) in handles.into_iter().enumerate() {
+        let output = handle
+            .join()
+            .unwrap_or_else(|_| panic!("wait for concurrent ql project emit-interface #{index}"));
+        let (stdout, stderr) = expect_success(
+            "project-interface-concurrent-write",
+            &format!("concurrent ql project emit-interface #{index}"),
+            &output,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+        expect_stdout_contains_all(
+            "project-interface-concurrent-write",
+            &stdout,
+            &["wrote interface:", "app.qi"],
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+        expect_snapshot_matches(
+            "project-interface-concurrent-write",
+            &format!("concurrent ql project emit-interface #{index} stderr"),
+            "",
+            &stderr,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    expect_file_exists(
+        "project-interface-concurrent-write",
+        &interface_path,
+        "generated interface",
+        "concurrent interface emission",
+    )
+    .expect("concurrent interface emission should create the default package qi artifact");
+    let rendered = read_normalized_file(&interface_path, "concurrently generated qi artifact");
+    assert!(
+        rendered.contains("pub fn exported(value: Int) -> Int"),
+        "concurrently generated interface should expose exported function:\n{rendered}"
+    );
+    assert_no_build_lock_directories("project-interface-concurrent-write", temp.path());
+    assert_no_atomic_write_temp_files("project-interface-concurrent-write", temp.path());
 }
 
 #[test]
