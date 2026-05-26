@@ -1,9 +1,9 @@
 use std::path::Path;
 
 use ql_diagnostics::Diagnostic;
-use ql_span::locate;
 use serde_json::{Value as JsonValue, json};
 
+use crate::cli_json_diagnostics::diagnostics_json;
 use crate::cli_utils::normalize_path;
 
 use super::check_path;
@@ -181,42 +181,6 @@ fn check_json_diagnostic_file(
     json!({
         "path": normalize_path(path),
         "owner_manifest_path": owner_manifest_path.map(normalize_path),
-        "diagnostics": diagnostics
-            .iter()
-            .map(|diagnostic| check_json_diagnostic(source, diagnostic))
-            .collect::<Vec<_>>(),
-    })
-}
-
-fn check_json_diagnostic(source: &str, diagnostic: &Diagnostic) -> JsonValue {
-    json!({
-        "severity": diagnostic.severity.as_str(),
-        "message": diagnostic.message,
-        "labels": diagnostic
-            .labels
-            .iter()
-            .map(|label| check_json_label(source, label))
-            .collect::<Vec<_>>(),
-        "notes": diagnostic.notes,
-    })
-}
-
-fn check_json_label(source: &str, label: &ql_diagnostics::Label) -> JsonValue {
-    let location = locate(source, label.span);
-    json!({
-        "is_primary": label.is_primary,
-        "message": label.message,
-        "span": {
-            "start_offset": label.span.start,
-            "end_offset": label.span.end,
-            "start": {
-                "line": location.start.line,
-                "column": location.start.column,
-            },
-            "end": {
-                "line": location.end.line,
-                "column": location.end.column,
-            },
-        },
+        "diagnostics": diagnostics_json(source, diagnostics),
     })
 }

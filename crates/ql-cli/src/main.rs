@@ -24,7 +24,6 @@ use ql_project::{
     load_interface_artifact, load_project_manifest, load_reference_manifests, package_name,
     package_source_root,
 };
-use ql_span::locate;
 use serde_json::{Value as JsonValue, json};
 
 mod analysis_commands;
@@ -32,6 +31,7 @@ mod build_command;
 mod check_command;
 mod cli_build_profile;
 mod cli_diagnostics;
+mod cli_json_diagnostics;
 mod cli_scan;
 mod cli_usage;
 mod cli_utils;
@@ -59,6 +59,7 @@ mod test_command;
 
 use check_command::CheckJsonReport;
 use cli_diagnostics::print_diagnostics;
+use cli_json_diagnostics::diagnostics_json;
 use cli_scan::collect_ql_files;
 use cli_usage::print_usage;
 use cli_utils::{
@@ -2127,43 +2128,7 @@ fn select_workspace_build_targets_for_build_json(
 fn build_json_diagnostic_file(path: &Path, source: &str, diagnostics: &[Diagnostic]) -> JsonValue {
     json!({
         "path": normalize_path(path),
-        "diagnostics": diagnostics
-            .iter()
-            .map(|diagnostic| build_json_diagnostic(source, diagnostic))
-            .collect::<Vec<_>>(),
-    })
-}
-
-fn build_json_diagnostic(source: &str, diagnostic: &Diagnostic) -> JsonValue {
-    json!({
-        "severity": diagnostic.severity.as_str(),
-        "message": diagnostic.message,
-        "labels": diagnostic
-            .labels
-            .iter()
-            .map(|label| build_json_label(source, label))
-            .collect::<Vec<_>>(),
-        "notes": diagnostic.notes,
-    })
-}
-
-fn build_json_label(source: &str, label: &ql_diagnostics::Label) -> JsonValue {
-    let location = locate(source, label.span);
-    json!({
-        "is_primary": label.is_primary,
-        "message": label.message,
-        "span": {
-            "start_offset": label.span.start,
-            "end_offset": label.span.end,
-            "start": {
-                "line": location.start.line,
-                "column": location.start.column,
-            },
-            "end": {
-                "line": location.end.line,
-                "column": location.end.column,
-            },
-        },
+        "diagnostics": diagnostics_json(source, diagnostics),
     })
 }
 
