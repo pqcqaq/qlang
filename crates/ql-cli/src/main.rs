@@ -75,9 +75,8 @@ use project_targets::{
 };
 use project_workspace::{
     WorkspaceMemberLookupError, render_workspace_member_lookup_error,
-    resolve_project_package_manifest, resolve_project_selected_package_manifest,
-    resolve_project_workspace_manifest, resolve_selected_workspace_member_manifest,
-    resolve_workspace_member_entry_by_package_name, select_workspace_members,
+    resolve_selected_workspace_member_manifest, resolve_workspace_member_entry_by_package_name,
+    select_workspace_members,
 };
 use test_command::TestCommandOptions;
 

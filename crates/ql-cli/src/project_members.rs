@@ -6,17 +6,16 @@ use ql_project::{load_project_manifest, package_name, render_manifest_with_added
 use toml::Value as TomlValue;
 
 use crate::cli_utils::{normalize_path, relative_path_from, validate_project_package_name};
-
-use super::{
-    WorkspaceMemberLookupError, project_init, render_workspace_member_lookup_error,
-    resolve_project_package_manifest, resolve_project_selected_package_manifest,
-    resolve_project_workspace_manifest, resolve_workspace_member_entry_by_package_name,
-};
-
 use crate::project_dependencies::find_workspace_member_dependents;
 use crate::project_dependency_edit::detach_workspace_member_dependents;
+use crate::project_init;
 use crate::project_manifest_edit::{
     acquire_locked_project_manifest_edits, write_locked_project_manifest,
+};
+use crate::project_workspace::{
+    WorkspaceMemberLookupError, render_workspace_member_lookup_error,
+    resolve_project_package_manifest, resolve_project_selected_package_manifest,
+    resolve_project_workspace_manifest, resolve_workspace_member_entry_by_package_name,
 };
 
 pub(crate) fn project_add_path(
