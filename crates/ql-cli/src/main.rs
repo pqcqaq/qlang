@@ -8,7 +8,7 @@ use ql_ast::{
     CallArg, Expr, ExprKind, FunctionDecl, GlobalDecl, ItemKind, Module, Param, ReceiverKind,
     Visibility,
 };
-use ql_driver::{BuildArtifact, BuildError, BuildOptions, build_source_with_link_inputs};
+use ql_driver::{BuildArtifact, BuildOptions};
 use ql_parser::parse_source;
 use ql_project::{
     BuildTargetKind, WorkspaceBuildTargets, default_interface_path, load_interface_artifact,
@@ -21,6 +21,8 @@ mod build_outputs;
 mod build_pipeline;
 mod build_plan;
 mod build_reporting;
+mod build_single_source;
+mod build_source_rewrites;
 mod check_command;
 mod check_reporting;
 mod cli_analysis;
@@ -60,27 +62,11 @@ mod test_command;
 mod test_pipeline;
 mod test_reporting;
 
-use build_failure_reporting::{
-    missing_build_header_import_surface, missing_build_input_path, missing_dylib_exports,
-    report_build_export_configuration_failure, report_build_header_configuration_failure,
-    report_build_header_import_surface_failure, report_build_header_output_path_failure,
-    report_build_input_path_failure, report_build_interface_failure,
-    report_build_interface_manifest_failure, report_build_interface_no_sources_failure,
-    report_build_interface_output_failure, report_build_interface_package_context_failure,
-    report_build_interface_source_failure, report_build_interface_source_root_failure,
-    report_build_output_path_failure, report_build_source_diagnostics_failure,
-    report_build_toolchain_failure, report_remaining_build_artifacts,
-    unsupported_build_header_emit,
-};
+use build_failure_reporting::report_build_input_path_failure;
 pub(crate) use build_outputs::{
     apply_manifest_default_profile, first_colliding_project_build_header_output_path,
     first_colliding_project_build_output_path, project_dependency_target_build_options,
     project_target_build_options, project_target_output_path,
-};
-use build_outputs::{
-    build_header_output_path, build_output_path, colliding_build_header_output_path,
-    io_targets_build_header_output_path, io_targets_build_output_path,
-    toolchain_targets_build_output_path,
 };
 pub(crate) use build_plan::{
     BuildPlanResolveError, BuildPlanResolveFailureKind, BuildTargetJsonError,
@@ -97,16 +83,20 @@ pub(crate) use build_reporting::{
     build_json_target_prep_failure, load_workspace_build_targets_for_build_json_from_request_root,
     select_workspace_build_targets_for_build_json,
 };
-use cli_diagnostics::print_diagnostics;
+pub(crate) use build_single_source::{
+    build_output_lock_error_message, build_single_source_target, build_single_source_target_quiet,
+    build_single_source_target_result, build_single_source_target_silent,
+    build_single_source_target_with_inputs_impl, build_single_source_target_with_inputs_result,
+    emit_built_package_interface, emit_built_package_interface_quiet,
+};
+use build_source_rewrites::{
+    RenderedDependencyBridgeItems, join_dependency_bridge_sections,
+    render_local_generic_function_specializations,
+};
 use cli_usage::print_usage;
 use cli_utils::normalize_path;
 use cli_version::{CLI_NAME, is_version_command, version_text};
 pub(crate) use project_emit_interface::project_emit_interface_path;
-use project_interface_reporting::report_emit_interface_result;
-use project_interfaces::{
-    EmitPackageInterfaceError, EmitPackageInterfaceResult, emit_package_interface_path,
-    emit_package_interface_path_quiet,
-};
 use project_manifest_paths::reference_manifest_path;
 pub(crate) use test_pipeline::{
     discover_test_targets, execute_test_targets, filter_test_targets, list_test_targets,
@@ -194,21 +184,6 @@ fn run() -> Result<(), u8> {
     }
 }
 
-pub(crate) fn build_output_lock_error_message(error: BuildError) -> String {
-    match error {
-        BuildError::Io { path, error } => format!(
-            "failed to acquire build output lock `{}`: {error}",
-            normalize_path(&path)
-        ),
-        BuildError::InvalidInput(message) => message,
-        BuildError::Diagnostics { path, .. } => format!(
-            "failed to acquire build output lock while diagnostics were reported for `{}`",
-            normalize_path(&path)
-        ),
-        BuildError::Toolchain { error, .. } => format!("{error}"),
-    }
-}
-
 #[derive(Clone, Debug)]
 struct DependencyExternOwner {
     package_name: String,
@@ -219,67 +194,6 @@ struct DependencyExternOwner {
 struct PreparedProjectTargetBuild {
     source_override: Option<String>,
     additional_link_inputs: Vec<PathBuf>,
-}
-
-#[derive(Clone, Debug, Default)]
-struct RenderedDependencyBridgeItems {
-    declarations: String,
-    source_rewrites: Vec<dependency_generic_bridge::SourceRewrite>,
-}
-
-impl RenderedDependencyBridgeItems {
-    fn append_declarations(&mut self, declarations: &str) {
-        self.declarations = join_dependency_bridge_sections(&self.declarations, declarations);
-    }
-
-    fn append_items(&mut self, items: RenderedDependencyBridgeItems) {
-        self.append_declarations(&items.declarations);
-        self.source_rewrites.extend(items.source_rewrites);
-    }
-
-    fn into_source_override(self, source: &str) -> Option<String> {
-        dependency_bridge_source_override(source, &self.declarations, &self.source_rewrites)
-    }
-}
-
-fn render_local_generic_function_specializations(source: &str) -> RenderedDependencyBridgeItems {
-    let module = match parse_source(source) {
-        Ok(module) => module,
-        Err(_) => return RenderedDependencyBridgeItems::default(),
-    };
-
-    let mut declarations = Vec::new();
-    let mut source_rewrites = Vec::new();
-    let mut rendered_specializations = BTreeSet::new();
-    for item in &module.items {
-        let ItemKind::Function(function) = &item.kind else {
-            continue;
-        };
-        let Some(rendered) = dependency_generic_bridge::render_local_function_specializations(
-            function,
-            source,
-            &module,
-            &mut rendered_specializations,
-        ) else {
-            continue;
-        };
-        declarations.push(rendered.declarations);
-        source_rewrites.extend(rendered.call_rewrites);
-    }
-
-    RenderedDependencyBridgeItems {
-        declarations: declarations.join("\n\n"),
-        source_rewrites,
-    }
-}
-
-fn local_generic_source_override(source: &str) -> Option<String> {
-    let local_generic_items = render_local_generic_function_specializations(source);
-    dependency_bridge_source_override(
-        source,
-        &local_generic_items.declarations,
-        &local_generic_items.source_rewrites,
-    )
 }
 
 pub(crate) fn build_project_source_target(
@@ -620,77 +534,6 @@ fn prepare_project_test_target_build(
         source_override: bridge_items.into_source_override(&source),
         additional_link_inputs,
     })
-}
-
-fn append_dependency_declarations(source: &str, dependency_declarations: &str) -> String {
-    let mut combined = source.trim_end_matches(['\r', '\n']).to_owned();
-    combined.push_str("\n\n");
-    combined.push_str(dependency_declarations);
-    if !combined.ends_with('\n') {
-        combined.push('\n');
-    }
-    combined
-}
-
-fn dependency_bridge_source_override(
-    source: &str,
-    dependency_declarations: &str,
-    source_rewrites: &[dependency_generic_bridge::SourceRewrite],
-) -> Option<String> {
-    if dependency_declarations.is_empty() && source_rewrites.is_empty() {
-        return None;
-    }
-
-    let rewritten_source = apply_dependency_source_rewrites(source, source_rewrites);
-    if dependency_declarations.is_empty() {
-        Some(rewritten_source)
-    } else {
-        Some(append_dependency_declarations(
-            &rewritten_source,
-            dependency_declarations,
-        ))
-    }
-}
-
-fn apply_dependency_source_rewrites(
-    source: &str,
-    source_rewrites: &[dependency_generic_bridge::SourceRewrite],
-) -> String {
-    let mut rewrites = source_rewrites.to_vec();
-    rewrites.sort_by(|left, right| {
-        right
-            .span
-            .start
-            .cmp(&left.span.start)
-            .then_with(|| right.span.end.cmp(&left.span.end))
-    });
-
-    let mut rewritten = source.to_owned();
-    let mut next_start = source.len();
-    for rewrite in rewrites {
-        if rewrite.span.start > rewrite.span.end
-            || rewrite.span.end > source.len()
-            || !source.is_char_boundary(rewrite.span.start)
-            || !source.is_char_boundary(rewrite.span.end)
-            || rewrite.span.end > next_start
-        {
-            continue;
-        }
-        rewritten.replace_range(rewrite.span.start..rewrite.span.end, &rewrite.replacement);
-        next_start = rewrite.span.start;
-    }
-    rewritten
-}
-
-fn join_dependency_bridge_sections(primary: &str, secondary: &str) -> String {
-    let mut sections = Vec::new();
-    if !primary.trim().is_empty() {
-        sections.push(primary.trim().to_owned());
-    }
-    if !secondary.trim().is_empty() {
-        sections.push(secondary.trim().to_owned());
-    }
-    sections.join("\n\n")
 }
 
 fn project_dependency_link_inputs(
@@ -4243,339 +4086,6 @@ fn span_text(source: &str, span: ql_span::Span) -> String {
         .get(span.start..span.end)
         .unwrap_or_default()
         .to_owned()
-}
-
-pub(crate) fn build_single_source_target(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-) -> Result<BuildArtifact, u8> {
-    build_single_source_target_impl(path, options, emit_interface, true, true)
-}
-
-pub(crate) fn build_single_source_target_silent(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-) -> Result<BuildArtifact, u8> {
-    build_single_source_target_impl(path, options, emit_interface, false, true)
-}
-
-pub(crate) fn build_single_source_target_result(
-    path: &Path,
-    options: &BuildOptions,
-) -> Result<BuildArtifact, BuildError> {
-    build_single_source_target_with_inputs_result(path, options, None, &[])
-}
-
-pub(crate) fn build_single_source_target_quiet(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-) -> Result<BuildArtifact, u8> {
-    build_single_source_target_impl(path, options, emit_interface, false, false)
-}
-
-fn build_single_source_target_impl(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-    report_success: bool,
-    report_failure: bool,
-) -> Result<BuildArtifact, u8> {
-    build_single_source_target_with_inputs_impl(
-        path,
-        options,
-        emit_interface,
-        report_success,
-        report_failure,
-        None,
-        &[],
-    )
-}
-
-fn build_single_source_target_with_inputs_impl(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-    report_success: bool,
-    report_failure: bool,
-    source_override: Option<&str>,
-    additional_link_inputs: &[PathBuf],
-) -> Result<BuildArtifact, u8> {
-    match build_single_source_target_with_inputs_result(
-        path,
-        options,
-        source_override,
-        additional_link_inputs,
-    ) {
-        Ok(artifact) => {
-            if report_success {
-                println!(
-                    "wrote {}: {}",
-                    artifact.emit.as_str(),
-                    artifact.path.display()
-                );
-                if let Some(header) = artifact.c_header.as_ref() {
-                    println!("wrote c-header: {}", header.path.display());
-                }
-            }
-            Ok(artifact)
-        }
-        Err(BuildError::InvalidInput(message)) => {
-            if report_failure {
-                eprintln!("error: {message}");
-            }
-            if emit_interface && report_failure {
-                if missing_build_input_path(path, &message) {
-                    report_build_input_path_failure(path, options, emit_interface);
-                } else if missing_dylib_exports(&message, options) {
-                    report_build_export_configuration_failure(path, options, emit_interface);
-                } else if missing_build_header_import_surface(&message, options) {
-                    report_build_header_import_surface_failure(path, options, emit_interface);
-                } else if unsupported_build_header_emit(options) {
-                    report_build_header_configuration_failure(path, options, emit_interface);
-                } else if let Some(header_output_path) =
-                    colliding_build_header_output_path(path, options)
-                {
-                    report_build_header_output_path_failure(
-                        path,
-                        options,
-                        emit_interface,
-                        &header_output_path,
-                    );
-                }
-            }
-            Err(1)
-        }
-        Err(BuildError::Io {
-            path: io_path,
-            error,
-        }) => {
-            if report_failure {
-                eprintln!("error: failed to access `{}`: {error}", io_path.display());
-            }
-            if emit_interface && report_failure {
-                if io_path == path {
-                    report_build_input_path_failure(path, options, emit_interface);
-                } else if let Some(output_path) = build_output_path(path, options) {
-                    if io_targets_build_output_path(&io_path, &output_path) {
-                        report_build_output_path_failure(
-                            path,
-                            options,
-                            emit_interface,
-                            &output_path,
-                        );
-                    } else if let Some(header_output_path) = build_header_output_path(path, options)
-                    {
-                        if io_targets_build_header_output_path(&io_path, &header_output_path) {
-                            report_build_header_output_path_failure(
-                                path,
-                                options,
-                                emit_interface,
-                                &header_output_path,
-                            );
-                        }
-                    }
-                }
-            }
-            Err(1)
-        }
-        Err(BuildError::Toolchain {
-            error,
-            preserved_artifacts,
-        }) => {
-            if report_failure {
-                eprintln!("error: {error}");
-                for path in preserved_artifacts {
-                    eprintln!(
-                        "note: preserved intermediate artifact at `{}`",
-                        path.display()
-                    );
-                }
-            }
-            if emit_interface && report_failure {
-                if let Some(output_path) = build_output_path(path, options) {
-                    if toolchain_targets_build_output_path(&error, &output_path) {
-                        report_build_output_path_failure(
-                            path,
-                            options,
-                            emit_interface,
-                            &output_path,
-                        );
-                    } else {
-                        report_build_toolchain_failure(path, options, emit_interface);
-                    }
-                } else {
-                    report_build_toolchain_failure(path, options, emit_interface);
-                }
-            }
-            Err(1)
-        }
-        Err(BuildError::Diagnostics {
-            path: diagnostic_path,
-            source,
-            diagnostics,
-        }) => {
-            if report_failure {
-                print_diagnostics(&diagnostic_path, &source, &diagnostics);
-            }
-            if emit_interface && report_failure {
-                report_build_source_diagnostics_failure(path, options, emit_interface);
-            }
-            Err(1)
-        }
-    }
-}
-
-fn build_single_source_target_with_inputs_result(
-    path: &Path,
-    options: &BuildOptions,
-    source_override: Option<&str>,
-    additional_link_inputs: &[PathBuf],
-) -> Result<BuildArtifact, BuildError> {
-    match source_override {
-        Some(source) => {
-            build_source_with_link_inputs(path, source, options, additional_link_inputs)
-        }
-        None => {
-            if !path.is_file() {
-                return Err(BuildError::InvalidInput(format!(
-                    "`{}` is not a file",
-                    path.display()
-                )));
-            }
-            let source = fs::read_to_string(path).map_err(|error| BuildError::Io {
-                path: path.to_path_buf(),
-                error,
-            })?;
-            let local_source_override = local_generic_source_override(&source);
-            build_source_with_link_inputs(
-                path,
-                local_source_override.as_deref().unwrap_or(&source),
-                options,
-                additional_link_inputs,
-            )
-        }
-    }
-}
-
-pub(crate) fn emit_built_package_interface(
-    request_path: &Path,
-    package_context_path: &Path,
-    options: &BuildOptions,
-    artifact_path: &Path,
-    additional_artifacts: &[PathBuf],
-) -> Result<(), u8> {
-    let result = emit_built_package_interface_impl(
-        request_path,
-        package_context_path,
-        options,
-        artifact_path,
-        additional_artifacts,
-    )?;
-    report_emit_interface_result(result);
-    Ok(())
-}
-
-pub(crate) fn emit_built_package_interface_quiet(
-    request_path: &Path,
-    package_context_path: &Path,
-    options: &BuildOptions,
-    artifact_path: &Path,
-    additional_artifacts: &[PathBuf],
-) -> Result<EmitPackageInterfaceResult, EmitPackageInterfaceError> {
-    let _ = (request_path, options, artifact_path, additional_artifacts);
-    emit_package_interface_path_quiet(package_context_path, None, false)
-}
-
-fn emit_built_package_interface_impl(
-    request_path: &Path,
-    package_context_path: &Path,
-    options: &BuildOptions,
-    artifact_path: &Path,
-    additional_artifacts: &[PathBuf],
-) -> Result<EmitPackageInterfaceResult, u8> {
-    match emit_package_interface_path(
-        package_context_path,
-        None,
-        "`ql build --emit-interface`",
-        false,
-    ) {
-        Ok(result) => Ok(result),
-        Err(EmitPackageInterfaceError::ManifestNotFound { .. }) => {
-            report_build_interface_package_context_failure(
-                request_path,
-                options,
-                true,
-                artifact_path,
-            );
-            report_remaining_build_artifacts(additional_artifacts);
-            Err(1)
-        }
-        Err(EmitPackageInterfaceError::SourceFailure { code, .. }) => {
-            report_build_interface_source_failure(request_path, options, true, artifact_path);
-            report_remaining_build_artifacts(additional_artifacts);
-            Err(code)
-        }
-        Err(EmitPackageInterfaceError::Code { code, .. }) => {
-            report_build_interface_failure(request_path, options, true, artifact_path);
-            report_remaining_build_artifacts(additional_artifacts);
-            Err(code)
-        }
-        Err(EmitPackageInterfaceError::ManifestFailure { manifest_path, .. }) => {
-            report_build_interface_manifest_failure(
-                request_path,
-                options,
-                true,
-                artifact_path,
-                &manifest_path,
-            );
-            report_remaining_build_artifacts(additional_artifacts);
-            Err(1)
-        }
-        Err(EmitPackageInterfaceError::NoSourceFilesFailure {
-            manifest_path,
-            source_root,
-        }) => {
-            report_build_interface_no_sources_failure(
-                request_path,
-                options,
-                true,
-                artifact_path,
-                &manifest_path,
-                &source_root,
-            );
-            report_remaining_build_artifacts(additional_artifacts);
-            Err(1)
-        }
-        Err(EmitPackageInterfaceError::SourceRootFailure {
-            manifest_path,
-            source_root,
-        }) => {
-            report_build_interface_source_root_failure(
-                request_path,
-                options,
-                true,
-                artifact_path,
-                &manifest_path,
-                &source_root,
-            );
-            report_remaining_build_artifacts(additional_artifacts);
-            Err(1)
-        }
-        Err(EmitPackageInterfaceError::OutputPathFailure { output_path, .. }) => {
-            report_build_interface_output_failure(
-                request_path,
-                options,
-                true,
-                artifact_path,
-                &output_path,
-            );
-            report_remaining_build_artifacts(additional_artifacts);
-            Err(1)
-        }
-    }
 }
 
 #[cfg(test)]
