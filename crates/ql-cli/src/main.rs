@@ -8,10 +8,7 @@ use ql_ast::{
     CallArg, Expr, ExprKind, FunctionDecl, GlobalDecl, ItemKind, Module, Param, ReceiverKind,
     Visibility,
 };
-use ql_driver::{
-    BuildArtifact, BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderSurface,
-    build_source_with_link_inputs,
-};
+use ql_driver::{BuildArtifact, BuildError, BuildOptions, build_source_with_link_inputs};
 use ql_parser::parse_source;
 use ql_project::{
     BuildTargetKind, WorkspaceBuildTargets, default_interface_path, discover_package_build_targets,
@@ -19,6 +16,7 @@ use ql_project::{
 };
 mod analysis_commands;
 mod build_command;
+mod build_failure_reporting;
 mod build_outputs;
 mod build_pipeline;
 mod build_reporting;
@@ -60,6 +58,18 @@ mod test_command;
 mod test_pipeline;
 mod test_reporting;
 
+use build_failure_reporting::{
+    missing_build_header_import_surface, missing_build_input_path, missing_dylib_exports,
+    report_build_export_configuration_failure, report_build_header_configuration_failure,
+    report_build_header_import_surface_failure, report_build_header_output_path_failure,
+    report_build_input_path_failure, report_build_interface_failure,
+    report_build_interface_manifest_failure, report_build_interface_no_sources_failure,
+    report_build_interface_output_failure, report_build_interface_package_context_failure,
+    report_build_interface_source_failure, report_build_interface_source_root_failure,
+    report_build_output_path_failure, report_build_source_diagnostics_failure,
+    report_build_toolchain_failure, report_remaining_build_artifacts,
+    unsupported_build_header_emit,
+};
 pub(crate) use build_outputs::{
     apply_manifest_default_profile, first_colliding_project_build_header_output_path,
     first_colliding_project_build_output_path, project_dependency_target_build_options,
@@ -5224,336 +5234,6 @@ fn emit_built_package_interface_impl(
             Err(1)
         }
     }
-}
-
-fn report_remaining_build_artifacts(paths: &[PathBuf]) {
-    for path in paths {
-        eprintln!("note: build artifact remains at `{}`", normalize_path(path));
-    }
-}
-
-fn unsupported_build_header_emit(options: &BuildOptions) -> bool {
-    options.c_header.is_some()
-        && !matches!(
-            options.emit,
-            BuildEmit::DynamicLibrary | BuildEmit::StaticLibrary
-        )
-}
-
-fn missing_build_input_path(path: &Path, message: &str) -> bool {
-    !path.is_file() && message.contains("is not a file")
-}
-
-fn missing_dylib_exports(message: &str, options: &BuildOptions) -> bool {
-    options.emit == BuildEmit::DynamicLibrary
-        && message
-            .contains("requires at least one public top-level `extern \"c\"` function definition")
-}
-
-fn missing_build_header_import_surface(message: &str, options: &BuildOptions) -> bool {
-    options.c_header.is_some()
-        && message.contains("does not define any imported `extern \"c\"` function declarations")
-}
-
-fn format_build_command(path: &Path, options: &BuildOptions, emit_interface: bool) -> String {
-    let mut command = format!("ql build {}", normalize_path(path));
-    command.push_str(&format!(" --emit {}", build_emit_cli_value(options.emit)));
-    if options.profile == BuildProfile::Release {
-        command.push_str(" --release");
-    }
-    if let Some(output) = &options.output {
-        command.push_str(&format!(" --output {}", normalize_path(output)));
-    }
-    if let Some(header) = &options.c_header {
-        if header.surface != CHeaderSurface::Exports {
-            command.push_str(&format!(" --header-surface {}", header.surface.as_str()));
-        } else if header.output.is_none() {
-            command.push_str(" --header");
-        }
-        if let Some(output) = &header.output {
-            command.push_str(&format!(" --header-output {}", normalize_path(output)));
-        }
-    }
-    if emit_interface {
-        command.push_str(" --emit-interface");
-    }
-    command
-}
-
-fn report_build_package_rerun_hint(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-    reason: &str,
-) {
-    if let Ok(manifest) = load_project_manifest(path) {
-        eprintln!(
-            "note: failing package manifest: {}",
-            normalize_path(&manifest.manifest_path)
-        );
-        let rerun_command = format_build_command(path, options, emit_interface);
-        eprintln!("hint: rerun `{rerun_command}` {reason}");
-    }
-}
-
-fn report_build_source_diagnostics_failure(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-) {
-    report_build_package_rerun_hint(
-        path,
-        options,
-        emit_interface,
-        "after fixing the package sources",
-    );
-}
-
-fn report_build_toolchain_failure(path: &Path, options: &BuildOptions, emit_interface: bool) {
-    report_build_package_rerun_hint(
-        path,
-        options,
-        emit_interface,
-        "after fixing the build toolchain",
-    );
-}
-
-fn report_build_export_configuration_failure(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-) {
-    report_build_package_rerun_hint(
-        path,
-        options,
-        emit_interface,
-        "after fixing the dylib export surface",
-    );
-}
-
-fn report_build_header_import_surface_failure(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-) {
-    report_build_package_rerun_hint(
-        path,
-        options,
-        emit_interface,
-        "after fixing the build header import surface",
-    );
-}
-
-fn report_build_input_path_failure(path: &Path, options: &BuildOptions, emit_interface: bool) {
-    if let Ok(manifest) = load_project_manifest(path) {
-        eprintln!(
-            "note: failing package manifest: {}",
-            normalize_path(&manifest.manifest_path)
-        );
-        eprintln!("note: failing build input path: {}", normalize_path(path));
-        let rerun_command = format_build_command(path, options, emit_interface);
-        eprintln!("hint: rerun `{rerun_command}` after fixing the build input path");
-    }
-}
-
-fn report_build_output_path_failure(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-    output_path: &Path,
-) {
-    if let Ok(manifest) = load_project_manifest(path) {
-        eprintln!(
-            "note: failing package manifest: {}",
-            normalize_path(&manifest.manifest_path)
-        );
-        eprintln!(
-            "note: failing build output path: {}",
-            normalize_path(output_path)
-        );
-        let rerun_command = format_build_command(path, options, emit_interface);
-        eprintln!("hint: rerun `{rerun_command}` after fixing the build output path");
-    }
-}
-
-fn report_build_header_output_path_failure(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-    output_path: &Path,
-) {
-    if let Ok(manifest) = load_project_manifest(path) {
-        eprintln!(
-            "note: failing package manifest: {}",
-            normalize_path(&manifest.manifest_path)
-        );
-        eprintln!(
-            "note: failing build header output path: {}",
-            normalize_path(output_path)
-        );
-        let rerun_command = format_build_command(path, options, emit_interface);
-        eprintln!("hint: rerun `{rerun_command}` after fixing the build header output path");
-    }
-}
-
-fn report_build_header_configuration_failure(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-) {
-    if let Ok(manifest) = load_project_manifest(path) {
-        eprintln!(
-            "note: failing package manifest: {}",
-            normalize_path(&manifest.manifest_path)
-        );
-        let rerun_command = format_build_command(path, options, emit_interface);
-        eprintln!("hint: rerun `{rerun_command}` after fixing the build header configuration");
-    }
-}
-
-fn report_build_interface_failure(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-    artifact_path: &Path,
-) {
-    report_build_package_rerun_hint(
-        path,
-        options,
-        emit_interface,
-        "after fixing the package interface error",
-    );
-    eprintln!(
-        "note: build artifact remains at `{}`",
-        normalize_path(artifact_path)
-    );
-}
-
-fn report_build_interface_package_context_failure(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-    artifact_path: &Path,
-) {
-    eprintln!(
-        "note: `ql build --emit-interface` only emits package interfaces for sources inside a package"
-    );
-    let rerun_command = format_build_command(path, options, emit_interface);
-    eprintln!("hint: rerun `{rerun_command}` after adding `qlang.toml` for this source");
-    eprintln!(
-        "note: build artifact remains at `{}`",
-        normalize_path(artifact_path)
-    );
-}
-
-fn report_build_interface_source_failure(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-    artifact_path: &Path,
-) {
-    report_build_package_rerun_hint(
-        path,
-        options,
-        emit_interface,
-        "after fixing the package sources",
-    );
-    eprintln!(
-        "note: build artifact remains at `{}`",
-        normalize_path(artifact_path)
-    );
-}
-
-fn report_build_interface_manifest_failure(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-    artifact_path: &Path,
-    manifest_path: &Path,
-) {
-    eprintln!(
-        "note: failing package manifest: {}",
-        normalize_path(manifest_path)
-    );
-    let rerun_command = format_build_command(path, options, emit_interface);
-    eprintln!("hint: rerun `{rerun_command}` after fixing the package manifest");
-    eprintln!(
-        "note: build artifact remains at `{}`",
-        normalize_path(artifact_path)
-    );
-}
-
-fn report_build_interface_source_root_failure(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-    artifact_path: &Path,
-    manifest_path: &Path,
-    source_root: &Path,
-) {
-    eprintln!(
-        "note: failing package manifest: {}",
-        normalize_path(manifest_path)
-    );
-    eprintln!(
-        "note: failing package source root: {}",
-        normalize_path(source_root)
-    );
-    let rerun_command = format_build_command(path, options, emit_interface);
-    eprintln!("hint: rerun `{rerun_command}` after fixing the package source root");
-    eprintln!(
-        "note: build artifact remains at `{}`",
-        normalize_path(artifact_path)
-    );
-}
-
-fn report_build_interface_no_sources_failure(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-    artifact_path: &Path,
-    manifest_path: &Path,
-    source_root: &Path,
-) {
-    eprintln!(
-        "note: failing package manifest: {}",
-        normalize_path(manifest_path)
-    );
-    eprintln!(
-        "note: failing package source root: {}",
-        normalize_path(source_root)
-    );
-    let rerun_command = format_build_command(path, options, emit_interface);
-    eprintln!("hint: rerun `{rerun_command}` after adding package source files");
-    eprintln!(
-        "note: build artifact remains at `{}`",
-        normalize_path(artifact_path)
-    );
-}
-
-fn report_build_interface_output_failure(
-    path: &Path,
-    options: &BuildOptions,
-    emit_interface: bool,
-    artifact_path: &Path,
-    output_path: &Path,
-) {
-    if let Ok(manifest) = load_project_manifest(path) {
-        eprintln!(
-            "note: failing package manifest: {}",
-            normalize_path(&manifest.manifest_path)
-        );
-        eprintln!(
-            "note: failing interface output path: {}",
-            normalize_path(output_path)
-        );
-        let rerun_command = format_build_command(path, options, emit_interface);
-        eprintln!("hint: rerun `{rerun_command}` after fixing the interface output path");
-    }
-    eprintln!(
-        "note: build artifact remains at `{}`",
-        normalize_path(artifact_path)
-    );
 }
 
 pub(crate) fn project_emit_interface_path(
