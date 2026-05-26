@@ -13,10 +13,11 @@ use crate::analysis_commands::{
     render_mir_path, render_ownership_path, render_runtime_requirements,
 };
 use crate::build_pipeline::build_path;
+use crate::cli_analysis::analyze_source;
 use crate::project_targets::ProjectTargetSelector;
 use crate::{
-    analyze_source, dependency_public_struct_method_bridge_candidates,
-    dependency_public_type_bridge_candidates, dependency_public_type_bridge_order,
+    dependency_public_struct_method_bridge_candidates, dependency_public_type_bridge_candidates,
+    dependency_public_type_bridge_order,
 };
 use ql_analysis::analyze_source as analyze_semantics;
 
