@@ -424,6 +424,12 @@ impl BuildOutputLock {
                     }
                     thread::sleep(BUILD_OUTPUT_LOCK_RETRY);
                 }
+                Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                    if started.elapsed() >= BUILD_OUTPUT_LOCK_TIMEOUT {
+                        return Err(BuildError::Io { path, error });
+                    }
+                    thread::sleep(BUILD_OUTPUT_LOCK_RETRY);
+                }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     if started.elapsed() >= BUILD_OUTPUT_LOCK_TIMEOUT {
                         return Err(BuildError::Io { path, error });
