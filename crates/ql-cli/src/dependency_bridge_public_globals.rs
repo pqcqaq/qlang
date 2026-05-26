@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ql_ast::{CallArg, Expr, ExprKind, GlobalDecl, ItemKind, Module, Visibility};
 
+use crate::dependency_bridge_names::supports_dependency_public_function_export_bridge;
+
 #[derive(Clone, Copy)]
 pub(crate) struct DependencyPublicGlobalBridgeCandidate<'a> {
     pub(crate) item: &'a ql_ast::Item,
@@ -33,6 +35,21 @@ pub(crate) fn dependency_public_global_bridge_candidates<'a>(
         );
     }
     candidates
+}
+
+pub(crate) fn dependency_public_function_bridge_candidates(module: &Module) -> BTreeSet<String> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Function(function)
+                if supports_dependency_public_function_export_bridge(function) =>
+            {
+                Some(function.name.clone())
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 pub(crate) fn dependency_public_global_dependencies<'a>(
