@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 use ql_driver::{BuildCHeaderOptions, BuildEmit, BuildOptions, BuildProfile, CHeaderSurface};
 
 use crate::cli_build_profile::{parse_cli_build_profile, set_cli_build_profile};
-
-use super::{
-    ProjectTargetSelector, build_path, list_build_targets_path,
-    parse_project_target_selector_option,
+use crate::project_targets::{
+    ProjectTargetSelector, list_build_targets_path, parse_project_target_selector_option,
 };
+
+use super::build_path;
 
 pub(crate) fn build_cli_path(args: &mut impl Iterator<Item = String>) -> Result<(), u8> {
     let Some(path) = args.next() else {

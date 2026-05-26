@@ -64,7 +64,6 @@ use cli_utils::{
 use project_targets::{
     ProjectCheckCommandScope, ProjectCommandPathError, ProjectCommandScope, ProjectTargetSelector,
     ResolvedProjectCommandPath, display_relative_to_root, is_runnable_project_target,
-    list_build_targets_path, list_runnable_targets_path, parse_project_target_selector_option,
     project_request_root, project_target_display_path,
     report_project_source_path_rejects_target_selector,
     report_project_target_selector_requires_project_context, resolve_project_check_command_scope,

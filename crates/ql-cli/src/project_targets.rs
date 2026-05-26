@@ -930,6 +930,65 @@ mod tests {
     }
 
     #[test]
+    fn target_selector_parser_records_package_and_target_options() {
+        let remaining = vec![
+            "--package".to_owned(),
+            "app".to_owned(),
+            "--target".to_owned(),
+            "src/bin/main.ql".to_owned(),
+        ];
+        let mut selector = ProjectTargetSelector::default();
+        let mut index = 0;
+
+        assert_eq!(
+            parse_project_target_selector_option(
+                "`ql build`",
+                &remaining,
+                &mut index,
+                &mut selector
+            ),
+            Ok(true)
+        );
+        assert_eq!(index, 1);
+        index += 1;
+        assert_eq!(
+            parse_project_target_selector_option(
+                "`ql build`",
+                &remaining,
+                &mut index,
+                &mut selector
+            ),
+            Ok(true)
+        );
+
+        assert_eq!(selector.package_name, Some("app".to_owned()));
+        assert_eq!(
+            selector.target,
+            Some(ProjectTargetSelectorKind::DisplayPath(
+                "src/bin/main.ql".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn target_selector_parser_rejects_conflicting_target_selectors() {
+        let remaining = vec!["--lib".to_owned(), "--bin".to_owned(), "app".to_owned()];
+        let mut selector = ProjectTargetSelector::default();
+        let mut index = 0;
+
+        assert_eq!(
+            parse_project_target_selector_option("`ql run`", &remaining, &mut index, &mut selector),
+            Ok(true)
+        );
+        index += 1;
+        assert_eq!(
+            parse_project_target_selector_option("`ql run`", &remaining, &mut index, &mut selector),
+            Err(1)
+        );
+        assert_eq!(selector.target, Some(ProjectTargetSelectorKind::Library));
+    }
+
+    #[test]
     fn filter_can_preserve_empty_members_for_list_views() {
         let members = vec![member_with_targets(vec![BuildTarget {
             kind: BuildTargetKind::Library,
