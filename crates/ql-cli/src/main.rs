@@ -78,6 +78,7 @@ mod project_target_build_prep;
 mod project_targets;
 mod project_workspace;
 mod run_command;
+mod run_execution;
 mod run_pipeline;
 mod run_reporting;
 mod run_targets;

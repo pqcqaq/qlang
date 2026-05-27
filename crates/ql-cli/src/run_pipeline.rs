@@ -1,8 +1,6 @@
-use std::io::Write;
 use std::path::Path;
-use std::process::Command;
 
-use ql_driver::{BuildEmit, BuildOptions, BuildProfile, acquire_build_output_locks};
+use ql_driver::{BuildEmit, BuildOptions, BuildProfile};
 use ql_project::WorkspaceBuildTargets;
 
 use crate::build_outputs::{apply_manifest_default_profile, project_target_output_path};
@@ -17,8 +15,6 @@ use crate::build_reporting::{
 use crate::build_single_source::{
     build_single_source_target_result, build_single_source_target_silent,
 };
-use crate::build_single_source_reporting::build_output_lock_error_message;
-use crate::cli_utils::normalize_path;
 use crate::project_reference_interfaces::prepare_reference_interfaces_for_manifests;
 use crate::project_target_build::{
     build_project_source_target_result, build_project_source_target_silent,
@@ -30,6 +26,7 @@ use crate::project_targets::{
     report_project_target_selector_requires_project_context, resolve_project_command_path,
     select_workspace_build_targets,
 };
+use crate::run_execution::{emit_run_json_execution, run_built_executable};
 use crate::run_reporting::RunJsonReport;
 use crate::run_targets::{
     select_runnable_project_target, select_runnable_project_target_for_run_json,
@@ -305,110 +302,6 @@ fn run_project_path(
         false,
     )?;
     run_built_executable(&artifact.path, program_args)
-}
-
-fn run_built_executable(executable_path: &Path, program_args: &[String]) -> Result<(), u8> {
-    let _ = std::io::stdout().flush();
-    let _ = std::io::stderr().flush();
-    let execution_lock =
-        acquire_build_output_locks(vec![executable_path.to_path_buf()]).map_err(|error| {
-            eprintln!(
-                "error: failed to lock built executable `{}`: {}",
-                normalize_path(executable_path),
-                build_output_lock_error_message(error)
-            );
-            1
-        })?;
-    let mut command = Command::new(executable_path);
-    command.args(program_args);
-    let status = command.status().map_err(|error| {
-        eprintln!(
-            "error: failed to run built executable `{}`: {error}",
-            normalize_path(executable_path)
-        );
-        1
-    })?;
-
-    match status.code() {
-        Some(0) => Ok(()),
-        Some(code) => {
-            drop(execution_lock);
-            std::process::exit(code);
-        }
-        None => {
-            eprintln!(
-                "error: built executable `{}` terminated without an exit code",
-                normalize_path(executable_path)
-            );
-            Err(1)
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct CapturedExecutableRun {
-    exit_code: Option<i32>,
-    stdout: String,
-    stderr: String,
-}
-
-fn run_built_executable_capture(
-    executable_path: &Path,
-    program_args: &[String],
-) -> Result<CapturedExecutableRun, String> {
-    let _execution_lock = acquire_build_output_locks(vec![executable_path.to_path_buf()])
-        .map_err(build_output_lock_error_message)?;
-    let mut command = Command::new(executable_path);
-    command.args(program_args);
-    let output = command.output().map_err(|error| {
-        format!(
-            "failed to run built executable `{}`: {error}",
-            normalize_path(executable_path)
-        )
-    })?;
-
-    Ok(CapturedExecutableRun {
-        exit_code: output.status.code(),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    })
-}
-
-fn emit_run_json_execution(
-    mut report: RunJsonReport,
-    executable_path: &Path,
-    program_args: &[String],
-) -> Result<(), u8> {
-    match run_built_executable_capture(executable_path, program_args) {
-        Ok(captured) => {
-            if let Some(exit_code) = captured.exit_code {
-                report.record_execution(exit_code, &captured.stdout, &captured.stderr);
-                print!("{}", report.into_json());
-                if exit_code == 0 {
-                    Ok(())
-                } else {
-                    std::process::exit(exit_code);
-                }
-            } else {
-                report.record_run_failure(
-                    executable_path,
-                    &format!(
-                        "built executable `{}` terminated without an exit code",
-                        normalize_path(executable_path)
-                    ),
-                    &captured.stdout,
-                    &captured.stderr,
-                );
-                print!("{}", report.into_json());
-                Err(1)
-            }
-        }
-        Err(error) => {
-            report.record_spawn_failure(executable_path, error);
-            print!("{}", report.into_json());
-            Err(1)
-        }
-    }
 }
 
 fn run_build_options(profile: BuildProfile) -> BuildOptions {
