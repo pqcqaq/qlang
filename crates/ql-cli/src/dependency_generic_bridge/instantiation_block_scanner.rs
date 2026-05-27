@@ -1,20 +1,13 @@
-use std::collections::BTreeSet;
+use ql_ast::{self, TypeExpr};
 
-use ql_ast::{self, FunctionDecl, TypeExpr};
-
-use super::function_bindings::FunctionTypeBindings;
 use super::instantiation_expr_scanner::collect_dependency_generic_function_instantiations_from_expr;
-use super::instantiation_scanner::PublicFunctionCallInstantiation;
+use super::instantiation_scan_context::InstantiationScanContext;
 use super::value_bindings::{ValueTypeBindings, record_let_type_bindings};
 
 pub(super) fn collect_dependency_generic_function_instantiations_from_block(
     block: &ql_ast::Block,
-    local_names: &BTreeSet<String>,
-    function: &FunctionDecl,
     bindings: &mut ValueTypeBindings,
-    function_bindings: &FunctionTypeBindings,
-    saw_call: &mut bool,
-    instantiations: &mut Vec<PublicFunctionCallInstantiation>,
+    context: &mut InstantiationScanContext<'_>,
     return_expected_ty: Option<&TypeExpr>,
     tail_expected_ty: Option<&TypeExpr>,
 ) {
@@ -27,26 +20,24 @@ pub(super) fn collect_dependency_generic_function_instantiations_from_block(
                     value,
                     ty.as_ref(),
                     return_expected_ty,
-                    local_names,
-                    function,
                     bindings,
-                    function_bindings,
-                    saw_call,
-                    instantiations,
+                    context,
                 );
-                record_let_type_bindings(pattern, ty.as_ref(), value, bindings, function_bindings);
+                record_let_type_bindings(
+                    pattern,
+                    ty.as_ref(),
+                    value,
+                    bindings,
+                    context.function_bindings,
+                );
             }
             ql_ast::StmtKind::Return(Some(value)) => {
                 collect_dependency_generic_function_instantiations_from_expr(
                     value,
                     return_expected_ty,
                     return_expected_ty,
-                    local_names,
-                    function,
                     bindings,
-                    function_bindings,
-                    saw_call,
-                    instantiations,
+                    context,
                 );
             }
             ql_ast::StmtKind::Defer(value) | ql_ast::StmtKind::Expr { expr: value, .. } => {
@@ -54,12 +45,8 @@ pub(super) fn collect_dependency_generic_function_instantiations_from_block(
                     value,
                     None,
                     return_expected_ty,
-                    local_names,
-                    function,
                     bindings,
-                    function_bindings,
-                    saw_call,
-                    instantiations,
+                    context,
                 );
             }
             ql_ast::StmtKind::While { condition, body } => {
@@ -67,22 +54,14 @@ pub(super) fn collect_dependency_generic_function_instantiations_from_block(
                     condition,
                     None,
                     return_expected_ty,
-                    local_names,
-                    function,
                     bindings,
-                    function_bindings,
-                    saw_call,
-                    instantiations,
+                    context,
                 );
                 let mut body_bindings = bindings.clone();
                 collect_dependency_generic_function_instantiations_from_block(
                     body,
-                    local_names,
-                    function,
                     &mut body_bindings,
-                    function_bindings,
-                    saw_call,
-                    instantiations,
+                    context,
                     return_expected_ty,
                     None,
                 );
@@ -91,12 +70,8 @@ pub(super) fn collect_dependency_generic_function_instantiations_from_block(
                 let mut body_bindings = bindings.clone();
                 collect_dependency_generic_function_instantiations_from_block(
                     body,
-                    local_names,
-                    function,
                     &mut body_bindings,
-                    function_bindings,
-                    saw_call,
-                    instantiations,
+                    context,
                     return_expected_ty,
                     None,
                 );
@@ -106,22 +81,14 @@ pub(super) fn collect_dependency_generic_function_instantiations_from_block(
                     iterable,
                     None,
                     return_expected_ty,
-                    local_names,
-                    function,
                     bindings,
-                    function_bindings,
-                    saw_call,
-                    instantiations,
+                    context,
                 );
                 let mut body_bindings = bindings.clone();
                 collect_dependency_generic_function_instantiations_from_block(
                     body,
-                    local_names,
-                    function,
                     &mut body_bindings,
-                    function_bindings,
-                    saw_call,
-                    instantiations,
+                    context,
                     return_expected_ty,
                     None,
                 );
@@ -136,12 +103,8 @@ pub(super) fn collect_dependency_generic_function_instantiations_from_block(
             tail,
             tail_expected_ty,
             return_expected_ty,
-            local_names,
-            function,
             bindings,
-            function_bindings,
-            saw_call,
-            instantiations,
+            context,
         );
     }
 }

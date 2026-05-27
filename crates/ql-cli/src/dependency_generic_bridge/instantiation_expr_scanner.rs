@@ -1,41 +1,24 @@
-use std::collections::BTreeSet;
-
-use ql_ast::{self, CallArg, Expr, ExprKind, FunctionDecl, TypeExpr};
+use ql_ast::{self, CallArg, Expr, ExprKind, TypeExpr};
 
 use super::call_args::{call_arg_expr, ordered_call_arg_expected_types};
 use super::call_inference::infer_dependency_generic_function_substitutions;
-use super::function_bindings::FunctionTypeBindings;
 use super::instantiation_block_scanner::collect_dependency_generic_function_instantiations_from_block;
-use super::instantiation_scanner::PublicFunctionCallInstantiation;
+use super::instantiation_scan_context::InstantiationScanContext;
 use super::value_bindings::ValueTypeBindings;
 
 pub(super) fn collect_dependency_generic_function_instantiations_from_expr(
     expr: &Expr,
     expected_ty: Option<&TypeExpr>,
     return_expected_ty: Option<&TypeExpr>,
-    local_names: &BTreeSet<String>,
-    function: &FunctionDecl,
     bindings: &ValueTypeBindings,
-    function_bindings: &FunctionTypeBindings,
-    saw_call: &mut bool,
-    instantiations: &mut Vec<PublicFunctionCallInstantiation>,
+    context: &mut InstantiationScanContext<'_>,
 ) {
-    let mut scanner = ExprInstantiationScanner {
-        local_names,
-        function,
-        function_bindings,
-        saw_call,
-        instantiations,
-    };
+    let mut scanner = ExprInstantiationScanner { context };
     scanner.scan_expr(expr, expected_ty, return_expected_ty, bindings);
 }
 
-struct ExprInstantiationScanner<'a, 'out> {
-    local_names: &'a BTreeSet<String>,
-    function: &'a FunctionDecl,
-    function_bindings: &'a FunctionTypeBindings,
-    saw_call: &'out mut bool,
-    instantiations: &'out mut Vec<PublicFunctionCallInstantiation>,
+struct ExprInstantiationScanner<'context, 'scan> {
+    context: &'context mut InstantiationScanContext<'scan>,
 }
 
 impl ExprInstantiationScanner<'_, '_> {
@@ -127,23 +110,20 @@ impl ExprInstantiationScanner<'_, '_> {
             args,
             expected_ty,
             bindings,
-            self.function_bindings,
+            self.context.function_bindings,
         );
         if let ExprKind::Name(name) = &callee.kind
-            && self.local_names.contains(name)
+            && self.context.local_names.contains(name)
         {
-            *self.saw_call = true;
+            self.context.mark_call_seen();
             if let Some(substitutions) = infer_dependency_generic_function_substitutions(
-                self.function,
+                self.context.target_function,
                 args,
                 expected_ty,
                 bindings,
-                self.function_bindings,
+                self.context.function_bindings,
             ) {
-                self.instantiations.push(PublicFunctionCallInstantiation {
-                    callee_span: callee.span,
-                    substitutions,
-                });
+                self.context.push_instantiation(callee.span, substitutions);
             }
         }
         self.scan_child_expr(callee, return_expected_ty, bindings);
@@ -183,12 +163,8 @@ impl ExprInstantiationScanner<'_, '_> {
         let mut block_bindings = bindings.clone();
         collect_dependency_generic_function_instantiations_from_block(
             block,
-            self.local_names,
-            self.function,
             &mut block_bindings,
-            self.function_bindings,
-            self.saw_call,
-            self.instantiations,
+            self.context,
             return_expected_ty,
             tail_expected_ty,
         );

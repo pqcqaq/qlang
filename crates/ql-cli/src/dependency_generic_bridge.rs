@@ -13,6 +13,7 @@ mod inferred_type_predicates;
 mod inferred_types;
 mod instantiation_block_scanner;
 mod instantiation_expr_scanner;
+mod instantiation_scan_context;
 mod instantiation_scanner;
 mod instantiations;
 mod rendering;

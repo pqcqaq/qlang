@@ -2,7 +2,8 @@ use std::collections::BTreeSet;
 
 use super::function_bindings::{FunctionTypeBindings, dependency_imported_local_names};
 use super::instantiation_block_scanner::collect_dependency_generic_function_instantiations_from_block;
-pub(super) use super::instantiation_scanner::PublicFunctionCallInstantiation;
+use super::instantiation_scan_context::InstantiationScanContext;
+pub(super) use super::instantiation_scan_context::PublicFunctionCallInstantiation;
 use super::instantiation_scanner::collect_dependency_generic_function_instantiations_from_item;
 use super::substitutions::TypeSubstitutions;
 use super::value_bindings::{
@@ -67,19 +68,15 @@ pub(super) fn collect_public_function_call_instantiation_status(
     }
 
     let root_bindings = collect_root_value_type_bindings(root_module);
-    let mut saw_call = false;
-    let mut instantiations = Vec::new();
+    let mut context = InstantiationScanContext::new(&local_names, function, function_bindings);
     for item in &root_module.items {
         collect_dependency_generic_function_instantiations_from_item(
             item,
-            &local_names,
-            function,
             &root_bindings,
-            function_bindings,
-            &mut saw_call,
-            &mut instantiations,
+            &mut context,
         );
     }
+    let (saw_call, instantiations) = context.finish();
     PublicFunctionCallInstantiations {
         saw_call,
         instantiations,
@@ -93,33 +90,25 @@ pub(super) fn collect_local_function_call_instantiations(
 ) -> Vec<PublicFunctionCallInstantiation> {
     let local_names = BTreeSet::from([function.name.clone()]);
     let root_bindings = collect_root_value_type_bindings(root_module);
-    let mut saw_call = false;
-    let mut instantiations = Vec::new();
+    let mut context = InstantiationScanContext::new(&local_names, function, function_bindings);
     for item in &root_module.items {
         let ItemKind::Function(root_function) = &item.kind else {
             collect_dependency_generic_function_instantiations_from_item(
                 item,
-                &local_names,
-                function,
                 &root_bindings,
-                function_bindings,
-                &mut saw_call,
-                &mut instantiations,
+                &mut context,
             );
             continue;
         };
         if root_function.generics.is_empty() {
             collect_dependency_generic_function_instantiations_from_item(
                 item,
-                &local_names,
-                function,
                 &root_bindings,
-                function_bindings,
-                &mut saw_call,
-                &mut instantiations,
+                &mut context,
             );
         }
     }
+    let (_, instantiations) = context.finish();
     instantiations
 }
 
@@ -155,19 +144,16 @@ pub(super) fn collect_specialized_body_call_instantiations_for_local_names(
         caller_substitutions,
         &mut bindings,
     );
-    let mut instantiations = Vec::new();
-    let mut saw_call = false;
+    let mut context =
+        InstantiationScanContext::new(local_names, target_function, function_bindings);
     collect_dependency_generic_function_instantiations_from_block(
         body,
-        local_names,
-        target_function,
         &mut bindings,
-        function_bindings,
-        &mut saw_call,
-        &mut instantiations,
+        &mut context,
         None,
         None,
     );
+    let (_, instantiations) = context.finish();
     instantiations
 }
 
