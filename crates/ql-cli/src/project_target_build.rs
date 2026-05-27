@@ -7,14 +7,19 @@ use ql_project::{BuildTargetKind, WorkspaceBuildTargets};
 use crate::build_failure_reporting::report_build_input_path_failure;
 use crate::build_source_rewrites::render_local_generic_function_specializations;
 use crate::cli_utils::normalize_path;
+use crate::dependency_bridge_direct::{
+    render_direct_dependency_bridge_items, render_direct_dependency_bridge_items_quiet,
+};
+use crate::dependency_bridge_package_under_test::render_package_under_test_bridge_items;
+use crate::dependency_bridge_public_export_wrappers::{
+    render_public_dependency_function_export_wrappers,
+    render_public_dependency_function_export_wrappers_quiet,
+};
 use crate::{
     BuildTargetJsonError, PrepareProjectTargetBuildError, PrepareProjectTargetBuildFailureKind,
     ProjectBuildPlanMember, build_single_source_target_with_inputs_impl,
     build_single_source_target_with_inputs_result, project_dependency_target_build_options,
-    render_direct_dependency_bridge_items, render_direct_dependency_bridge_items_quiet,
-    render_package_under_test_bridge_items, render_public_dependency_function_export_wrappers,
-    render_public_dependency_function_export_wrappers_quiet, resolve_project_build_plan_members,
-    select_project_build_plan_root_members,
+    resolve_project_build_plan_members, select_project_build_plan_root_members,
 };
 
 #[derive(Clone, Debug, Default)]
