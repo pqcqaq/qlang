@@ -1,19 +1,18 @@
 use std::path::Path;
 
 #[cfg(test)]
-use ql_project::{BuildTarget, BuildTargetKind};
-use ql_project::{WorkspaceBuildTargets, discover_workspace_build_targets, load_project_manifest};
+use ql_project::{BuildTarget, BuildTargetKind, WorkspaceBuildTargets};
 
-use crate::cli_utils::{
-    normalize_path, package_check_manifest_path_from_project_error,
-    package_missing_name_manifest_path_from_project_error,
-};
+use crate::cli_utils::normalize_path;
 
+mod loader;
 mod paths;
 mod rendering;
 mod selection;
 mod selector;
 
+use loader::load_project_target_members_for_workspace_member_path;
+pub(crate) use loader::load_workspace_build_targets_for_command_from_request_root;
 #[cfg(test)]
 use paths::is_ql_source_file;
 pub(crate) use paths::{
@@ -25,10 +24,7 @@ pub(crate) use paths::{
 };
 #[cfg(test)]
 pub(crate) use rendering::render_project_targets_json;
-use rendering::{
-    render_project_target_members, render_project_targets_preflight_failure_json,
-    render_project_targets_selection_failure_json,
-};
+use rendering::{render_project_target_members, render_project_targets_selection_failure_json};
 use selection::{
     ProjectTargetSelectionFailure, report_project_target_selection_failure,
     select_workspace_build_targets_with_failure,
@@ -58,107 +54,6 @@ pub(crate) fn report_project_source_path_rejects_target_selector(
     );
     eprintln!("note: source path: {}", normalize_path(path));
     eprintln!("note: selector: {}", selector.describe());
-}
-
-fn load_project_target_members_for_workspace_member_path(
-    path: &Path,
-    command_label: &str,
-    json: bool,
-) -> Result<Vec<WorkspaceBuildTargets>, u8> {
-    let request_root = resolve_project_workspace_member_command_request_root(path);
-    let request_root = request_root.as_deref().unwrap_or(path);
-    if json {
-        return load_project_target_members_for_json(path, request_root, command_label);
-    }
-
-    load_workspace_build_targets_for_command_from_request_root(path, request_root, command_label)
-}
-
-pub(crate) fn load_workspace_build_targets_for_command_from_request_root(
-    _request_path: &Path,
-    request_root: &Path,
-    command_label: &str,
-) -> Result<Vec<WorkspaceBuildTargets>, u8> {
-    let manifest = load_project_manifest(request_root).map_err(|error| {
-        if let ql_project::ProjectError::ManifestNotFound { start } = &error {
-            eprintln!(
-                "error: {command_label} requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
-                normalize_path(start)
-            );
-        } else if let Some(manifest_path) =
-            package_missing_name_manifest_path_from_project_error(&error)
-        {
-            eprintln!(
-                "error: {command_label} manifest `{}` does not declare `[package].name`",
-                normalize_path(manifest_path)
-            );
-        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error)
-        {
-            eprintln!("error: {command_label} {error}");
-            eprintln!(
-                "note: failing package manifest: {}",
-                normalize_path(manifest_path)
-            );
-        } else {
-            eprintln!("error: {command_label} {error}");
-        }
-        1
-    })?;
-
-    discover_workspace_build_targets(&manifest).map_err(|error| {
-        if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error) {
-            eprintln!(
-                "error: {command_label} manifest `{}` does not declare `[package].name`",
-                normalize_path(manifest_path)
-            );
-        } else if let ql_project::ProjectError::PackageSourceRootNotFound { path } = &error {
-            eprintln!(
-                "error: {command_label} package source directory `{}` does not exist",
-                normalize_path(path)
-            );
-        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error) {
-            eprintln!("error: {command_label} {error}");
-            eprintln!(
-                "note: failing package manifest: {}",
-                normalize_path(manifest_path)
-            );
-        } else {
-            eprintln!("error: {command_label} {error}");
-        }
-        1
-    })
-}
-
-fn load_project_target_members_for_json(
-    path: &Path,
-    request_root: &Path,
-    command_label: &str,
-) -> Result<Vec<WorkspaceBuildTargets>, u8> {
-    let manifest = load_project_manifest(request_root).map_err(|error| {
-        print!(
-            "{}",
-            render_project_targets_preflight_failure_json(
-                path,
-                "manifest-load",
-                project_targets_load_error_message(command_label, &error),
-                project_targets_error_manifest_path(&error),
-            )
-        );
-        1
-    })?;
-
-    discover_workspace_build_targets(&manifest).map_err(|error| {
-        print!(
-            "{}",
-            render_project_targets_preflight_failure_json(
-                path,
-                "target-discovery",
-                project_targets_discovery_error_message(command_label, &error),
-                project_targets_error_manifest_path(&error),
-            )
-        );
-        1
-    })
 }
 
 pub(crate) fn project_targets_path(
@@ -283,49 +178,6 @@ pub(crate) fn list_runnable_targets_path(
     }
     render_project_target_members(&runnable_members, json);
     Ok(())
-}
-
-fn project_targets_load_error_message(
-    command_label: &str,
-    error: &ql_project::ProjectError,
-) -> String {
-    if let ql_project::ProjectError::ManifestNotFound { start } = error {
-        return format!(
-            "{command_label} requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
-            normalize_path(start)
-        );
-    }
-    if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(error) {
-        return format!(
-            "{command_label} manifest `{}` does not declare `[package].name`",
-            normalize_path(manifest_path)
-        );
-    }
-    format!("{command_label} {error}")
-}
-
-fn project_targets_discovery_error_message(
-    command_label: &str,
-    error: &ql_project::ProjectError,
-) -> String {
-    if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(error) {
-        return format!(
-            "{command_label} manifest `{}` does not declare `[package].name`",
-            normalize_path(manifest_path)
-        );
-    }
-    if let ql_project::ProjectError::PackageSourceRootNotFound { path } = error {
-        return format!(
-            "{command_label} package source directory `{}` does not exist",
-            normalize_path(path)
-        );
-    }
-    format!("{command_label} {error}")
-}
-
-fn project_targets_error_manifest_path(error: &ql_project::ProjectError) -> Option<&Path> {
-    package_missing_name_manifest_path_from_project_error(error)
-        .or_else(|| package_check_manifest_path_from_project_error(error))
 }
 
 #[cfg(test)]
