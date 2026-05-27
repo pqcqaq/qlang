@@ -10,10 +10,9 @@ use ql_project::{
 };
 
 use crate::build_plan::{
-    PrepareProjectTargetBuildError, PrepareProjectTargetBuildFailureKind,
-    report_project_build_dependency_error, target_prep_dependency_interface_failure,
-    target_prep_dependency_manifest_failure, target_prep_dependency_source_parse_failure,
-    target_prep_dependency_source_read_failure,
+    PrepareProjectTargetBuildError, report_project_build_dependency_error,
+    target_prep_dependency_interface_failure, target_prep_dependency_manifest_failure,
+    target_prep_dependency_source_parse_failure, target_prep_dependency_source_read_failure,
 };
 use crate::dependency_bridge_imports::{
     ImportedDependencyExterns, collect_imported_dependency_externs,
@@ -33,10 +32,13 @@ use crate::dependency_bridge_public_globals::{
 use crate::dependency_bridge_public_types::{
     collect_dependency_public_type_expr_dependencies, dependency_public_type_bridge_candidates,
 };
+use crate::dependency_bridge_public_value_errors::{
+    DependencyPublicValueBridgeError, dependency_value_bridge_target_prep_error,
+    report_direct_dependency_value_bridge_error,
+};
 use crate::dependency_bridge_reporting::{
     report_dependency_interface_load_failure, report_dependency_source_parse_failure,
-    report_dependency_source_read_failure, report_direct_dependency_local_conflict,
-    report_direct_dependency_symbol_conflict,
+    report_dependency_source_read_failure,
 };
 use crate::project_manifest_paths::reference_manifest_path;
 
@@ -157,27 +159,11 @@ pub(crate) fn render_direct_dependency_public_value_declarations(
             )
             .map_err(|error| {
                 if report_failure {
-                    match error {
-                        DependencyPublicValueBridgeError::DependencyConflict { symbol, owner } => {
-                            report_direct_dependency_symbol_conflict(
-                                command_label,
-                                "public value",
-                                &symbol,
-                                &owner.package_name,
-                                &dependency_package,
-                                "keep direct dependency public value names unique until package-qualified dependency value lowering lands",
-                            );
-                        }
-                        DependencyPublicValueBridgeError::LocalConflict { symbol } => {
-                            report_direct_dependency_local_conflict(
-                                command_label,
-                                "public value",
-                                &symbol,
-                                &dependency_package,
-                                "rename the local top-level item or avoid importing a direct dependency public value with the same original symbol name",
-                            );
-                        }
-                    }
+                    report_direct_dependency_value_bridge_error(
+                        command_label,
+                        &dependency_package,
+                        error,
+                    );
                 }
                 1
             })?;
@@ -284,31 +270,12 @@ pub(crate) fn render_direct_dependency_public_value_declarations_quiet(
                 &mut owners_by_symbol,
                 &mut declarations,
             )
-            .map_err(|error| match error {
-                DependencyPublicValueBridgeError::DependencyConflict { symbol, owner } => {
-                    PrepareProjectTargetBuildError {
-                        failure_kind:
-                            PrepareProjectTargetBuildFailureKind::DependencyValueConflict {
-                                symbol,
-                                first_package: owner.package_name,
-                                first_manifest_path: owner.manifest_path,
-                                conflicting_package: dependency_package.clone(),
-                                conflicting_manifest_path: dependency_manifest
-                                    .manifest_path
-                                    .clone(),
-                            },
-                    }
-                }
-                DependencyPublicValueBridgeError::LocalConflict { symbol } => {
-                    PrepareProjectTargetBuildError {
-                        failure_kind:
-                            PrepareProjectTargetBuildFailureKind::DependencyValueLocalConflict {
-                                symbol,
-                                dependency_package: dependency_package.clone(),
-                                dependency_manifest_path: dependency_manifest.manifest_path.clone(),
-                            },
-                    }
-                }
+            .map_err(|error| {
+                dependency_value_bridge_target_prep_error(
+                    error,
+                    &dependency_package,
+                    &dependency_manifest.manifest_path,
+                )
             })?;
         }
     }
@@ -413,16 +380,6 @@ pub(crate) fn collect_dependency_module_public_value_declarations(
     }
 
     Ok(())
-}
-
-pub(crate) enum DependencyPublicValueBridgeError {
-    DependencyConflict {
-        symbol: String,
-        owner: DependencyExternOwner,
-    },
-    LocalConflict {
-        symbol: String,
-    },
 }
 
 #[cfg(test)]

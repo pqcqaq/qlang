@@ -38,6 +38,7 @@ mod dependency_bridge_public_globals;
 mod dependency_bridge_public_methods;
 mod dependency_bridge_public_type_declarations;
 mod dependency_bridge_public_types;
+mod dependency_bridge_public_value_errors;
 mod dependency_bridge_public_values;
 mod dependency_bridge_reporting;
 mod dependency_generic_bridge;
