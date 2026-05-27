@@ -4,13 +4,8 @@ use std::path::Path;
 use ql_ast::{ItemKind, Module};
 use ql_project::InterfaceModule;
 
-use crate::dependency_bridge_imports::{
-    ImportedDependencyExterns, collect_imported_dependency_externs, dependency_extern_is_imported,
-};
-use crate::dependency_bridge_modules::{
-    dependency_interface_module_import_path, dependency_interface_module_import_paths,
-    dependency_module_source_path,
-};
+use crate::dependency_bridge_imports::{ImportedDependencyExterns, dependency_extern_is_imported};
+use crate::dependency_bridge_modules::dependency_interface_module_import_path;
 use crate::dependency_bridge_names::{
     DependencyExternOwner, record_dependency_extern_declaration,
     render_imported_dependency_public_function_forwarder,
@@ -20,6 +15,7 @@ use crate::dependency_bridge_public_function_errors::DependencyPublicFunctionFor
 use crate::dependency_bridge_public_types::{
     collect_dependency_public_function_type_dependencies, dependency_public_type_bridge_candidates,
 };
+use crate::dependency_bridge_source_modules::collect_dependency_source_module_bridge_items;
 use crate::dependency_generic_bridge;
 
 pub(crate) fn collect_dependency_public_function_forwarders_from_modules<E>(
@@ -35,41 +31,37 @@ pub(crate) fn collect_dependency_public_function_forwarders_from_modules<E>(
     forwarders: &mut Vec<String>,
     source_rewrites: &mut Vec<dependency_generic_bridge::SourceRewrite>,
     rendered_specializations: &mut BTreeSet<String>,
-    mut read_source: impl FnMut(&Path) -> Result<String, E>,
-    mut parse_source_module: impl FnMut(&Path, &str) -> Result<Module, E>,
+    read_source: impl FnMut(&Path) -> Result<String, E>,
+    parse_source_module: impl FnMut(&Path, &str) -> Result<Module, E>,
     mut map_bridge_error: impl FnMut(DependencyPublicFunctionForwarderError) -> E,
 ) -> Result<(), E> {
-    let module_import_paths = dependency_interface_module_import_paths(dependency_package, modules);
-    let imported_externs =
-        collect_imported_dependency_externs(root_source_module, &module_import_paths);
-
-    for module in modules {
-        let dependency_source_path =
-            dependency_module_source_path(dependency_manifest_path, &module.source_path);
-        let dependency_source = read_source(&dependency_source_path)?;
-        let source_module = parse_source_module(&dependency_source_path, &dependency_source)?;
-        let module_import_path =
-            dependency_interface_module_import_path(dependency_package, &source_module);
-        collect_dependency_module_public_function_forwarders(
-            dependency_package,
-            dependency_manifest_path,
-            &source_module,
-            &dependency_source,
-            root_source_module,
-            Some(&imported_externs),
-            required_functions_by_module_path.get(&module_import_path),
-            occupied_root_names,
-            specialization_modules,
-            required_types_by_module_path,
-            owners_by_symbol,
-            forwarders,
-            source_rewrites,
-            rendered_specializations,
-        )
-        .map_err(&mut map_bridge_error)?;
-    }
-
-    Ok(())
+    collect_dependency_source_module_bridge_items(
+        dependency_package,
+        dependency_manifest_path,
+        modules,
+        root_source_module,
+        read_source,
+        parse_source_module,
+        |source_module, dependency_source, imported_externs, module_import_path| {
+            collect_dependency_module_public_function_forwarders(
+                dependency_package,
+                dependency_manifest_path,
+                source_module,
+                dependency_source,
+                root_source_module,
+                Some(imported_externs),
+                required_functions_by_module_path.get(module_import_path),
+                occupied_root_names,
+                specialization_modules,
+                required_types_by_module_path,
+                owners_by_symbol,
+                forwarders,
+                source_rewrites,
+                rendered_specializations,
+            )
+            .map_err(&mut map_bridge_error)
+        },
+    )
 }
 
 pub(crate) fn collect_dependency_module_public_function_forwarders(
