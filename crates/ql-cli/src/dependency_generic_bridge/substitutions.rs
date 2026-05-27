@@ -61,28 +61,16 @@ pub(super) fn collect_generic_type_substitutions(
                 path: arg_path,
                 args: arg_args,
             },
-        ) => {
-            path.segments == *arg_path
-                && args.len() == arg_args.len()
-                && args.iter().zip(arg_args).all(|(param_arg, arg_arg)| {
-                    collect_generic_type_substitutions(
-                        param_arg,
-                        arg_arg,
-                        generic_names,
-                        substitutions,
-                    )
-                })
-        }
+        ) => collect_named_type_substitutions(
+            &path.segments,
+            args,
+            arg_path,
+            arg_args,
+            generic_names,
+            substitutions,
+        ),
         (TypeExprKind::Tuple(params), InferredTypeKind::Tuple(args)) => {
-            params.len() == args.len()
-                && params.iter().zip(args).all(|(param_item, arg_item)| {
-                    collect_generic_type_substitutions(
-                        param_item,
-                        arg_item,
-                        generic_names,
-                        substitutions,
-                    )
-                })
+            collect_type_arg_substitutions(params, args, generic_names, substitutions)
         }
         (
             TypeExprKind::Array {
@@ -93,15 +81,14 @@ pub(super) fn collect_generic_type_substitutions(
                 element: arg_element,
                 len: arg_len,
             },
-        ) => {
-            bind_generic_len_substitution(param_len, arg_len, generic_names, substitutions)
-                && collect_generic_type_substitutions(
-                    param_element,
-                    arg_element,
-                    generic_names,
-                    substitutions,
-                )
-        }
+        ) => collect_array_type_substitutions(
+            param_element,
+            param_len,
+            arg_element,
+            arg_len,
+            generic_names,
+            substitutions,
+        ),
         (
             TypeExprKind::Pointer {
                 is_const: param_const,
@@ -111,15 +98,14 @@ pub(super) fn collect_generic_type_substitutions(
                 is_const: arg_const,
                 inner: arg_inner,
             },
-        ) => {
-            param_const == arg_const
-                && collect_generic_type_substitutions(
-                    param_inner,
-                    arg_inner,
-                    generic_names,
-                    substitutions,
-                )
-        }
+        ) => collect_pointer_type_substitutions(
+            *param_const,
+            param_inner,
+            *arg_const,
+            arg_inner,
+            generic_names,
+            substitutions,
+        ),
         (
             TypeExprKind::Callable {
                 params: param_params,
@@ -129,28 +115,81 @@ pub(super) fn collect_generic_type_substitutions(
                 params: arg_params,
                 ret: arg_ret,
             },
-        ) => {
-            param_params.len() == arg_params.len()
-                && param_params
-                    .iter()
-                    .zip(arg_params)
-                    .all(|(param_param, arg_param)| {
-                        collect_generic_type_substitutions(
-                            param_param,
-                            arg_param,
-                            generic_names,
-                            substitutions,
-                        )
-                    })
-                && collect_generic_type_substitutions(
-                    param_ret,
-                    arg_ret,
-                    generic_names,
-                    substitutions,
-                )
-        }
+        ) => collect_callable_type_substitutions(
+            param_params,
+            param_ret,
+            arg_params,
+            arg_ret,
+            generic_names,
+            substitutions,
+        ),
         _ => false,
     }
+}
+
+fn collect_named_type_substitutions(
+    param_path: &[String],
+    param_args: &[TypeExpr],
+    arg_path: &[String],
+    arg_args: &[InferredType],
+    generic_names: &BTreeSet<&str>,
+    substitutions: &mut TypeSubstitutions,
+) -> bool {
+    param_path == arg_path
+        && collect_type_arg_substitutions(param_args, arg_args, generic_names, substitutions)
+}
+
+fn collect_array_type_substitutions(
+    param_element: &TypeExpr,
+    param_len: &str,
+    arg_element: &InferredType,
+    arg_len: &str,
+    generic_names: &BTreeSet<&str>,
+    substitutions: &mut TypeSubstitutions,
+) -> bool {
+    bind_generic_len_substitution(param_len, arg_len, generic_names, substitutions)
+        && collect_generic_type_substitutions(
+            param_element,
+            arg_element,
+            generic_names,
+            substitutions,
+        )
+}
+
+fn collect_pointer_type_substitutions(
+    param_const: bool,
+    param_inner: &TypeExpr,
+    arg_const: bool,
+    arg_inner: &InferredType,
+    generic_names: &BTreeSet<&str>,
+    substitutions: &mut TypeSubstitutions,
+) -> bool {
+    param_const == arg_const
+        && collect_generic_type_substitutions(param_inner, arg_inner, generic_names, substitutions)
+}
+
+fn collect_callable_type_substitutions(
+    param_params: &[TypeExpr],
+    param_ret: &TypeExpr,
+    arg_params: &[InferredType],
+    arg_ret: &InferredType,
+    generic_names: &BTreeSet<&str>,
+    substitutions: &mut TypeSubstitutions,
+) -> bool {
+    collect_type_arg_substitutions(param_params, arg_params, generic_names, substitutions)
+        && collect_generic_type_substitutions(param_ret, arg_ret, generic_names, substitutions)
+}
+
+fn collect_type_arg_substitutions(
+    param_args: &[TypeExpr],
+    arg_args: &[InferredType],
+    generic_names: &BTreeSet<&str>,
+    substitutions: &mut TypeSubstitutions,
+) -> bool {
+    param_args.len() == arg_args.len()
+        && param_args.iter().zip(arg_args).all(|(param_arg, arg_arg)| {
+            collect_generic_type_substitutions(param_arg, arg_arg, generic_names, substitutions)
+        })
 }
 
 pub(super) fn bind_generic_len_substitution(
