@@ -49,6 +49,7 @@ mod dependency_bridge_public_value_declarations;
 mod dependency_bridge_public_value_errors;
 mod dependency_bridge_public_values;
 mod dependency_bridge_reporting;
+mod dependency_bridge_source_modules;
 mod dependency_generic_bridge;
 mod ffi_command;
 mod fmt_command;
