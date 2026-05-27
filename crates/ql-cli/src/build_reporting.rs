@@ -3,9 +3,9 @@ use std::path::Path;
 use ql_diagnostics::Diagnostic;
 use ql_driver::{BuildArtifact, BuildEmit, BuildError};
 use ql_project::{
-    BuildTarget, WorkspaceBuildTargets, discover_workspace_build_targets, load_project_manifest,
+    discover_workspace_build_targets, load_project_manifest, BuildTarget, WorkspaceBuildTargets,
 };
-use serde_json::{Value as JsonValue, json};
+use serde_json::{json, Value as JsonValue};
 
 use crate::build_plan::{
     BuildPlanResolveError, BuildPlanResolveFailureKind, PrepareProjectTargetBuildError,
@@ -52,40 +52,99 @@ pub(crate) fn build_json_target(
 }
 
 #[derive(Clone, Debug)]
-struct BuildJsonFailureTarget<'a> {
-    manifest_path: Option<String>,
-    package_name: Option<&'a str>,
-    selected: bool,
-    kind: &'a str,
-    display_path: String,
+struct BuildJsonFailureEnvelope {
+    manifest_path: JsonValue,
+    package_name: JsonValue,
+    selected: JsonValue,
+    dependency_only: JsonValue,
+    kind: JsonValue,
+    path: JsonValue,
 }
 
-impl<'a> BuildJsonFailureTarget<'a> {
-    fn new(
+impl BuildJsonFailureEnvelope {
+    fn target(
         manifest_path: Option<&Path>,
-        package_name: Option<&'a str>,
-        kind: &'a str,
+        package_name: Option<&str>,
+        kind: &str,
         display_path: String,
         selected: bool,
     ) -> Self {
         Self {
-            manifest_path: manifest_path.map(normalize_path),
-            package_name,
-            selected,
-            kind,
-            display_path,
+            manifest_path: json!(manifest_path.map(normalize_path)),
+            package_name: json!(package_name),
+            selected: json!(selected),
+            dependency_only: json!(!selected),
+            kind: json!(kind),
+            path: json!(display_path),
+        }
+    }
+
+    fn preflight(
+        request_path: &Path,
+        manifest_path: Option<&Path>,
+        package_name: Option<&str>,
+        selected: Option<bool>,
+    ) -> Self {
+        Self {
+            manifest_path: json!(manifest_path.map(normalize_path)),
+            package_name: json!(package_name),
+            selected: json!(selected),
+            dependency_only: json!(selected.map(|value| !value)),
+            kind: JsonValue::Null,
+            path: json!(normalize_path(request_path)),
+        }
+    }
+
+    fn interface(
+        display_path: String,
+        manifest_path: Option<&Path>,
+        package_name: Option<&str>,
+        selected: bool,
+    ) -> Self {
+        Self {
+            manifest_path: json!(manifest_path.map(normalize_path)),
+            package_name: json!(package_name),
+            selected: json!(selected),
+            dependency_only: json!(!selected),
+            kind: json!("interface"),
+            path: json!(display_path),
+        }
+    }
+
+    fn build_plan(request_path: &Path, manifest_path: Option<&Path>) -> Self {
+        Self {
+            manifest_path: json!(manifest_path.map(normalize_path)),
+            package_name: JsonValue::Null,
+            selected: JsonValue::Null,
+            dependency_only: JsonValue::Null,
+            kind: JsonValue::Null,
+            path: json!(normalize_path(request_path)),
         }
     }
 
     fn base_json(&self, error_kind: &str, message: String) -> JsonValue {
         json!({
-            "manifest_path": self.manifest_path,
-            "package_name": self.package_name,
-            "selected": self.selected,
-            "dependency_only": !self.selected,
-            "kind": self.kind,
-            "path": self.display_path,
+            "manifest_path": self.manifest_path.clone(),
+            "package_name": self.package_name.clone(),
+            "selected": self.selected.clone(),
+            "dependency_only": self.dependency_only.clone(),
+            "kind": self.kind.clone(),
+            "path": self.path.clone(),
             "error_kind": error_kind,
+            "message": message,
+        })
+    }
+
+    fn staged_json(&self, error_kind: &str, stage: &str, message: String) -> JsonValue {
+        json!({
+            "manifest_path": self.manifest_path.clone(),
+            "package_name": self.package_name.clone(),
+            "selected": self.selected.clone(),
+            "dependency_only": self.dependency_only.clone(),
+            "kind": self.kind.clone(),
+            "path": self.path.clone(),
+            "error_kind": error_kind,
+            "stage": stage,
             "message": message,
         })
     }
@@ -100,11 +159,9 @@ pub(crate) fn build_json_failure(
     error: &BuildError,
 ) -> JsonValue {
     let target =
-        BuildJsonFailureTarget::new(manifest_path, package_name, kind, display_path, selected);
+        BuildJsonFailureEnvelope::target(manifest_path, package_name, kind, display_path, selected);
     match error {
-        BuildError::InvalidInput(message) => {
-            target.base_json("invalid-input", message.clone())
-        }
+        BuildError::InvalidInput(message) => target.base_json("invalid-input", message.clone()),
         BuildError::Io { path, error } => {
             let mut failure = target.base_json(
                 "io",
@@ -118,22 +175,18 @@ pub(crate) fn build_json_failure(
             preserved_artifacts,
         } => {
             let mut failure = target.base_json("toolchain", error.to_string());
-            failure["preserved_artifacts"] = json!(
-                preserved_artifacts
-                    .iter()
-                    .map(|path| normalize_path(path))
-                    .collect::<Vec<_>>()
-            );
-            failure["intermediate_ir"] = json!(
-                preserved_artifacts
+            failure["preserved_artifacts"] = json!(preserved_artifacts
                 .iter()
-                    .find(|path| {
-                        path.file_name()
-                            .and_then(|name| name.to_str())
-                            .is_some_and(|name| name.contains(".codegen.ll"))
-                    })
-                    .map(|path| normalize_path(path))
-            );
+                .map(|path| normalize_path(path))
+                .collect::<Vec<_>>());
+            failure["intermediate_ir"] = json!(preserved_artifacts
+                .iter()
+                .find(|path| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.contains(".codegen.ll"))
+                })
+                .map(|path| normalize_path(path)));
             failure
         }
         BuildError::Diagnostics {
@@ -161,20 +214,13 @@ pub(crate) fn build_json_preflight_failure(
     conflict_path: Option<String>,
     target_count: Option<usize>,
 ) -> JsonValue {
-    json!({
-        "manifest_path": manifest_path.map(normalize_path),
-        "package_name": package_name,
-        "selected": selected,
-        "dependency_only": selected.map(|value| !value),
-        "kind": JsonValue::Null,
-        "path": normalize_path(request_path),
-        "error_kind": error_kind,
-        "stage": stage,
-        "message": message,
-        "selector": selector,
-        "conflict_path": conflict_path,
-        "target_count": target_count,
-    })
+    let envelope =
+        BuildJsonFailureEnvelope::preflight(request_path, manifest_path, package_name, selected);
+    let mut failure = envelope.staged_json(error_kind, stage, message);
+    failure["selector"] = json!(selector);
+    failure["conflict_path"] = json!(conflict_path);
+    failure["target_count"] = json!(target_count);
+    failure
 }
 
 pub(crate) fn build_json_project_error(
@@ -267,21 +313,14 @@ fn build_json_interface_failure(
         .clone()
         .or_else(|| manifest_path.map(normalize_path))
         .unwrap_or_else(|| normalize_path(request_path));
-    json!({
-        "manifest_path": manifest_path.map(normalize_path),
-        "package_name": package_name,
-        "selected": true,
-        "dependency_only": false,
-        "kind": "interface",
-        "path": display_path,
-        "error_kind": error_kind,
-        "stage": "emit-interface",
-        "message": message,
-        "output_path": output_path,
-        "source_root": source_root,
-        "failing_source_count": failing_source_count,
-        "first_failing_source": first_failing_source,
-    })
+    let envelope =
+        BuildJsonFailureEnvelope::interface(display_path, manifest_path, package_name, true);
+    let mut failure = envelope.staged_json(error_kind, "emit-interface", message);
+    failure["output_path"] = json!(output_path);
+    failure["source_root"] = json!(source_root);
+    failure["failing_source_count"] = json!(failing_source_count);
+    failure["first_failing_source"] = json!(first_failing_source);
+    failure
 }
 
 pub(crate) fn build_json_emit_interface_failure(
@@ -514,26 +553,18 @@ pub(crate) fn build_json_dependency_interface_prep_failure(
         .or_else(|| source_root.clone())
         .or_else(|| manifest_path.map(normalize_path))
         .unwrap_or_else(|| reference_manifest_path.clone());
-    json!({
-        "manifest_path": manifest_path.map(normalize_path),
-        "package_name": JsonValue::Null,
-        "selected": false,
-        "dependency_only": true,
-        "kind": "interface",
-        "path": display_path,
-        "error_kind": error_kind,
-        "stage": "dependency-interface-prep",
-        "message": message,
-        "output_path": output_path,
-        "source_root": source_root,
-        "failing_source_count": failing_source_count,
-        "first_failing_source": first_failing_source,
-        "owner_manifest_path": owner_manifest_path,
-        "reference_manifest_path": reference_manifest_path,
-        "reference": failure.first_failure.reference.clone(),
-        "failing_dependency_count": failure.failure_count,
-        "first_failing_dependency_manifest": first_failing_dependency_manifest,
-    })
+    let envelope = BuildJsonFailureEnvelope::interface(display_path, manifest_path, None, false);
+    let mut json_failure = envelope.staged_json(error_kind, "dependency-interface-prep", message);
+    json_failure["output_path"] = json!(output_path);
+    json_failure["source_root"] = json!(source_root);
+    json_failure["failing_source_count"] = json!(failing_source_count);
+    json_failure["first_failing_source"] = json!(first_failing_source);
+    json_failure["owner_manifest_path"] = json!(owner_manifest_path);
+    json_failure["reference_manifest_path"] = json!(reference_manifest_path);
+    json_failure["reference"] = json!(failure.first_failure.reference.clone());
+    json_failure["failing_dependency_count"] = json!(failure.failure_count);
+    json_failure["first_failing_dependency_manifest"] = json!(first_failing_dependency_manifest);
+    json_failure
 }
 
 pub(crate) fn build_json_build_plan_failure(
@@ -541,34 +572,42 @@ pub(crate) fn build_json_build_plan_failure(
     failure: &BuildPlanResolveError,
 ) -> JsonValue {
     match &failure.failure_kind {
-        BuildPlanResolveFailureKind::Dependency { message } => json!({
-            "manifest_path": failure.manifest_path.as_ref().map(|path| normalize_path(path)),
-            "package_name": JsonValue::Null,
-            "selected": JsonValue::Null,
-            "dependency_only": JsonValue::Null,
-            "kind": JsonValue::Null,
-            "path": normalize_path(request_path),
-            "error_kind": "dependency",
-            "stage": "build-plan",
-            "message": message,
-            "owner_manifest_path": failure.owner_manifest_path.as_ref().map(|path| normalize_path(path)),
-            "dependency_manifest_path": failure.dependency_manifest_path.as_ref().map(|path| normalize_path(path)),
-            "cycle_manifests": JsonValue::Null,
-        }),
-        BuildPlanResolveFailureKind::Cycle { cycle_manifests } => json!({
-            "manifest_path": failure.manifest_path.as_ref().map(|path| normalize_path(path)),
-            "package_name": JsonValue::Null,
-            "selected": JsonValue::Null,
-            "dependency_only": JsonValue::Null,
-            "kind": JsonValue::Null,
-            "path": normalize_path(request_path),
-            "error_kind": "cycle",
-            "stage": "build-plan",
-            "message": "local package build dependencies contain a cycle",
-            "owner_manifest_path": JsonValue::Null,
-            "dependency_manifest_path": failure.dependency_manifest_path.as_ref().map(|path| normalize_path(path)),
-            "cycle_manifests": cycle_manifests,
-        }),
+        BuildPlanResolveFailureKind::Dependency { message } => {
+            let envelope = BuildJsonFailureEnvelope::build_plan(
+                request_path,
+                failure.manifest_path.as_deref(),
+            );
+            let mut json_failure =
+                envelope.staged_json("dependency", "build-plan", message.clone());
+            json_failure["owner_manifest_path"] = json!(failure
+                .owner_manifest_path
+                .as_ref()
+                .map(|path| normalize_path(path)));
+            json_failure["dependency_manifest_path"] = json!(failure
+                .dependency_manifest_path
+                .as_ref()
+                .map(|path| normalize_path(path)));
+            json_failure["cycle_manifests"] = JsonValue::Null;
+            json_failure
+        }
+        BuildPlanResolveFailureKind::Cycle { cycle_manifests } => {
+            let envelope = BuildJsonFailureEnvelope::build_plan(
+                request_path,
+                failure.manifest_path.as_deref(),
+            );
+            let mut json_failure = envelope.staged_json(
+                "cycle",
+                "build-plan",
+                "local package build dependencies contain a cycle".to_owned(),
+            );
+            json_failure["owner_manifest_path"] = JsonValue::Null;
+            json_failure["dependency_manifest_path"] = json!(failure
+                .dependency_manifest_path
+                .as_ref()
+                .map(|path| normalize_path(path)));
+            json_failure["cycle_manifests"] = json!(cycle_manifests);
+            json_failure
+        }
     }
 }
 
@@ -814,26 +853,24 @@ pub(crate) fn build_json_target_prep_failure(
         ),
     };
 
-    json!({
-        "manifest_path": normalize_path(&member.member_manifest_path),
-        "package_name": member.package_name,
-        "selected": selected,
-        "dependency_only": !selected,
-        "kind": target.kind.as_str(),
-        "path": project_target_display_path(&member.member_manifest_path, &target.path),
-        "error_kind": error_kind,
-        "stage": "target-prep",
-        "message": message,
-        "dependency_manifest_path": dependency_manifest_path,
-        "dependency_package": dependency_package,
-        "interface_path": interface_path,
-        "symbol": symbol,
-        "first_dependency_package": first_dependency_package,
-        "first_dependency_manifest_path": first_dependency_manifest_path,
-        "conflicting_dependency_package": conflicting_dependency_package,
-        "conflicting_dependency_manifest_path": conflicting_dependency_manifest_path,
-        "io_path": io_path,
-    })
+    let envelope = BuildJsonFailureEnvelope::target(
+        Some(&member.member_manifest_path),
+        Some(member.package_name.as_str()),
+        target.kind.as_str(),
+        project_target_display_path(&member.member_manifest_path, &target.path),
+        selected,
+    );
+    let mut json_failure = envelope.staged_json(error_kind, "target-prep", message);
+    json_failure["dependency_manifest_path"] = dependency_manifest_path;
+    json_failure["dependency_package"] = dependency_package;
+    json_failure["interface_path"] = interface_path;
+    json_failure["symbol"] = symbol;
+    json_failure["first_dependency_package"] = first_dependency_package;
+    json_failure["first_dependency_manifest_path"] = first_dependency_manifest_path;
+    json_failure["conflicting_dependency_package"] = conflicting_dependency_package;
+    json_failure["conflicting_dependency_manifest_path"] = conflicting_dependency_manifest_path;
+    json_failure["io_path"] = io_path;
+    json_failure
 }
 
 pub(crate) fn load_workspace_build_targets_for_build_json_from_request_root(
@@ -916,6 +953,9 @@ mod tests {
     use std::path::PathBuf;
 
     use ql_driver::ToolchainError;
+    use ql_project::{BuildTargetKind, ManifestBuildProfile};
+
+    use crate::project_interfaces::ReferenceInterfacePrepFailure;
 
     use super::*;
 
@@ -966,5 +1006,193 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn build_json_preflight_failure_preserves_nullable_target_context() {
+        let failure = build_json_preflight_failure(
+            Path::new("workspace"),
+            Some(Path::new("workspace/qlang.toml")),
+            Some("app"),
+            Some(true),
+            "selector",
+            "target-selection",
+            "target selector matched no build targets".to_owned(),
+            Some("target `missing.ql`".to_owned()),
+            Some("workspace/src/missing.ql".to_owned()),
+            Some(0),
+        );
+
+        assert_eq!(failure["manifest_path"], "workspace/qlang.toml");
+        assert_eq!(failure["package_name"], "app");
+        assert_eq!(failure["selected"], true);
+        assert_eq!(failure["dependency_only"], false);
+        assert!(failure["kind"].is_null());
+        assert_eq!(failure["path"], "workspace");
+        assert_eq!(failure["error_kind"], "selector");
+        assert_eq!(failure["stage"], "target-selection");
+        assert_eq!(failure["selector"], "target `missing.ql`");
+        assert_eq!(failure["conflict_path"], "workspace/src/missing.ql");
+        assert_eq!(failure["target_count"], 0);
+    }
+
+    #[test]
+    fn build_json_emit_interface_failure_preserves_interface_target_context() {
+        let failure = build_json_emit_interface_failure(
+            Path::new("workspace/app"),
+            Some(Path::new("workspace/app/qlang.toml")),
+            Some("app"),
+            &EmitPackageInterfaceError::OutputPathFailure {
+                manifest_path: Some(PathBuf::from("workspace/app/qlang.toml")),
+                output_path: PathBuf::from("workspace/app/app.qi"),
+                message: "failed to write interface".to_owned(),
+            },
+        );
+
+        assert_eq!(failure["manifest_path"], "workspace/app/qlang.toml");
+        assert_eq!(failure["package_name"], "app");
+        assert_eq!(failure["selected"], true);
+        assert_eq!(failure["dependency_only"], false);
+        assert_eq!(failure["kind"], "interface");
+        assert_eq!(failure["path"], "workspace/app/app.qi");
+        assert_eq!(failure["error_kind"], "interface-output");
+        assert_eq!(failure["stage"], "emit-interface");
+        assert_eq!(failure["message"], "failed to write interface");
+        assert_eq!(failure["output_path"], "workspace/app/app.qi");
+        assert!(failure["source_root"].is_null());
+        assert!(failure["failing_source_count"].is_null());
+        assert!(failure["first_failing_source"].is_null());
+    }
+
+    #[test]
+    fn build_json_dependency_interface_prep_failure_preserves_dependency_context() {
+        let failure = build_json_dependency_interface_prep_failure(
+            Path::new("workspace/app"),
+            &ReferenceInterfacePrepError {
+                failure_count: 2,
+                first_failure_manifest: Some(PathBuf::from("workspace/lib/qlang.toml")),
+                first_failure: ReferenceInterfacePrepFailure {
+                    owner_manifest_path: Some(PathBuf::from("workspace/app/qlang.toml")),
+                    reference: Some("lib".to_owned()),
+                    reference_manifest_path: PathBuf::from("workspace/lib/qlang.toml"),
+                    manifest_path: Some(PathBuf::from("workspace/lib/qlang.toml")),
+                    failure_kind: ReferenceInterfacePrepFailureKind::InterfaceEmit(
+                        EmitPackageInterfaceError::NoSourceFilesFailure {
+                            manifest_path: PathBuf::from("workspace/lib/qlang.toml"),
+                            source_root: PathBuf::from("workspace/lib/src"),
+                        },
+                    ),
+                },
+            },
+        );
+
+        assert_eq!(failure["manifest_path"], "workspace/lib/qlang.toml");
+        assert!(failure["package_name"].is_null());
+        assert_eq!(failure["selected"], false);
+        assert_eq!(failure["dependency_only"], true);
+        assert_eq!(failure["kind"], "interface");
+        assert_eq!(failure["path"], "workspace/lib/src");
+        assert_eq!(failure["error_kind"], "package-sources");
+        assert_eq!(failure["stage"], "dependency-interface-prep");
+        assert_eq!(failure["source_root"], "workspace/lib/src");
+        assert!(failure["output_path"].is_null());
+        assert!(failure["failing_source_count"].is_null());
+        assert_eq!(failure["owner_manifest_path"], "workspace/app/qlang.toml");
+        assert_eq!(
+            failure["reference_manifest_path"],
+            "workspace/lib/qlang.toml"
+        );
+        assert_eq!(failure["reference"], "lib");
+        assert_eq!(failure["failing_dependency_count"], 2);
+        assert_eq!(
+            failure["first_failing_dependency_manifest"],
+            "workspace/lib/qlang.toml"
+        );
+    }
+
+    #[test]
+    fn build_json_build_plan_failure_preserves_cycle_context() {
+        let failure = build_json_build_plan_failure(
+            Path::new("workspace/app"),
+            &BuildPlanResolveError {
+                manifest_path: Some(PathBuf::from("workspace/app/qlang.toml")),
+                owner_manifest_path: None,
+                dependency_manifest_path: Some(PathBuf::from("workspace/app/qlang.toml")),
+                failure_kind: BuildPlanResolveFailureKind::Cycle {
+                    cycle_manifests: vec![
+                        "workspace/app/qlang.toml".to_owned(),
+                        "workspace/lib/qlang.toml".to_owned(),
+                        "workspace/app/qlang.toml".to_owned(),
+                    ],
+                },
+            },
+        );
+
+        assert_eq!(failure["manifest_path"], "workspace/app/qlang.toml");
+        assert!(failure["package_name"].is_null());
+        assert!(failure["selected"].is_null());
+        assert!(failure["dependency_only"].is_null());
+        assert!(failure["kind"].is_null());
+        assert_eq!(failure["path"], "workspace/app");
+        assert_eq!(failure["error_kind"], "cycle");
+        assert_eq!(failure["stage"], "build-plan");
+        assert!(failure["owner_manifest_path"].is_null());
+        assert_eq!(
+            failure["dependency_manifest_path"],
+            "workspace/app/qlang.toml"
+        );
+        assert_eq!(
+            failure["cycle_manifests"],
+            json!([
+                "workspace/app/qlang.toml",
+                "workspace/lib/qlang.toml",
+                "workspace/app/qlang.toml"
+            ])
+        );
+    }
+
+    #[test]
+    fn build_json_target_prep_failure_preserves_target_context_and_detail_fields() {
+        let member = WorkspaceBuildTargets {
+            member_manifest_path: PathBuf::from("workspace/app/qlang.toml"),
+            package_name: "app".to_owned(),
+            default_profile: Some(ManifestBuildProfile::Debug),
+            targets: Vec::new(),
+        };
+        let target = BuildTarget {
+            kind: BuildTargetKind::Binary,
+            path: PathBuf::from("workspace/app/src/main.ql"),
+        };
+        let failure = build_json_target_prep_failure(
+            &member,
+            &target,
+            false,
+            &PrepareProjectTargetBuildError {
+                failure_kind: PrepareProjectTargetBuildFailureKind::DependencyInterface {
+                    dependency_manifest_path: PathBuf::from("workspace/lib/qlang.toml"),
+                    dependency_package: "lib".to_owned(),
+                    interface_path: PathBuf::from("workspace/lib/lib.qi"),
+                    message: "missing dependency interface".to_owned(),
+                },
+            },
+        );
+
+        assert_eq!(failure["manifest_path"], "workspace/app/qlang.toml");
+        assert_eq!(failure["package_name"], "app");
+        assert_eq!(failure["selected"], false);
+        assert_eq!(failure["dependency_only"], true);
+        assert_eq!(failure["kind"], "bin");
+        assert_eq!(failure["path"], "src/main.ql");
+        assert_eq!(failure["error_kind"], "dependency-interface");
+        assert_eq!(failure["stage"], "target-prep");
+        assert_eq!(failure["message"], "missing dependency interface");
+        assert_eq!(
+            failure["dependency_manifest_path"],
+            "workspace/lib/qlang.toml"
+        );
+        assert_eq!(failure["dependency_package"], "lib");
+        assert_eq!(failure["interface_path"], "workspace/lib/lib.qi");
+        assert!(failure["symbol"].is_null());
+        assert!(failure["io_path"].is_null());
     }
 }
