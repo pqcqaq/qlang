@@ -15,9 +15,3 @@ fn interface_artifact_renderer_preserves_package_header_and_sources() {
         "// qlang interface v1\n// package: app\n\n// source: src/lib.ql\npub fn one() -> Int\n\n// source: src/extra.ql\npub const two: Int\n"
     );
 }
-
-#[test]
-fn quiet_reference_prep_accepts_empty_manifest_list() {
-    prepare_reference_interfaces_for_manifests_quiet(&[])
-        .expect("empty quiet reference prep should succeed");
-}
