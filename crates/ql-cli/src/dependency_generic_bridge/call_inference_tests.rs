@@ -1,5 +1,6 @@
 use ql_ast::{ExprKind, FunctionDecl, ItemKind, Module, StmtKind};
 
+use super::super::call_args::ordered_call_arg_expected_types;
 use super::*;
 
 fn parse_module(source: &str) -> Module {
