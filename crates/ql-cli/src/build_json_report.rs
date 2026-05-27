@@ -11,6 +11,18 @@ use crate::project_targets::{
     ProjectCommandScope, project_target_display_path, resolve_project_command_scope,
 };
 
+pub(crate) fn emit_build_json_failure(
+    json_report: &mut Option<BuildJsonReport>,
+    failure: JsonValue,
+) -> Result<(), u8> {
+    let mut report = json_report
+        .take()
+        .expect("json report should exist for `ql build --json` failure reporting");
+    report.record_preflight_failure(failure);
+    print!("{}", report.into_json());
+    Err(1)
+}
+
 #[derive(Debug)]
 pub(crate) struct BuildJsonReport {
     scope: &'static str,

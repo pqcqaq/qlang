@@ -1,21 +1,19 @@
 use std::path::Path;
 
 use ql_driver::BuildOptions;
-use ql_project::BuildTargetKind;
 
-use crate::build_json_report::BuildJsonReport;
+use crate::build_json_report::{BuildJsonReport, emit_build_json_failure};
 use crate::build_outputs::{
     first_colliding_project_build_header_output_path, first_colliding_project_build_output_path,
-    project_dependency_target_build_options, project_target_build_options,
 };
 use crate::build_plan::{
-    BuildTargetJsonError, resolve_project_build_plan_members,
-    resolve_project_build_plan_members_quiet,
+    resolve_project_build_plan_members, resolve_project_build_plan_members_quiet,
 };
+use crate::build_project_execution::execute_project_build_plan;
 use crate::build_reporting::{
     build_json_build_plan_failure, build_json_dependency_interface_prep_failure,
     build_json_emit_interface_failure, build_json_preflight_failure,
-    build_json_target_prep_failure, load_workspace_build_targets_for_build_json_from_request_root,
+    load_workspace_build_targets_for_build_json_from_request_root,
     select_workspace_build_targets_for_build_json,
 };
 use crate::build_single_source::{
@@ -25,9 +23,6 @@ use crate::build_single_source::{
 use crate::cli_utils::normalize_path;
 use crate::project_interfaces::prepare_reference_interfaces_for_manifests_quiet;
 use crate::project_reference_interfaces::prepare_reference_interfaces_for_manifests;
-use crate::project_target_build::{
-    build_project_source_target, build_project_source_target_result,
-};
 use crate::project_targets::{
     ProjectCommandPathError, ProjectTargetSelector, ResolvedProjectCommandPath,
     load_workspace_build_targets_for_command_from_request_root,
@@ -143,18 +138,6 @@ pub(crate) fn build_path(
         emit_built_package_interface(path, path, options, &artifact.path, &[])?;
     }
     Ok(())
-}
-
-fn emit_build_json_failure(
-    json_report: &mut Option<BuildJsonReport>,
-    failure: serde_json::Value,
-) -> Result<(), u8> {
-    let mut report = json_report
-        .take()
-        .expect("json report should exist for `ql build --json` failure reporting");
-    report.record_preflight_failure(failure);
-    print!("{}", report.into_json());
-    Err(1)
 }
 
 fn build_project_path(
@@ -392,242 +375,16 @@ fn build_project_path(
         resolve_project_build_plan_members(&members, &selected_members, "`ql build`")?
     };
 
-    for plan_member in &build_plan {
-        if plan_member.require_targets && plan_member.member.targets.is_empty() {
-            if json {
-                return emit_build_json_failure(
-                    &mut json_report,
-                    build_json_preflight_failure(
-                        path,
-                        Some(&plan_member.member.member_manifest_path),
-                        Some(plan_member.member.package_name.as_str()),
-                        Some(true),
-                        "project",
-                        "build-plan",
-                        format!(
-                            "package `{}` has no discovered build targets",
-                            plan_member.member.package_name
-                        ),
-                        None,
-                        None,
-                        Some(0),
-                    ),
-                );
-            }
-            eprintln!(
-                "error: `ql build` package `{}` has no discovered build targets",
-                plan_member.member.package_name
-            );
-            eprintln!(
-                "note: failing package manifest: {}",
-                normalize_path(&plan_member.member.member_manifest_path)
-            );
-            eprintln!(
-                "hint: rerun `ql project targets {}` to inspect the discovered build targets",
-                normalize_path(&plan_member.member.member_manifest_path)
-            );
-            return Err(1);
-        }
-        if plan_member.member.targets.is_empty() {
-            continue;
-        }
-
-        let mut built_targets = plan_member.member.targets.iter();
-        let first_target = built_targets
-            .next()
-            .expect("member targets emptiness checked above");
-        let first_options = if plan_member.require_targets {
-            project_target_build_options(
-                &plan_member.member,
-                first_target,
-                options,
-                emit_overridden,
-                profile_overridden,
-            )
-        } else {
-            project_dependency_target_build_options(
-                &plan_member.member,
-                first_target,
-                options,
-                emit_overridden,
-                profile_overridden,
-            )
-        };
-        let first_artifact = if json {
-            match build_project_source_target_result(
-                &build_plan,
-                &plan_member.member.member_manifest_path,
-                &first_target.path,
-                &first_options,
-                options,
-                profile_overridden,
-                !plan_member.require_targets && first_target.kind == BuildTargetKind::Library,
-            ) {
-                Ok(artifact) => artifact,
-                Err(BuildTargetJsonError::Early(error)) => {
-                    return emit_build_json_failure(
-                        &mut json_report,
-                        build_json_target_prep_failure(
-                            &plan_member.member,
-                            first_target,
-                            plan_member.require_targets,
-                            &error,
-                        ),
-                    );
-                }
-                Err(BuildTargetJsonError::Build(error)) => {
-                    let mut report = json_report
-                        .take()
-                        .expect("json report should exist for `ql build --json`");
-                    report.record_project_failure(
-                        &plan_member.member,
-                        first_target,
-                        &error,
-                        plan_member.require_targets,
-                    );
-                    print!("{}", report.into_json());
-                    return Err(1);
-                }
-            }
-        } else {
-            build_project_source_target(
-                &members,
-                "`ql build`",
-                &plan_member.member.member_manifest_path,
-                &first_target.path,
-                &first_options,
-                options,
-                profile_overridden,
-                emit_interface,
-                !plan_member.require_targets && first_target.kind == BuildTargetKind::Library,
-            )?
-        };
-        if let Some(report) = json_report.as_mut() {
-            report.record_project_target(
-                &plan_member.member,
-                first_target,
-                &first_artifact,
-                plan_member.require_targets,
-            );
-        }
-        let mut additional_artifacts = Vec::new();
-        for target in built_targets {
-            let target_options = if plan_member.require_targets {
-                project_target_build_options(
-                    &plan_member.member,
-                    target,
-                    options,
-                    emit_overridden,
-                    profile_overridden,
-                )
-            } else {
-                project_dependency_target_build_options(
-                    &plan_member.member,
-                    target,
-                    options,
-                    emit_overridden,
-                    profile_overridden,
-                )
-            };
-            let artifact = if json {
-                match build_project_source_target_result(
-                    &build_plan,
-                    &plan_member.member.member_manifest_path,
-                    &target.path,
-                    &target_options,
-                    options,
-                    profile_overridden,
-                    !plan_member.require_targets && target.kind == BuildTargetKind::Library,
-                ) {
-                    Ok(artifact) => artifact,
-                    Err(BuildTargetJsonError::Early(error)) => {
-                        return emit_build_json_failure(
-                            &mut json_report,
-                            build_json_target_prep_failure(
-                                &plan_member.member,
-                                target,
-                                plan_member.require_targets,
-                                &error,
-                            ),
-                        );
-                    }
-                    Err(BuildTargetJsonError::Build(error)) => {
-                        let mut report = json_report
-                            .take()
-                            .expect("json report should exist for `ql build --json`");
-                        report.record_project_failure(
-                            &plan_member.member,
-                            target,
-                            &error,
-                            plan_member.require_targets,
-                        );
-                        print!("{}", report.into_json());
-                        return Err(1);
-                    }
-                }
-            } else {
-                build_project_source_target(
-                    &members,
-                    "`ql build`",
-                    &plan_member.member.member_manifest_path,
-                    &target.path,
-                    &target_options,
-                    options,
-                    profile_overridden,
-                    emit_interface,
-                    !plan_member.require_targets && target.kind == BuildTargetKind::Library,
-                )?
-            };
-            if let Some(report) = json_report.as_mut() {
-                report.record_project_target(
-                    &plan_member.member,
-                    target,
-                    &artifact,
-                    plan_member.require_targets,
-                );
-            }
-            additional_artifacts.push(artifact.path);
-        }
-
-        if plan_member.emit_interface {
-            if let Some(report) = json_report.as_mut() {
-                let interface_result = match emit_built_package_interface_quiet(
-                    path,
-                    &plan_member.member.member_manifest_path,
-                    options,
-                    &first_artifact.path,
-                    &additional_artifacts,
-                ) {
-                    Ok(result) => result,
-                    Err(error) => {
-                        return emit_build_json_failure(
-                            &mut json_report,
-                            build_json_emit_interface_failure(
-                                path,
-                                Some(&plan_member.member.member_manifest_path),
-                                Some(plan_member.member.package_name.as_str()),
-                                &error,
-                            ),
-                        );
-                    }
-                };
-                report.record_interface_result(
-                    Some(&plan_member.member.member_manifest_path),
-                    Some(plan_member.member.package_name.as_str()),
-                    true,
-                    interface_result,
-                );
-            } else {
-                emit_built_package_interface(
-                    path,
-                    &plan_member.member.member_manifest_path,
-                    options,
-                    &first_artifact.path,
-                    &additional_artifacts,
-                )?;
-            }
-        }
-    }
+    execute_project_build_plan(
+        path,
+        &members,
+        &build_plan,
+        options,
+        emit_interface,
+        emit_overridden,
+        profile_overridden,
+        &mut json_report,
+    )?;
 
     if let Some(report) = json_report {
         print!("{}", report.into_json());

@@ -8,6 +8,7 @@ mod build_json_report;
 mod build_outputs;
 mod build_pipeline;
 mod build_plan;
+mod build_project_execution;
 mod build_reporting;
 mod build_single_source;
 mod build_source_rewrites;
