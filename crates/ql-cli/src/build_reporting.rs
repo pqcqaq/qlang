@@ -2,9 +2,7 @@ use std::path::Path;
 
 use ql_diagnostics::Diagnostic;
 use ql_driver::{BuildArtifact, BuildEmit, BuildError};
-use ql_project::{
-    discover_workspace_build_targets, load_project_manifest, BuildTarget, WorkspaceBuildTargets,
-};
+use ql_project::{BuildTarget, WorkspaceBuildTargets};
 use serde_json::{json, Value as JsonValue};
 
 use crate::build_plan::{
@@ -53,8 +51,13 @@ pub(crate) fn build_json_target(
 
 mod failure_details;
 mod failure_envelope;
+mod workspace_targets;
 use failure_details::{BuildJsonInterfaceFailureDetails, BuildJsonTargetPrepDetails};
 use failure_envelope::BuildJsonFailureEnvelope;
+pub(crate) use workspace_targets::{
+    load_workspace_build_targets_for_build_json_from_request_root,
+    select_workspace_build_targets_for_build_json,
+};
 
 pub(crate) fn build_json_failure(
     manifest_path: Option<&Path>,
@@ -587,74 +590,6 @@ pub(crate) fn build_json_target_prep_failure(
         envelope.staged_json(details.error_kind, "target-prep", details.message.clone());
     details.apply_to(&mut json_failure);
     json_failure
-}
-
-pub(crate) fn load_workspace_build_targets_for_build_json_from_request_root(
-    request_path: &Path,
-    request_root: &Path,
-) -> Result<Vec<WorkspaceBuildTargets>, JsonValue> {
-    let manifest = load_project_manifest(request_root)
-        .map_err(|error| build_json_project_error(request_path, &error, "manifest-load"))?;
-    discover_workspace_build_targets(&manifest)
-        .map_err(|error| build_json_project_error(request_path, &error, "target-discovery"))
-}
-
-pub(crate) fn select_workspace_build_targets_for_build_json(
-    path: &Path,
-    members: &[WorkspaceBuildTargets],
-    selector: &crate::project_targets::ProjectTargetSelector,
-    target_label: &str,
-) -> Result<Vec<WorkspaceBuildTargets>, JsonValue> {
-    if !selector.is_active() {
-        return Ok(members.to_vec());
-    }
-
-    let mut selected = Vec::new();
-    for member in members {
-        let targets = member
-            .targets
-            .iter()
-            .filter(|target| {
-                selector.matches(
-                    member.member_manifest_path.as_path(),
-                    &member.package_name,
-                    target,
-                )
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        if !targets.is_empty() {
-            selected.push(WorkspaceBuildTargets {
-                member_manifest_path: member.member_manifest_path.clone(),
-                package_name: member.package_name.clone(),
-                default_profile: member.default_profile,
-                targets,
-            });
-        }
-    }
-
-    if selected
-        .iter()
-        .map(|member| member.targets.len())
-        .sum::<usize>()
-        == 0
-    {
-        let normalized_path = normalize_path(path);
-        return Err(build_json_preflight_failure(
-            path,
-            None,
-            None,
-            None,
-            "selector",
-            "target-selection",
-            format!("target selector matched no {target_label} under `{normalized_path}`"),
-            Some(selector.describe()),
-            None,
-            Some(0),
-        ));
-    }
-
-    Ok(selected)
 }
 
 fn build_json_diagnostic_file(path: &Path, source: &str, diagnostics: &[Diagnostic]) -> JsonValue {
