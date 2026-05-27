@@ -39,6 +39,7 @@ mod dependency_bridge_public_functions;
 mod dependency_bridge_public_globals;
 mod dependency_bridge_public_method_forwarders;
 mod dependency_bridge_public_methods;
+mod dependency_bridge_public_type_declaration_collection;
 mod dependency_bridge_public_type_declarations;
 mod dependency_bridge_public_type_errors;
 mod dependency_bridge_public_types;

@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-use ql_ast::{ItemKind, Module, Visibility};
 use ql_parser::parse_source;
 use ql_project::{
     default_interface_path, load_interface_artifact, load_project_manifest,
@@ -15,22 +14,16 @@ use crate::build_plan::{
     target_prep_dependency_source_parse_failure, target_prep_dependency_source_read_failure,
 };
 use crate::dependency_bridge_imports::{
-    ImportedDependencyExterns, collect_imported_dependency_externs,
-    collect_top_level_definition_names, dependency_extern_is_imported,
+    collect_imported_dependency_externs, collect_top_level_definition_names,
 };
 use crate::dependency_bridge_modules::{
     dependency_interface_module_import_path, dependency_interface_module_import_paths,
     dependency_module_source_path,
 };
-use crate::dependency_bridge_names::{
-    DependencyExternOwner, record_dependency_extern_declaration, span_text,
-};
+use crate::dependency_bridge_names::DependencyExternOwner;
+use crate::dependency_bridge_public_type_declaration_collection::collect_dependency_module_public_type_declarations;
 use crate::dependency_bridge_public_type_errors::{
-    DependencyPublicTypeBridgeError, dependency_type_bridge_target_prep_error,
-    report_direct_dependency_type_bridge_error,
-};
-use crate::dependency_bridge_public_types::{
-    dependency_public_type_bridge_candidates, dependency_public_type_bridge_order,
+    dependency_type_bridge_target_prep_error, report_direct_dependency_type_bridge_error,
 };
 use crate::dependency_bridge_reporting::{
     report_dependency_interface_load_failure, report_dependency_source_parse_failure,
@@ -266,120 +259,4 @@ pub(crate) fn render_direct_dependency_public_type_declarations_quiet(
     }
 
     Ok(declarations.join("\n\n"))
-}
-
-pub(crate) fn collect_dependency_module_public_type_declarations(
-    dependency_package: &str,
-    dependency_manifest_path: &Path,
-    module: &Module,
-    contents: &str,
-    imported_externs: Option<&ImportedDependencyExterns>,
-    required_type_names: Option<&BTreeSet<String>>,
-    occupied_root_names: &BTreeSet<String>,
-    owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
-    declarations: &mut Vec<String>,
-) -> Result<(), DependencyPublicTypeBridgeError> {
-    let module_import_path = dependency_interface_module_import_path(dependency_package, module);
-    let type_candidates = dependency_public_type_bridge_candidates(module);
-    let mut emitted = BTreeSet::new();
-
-    for item in &module.items {
-        let type_name = match &item.kind {
-            ItemKind::Struct(struct_decl) if struct_decl.visibility == Visibility::Public => {
-                struct_decl.name.as_str()
-            }
-            ItemKind::Enum(enum_decl) if enum_decl.visibility == Visibility::Public => {
-                enum_decl.name.as_str()
-            }
-            ItemKind::TypeAlias(alias)
-                if alias.visibility == Visibility::Public
-                    && !alias.is_opaque
-                    && alias.generics.is_empty() =>
-            {
-                alias.name.as_str()
-            }
-            _ => continue,
-        };
-        let imported = imported_externs.is_none_or(|imports| {
-            dependency_extern_is_imported(imports, &module_import_path, type_name)
-        });
-        let required_by_bridge = required_type_names
-            .is_some_and(|required_type_names| required_type_names.contains(type_name));
-        if !imported && !required_by_bridge {
-            continue;
-        }
-
-        let Some(ordered_symbols) =
-            dependency_public_type_bridge_order(type_name, &type_candidates)
-        else {
-            continue;
-        };
-
-        for ordered_symbol in ordered_symbols {
-            if emitted.contains(&ordered_symbol) {
-                continue;
-            }
-            if occupied_root_names.contains(&ordered_symbol) {
-                return Err(DependencyPublicTypeBridgeError::LocalConflict {
-                    symbol: ordered_symbol,
-                });
-            }
-            let candidate = type_candidates
-                .get(&ordered_symbol)
-                .expect("ordered dependency public types should resolve to candidates");
-            record_dependency_extern_declaration(
-                dependency_package,
-                dependency_manifest_path,
-                &ordered_symbol,
-                span_text(contents, candidate.item.span),
-                owners_by_symbol,
-                declarations,
-            )
-            .map_err(|(symbol, owner)| {
-                DependencyPublicTypeBridgeError::DependencyConflict { symbol, owner }
-            })?;
-            emitted.insert(ordered_symbol);
-        }
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use ql_parser::parse_source;
-
-    use super::*;
-
-    #[test]
-    fn module_type_declarations_report_local_conflicts() {
-        let dependency_source = "pub struct Box { value: Int }\n";
-        let dependency_module = parse_source(dependency_source).unwrap();
-        let root_source = "struct Box { value: Int }\n";
-        let root_module = parse_source(root_source).unwrap();
-        let occupied_root_names = collect_top_level_definition_names(&root_module);
-        let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
-        let mut declarations = Vec::new();
-
-        let error = collect_dependency_module_public_type_declarations(
-            "dep",
-            &PathBuf::from("dep/qlang.toml"),
-            &dependency_module,
-            dependency_source,
-            None,
-            None,
-            &occupied_root_names,
-            &mut owners_by_symbol,
-            &mut declarations,
-        )
-        .unwrap_err();
-
-        assert!(matches!(
-            error,
-            DependencyPublicTypeBridgeError::LocalConflict { symbol } if symbol == "Box"
-        ));
-        assert!(declarations.is_empty());
-    }
 }
