@@ -11,7 +11,7 @@
 
     use super::{
         BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderSurface,
-        build_file, default_build_c_header_output_path, default_output_path,
+        build_file, default_build_c_header_output_path, default_output_path, prepare_build_codegen,
     };
 
     fn compact_test_prefix(prefix: &str) -> String {
@@ -212,6 +212,48 @@ fn main() -> Int {
         assert!(rendered.contains("define i32 @main()"));
         assert!(rendered.contains("define i64 @ql_1_main()"));
         assert!(rendered.contains("call i64 @ql_0_add_one(i64 41)"));
+    }
+
+    #[test]
+    fn prepare_build_codegen_returns_analysis_ir_and_export_metadata() {
+        let source = r#"
+fn add_one(value: Int) -> Int {
+    return value + 1
+}
+
+fn main() -> Int {
+    return add_one(41)
+}
+"#;
+
+        let prepared = prepare_build_codegen(Path::new("sample.ql"), source, BuildEmit::LlvmIr)
+            .expect("codegen preparation should succeed for a valid program");
+
+        assert_eq!(prepared.source, source);
+        assert!(!prepared.analysis.has_errors());
+        assert!(prepared.exported_symbols.is_empty());
+        assert!(prepared.ir.contains("define i32 @main()"));
+        assert!(prepared.ir.contains("call i64 @ql_0_add_one(i64 41)"));
+    }
+
+    #[test]
+    fn prepare_build_codegen_requires_dynamic_library_exports() {
+        let source = r#"
+fn helper() -> Int {
+    return 1
+}
+"#;
+
+        let error = prepare_build_codegen(Path::new("library.ql"), source, BuildEmit::DynamicLibrary)
+            .expect_err("dylib codegen preparation should require a public extern export");
+
+        match error {
+            BuildError::InvalidInput(message) => assert!(
+                message.contains("requires at least one public top-level"),
+                "unexpected invalid input message: {message}"
+            ),
+            other => panic!("expected invalid input error, got {other:?}"),
+        }
     }
 
     #[test]

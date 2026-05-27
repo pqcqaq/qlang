@@ -21,6 +21,14 @@ use crate::{replace_file_atomically, write_file_atomically};
 const BUILD_OUTPUT_LOCK_TIMEOUT: Duration = Duration::from_secs(120);
 const BUILD_OUTPUT_LOCK_RETRY: Duration = Duration::from_millis(25);
 
+#[derive(Debug)]
+struct BuildCodegenPreparation {
+    source: String,
+    analysis: ql_analysis::Analysis,
+    ir: String,
+    exported_symbols: Vec<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuildEmit {
     LlvmIr,
@@ -202,94 +210,8 @@ pub fn build_source_with_link_inputs(
             options.emit.as_str()
         )));
     }
-    let source = source.to_owned();
 
-    let analysis = analyze_source(&source).map_err(|diagnostics| BuildError::Diagnostics {
-        path: path.to_path_buf(),
-        source: source.clone(),
-        diagnostics,
-    })?;
-
-    if analysis.has_errors() {
-        return Err(BuildError::Diagnostics {
-            path: path.to_path_buf(),
-            source: source.clone(),
-            diagnostics: analysis.diagnostics().to_vec(),
-        });
-    }
-
-    let exported_symbols = if options.emit == BuildEmit::DynamicLibrary {
-        let symbols = exported_c_symbol_names(analysis.hir());
-        if symbols.is_empty() {
-            return Err(BuildError::InvalidInput(
-                "dynamic library emission currently requires at least one public top-level `extern \"c\"` function definition"
-                    .to_owned(),
-            ));
-        }
-        symbols
-    } else {
-        Vec::new()
-    };
-
-    let runtime_diagnostics = runtime_requirement_diagnostics(&analysis, options.emit);
-    let mut runtime_capabilities = analysis
-        .runtime_requirements()
-        .iter()
-        .map(|requirement| requirement.capability)
-        .collect::<Vec<_>>();
-    if matches!(
-        options.emit,
-        BuildEmit::Executable | BuildEmit::LlvmIr | BuildEmit::Object
-    ) && analysis
-        .hir()
-        .items
-        .iter()
-        .filter_map(|&item_id| match &analysis.hir().item(item_id).kind {
-            ql_hir::ItemKind::Function(function) => Some(function),
-            _ => None,
-        })
-        .any(|function| function.name == "main" && function.is_async)
-    {
-        if !runtime_capabilities.contains(&RuntimeCapability::TaskSpawn) {
-            runtime_capabilities.push(RuntimeCapability::TaskSpawn);
-        }
-        if !runtime_capabilities.contains(&RuntimeCapability::TaskAwait) {
-            runtime_capabilities.push(RuntimeCapability::TaskAwait);
-        }
-    }
-    let runtime_hooks = collect_runtime_hook_signatures(runtime_capabilities.iter().copied());
-    let module_name = default_module_name(path);
-    let ir = match emit_module(CodegenInput {
-        module_name: &module_name,
-        mode: codegen_mode(options.emit),
-        inline_runtime_support: options.emit == BuildEmit::DynamicLibrary,
-        hir: analysis.hir(),
-        mir: analysis.mir(),
-        resolution: analysis.resolution(),
-        typeck: analysis.typeck(),
-        runtime_hooks: &runtime_hooks,
-    }) {
-        Ok(ir) => {
-            if !runtime_diagnostics.is_empty() {
-                return Err(BuildError::Diagnostics {
-                    path: path.to_path_buf(),
-                    source: source.clone(),
-                    diagnostics: runtime_diagnostics,
-                });
-            }
-            ir
-        }
-        Err(error) => {
-            return Err(BuildError::Diagnostics {
-                path: path.to_path_buf(),
-                source: source.clone(),
-                diagnostics: merge_unique_diagnostics(
-                    error.into_diagnostics(),
-                    &runtime_diagnostics,
-                ),
-            });
-        }
-    };
+    let codegen = prepare_build_codegen(path, source, options.emit)?;
 
     let output_path = match &options.output {
         Some(path) => path.clone(),
@@ -334,21 +256,23 @@ pub fn build_source_with_link_inputs(
 
     match options.emit {
         BuildEmit::LlvmIr => {
-            write_file_atomically(&output_path, ir).map_err(|error| BuildError::Io {
-                path: output_path.clone(),
-                error,
+            write_file_atomically(&output_path, codegen.ir.as_str()).map_err(|error| {
+                BuildError::Io {
+                    path: output_path.clone(),
+                    error,
+                }
             })?;
         }
         BuildEmit::Assembly => {
-            build_assembly_file(&output_path, &ir, &options.toolchain)?;
+            build_assembly_file(&output_path, &codegen.ir, &options.toolchain)?;
         }
         BuildEmit::Object => {
-            build_object_file(&output_path, &ir, &options.toolchain)?;
+            build_object_file(&output_path, &codegen.ir, &options.toolchain)?;
         }
         BuildEmit::Executable => {
             build_executable_file(
                 &output_path,
-                &ir,
+                &codegen.ir,
                 additional_link_inputs,
                 &options.toolchain,
             )?;
@@ -356,14 +280,14 @@ pub fn build_source_with_link_inputs(
         BuildEmit::DynamicLibrary => {
             build_dynamic_library_file(
                 &output_path,
-                &ir,
-                &exported_symbols,
+                &codegen.ir,
+                &codegen.exported_symbols,
                 additional_link_inputs,
                 &options.toolchain,
             )?;
         }
         BuildEmit::StaticLibrary => {
-            build_static_library_file(&output_path, &ir, &options.toolchain)?;
+            build_static_library_file(&output_path, &codegen.ir, &options.toolchain)?;
         }
     }
 
@@ -373,7 +297,12 @@ pub fn build_source_with_link_inputs(
                 .output
                 .clone()
                 .expect("build-side C header output path should be resolved");
-            match emit_c_header_from_analysis(path, &source, &analysis, header_options) {
+            match emit_c_header_from_analysis(
+                path,
+                &codegen.source,
+                &codegen.analysis,
+                header_options,
+            ) {
                 Ok(artifact) => Some(artifact),
                 Err(error) => {
                     cleanup_artifacts(&[output_path.clone(), header_path]);
@@ -390,6 +319,126 @@ pub fn build_source_with_link_inputs(
         path: output_path,
         c_header,
     })
+}
+
+fn prepare_build_codegen(
+    path: &Path,
+    source: &str,
+    emit: BuildEmit,
+) -> Result<BuildCodegenPreparation, BuildError> {
+    let source = source.to_owned();
+    let analysis = analyze_source(&source).map_err(|diagnostics| BuildError::Diagnostics {
+        path: path.to_path_buf(),
+        source: source.clone(),
+        diagnostics,
+    })?;
+
+    if analysis.has_errors() {
+        return Err(BuildError::Diagnostics {
+            path: path.to_path_buf(),
+            source: source.clone(),
+            diagnostics: analysis.diagnostics().to_vec(),
+        });
+    }
+
+    let exported_symbols = exported_symbols_for_emit(&analysis, emit)?;
+    let runtime_diagnostics = runtime_requirement_diagnostics(&analysis, emit);
+    let runtime_hooks = collect_runtime_hooks_for_codegen(&analysis, emit);
+    let module_name = default_module_name(path);
+    let ir = match emit_module(CodegenInput {
+        module_name: &module_name,
+        mode: codegen_mode(emit),
+        inline_runtime_support: emit == BuildEmit::DynamicLibrary,
+        hir: analysis.hir(),
+        mir: analysis.mir(),
+        resolution: analysis.resolution(),
+        typeck: analysis.typeck(),
+        runtime_hooks: &runtime_hooks,
+    }) {
+        Ok(ir) => {
+            if !runtime_diagnostics.is_empty() {
+                return Err(BuildError::Diagnostics {
+                    path: path.to_path_buf(),
+                    source,
+                    diagnostics: runtime_diagnostics,
+                });
+            }
+            ir
+        }
+        Err(error) => {
+            return Err(BuildError::Diagnostics {
+                path: path.to_path_buf(),
+                source,
+                diagnostics: merge_unique_diagnostics(
+                    error.into_diagnostics(),
+                    &runtime_diagnostics,
+                ),
+            });
+        }
+    };
+
+    Ok(BuildCodegenPreparation {
+        source,
+        analysis,
+        ir,
+        exported_symbols,
+    })
+}
+
+fn exported_symbols_for_emit(
+    analysis: &ql_analysis::Analysis,
+    emit: BuildEmit,
+) -> Result<Vec<String>, BuildError> {
+    if emit != BuildEmit::DynamicLibrary {
+        return Ok(Vec::new());
+    }
+
+    let symbols = exported_c_symbol_names(analysis.hir());
+    if symbols.is_empty() {
+        return Err(BuildError::InvalidInput(
+            "dynamic library emission currently requires at least one public top-level `extern \"c\"` function definition"
+                .to_owned(),
+        ));
+    }
+    Ok(symbols)
+}
+
+fn collect_runtime_hooks_for_codegen(
+    analysis: &ql_analysis::Analysis,
+    emit: BuildEmit,
+) -> Vec<ql_runtime::RuntimeHookSignature> {
+    let mut runtime_capabilities = analysis
+        .runtime_requirements()
+        .iter()
+        .map(|requirement| requirement.capability)
+        .collect::<Vec<_>>();
+    if emit_requires_async_main_runtime_hooks(analysis, emit) {
+        if !runtime_capabilities.contains(&RuntimeCapability::TaskSpawn) {
+            runtime_capabilities.push(RuntimeCapability::TaskSpawn);
+        }
+        if !runtime_capabilities.contains(&RuntimeCapability::TaskAwait) {
+            runtime_capabilities.push(RuntimeCapability::TaskAwait);
+        }
+    }
+    collect_runtime_hook_signatures(runtime_capabilities)
+}
+
+fn emit_requires_async_main_runtime_hooks(
+    analysis: &ql_analysis::Analysis,
+    emit: BuildEmit,
+) -> bool {
+    matches!(
+        emit,
+        BuildEmit::Executable | BuildEmit::LlvmIr | BuildEmit::Object
+    ) && analysis
+        .hir()
+        .items
+        .iter()
+        .filter_map(|&item_id| match &analysis.hir().item(item_id).kind {
+            ql_hir::ItemKind::Function(function) => Some(function),
+            _ => None,
+        })
+        .any(|function| function.name == "main" && function.is_async)
 }
 
 pub struct BuildOutputLock {
