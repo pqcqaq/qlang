@@ -16,6 +16,7 @@ mod instantiation_scanner;
 mod instantiations;
 mod rendering;
 mod specializations;
+mod specialized_forwarders;
 mod substitutions;
 mod value_bindings;
 
