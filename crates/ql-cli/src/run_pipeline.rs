@@ -16,9 +16,9 @@ use crate::build_reporting::{
     select_workspace_build_targets_for_build_json,
 };
 use crate::build_single_source::{
-    build_output_lock_error_message, build_single_source_target_result,
-    build_single_source_target_silent,
+    build_single_source_target_result, build_single_source_target_silent,
 };
+use crate::build_single_source_reporting::build_output_lock_error_message;
 use crate::cli_utils::normalize_path;
 use crate::project_reference_interfaces::prepare_reference_interfaces_for_manifests;
 use crate::project_target_build::{

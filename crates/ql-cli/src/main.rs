@@ -12,6 +12,7 @@ mod build_plan;
 mod build_project_execution;
 mod build_reporting;
 mod build_single_source;
+mod build_single_source_reporting;
 mod build_source_rewrites;
 mod check_command;
 mod check_reporting;

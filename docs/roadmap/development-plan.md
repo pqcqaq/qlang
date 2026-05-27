@@ -24,7 +24,7 @@
 
 ## 当前工作项
 
-- `ql-cli` 主入口已收口到命令分发；内部模块不再依赖 crate root re-export 中转。command、pipeline、project target、project target build prep、build interface emission、source rewrite、dependency bridge、build/run/test reporting 和 project build execution 已拆成独立模块。下一步继续拆 single-source/backend driver glue，所有移动必须保持行为不变并跑真实 workspace smoke。
+- `ql-cli` 主入口已收口到命令分发；内部模块不再依赖 crate root re-export 中转。command、pipeline、project target、project target build prep、single-source reporting、build interface emission、source rewrite、dependency bridge、build/run/test reporting 和 project build execution 已拆成独立模块。下一步继续拆 backend driver glue，所有移动必须保持行为不变并跑真实 workspace smoke。
 - 关键输出写入已统一走同目录临时文件替换和输出路径锁，覆盖 artifact、header、source、manifest、lockfile、interface 以及 `run/test` 执行期 executable。后续并发问题继续按“先保护真实产物，再补 CLI smoke”的顺序处理。
 - `project init --stdlib` starter 是 downstream 可用性入口；package/workspace 的 `check/build/run/test`、interface sync/check、graph/status/targets/dependencies/dependents、lock stale failure 和 JSON/listing 合同都必须持续覆盖。
 - `ql test` 已覆盖 package-under-test、direct dependency 和 local generic source override 的组合路径；后续重点是继续与 build/run 的 selector、profile、JSON failure 合同保持一致。

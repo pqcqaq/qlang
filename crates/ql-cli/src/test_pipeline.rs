@@ -20,9 +20,9 @@ use crate::build_plan::{
 };
 use crate::build_reporting::build_json_project_error;
 use crate::build_single_source::{
-    build_output_lock_error_message, build_single_source_target_quiet,
-    build_single_source_target_silent,
+    build_single_source_target_quiet, build_single_source_target_silent,
 };
+use crate::build_single_source_reporting::build_output_lock_error_message;
 use crate::cli_analysis::analyze_source;
 use crate::cli_scan::collect_ql_files;
 use crate::cli_utils::{
