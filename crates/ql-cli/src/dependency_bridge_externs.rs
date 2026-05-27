@@ -9,9 +9,12 @@ use ql_project::{
 };
 
 use crate::build_plan::{
-    PrepareProjectTargetBuildError, PrepareProjectTargetBuildFailureKind,
-    report_project_build_dependency_error, target_prep_dependency_interface_failure,
-    target_prep_dependency_manifest_failure,
+    PrepareProjectTargetBuildError, report_project_build_dependency_error,
+    target_prep_dependency_interface_failure, target_prep_dependency_manifest_failure,
+};
+use crate::dependency_bridge_extern_errors::{
+    DependencyExternBridgeError, dependency_extern_bridge_target_prep_error,
+    report_direct_dependency_extern_bridge_error,
 };
 use crate::dependency_bridge_imports::{
     ImportedDependencyExterns, collect_imported_dependency_externs, dependency_extern_is_imported,
@@ -20,9 +23,7 @@ use crate::dependency_bridge_modules::dependency_interface_module_import_paths;
 use crate::dependency_bridge_names::{
     DependencyExternOwner, record_dependency_extern_declaration, span_text,
 };
-use crate::dependency_bridge_reporting::{
-    report_dependency_interface_load_failure, report_direct_dependency_symbol_conflict,
-};
+use crate::dependency_bridge_reporting::report_dependency_interface_load_failure;
 use crate::project_manifest_paths::reference_manifest_path;
 
 pub(crate) fn render_direct_dependency_extern_declarations(
@@ -98,15 +99,12 @@ pub(crate) fn render_direct_dependency_extern_declarations(
                 &mut owners_by_symbol,
                 &mut declarations,
             )
-            .map_err(|(symbol, owner)| {
+            .map_err(|error| {
                 if report_failure {
-                    report_direct_dependency_symbol_conflict(
+                    report_direct_dependency_extern_bridge_error(
                         command_label,
-                        "extern",
-                        &symbol,
-                        &owner.package_name,
                         &dependency_package,
-                        "keep direct dependency `extern \"c\"` names unique until package-qualified extern resolution lands",
+                        error,
                     );
                 }
                 1
@@ -183,14 +181,12 @@ pub(crate) fn render_direct_dependency_extern_declarations_quiet(
                 &mut owners_by_symbol,
                 &mut declarations,
             )
-            .map_err(|(symbol, owner)| PrepareProjectTargetBuildError {
-                failure_kind: PrepareProjectTargetBuildFailureKind::DependencyExternConflict {
-                    symbol,
-                    first_package: owner.package_name,
-                    first_manifest_path: owner.manifest_path,
-                    conflicting_package: dependency_package.clone(),
-                    conflicting_manifest_path: dependency_manifest.manifest_path.clone(),
-                },
+            .map_err(|error| {
+                dependency_extern_bridge_target_prep_error(
+                    error,
+                    &dependency_package,
+                    &dependency_manifest.manifest_path,
+                )
             })?;
         }
     }
@@ -206,7 +202,7 @@ fn collect_dependency_module_extern_declarations(
     imported_externs: Option<&ImportedDependencyExterns>,
     owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
     declarations: &mut Vec<String>,
-) -> Result<(), (String, DependencyExternOwner)> {
+) -> Result<(), DependencyExternBridgeError> {
     let module_import_path =
         crate::dependency_bridge_modules::dependency_interface_module_import_path(
             dependency_package,
@@ -229,7 +225,10 @@ fn collect_dependency_module_extern_declarations(
                     span_text(contents, item.span),
                     owners_by_symbol,
                     declarations,
-                )?;
+                )
+                .map_err(|(symbol, owner)| {
+                    DependencyExternBridgeError::DependencyConflict { symbol, owner }
+                })?;
             }
             ItemKind::ExternBlock(extern_block)
                 if extern_block.visibility == Visibility::Public && extern_block.abi == "c" =>
@@ -249,7 +248,10 @@ fn collect_dependency_module_extern_declarations(
                         declaration,
                         owners_by_symbol,
                         declarations,
-                    )?;
+                    )
+                    .map_err(|(symbol, owner)| {
+                        DependencyExternBridgeError::DependencyConflict { symbol, owner }
+                    })?;
                 }
             }
             _ => {}
@@ -295,8 +297,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert_eq!(error.0, "q_add");
-        assert_eq!(error.1.package_name, "first");
+        assert!(matches!(
+            error,
+            DependencyExternBridgeError::DependencyConflict { symbol, owner }
+                if symbol == "q_add" && owner.package_name == "first"
+        ));
         assert_eq!(declarations.len(), 1);
     }
 }
