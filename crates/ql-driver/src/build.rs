@@ -29,6 +29,13 @@ struct BuildCodegenPreparation {
     exported_symbols: Vec<String>,
 }
 
+#[derive(Debug)]
+struct BuildOutputResolution {
+    output_path: PathBuf,
+    c_header_options: Option<CHeaderOptions>,
+    locked_paths: Vec<PathBuf>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuildEmit {
     LlvmIr,
@@ -212,66 +219,35 @@ pub fn build_source_with_link_inputs(
     }
 
     let codegen = prepare_build_codegen(path, source, options.emit)?;
+    let outputs = resolve_build_outputs(path, options, additional_link_inputs)?;
 
-    let output_path = match &options.output {
-        Some(path) => path.clone(),
-        None => {
-            let build_root = env::current_dir().map_err(|error| BuildError::Io {
-                path: PathBuf::from("."),
-                error,
-            })?;
-            default_output_path(&build_root, path, options.profile, options.emit)
-        }
-    };
-    let c_header_options =
-        resolve_build_c_header_options(path, &output_path, options.c_header.as_ref());
-    if let Some(header_options) = c_header_options.as_ref() {
-        let header_path = header_options
-            .output
-            .as_ref()
-            .expect("build-side C header output path should be resolved");
-        if header_path == &output_path {
-            return Err(BuildError::InvalidInput(format!(
-                "build-side C header output `{}` must differ from the primary artifact output",
-                header_path.display()
-            )));
-        }
-    }
-
-    if let Some(parent) = output_path.parent() {
+    if let Some(parent) = outputs.output_path.parent() {
         fs::create_dir_all(parent).map_err(|error| BuildError::Io {
             path: parent.to_path_buf(),
             error,
         })?;
     }
 
-    let mut locked_paths = vec![output_path.clone()];
-    locked_paths.extend(additional_link_inputs.iter().cloned());
-    if let Some(header_options) = c_header_options.as_ref()
-        && let Some(header_path) = header_options.output.as_ref()
-    {
-        locked_paths.push(header_path.clone());
-    }
-    let _output_locks = acquire_build_output_locks(locked_paths)?;
+    let _output_locks = acquire_build_output_locks(outputs.locked_paths.iter().cloned())?;
 
     match options.emit {
         BuildEmit::LlvmIr => {
-            write_file_atomically(&output_path, codegen.ir.as_str()).map_err(|error| {
+            write_file_atomically(&outputs.output_path, codegen.ir.as_str()).map_err(|error| {
                 BuildError::Io {
-                    path: output_path.clone(),
+                    path: outputs.output_path.clone(),
                     error,
                 }
             })?;
         }
         BuildEmit::Assembly => {
-            build_assembly_file(&output_path, &codegen.ir, &options.toolchain)?;
+            build_assembly_file(&outputs.output_path, &codegen.ir, &options.toolchain)?;
         }
         BuildEmit::Object => {
-            build_object_file(&output_path, &codegen.ir, &options.toolchain)?;
+            build_object_file(&outputs.output_path, &codegen.ir, &options.toolchain)?;
         }
         BuildEmit::Executable => {
             build_executable_file(
-                &output_path,
+                &outputs.output_path,
                 &codegen.ir,
                 additional_link_inputs,
                 &options.toolchain,
@@ -279,7 +255,7 @@ pub fn build_source_with_link_inputs(
         }
         BuildEmit::DynamicLibrary => {
             build_dynamic_library_file(
-                &output_path,
+                &outputs.output_path,
                 &codegen.ir,
                 &codegen.exported_symbols,
                 additional_link_inputs,
@@ -287,11 +263,11 @@ pub fn build_source_with_link_inputs(
             )?;
         }
         BuildEmit::StaticLibrary => {
-            build_static_library_file(&output_path, &codegen.ir, &options.toolchain)?;
+            build_static_library_file(&outputs.output_path, &codegen.ir, &options.toolchain)?;
         }
     }
 
-    let c_header = match c_header_options {
+    let c_header = match outputs.c_header_options {
         Some(ref header_options) => {
             let header_path = header_options
                 .output
@@ -305,7 +281,7 @@ pub fn build_source_with_link_inputs(
             ) {
                 Ok(artifact) => Some(artifact),
                 Err(error) => {
-                    cleanup_artifacts(&[output_path.clone(), header_path]);
+                    cleanup_artifacts(&[outputs.output_path.clone(), header_path]);
                     return Err(map_c_header_error(error));
                 }
             }
@@ -316,7 +292,7 @@ pub fn build_source_with_link_inputs(
     Ok(BuildArtifact {
         emit: options.emit,
         profile: options.profile,
-        path: output_path,
+        path: outputs.output_path,
         c_header,
     })
 }
@@ -439,6 +415,60 @@ fn emit_requires_async_main_runtime_hooks(
             _ => None,
         })
         .any(|function| function.name == "main" && function.is_async)
+}
+
+fn resolve_build_outputs(
+    input_path: &Path,
+    options: &BuildOptions,
+    additional_link_inputs: &[PathBuf],
+) -> Result<BuildOutputResolution, BuildError> {
+    let output_path = match &options.output {
+        Some(path) => path.clone(),
+        None => {
+            let build_root = env::current_dir().map_err(|error| BuildError::Io {
+                path: PathBuf::from("."),
+                error,
+            })?;
+            default_output_path(&build_root, input_path, options.profile, options.emit)
+        }
+    };
+    let c_header_options =
+        resolve_build_c_header_options(input_path, &output_path, options.c_header.as_ref());
+    validate_build_c_header_output(&output_path, c_header_options.as_ref())?;
+
+    let mut locked_paths = vec![output_path.clone()];
+    locked_paths.extend(additional_link_inputs.iter().cloned());
+    if let Some(header_options) = c_header_options.as_ref()
+        && let Some(header_path) = header_options.output.as_ref()
+    {
+        locked_paths.push(header_path.clone());
+    }
+
+    Ok(BuildOutputResolution {
+        output_path,
+        c_header_options,
+        locked_paths,
+    })
+}
+
+fn validate_build_c_header_output(
+    output_path: &Path,
+    c_header_options: Option<&CHeaderOptions>,
+) -> Result<(), BuildError> {
+    let Some(header_options) = c_header_options else {
+        return Ok(());
+    };
+    let header_path = header_options
+        .output
+        .as_ref()
+        .expect("build-side C header output path should be resolved");
+    if header_path == output_path {
+        return Err(BuildError::InvalidInput(format!(
+            "build-side C header output `{}` must differ from the primary artifact output",
+            header_path.display()
+        )));
+    }
+    Ok(())
 }
 
 pub struct BuildOutputLock {

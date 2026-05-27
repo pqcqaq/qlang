@@ -11,7 +11,8 @@
 
     use super::{
         BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderSurface,
-        build_file, default_build_c_header_output_path, default_output_path, prepare_build_codegen,
+        build_file, default_build_c_header_output_path, default_output_path,
+        prepare_build_codegen, resolve_build_outputs,
     };
 
     fn compact_test_prefix(prefix: &str) -> String {
@@ -250,6 +251,76 @@ fn helper() -> Int {
         match error {
             BuildError::InvalidInput(message) => assert!(
                 message.contains("requires at least one public top-level"),
+                "unexpected invalid input message: {message}"
+            ),
+            other => panic!("expected invalid input error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_build_outputs_tracks_artifact_header_and_link_input_locks() {
+        let dir = TestDir::new("ql-driver-build-output-resolution");
+        let output = dir.path().join("artifacts/ffi_export.dll");
+        let link_input = dir.path().join("deps/helper.lib");
+
+        let resolved = resolve_build_outputs(
+            Path::new("src/ffi_export.ql"),
+            &BuildOptions {
+                emit: BuildEmit::DynamicLibrary,
+                profile: BuildProfile::Release,
+                output: Some(output.clone()),
+                c_header: Some(BuildCHeaderOptions {
+                    output: None,
+                    surface: CHeaderSurface::Exports,
+                }),
+                toolchain: ToolchainOptions::default(),
+            },
+            &[link_input.clone()],
+        )
+        .expect("build output resolution should succeed");
+
+        let header_path = output
+            .parent()
+            .expect("explicit output should have a parent")
+            .join("ffi_export.h");
+        assert_eq!(resolved.output_path, output);
+        assert_eq!(
+            resolved
+                .c_header_options
+                .as_ref()
+                .and_then(|options| options.output.as_ref()),
+            Some(&header_path)
+        );
+        assert_eq!(
+            resolved.locked_paths,
+            vec![resolved.output_path.clone(), link_input, header_path]
+        );
+    }
+
+    #[test]
+    fn resolve_build_outputs_rejects_header_output_path_collisions() {
+        let dir = TestDir::new("ql-driver-build-output-collision");
+        let output = dir.path().join("artifacts/ffi_export.dll");
+
+        let error = resolve_build_outputs(
+            Path::new("src/ffi_export.ql"),
+            &BuildOptions {
+                emit: BuildEmit::DynamicLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: Some(BuildCHeaderOptions {
+                    output: Some(output),
+                    surface: CHeaderSurface::Exports,
+                }),
+                toolchain: ToolchainOptions::default(),
+            },
+            &[],
+        )
+        .expect_err("header output path collisions should be rejected before emission");
+
+        match error {
+            BuildError::InvalidInput(message) => assert!(
+                message.contains("must differ from the primary artifact output"),
                 "unexpected invalid input message: {message}"
             ),
             other => panic!("expected invalid input error, got {other:?}"),
