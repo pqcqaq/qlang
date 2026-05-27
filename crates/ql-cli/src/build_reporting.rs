@@ -51,6 +51,46 @@ pub(crate) fn build_json_target(
     })
 }
 
+#[derive(Clone, Debug)]
+struct BuildJsonFailureTarget<'a> {
+    manifest_path: Option<String>,
+    package_name: Option<&'a str>,
+    selected: bool,
+    kind: &'a str,
+    display_path: String,
+}
+
+impl<'a> BuildJsonFailureTarget<'a> {
+    fn new(
+        manifest_path: Option<&Path>,
+        package_name: Option<&'a str>,
+        kind: &'a str,
+        display_path: String,
+        selected: bool,
+    ) -> Self {
+        Self {
+            manifest_path: manifest_path.map(normalize_path),
+            package_name,
+            selected,
+            kind,
+            display_path,
+        }
+    }
+
+    fn base_json(&self, error_kind: &str, message: String) -> JsonValue {
+        json!({
+            "manifest_path": self.manifest_path,
+            "package_name": self.package_name,
+            "selected": self.selected,
+            "dependency_only": !self.selected,
+            "kind": self.kind,
+            "path": self.display_path,
+            "error_kind": error_kind,
+            "message": message,
+        })
+    }
+}
+
 pub(crate) fn build_json_failure(
     manifest_path: Option<&Path>,
     package_name: Option<&str>,
@@ -59,69 +99,53 @@ pub(crate) fn build_json_failure(
     selected: bool,
     error: &BuildError,
 ) -> JsonValue {
-    let manifest_path = manifest_path.map(normalize_path);
+    let target =
+        BuildJsonFailureTarget::new(manifest_path, package_name, kind, display_path, selected);
     match error {
-        BuildError::InvalidInput(message) => json!({
-            "manifest_path": manifest_path,
-            "package_name": package_name,
-            "selected": selected,
-            "dependency_only": !selected,
-            "kind": kind,
-            "path": display_path,
-            "error_kind": "invalid-input",
-            "message": message,
-        }),
-        BuildError::Io { path, error } => json!({
-            "manifest_path": manifest_path,
-            "package_name": package_name,
-            "selected": selected,
-            "dependency_only": !selected,
-            "kind": kind,
-            "path": display_path,
-            "error_kind": "io",
-            "message": format!("failed to access `{}`: {error}", normalize_path(path)),
-            "io_path": normalize_path(path),
-        }),
+        BuildError::InvalidInput(message) => {
+            target.base_json("invalid-input", message.clone())
+        }
+        BuildError::Io { path, error } => {
+            let mut failure = target.base_json(
+                "io",
+                format!("failed to access `{}`: {error}", normalize_path(path)),
+            );
+            failure["io_path"] = json!(normalize_path(path));
+            failure
+        }
         BuildError::Toolchain {
             error,
             preserved_artifacts,
-        } => json!({
-            "manifest_path": manifest_path,
-            "package_name": package_name,
-            "selected": selected,
-            "dependency_only": !selected,
-            "kind": kind,
-            "path": display_path,
-            "error_kind": "toolchain",
-            "message": error.to_string(),
-            "preserved_artifacts": preserved_artifacts
+        } => {
+            let mut failure = target.base_json("toolchain", error.to_string());
+            failure["preserved_artifacts"] = json!(
+                preserved_artifacts
+                    .iter()
+                    .map(|path| normalize_path(path))
+                    .collect::<Vec<_>>()
+            );
+            failure["intermediate_ir"] = json!(
+                preserved_artifacts
                 .iter()
-                .map(|path| normalize_path(path))
-                .collect::<Vec<_>>(),
-            "intermediate_ir": preserved_artifacts
-                .iter()
-                .find(|path| {
-                    path.file_name()
-                        .and_then(|name| name.to_str())
-                        .is_some_and(|name| name.contains(".codegen.ll"))
-                })
-                .map(|path| normalize_path(path)),
-        }),
+                    .find(|path| {
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| name.contains(".codegen.ll"))
+                    })
+                    .map(|path| normalize_path(path))
+            );
+            failure
+        }
         BuildError::Diagnostics {
             path,
             source,
             diagnostics,
-        } => json!({
-            "manifest_path": manifest_path,
-            "package_name": package_name,
-            "selected": selected,
-            "dependency_only": !selected,
-            "kind": kind,
-            "path": display_path,
-            "error_kind": "diagnostics",
-            "message": "build produced diagnostics",
-            "diagnostic_file": build_json_diagnostic_file(path, source, diagnostics),
-        }),
+        } => {
+            let mut failure =
+                target.base_json("diagnostics", "build produced diagnostics".to_owned());
+            failure["diagnostic_file"] = build_json_diagnostic_file(path, source, diagnostics);
+            failure
+        }
     }
 }
 
@@ -885,4 +909,62 @@ fn build_json_diagnostic_file(path: &Path, source: &str, diagnostics: &[Diagnost
         "path": normalize_path(path),
         "diagnostics": diagnostics_json(source, diagnostics),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use ql_driver::ToolchainError;
+
+    use super::*;
+
+    #[test]
+    fn build_json_failure_preserves_toolchain_target_context_and_artifacts() {
+        let failure = build_json_failure(
+            Some(Path::new("workspace/app/qlang.toml")),
+            Some("app"),
+            "bin",
+            "src/main.ql".to_owned(),
+            false,
+            &BuildError::Toolchain {
+                error: ToolchainError::InvocationFailed {
+                    program: "clang".to_owned(),
+                    status: Some(7),
+                    stderr: "mock link failure".to_owned(),
+                },
+                preserved_artifacts: vec![
+                    PathBuf::from("target/ql/debug/main.123.codegen.ll"),
+                    PathBuf::from(if cfg!(windows) {
+                        "target/ql/debug/main.123.codegen.obj"
+                    } else {
+                        "target/ql/debug/main.123.codegen.o"
+                    }),
+                ],
+            },
+        );
+
+        assert_eq!(failure["manifest_path"], "workspace/app/qlang.toml");
+        assert_eq!(failure["package_name"], "app");
+        assert_eq!(failure["selected"], false);
+        assert_eq!(failure["dependency_only"], true);
+        assert_eq!(failure["kind"], "bin");
+        assert_eq!(failure["path"], "src/main.ql");
+        assert_eq!(failure["error_kind"], "toolchain");
+        assert_eq!(
+            failure["message"],
+            "toolchain `clang` failed with exit code 7: mock link failure"
+        );
+        assert_eq!(
+            failure["intermediate_ir"],
+            "target/ql/debug/main.123.codegen.ll"
+        );
+        assert_eq!(
+            failure["preserved_artifacts"]
+                .as_array()
+                .expect("preserved artifacts should be an array")
+                .len(),
+            2
+        );
+    }
 }
