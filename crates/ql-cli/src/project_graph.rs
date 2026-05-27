@@ -289,14 +289,5 @@ fn format_project_graph_command(normalized_path: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn graph_rerun_command_preserves_normalized_path() {
-        assert_eq!(
-            format_project_graph_command("packages/app/qlang.toml"),
-            "ql project graph packages/app/qlang.toml"
-        );
-    }
-}
+#[path = "project_graph_tests.rs"]
+mod tests;
