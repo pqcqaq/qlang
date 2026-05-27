@@ -4,9 +4,10 @@ use ql_driver::{BuildArtifact, BuildError, BuildOptions};
 use ql_project::{BuildTarget, WorkspaceBuildTargets};
 use serde_json::{Value as JsonValue, json};
 
+use crate::build_json_report::BuildJsonReport;
 use crate::build_plan::PrepareProjectTargetBuildError;
 use crate::build_reporting::{
-    BuildJsonReport, build_json_failure, build_json_target, build_json_target_prep_failure,
+    build_json_failure, build_json_target, build_json_target_prep_failure,
 };
 use crate::cli_utils::normalize_path;
 use crate::project_targets::project_target_display_path;

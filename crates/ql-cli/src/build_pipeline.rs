@@ -3,6 +3,7 @@ use std::path::Path;
 use ql_driver::BuildOptions;
 use ql_project::BuildTargetKind;
 
+use crate::build_json_report::BuildJsonReport;
 use crate::build_outputs::{
     first_colliding_project_build_header_output_path, first_colliding_project_build_output_path,
     project_dependency_target_build_options, project_target_build_options,
@@ -12,7 +13,7 @@ use crate::build_plan::{
     resolve_project_build_plan_members_quiet,
 };
 use crate::build_reporting::{
-    BuildJsonReport, build_json_build_plan_failure, build_json_dependency_interface_prep_failure,
+    build_json_build_plan_failure, build_json_dependency_interface_prep_failure,
     build_json_emit_interface_failure, build_json_preflight_failure,
     build_json_target_prep_failure, load_workspace_build_targets_for_build_json_from_request_root,
     select_workspace_build_targets_for_build_json,

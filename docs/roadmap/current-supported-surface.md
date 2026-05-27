@@ -82,7 +82,7 @@
 
 ## 主要缺口
 
-- `ql-cli` 主链路仍需继续拆分；主入口已收口到命令分发，内部模块已改为直接依赖真实模块而不是 crate root re-export 中转。command、pipeline、project target、interface、source rewrite、dependency bridge、run/test reporting 已模块化。剩余重点是拆 build backend glue 和剩余 reporting，用真实 workspace smoke 锁住行为。
+- `ql-cli` 主链路仍需继续拆分；主入口已收口到命令分发，内部模块已改为直接依赖真实模块而不是 crate root re-export 中转。command、pipeline、project target、interface、source rewrite、dependency bridge、build/run/test reporting 已模块化。剩余重点是拆 build backend glue，用真实 workspace smoke 锁住行为。
 - `ql test` 的 package-under-test/direct-dependency bridge source override 已覆盖 package path 和直接 project test file 的 local generic 组合；`test_reporting` 已承载 target/report/failure JSON 合同，`test_pipeline` 已承载 discovery/selection/listing/execution/UI snapshot pipeline。剩余重点是与 build/run 已拆出的 project pipeline 保持 selector、profile、JSON failure 合同一致。
 - LSP 还不是稳定 workspace service；主要编辑请求已开始共享 workspace request context，request context/open-doc snapshot、codeLens、diagnostics、documentLink、formatting、signatureHelp/inlayHint callable hints 和 workspace/symbol 已拆出独立模块；持久 workspace index/cache 生命周期仍需要继续统一。
 - stdlib public API 已清掉 concrete carrier、主要固定 arity 包装和 `std.test` typed facade；`std.core` package-local smoke 已覆盖公开 scalar/predicate/bool helpers，`std.result` package-local smoke 和 `project init --stdlib` starter 已直接覆盖 generic carrier 语义与 option/result assertions。剩余重点是更完整 generic backend、共享 project pipeline 和更宽 dependency-aware backend。
