@@ -28,6 +28,7 @@ mod cli_version;
 mod dependency_bridge_direct;
 mod dependency_bridge_extern_errors;
 mod dependency_bridge_externs;
+mod dependency_bridge_generic_specialization_errors;
 mod dependency_bridge_imports;
 mod dependency_bridge_modules;
 mod dependency_bridge_names;
