@@ -4,25 +4,24 @@ use ql_project::{
     BuildTarget, BuildTargetKind, WorkspaceBuildTargets, discover_package_build_targets,
     discover_workspace_build_targets, load_project_manifest, package_name,
 };
-use serde_json::json;
 
 use crate::cli_utils::{
-    json_string, normalize_path, package_check_manifest_path_from_project_error,
+    normalize_path, package_check_manifest_path_from_project_error,
     package_missing_name_manifest_path_from_project_error,
 };
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct ProjectTargetSelector {
-    pub(crate) package_name: Option<String>,
-    pub(crate) target: Option<ProjectTargetSelectorKind>,
-}
+mod rendering;
+mod selector;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ProjectTargetSelectorKind {
-    Library,
-    Binary(String),
-    DisplayPath(String),
-}
+#[cfg(test)]
+pub(crate) use rendering::render_project_targets_json;
+use rendering::{
+    render_project_target_members, render_project_targets_preflight_failure_json,
+    render_project_targets_selection_failure_json,
+};
+pub(crate) use selector::{
+    ProjectTargetSelector, ProjectTargetSelectorKind, parse_project_target_selector_option,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ProjectCommandScope {
@@ -53,58 +52,6 @@ pub(crate) enum ResolvedProjectCommandPath {
 pub(crate) enum ProjectCommandPathError {
     SourcePathRejectsSelector,
     SelectorRequiresProjectContext,
-}
-
-impl ProjectTargetSelector {
-    pub(crate) fn is_active(&self) -> bool {
-        self.package_name.is_some() || self.target.is_some()
-    }
-
-    pub(crate) fn describe(&self) -> String {
-        let mut parts = Vec::new();
-        if let Some(package_name) = self.package_name.as_ref() {
-            parts.push(format!("package `{package_name}`"));
-        }
-        if let Some(target) = self.target.as_ref() {
-            parts.push(match target {
-                ProjectTargetSelectorKind::Library => "library target".to_owned(),
-                ProjectTargetSelectorKind::Binary(name) => format!("binary `{name}`"),
-                ProjectTargetSelectorKind::DisplayPath(path) => format!("target `{path}`"),
-            });
-        }
-        parts.join(", ")
-    }
-
-    pub(crate) fn matches(
-        &self,
-        manifest_path: &Path,
-        package_name: &str,
-        target: &BuildTarget,
-    ) -> bool {
-        if self
-            .package_name
-            .as_ref()
-            .is_some_and(|expected| expected != package_name)
-        {
-            return false;
-        }
-
-        match self.target.as_ref() {
-            None => true,
-            Some(ProjectTargetSelectorKind::Library) => target.kind == BuildTargetKind::Library,
-            Some(ProjectTargetSelectorKind::Binary(name)) => {
-                target.kind == BuildTargetKind::Binary
-                    && target
-                        .path
-                        .file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .is_some_and(|stem| stem == name)
-            }
-            Some(ProjectTargetSelectorKind::DisplayPath(path)) => {
-                project_target_display_path(manifest_path, target.path.as_path()) == *path
-            }
-        }
-    }
 }
 
 pub(crate) fn resolve_project_command_path(
@@ -164,79 +111,6 @@ pub(crate) fn resolve_project_check_command_scope(path: &Path) -> ProjectCheckCo
     }
 
     ProjectCheckCommandScope::DirectSource
-}
-
-pub(crate) fn parse_project_target_selector_option(
-    command_label: &str,
-    remaining: &[String],
-    index: &mut usize,
-    selector: &mut ProjectTargetSelector,
-) -> Result<bool, u8> {
-    match remaining[*index].as_str() {
-        "--package" => {
-            *index += 1;
-            let Some(value) = remaining.get(*index) else {
-                eprintln!("error: {command_label} --package expects a package name");
-                return Err(1);
-            };
-            if selector.package_name.is_some() {
-                eprintln!("error: {command_label} received multiple `--package` selectors");
-                return Err(1);
-            }
-            selector.package_name = Some(value.to_owned());
-            Ok(true)
-        }
-        "--lib" => {
-            set_project_target_selector_kind(
-                command_label,
-                selector,
-                ProjectTargetSelectorKind::Library,
-            )?;
-            Ok(true)
-        }
-        "--bin" => {
-            *index += 1;
-            let Some(value) = remaining.get(*index) else {
-                eprintln!("error: {command_label} --bin expects a target name");
-                return Err(1);
-            };
-            set_project_target_selector_kind(
-                command_label,
-                selector,
-                ProjectTargetSelectorKind::Binary(value.to_owned()),
-            )?;
-            Ok(true)
-        }
-        "--target" => {
-            *index += 1;
-            let Some(value) = remaining.get(*index) else {
-                eprintln!("error: {command_label} --target expects a target path");
-                return Err(1);
-            };
-            set_project_target_selector_kind(
-                command_label,
-                selector,
-                ProjectTargetSelectorKind::DisplayPath(normalize_path(Path::new(value))),
-            )?;
-            Ok(true)
-        }
-        _ => Ok(false),
-    }
-}
-
-fn set_project_target_selector_kind(
-    command_label: &str,
-    selector: &mut ProjectTargetSelector,
-    kind: ProjectTargetSelectorKind,
-) -> Result<(), u8> {
-    if selector.target.is_some() {
-        eprintln!(
-            "error: {command_label} does not support combining `--lib`, `--bin`, and `--target`"
-        );
-        return Err(1);
-    }
-    selector.target = Some(kind);
-    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -753,46 +627,6 @@ pub(crate) fn is_runnable_project_target(kind: BuildTargetKind) -> bool {
     matches!(kind, BuildTargetKind::Binary | BuildTargetKind::Source)
 }
 
-fn print_project_target_members(members: &[WorkspaceBuildTargets]) {
-    for (index, member) in members.iter().enumerate() {
-        if index > 0 {
-            println!();
-        }
-        print_project_target_member(
-            member.member_manifest_path.as_path(),
-            &member.package_name,
-            &member.targets,
-        );
-    }
-}
-
-fn render_project_target_members(members: &[WorkspaceBuildTargets], json: bool) {
-    if json {
-        print!("{}", render_project_targets_json(members));
-    } else {
-        print_project_target_members(members);
-    }
-}
-
-fn print_project_target_member(manifest_path: &Path, package_name: &str, targets: &[BuildTarget]) {
-    println!("manifest: {}", normalize_path(manifest_path));
-    println!("package: {package_name}");
-
-    if targets.is_empty() {
-        println!("targets: (none found)");
-        return;
-    }
-
-    println!("targets:");
-    for target in targets {
-        println!(
-            "  - {}: {}",
-            target.kind.as_str(),
-            project_target_display_path(manifest_path, target.path.as_path())
-        );
-    }
-}
-
 pub(crate) fn project_target_display_path(manifest_path: &Path, target_path: &Path) -> String {
     let package_root = manifest_path.parent().unwrap_or(Path::new("."));
     if let Ok(relative) = target_path.strip_prefix(package_root) {
@@ -800,112 +634,6 @@ pub(crate) fn project_target_display_path(manifest_path: &Path, target_path: &Pa
     } else {
         normalize_path(target_path)
     }
-}
-
-fn render_project_targets_json(members: &[WorkspaceBuildTargets]) -> String {
-    let mut rendered = String::new();
-    rendered.push_str("{\n");
-    rendered.push_str("  \"schema\": \"ql.project.targets.v1\",\n");
-    rendered.push_str("  \"members\": [");
-
-    if members.is_empty() {
-        rendered.push_str("]\n}\n");
-        return rendered;
-    }
-
-    rendered.push('\n');
-    for (index, member) in members.iter().enumerate() {
-        if index > 0 {
-            rendered.push_str(",\n");
-        }
-        rendered.push_str("    {\n");
-        rendered.push_str("      \"manifest_path\": ");
-        rendered.push_str(&json_string(&normalize_path(
-            member.member_manifest_path.as_path(),
-        )));
-        rendered.push_str(",\n");
-        rendered.push_str("      \"package_name\": ");
-        rendered.push_str(&json_string(&member.package_name));
-        rendered.push_str(",\n");
-        rendered.push_str("      \"targets\": [");
-
-        if member.targets.is_empty() {
-            rendered.push_str("]\n");
-        } else {
-            rendered.push('\n');
-            for (target_index, target) in member.targets.iter().enumerate() {
-                if target_index > 0 {
-                    rendered.push_str(",\n");
-                }
-                rendered.push_str("        {\n");
-                rendered.push_str("          \"kind\": ");
-                rendered.push_str(&json_string(target.kind.as_str()));
-                rendered.push_str(",\n");
-                rendered.push_str("          \"path\": ");
-                rendered.push_str(&json_string(&project_target_display_path(
-                    member.member_manifest_path.as_path(),
-                    target.path.as_path(),
-                )));
-                rendered.push_str("\n        }");
-            }
-            rendered.push_str("\n      ]\n");
-        }
-
-        rendered.push_str("    }");
-    }
-
-    rendered.push_str("\n  ]\n}\n");
-    rendered
-}
-
-fn render_project_targets_selection_failure_json(
-    failure: &ProjectTargetSelectionFailure,
-) -> String {
-    let mut rendered = String::new();
-    rendered.push_str("{\n");
-    rendered.push_str("  \"schema\": \"ql.project.targets.v1\",\n");
-    rendered.push_str("  \"members\": [],\n");
-    rendered.push_str("  \"failure\": {\n");
-    rendered.push_str("    \"kind\": \"selection\",\n");
-    rendered.push_str("    \"selection_failure\": {\n");
-    rendered.push_str("      \"stage\": ");
-    rendered.push_str(&json_string(failure.stage));
-    rendered.push_str(",\n");
-    rendered.push_str("      \"message\": ");
-    rendered.push_str(&json_string(&failure.message));
-    rendered.push_str(",\n");
-    rendered.push_str("      \"selector\": ");
-    rendered.push_str(&json_string(&failure.selector));
-    rendered.push_str(",\n");
-    rendered.push_str("      \"target_count\": ");
-    rendered.push_str(&failure.target_count.to_string());
-    rendered.push_str("\n    }\n");
-    rendered.push_str("  }\n");
-    rendered.push_str("}\n");
-    rendered
-}
-
-fn render_project_targets_preflight_failure_json(
-    path: &Path,
-    stage: &str,
-    message: String,
-    manifest_path: Option<&Path>,
-) -> String {
-    let rendered = serde_json::to_string_pretty(&json!({
-        "schema": "ql.project.targets.v1",
-        "path": normalize_path(path),
-        "members": [],
-        "failure": {
-            "kind": "preflight",
-            "preflight_failure": {
-                "stage": stage,
-                "message": message,
-                "manifest_path": manifest_path.map(normalize_path),
-            },
-        },
-    }))
-    .expect("project targets preflight failure json should serialize");
-    format!("{rendered}\n")
 }
 
 fn project_targets_load_error_message(
