@@ -84,6 +84,7 @@ mod run_project;
 mod run_reporting;
 mod run_targets;
 mod test_command;
+mod test_discovery;
 mod test_execution;
 mod test_pipeline;
 mod test_reporting;
