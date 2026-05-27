@@ -1,13 +1,13 @@
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-
 use ql_ast::{FunctionDecl, Param, ReceiverKind, Visibility};
 
-#[derive(Clone, Debug)]
-pub(crate) struct DependencyExternOwner {
-    pub(crate) package_name: String,
-    pub(crate) manifest_path: PathBuf,
-}
+pub(crate) use self::externs::{DependencyExternOwner, record_dependency_extern_declaration};
+use self::identifiers::{
+    dependency_public_function_export_name, dependency_public_function_local_forwarder_name,
+    dependency_public_method_export_name,
+};
+
+mod externs;
+mod identifiers;
 
 pub(crate) fn supports_dependency_public_function_import_bridge(function: &FunctionDecl) -> bool {
     function.visibility == Visibility::Public
@@ -294,85 +294,6 @@ fn render_dependency_bridge_visibility_prefix(visibility: &Visibility) -> &'stat
         Visibility::Private => "",
         Visibility::Public => "pub ",
     }
-}
-
-fn dependency_public_function_export_name(
-    module_import_path: &[String],
-    symbol_name: &str,
-) -> String {
-    let mut rendered = String::from("__ql_bridge_");
-    for segment in module_import_path {
-        rendered.push_str(&sanitize_dependency_bridge_identifier_fragment(segment));
-        rendered.push('_');
-    }
-    rendered.push_str(&sanitize_dependency_bridge_identifier_fragment(symbol_name));
-    rendered
-}
-
-fn dependency_public_function_local_forwarder_name(
-    module_import_path: &[String],
-    symbol_name: &str,
-) -> String {
-    let mut rendered = String::from("__ql_bridge_local_");
-    for segment in module_import_path {
-        rendered.push_str(&sanitize_dependency_bridge_identifier_fragment(segment));
-        rendered.push('_');
-    }
-    rendered.push_str(&sanitize_dependency_bridge_identifier_fragment(symbol_name));
-    rendered
-}
-
-fn dependency_public_method_export_name(
-    module_import_path: &[String],
-    struct_name: &str,
-    symbol_name: &str,
-) -> String {
-    let mut rendered = String::from("__ql_bridge_method_");
-    for segment in module_import_path {
-        rendered.push_str(&sanitize_dependency_bridge_identifier_fragment(segment));
-        rendered.push('_');
-    }
-    rendered.push_str(&sanitize_dependency_bridge_identifier_fragment(struct_name));
-    rendered.push('_');
-    rendered.push_str(&sanitize_dependency_bridge_identifier_fragment(symbol_name));
-    rendered
-}
-
-fn sanitize_dependency_bridge_identifier_fragment(fragment: &str) -> String {
-    let mut rendered = String::new();
-    for ch in fragment.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '_' {
-            rendered.push(ch);
-        } else {
-            rendered.push('_');
-        }
-    }
-    if rendered.is_empty() {
-        rendered.push('_');
-    }
-    rendered
-}
-
-pub(crate) fn record_dependency_extern_declaration(
-    dependency_package: &str,
-    dependency_manifest_path: &Path,
-    symbol_name: &str,
-    declaration: String,
-    owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
-    declarations: &mut Vec<String>,
-) -> Result<(), (String, DependencyExternOwner)> {
-    if let Some(owner) = owners_by_symbol.get(symbol_name) {
-        return Err((symbol_name.to_owned(), owner.clone()));
-    }
-    owners_by_symbol.insert(
-        symbol_name.to_owned(),
-        DependencyExternOwner {
-            package_name: dependency_package.to_owned(),
-            manifest_path: dependency_manifest_path.to_path_buf(),
-        },
-    );
-    declarations.push(declaration.trim().to_owned());
-    Ok(())
 }
 
 pub(crate) fn span_text(source: &str, span: ql_span::Span) -> String {
