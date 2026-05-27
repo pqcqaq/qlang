@@ -117,23 +117,21 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
             if !supports_local_function_specialization(callee) || callee.body.is_none() {
                 continue;
             }
-            for instantiation in instantiations::collect_specialized_body_call_instantiations(
-                function,
-                callee,
-                substitutions,
-                function_bindings,
-            ) {
-                self.render_specialized_body_call_rewrite(
-                    SpecializedBodyCallTarget {
-                        module_import_path,
-                        contents,
-                        module: specialization_module,
-                        callee,
-                    },
-                    instantiation,
-                    body_call_rewrites,
-                )?;
-            }
+            self.render_specialized_body_call_rewrites_for_callee(
+                SpecializedBodyCallTarget {
+                    module_import_path,
+                    contents,
+                    module: specialization_module,
+                    callee,
+                },
+                instantiations::collect_specialized_body_call_instantiations(
+                    function,
+                    callee,
+                    substitutions,
+                    function_bindings,
+                ),
+                body_call_rewrites,
+            )?;
         }
         Some(())
     }
@@ -163,27 +161,42 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
                 if local_names.is_empty() {
                     continue;
                 }
-                for instantiation in
+                self.render_specialized_body_call_rewrites_for_callee(
+                    SpecializedBodyCallTarget {
+                        module_import_path: target_module.module_import_path,
+                        contents: target_module.contents,
+                        module: target_module.module,
+                        callee,
+                    },
                     instantiations::collect_specialized_body_call_instantiations_for_local_names(
                         function,
                         callee,
                         &local_names,
                         substitutions,
                         function_bindings,
-                    )
-                {
-                    self.render_specialized_body_call_rewrite(
-                        SpecializedBodyCallTarget {
-                            module_import_path: target_module.module_import_path,
-                            contents: target_module.contents,
-                            module: target_module.module,
-                            callee,
-                        },
-                        instantiation,
-                        body_call_rewrites,
-                    )?;
-                }
+                    ),
+                    body_call_rewrites,
+                )?;
             }
+        }
+        Some(())
+    }
+
+    fn render_specialized_body_call_rewrites_for_callee<I>(
+        &mut self,
+        target: SpecializedBodyCallTarget<'_>,
+        instantiations: I,
+        body_call_rewrites: &mut Vec<SourceRewrite>,
+    ) -> Option<()>
+    where
+        I: IntoIterator<Item = instantiations::PublicFunctionCallInstantiation>,
+    {
+        for instantiation in instantiations {
+            self.render_specialized_body_call_rewrite(
+                target.clone(),
+                instantiation,
+                body_call_rewrites,
+            )?;
         }
         Some(())
     }
@@ -214,6 +227,7 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
     }
 }
 
+#[derive(Clone)]
 struct SpecializedBodyCallTarget<'a> {
     module_import_path: &'a [String],
     contents: &'a str,
