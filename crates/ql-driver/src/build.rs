@@ -15,7 +15,9 @@ use crate::ffi::{
     CHeaderArtifact, CHeaderError, CHeaderOptions, CHeaderSurface, emit_c_header_from_analysis,
     exported_c_symbol_names,
 };
-use crate::toolchain::{ToolchainError, ToolchainOptions, discover_toolchain};
+use crate::toolchain::{
+    DiscoveredToolchain, ToolchainError, ToolchainOptions, discover_toolchain,
+};
 use crate::{replace_file_atomically, write_file_atomically};
 
 const BUILD_OUTPUT_LOCK_TIMEOUT: Duration = Duration::from_secs(120);
@@ -83,6 +85,14 @@ impl ToolchainEmissionWorkspace {
 
     fn cleanup_ir_and_object(&self) -> Vec<PathBuf> {
         self.preserve_ir_and_object()
+    }
+
+    fn cleanup_after_success(&self) -> Vec<PathBuf> {
+        if self.intermediate_object.is_some() {
+            self.cleanup_ir_and_object()
+        } else {
+            self.cleanup_ir()
+        }
     }
 }
 
@@ -811,32 +821,29 @@ fn build_assembly_file(
     ir: &str,
     toolchain_options: &ToolchainOptions,
 ) -> Result<(), BuildError> {
-    let workspace = ToolchainEmissionWorkspace::without_object(output_path);
-    fs::write(&workspace.intermediate_ir, ir).map_err(|error| BuildError::Io {
-        path: workspace.intermediate_ir.clone(),
-        error,
-    })?;
-
-    let toolchain = discover_toolchain(toolchain_options)
-        .map_err(|error| toolchain_failure(error, workspace.preserve_ir()))?;
-
-    if let Err(error) = toolchain
-        .compile_llvm_ir_to_assembly(&workspace.intermediate_ir, &workspace.temp_output_path)
-    {
-        let _ = fs::remove_file(&workspace.temp_output_path);
-        return Err(toolchain_failure(error, workspace.preserve_ir()));
-    }
-
-    let cleanup = workspace.cleanup_ir();
-    promote_final_artifact(output_path, &workspace.temp_output_path, &cleanup)?;
-    cleanup_artifacts(&cleanup);
-    Ok(())
+    run_ir_to_final_artifact(output_path, ir, toolchain_options, |toolchain, workspace| {
+        toolchain.compile_llvm_ir_to_assembly(
+            &workspace.intermediate_ir,
+            &workspace.temp_output_path,
+        )
+    })
 }
 
 fn build_object_file(
     output_path: &Path,
     ir: &str,
     toolchain_options: &ToolchainOptions,
+) -> Result<(), BuildError> {
+    run_ir_to_final_artifact(output_path, ir, toolchain_options, |toolchain, workspace| {
+        toolchain.compile_llvm_ir_to_object(&workspace.intermediate_ir, &workspace.temp_output_path)
+    })
+}
+
+fn run_ir_to_final_artifact(
+    output_path: &Path,
+    ir: &str,
+    toolchain_options: &ToolchainOptions,
+    emit: impl FnOnce(&DiscoveredToolchain, &ToolchainEmissionWorkspace) -> Result<(), ToolchainError>,
 ) -> Result<(), BuildError> {
     let workspace = ToolchainEmissionWorkspace::without_object(output_path);
     fs::write(&workspace.intermediate_ir, ir).map_err(|error| BuildError::Io {
@@ -847,14 +854,12 @@ fn build_object_file(
     let toolchain = discover_toolchain(toolchain_options)
         .map_err(|error| toolchain_failure(error, workspace.preserve_ir()))?;
 
-    if let Err(error) = toolchain
-        .compile_llvm_ir_to_object(&workspace.intermediate_ir, &workspace.temp_output_path)
-    {
+    if let Err(error) = emit(&toolchain, &workspace) {
         let _ = fs::remove_file(&workspace.temp_output_path);
         return Err(toolchain_failure(error, workspace.preserve_ir()));
     }
 
-    let cleanup = workspace.cleanup_ir();
+    let cleanup = workspace.cleanup_after_success();
     promote_final_artifact(output_path, &workspace.temp_output_path, &cleanup)?;
     cleanup_artifacts(&cleanup);
     Ok(())
@@ -866,37 +871,19 @@ fn build_executable_file(
     additional_link_inputs: &[PathBuf],
     toolchain_options: &ToolchainOptions,
 ) -> Result<(), BuildError> {
-    let workspace = ToolchainEmissionWorkspace::with_object(output_path);
-    fs::write(&workspace.intermediate_ir, ir).map_err(|error| BuildError::Io {
-        path: workspace.intermediate_ir.clone(),
-        error,
-    })?;
-
-    let toolchain = discover_toolchain(toolchain_options)
-        .map_err(|error| toolchain_failure(error, workspace.preserve_ir()))?;
-    let intermediate_object = workspace.intermediate_object();
-
-    if let Err(error) =
-        toolchain.compile_llvm_ir_to_object(&workspace.intermediate_ir, intermediate_object)
-    {
-        let _ = fs::remove_file(intermediate_object);
-        let _ = fs::remove_file(&workspace.temp_output_path);
-        return Err(toolchain_failure(error, workspace.preserve_ir()));
-    }
-
-    if let Err(error) = toolchain.link_object_to_executable_with_inputs(
-        intermediate_object,
-        &workspace.temp_output_path,
-        additional_link_inputs,
-    ) {
-        let _ = fs::remove_file(&workspace.temp_output_path);
-        return Err(toolchain_failure(error, workspace.preserve_ir_and_object()));
-    }
-
-    let cleanup = workspace.cleanup_ir_and_object();
-    promote_final_artifact(output_path, &workspace.temp_output_path, &cleanup)?;
-    cleanup_artifacts(&cleanup);
-    Ok(())
+    run_object_backed_final_artifact(
+        output_path,
+        ir,
+        toolchain_options,
+        |_, _| Ok(()),
+        |toolchain, workspace| {
+            toolchain.link_object_to_executable_with_inputs(
+                workspace.intermediate_object(),
+                &workspace.temp_output_path,
+                additional_link_inputs,
+            )
+        },
+    )
 }
 
 fn build_static_library_file(
@@ -904,38 +891,22 @@ fn build_static_library_file(
     ir: &str,
     toolchain_options: &ToolchainOptions,
 ) -> Result<(), BuildError> {
-    let workspace = ToolchainEmissionWorkspace::with_object(output_path);
-    fs::write(&workspace.intermediate_ir, ir).map_err(|error| BuildError::Io {
-        path: workspace.intermediate_ir.clone(),
-        error,
-    })?;
-
-    let toolchain = discover_toolchain(toolchain_options)
-        .map_err(|error| toolchain_failure(error, workspace.preserve_ir()))?;
-    toolchain
-        .ensure_archiver_available()
-        .map_err(|error| toolchain_failure(error, workspace.preserve_ir()))?;
-    let intermediate_object = workspace.intermediate_object();
-
-    if let Err(error) =
-        toolchain.compile_llvm_ir_to_object(&workspace.intermediate_ir, intermediate_object)
-    {
-        let _ = fs::remove_file(intermediate_object);
-        let _ = fs::remove_file(&workspace.temp_output_path);
-        return Err(toolchain_failure(error, workspace.preserve_ir()));
-    }
-
-    if let Err(error) =
-        toolchain.archive_object_to_static_library(intermediate_object, &workspace.temp_output_path)
-    {
-        let _ = fs::remove_file(&workspace.temp_output_path);
-        return Err(toolchain_failure(error, workspace.preserve_ir_and_object()));
-    }
-
-    let cleanup = workspace.cleanup_ir_and_object();
-    promote_final_artifact(output_path, &workspace.temp_output_path, &cleanup)?;
-    cleanup_artifacts(&cleanup);
-    Ok(())
+    run_object_backed_final_artifact(
+        output_path,
+        ir,
+        toolchain_options,
+        |toolchain, workspace| {
+            toolchain
+                .ensure_archiver_available()
+                .map_err(|error| toolchain_failure(error, workspace.preserve_ir()))
+        },
+        |toolchain, workspace| {
+            toolchain.archive_object_to_static_library(
+                workspace.intermediate_object(),
+                &workspace.temp_output_path,
+            )
+        },
+    )
 }
 
 fn build_dynamic_library_file(
@@ -945,6 +916,32 @@ fn build_dynamic_library_file(
     additional_link_inputs: &[PathBuf],
     toolchain_options: &ToolchainOptions,
 ) -> Result<(), BuildError> {
+    run_object_backed_final_artifact(
+        output_path,
+        ir,
+        toolchain_options,
+        |_, _| Ok(()),
+        |toolchain, workspace| {
+            toolchain.link_object_to_dynamic_library_with_inputs(
+                workspace.intermediate_object(),
+                &workspace.temp_output_path,
+                exported_symbols,
+                additional_link_inputs,
+            )
+        },
+    )
+}
+
+fn run_object_backed_final_artifact(
+    output_path: &Path,
+    ir: &str,
+    toolchain_options: &ToolchainOptions,
+    prepare: impl FnOnce(
+        &DiscoveredToolchain,
+        &ToolchainEmissionWorkspace,
+    ) -> Result<(), BuildError>,
+    emit: impl FnOnce(&DiscoveredToolchain, &ToolchainEmissionWorkspace) -> Result<(), ToolchainError>,
+) -> Result<(), BuildError> {
     let workspace = ToolchainEmissionWorkspace::with_object(output_path);
     fs::write(&workspace.intermediate_ir, ir).map_err(|error| BuildError::Io {
         path: workspace.intermediate_ir.clone(),
@@ -953,6 +950,7 @@ fn build_dynamic_library_file(
 
     let toolchain = discover_toolchain(toolchain_options)
         .map_err(|error| toolchain_failure(error, workspace.preserve_ir()))?;
+    prepare(&toolchain, &workspace)?;
     let intermediate_object = workspace.intermediate_object();
 
     if let Err(error) =
@@ -963,17 +961,12 @@ fn build_dynamic_library_file(
         return Err(toolchain_failure(error, workspace.preserve_ir()));
     }
 
-    if let Err(error) = toolchain.link_object_to_dynamic_library_with_inputs(
-        intermediate_object,
-        &workspace.temp_output_path,
-        exported_symbols,
-        additional_link_inputs,
-    ) {
+    if let Err(error) = emit(&toolchain, &workspace) {
         let _ = fs::remove_file(&workspace.temp_output_path);
         return Err(toolchain_failure(error, workspace.preserve_ir_and_object()));
     }
 
-    let cleanup = workspace.cleanup_ir_and_object();
+    let cleanup = workspace.cleanup_after_success();
     promote_final_artifact(output_path, &workspace.temp_output_path, &cleanup)?;
     cleanup_artifacts(&cleanup);
     Ok(())

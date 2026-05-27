@@ -6,14 +6,14 @@
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::toolchain::{
-        ArchiverFlavor, ArchiverInvocation, ProgramInvocation, ToolchainOptions,
+        ArchiverFlavor, ArchiverInvocation, ProgramInvocation, ToolchainError, ToolchainOptions,
     };
 
     use super::{
         BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderSurface,
         build_file, default_build_c_header_output_path, default_output_path,
         emit_build_artifact, object_extension, prepare_build_codegen, resolve_build_outputs,
-        ToolchainEmissionWorkspace,
+        run_object_backed_final_artifact, ToolchainEmissionWorkspace,
     };
 
     fn compact_test_prefix(prefix: &str) -> String {
@@ -4913,6 +4913,75 @@ fn add_one(value: Int) -> Int {
         assert_eq!(
             fs::read_to_string(&output).expect("read preserved static library artifact"),
             "old-staticlib"
+        );
+    }
+
+    #[test]
+    fn object_backed_emission_prepare_failure_preserves_ir_and_skips_object_compile() {
+        let dir = TestDir::new("ql-driver-object-backed-prepare-fail");
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/math.lib"
+        } else {
+            "artifacts/libmath.a"
+        });
+        fs::create_dir_all(output.parent().expect("output should have a parent"))
+            .expect("create output directory");
+
+        let error = run_object_backed_final_artifact(
+            &output,
+            "define i64 @ql_0_add_one(i64 %value) { ret i64 %value }\n",
+            &ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+            |_, workspace| {
+                Err(BuildError::Toolchain {
+                    error: ToolchainError::NotFound {
+                        tool: "archiver",
+                        hint: "test prepare failure".to_owned(),
+                    },
+                    preserved_artifacts: workspace.preserve_ir(),
+                })
+            },
+            |toolchain, workspace| {
+                toolchain.archive_object_to_static_library(
+                    workspace.intermediate_object(),
+                    &workspace.temp_output_path,
+                )
+            },
+        )
+        .expect_err("object-backed prepare failure should stop before object compilation");
+
+        let preserved = error
+            .preserved_artifacts()
+            .expect("prepare failure should preserve generated LLVM IR");
+
+        assert!(matches!(&error, BuildError::Toolchain { .. }));
+        assert_eq!(preserved.len(), 1);
+        assert!(preserved[0].exists(), "intermediate LLVM IR should remain");
+        assert!(
+            preserved[0]
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains(".codegen.ll")),
+            "unexpected preserved artifact path: {}",
+            preserved[0].display()
+        );
+        let object_leftovers = fs::read_dir(dir.path().join("artifacts"))
+            .expect("read output directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(".codegen."))
+                    && path.extension().and_then(|extension| extension.to_str())
+                        == Some(object_extension())
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            object_leftovers.is_empty(),
+            "prepare failure should stop before compiling an intermediate object"
         );
     }
 
