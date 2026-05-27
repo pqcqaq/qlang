@@ -80,6 +80,7 @@ mod project_workspace;
 mod run_command;
 mod run_pipeline;
 mod run_reporting;
+mod run_targets;
 mod test_command;
 mod test_pipeline;
 mod test_reporting;

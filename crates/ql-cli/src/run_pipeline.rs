@@ -1,10 +1,9 @@
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use ql_driver::{BuildEmit, BuildOptions, BuildProfile, acquire_build_output_locks};
-use ql_project::{BuildTarget, ManifestBuildProfile, WorkspaceBuildTargets};
-use serde_json::Value as JsonValue;
+use ql_project::WorkspaceBuildTargets;
 
 use crate::build_outputs::{apply_manifest_default_profile, project_target_output_path};
 use crate::build_plan::{
@@ -26,20 +25,15 @@ use crate::project_target_build::{
 };
 use crate::project_targets::{
     ProjectCommandPathError, ProjectTargetSelector, ResolvedProjectCommandPath,
-    is_runnable_project_target, load_workspace_build_targets_for_command_from_request_root,
-    project_target_display_path, report_project_source_path_rejects_target_selector,
+    load_workspace_build_targets_for_command_from_request_root,
+    report_project_source_path_rejects_target_selector,
     report_project_target_selector_requires_project_context, resolve_project_command_path,
     select_workspace_build_targets,
 };
 use crate::run_reporting::RunJsonReport;
-
-#[derive(Clone, Debug)]
-struct RunnableProjectTarget {
-    member_manifest_path: PathBuf,
-    package_name: String,
-    default_profile: Option<ManifestBuildProfile>,
-    target: BuildTarget,
-}
+use crate::run_targets::{
+    select_runnable_project_target, select_runnable_project_target_for_run_json,
+};
 
 pub(crate) fn run_path(
     path: &Path,
@@ -311,171 +305,6 @@ fn run_project_path(
         false,
     )?;
     run_built_executable(&artifact.path, program_args)
-}
-
-fn collect_runnable_project_targets(
-    members: &[WorkspaceBuildTargets],
-) -> Vec<RunnableProjectTarget> {
-    let mut runnable_targets = Vec::new();
-    for member in members {
-        for target in &member.targets {
-            if is_runnable_project_target(target.kind) {
-                runnable_targets.push(RunnableProjectTarget {
-                    member_manifest_path: member.member_manifest_path.clone(),
-                    package_name: member.package_name.clone(),
-                    default_profile: member.default_profile,
-                    target: target.clone(),
-                });
-            }
-        }
-    }
-    runnable_targets
-}
-
-fn select_runnable_project_target(
-    path: &Path,
-    members: &[WorkspaceBuildTargets],
-    selector: &ProjectTargetSelector,
-) -> Result<RunnableProjectTarget, u8> {
-    let mut runnable_targets = collect_runnable_project_targets(members);
-    match runnable_targets.len() {
-        0 => {
-            let normalized_path = normalize_path(path);
-            if selector.is_active() {
-                eprintln!(
-                    "error: `ql run` target selector matched no runnable build targets under `{normalized_path}`"
-                );
-                eprintln!("note: selector: {}", selector.describe());
-                eprintln!(
-                    "hint: rerun `ql project targets {normalized_path}` to inspect the discovered build targets"
-                );
-                return Err(1);
-            }
-            eprintln!("error: `ql run` found no runnable build targets under `{normalized_path}`");
-            eprintln!(
-                "hint: add `src/main.ql`, `src/bin/*.ql`, or declare `[[bin]].path`, or rerun `ql project targets {normalized_path}` to inspect the discovered build targets"
-            );
-            Err(1)
-        }
-        1 => Ok(runnable_targets
-            .pop()
-            .expect("runnable target count checked above")),
-        count => {
-            let normalized_path = normalize_path(path);
-            if selector.is_active() {
-                eprintln!(
-                    "error: `ql run` target selector matched multiple runnable build targets under `{normalized_path}`"
-                );
-                eprintln!("note: selector: {}", selector.describe());
-                eprintln!("note: `{normalized_path}` resolved to {count} runnable build targets");
-                for runnable in &runnable_targets {
-                    eprintln!(
-                        "note: candidate target `{}` from package `{}`",
-                        project_target_display_path(
-                            &runnable.member_manifest_path,
-                            runnable.target.path.as_path()
-                        ),
-                        runnable.package_name
-                    );
-                }
-                eprintln!(
-                    "hint: refine the selector with `--package`, `--bin`, or `--target`, or rerun `ql project targets {normalized_path}` to inspect the discovered build targets"
-                );
-                return Err(1);
-            }
-            eprintln!(
-                "error: `ql run` found multiple runnable build targets under `{normalized_path}`"
-            );
-            eprintln!("note: `{normalized_path}` resolved to {count} runnable build targets");
-            for runnable in &runnable_targets {
-                eprintln!(
-                    "note: candidate target `{}` from package `{}`",
-                    project_target_display_path(
-                        &runnable.member_manifest_path,
-                        runnable.target.path.as_path()
-                    ),
-                    runnable.package_name
-                );
-            }
-            eprintln!(
-                "hint: rerun `ql run <source-file>` for a specific target, or `ql project targets {normalized_path}` to inspect the discovered build targets"
-            );
-            Err(1)
-        }
-    }
-}
-
-fn select_runnable_project_target_for_run_json(
-    path: &Path,
-    members: &[WorkspaceBuildTargets],
-    selector: &ProjectTargetSelector,
-) -> Result<RunnableProjectTarget, JsonValue> {
-    let mut runnable_targets = collect_runnable_project_targets(members);
-    match runnable_targets.len() {
-        0 => {
-            let normalized_path = normalize_path(path);
-            let (error_kind, message, selector) = if selector.is_active() {
-                (
-                    "selector",
-                    format!(
-                        "target selector matched no runnable build targets under `{normalized_path}`"
-                    ),
-                    Some(selector.describe()),
-                )
-            } else {
-                (
-                    "project",
-                    format!("found no runnable build targets under `{normalized_path}`"),
-                    None,
-                )
-            };
-            Err(build_json_preflight_failure(
-                path,
-                None,
-                None,
-                None,
-                error_kind,
-                "target-selection",
-                message,
-                selector,
-                None,
-                Some(0),
-            ))
-        }
-        1 => Ok(runnable_targets
-            .pop()
-            .expect("runnable target count checked above")),
-        count => {
-            let normalized_path = normalize_path(path);
-            let (error_kind, message, selector) = if selector.is_active() {
-                (
-                    "selector",
-                    format!(
-                        "target selector matched multiple runnable build targets under `{normalized_path}`"
-                    ),
-                    Some(selector.describe()),
-                )
-            } else {
-                (
-                    "project",
-                    format!("found multiple runnable build targets under `{normalized_path}`"),
-                    None,
-                )
-            };
-            Err(build_json_preflight_failure(
-                path,
-                None,
-                None,
-                None,
-                error_kind,
-                "target-selection",
-                message,
-                selector,
-                None,
-                Some(count),
-            ))
-        }
-    }
 }
 
 fn run_built_executable(executable_path: &Path, program_args: &[String]) -> Result<(), u8> {
