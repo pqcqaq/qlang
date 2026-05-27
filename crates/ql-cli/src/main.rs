@@ -34,6 +34,7 @@ mod dependency_bridge_imports;
 mod dependency_bridge_modules;
 mod dependency_bridge_names;
 mod dependency_bridge_package_under_test;
+mod dependency_bridge_package_under_test_collection;
 mod dependency_bridge_public_export_wrappers;
 mod dependency_bridge_public_function_errors;
 mod dependency_bridge_public_function_forwarders;

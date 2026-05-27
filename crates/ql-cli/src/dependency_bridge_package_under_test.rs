@@ -1,4 +1,3 @@
-use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use ql_parser::parse_source;
@@ -9,17 +8,14 @@ use crate::build_source_rewrites::{
     RenderedDependencyBridgeItems, join_dependency_bridge_sections,
 };
 use crate::cli_utils::normalize_path;
-use crate::dependency_bridge_imports::{
-    collect_imported_dependency_externs, collect_top_level_definition_names,
-};
 use crate::dependency_bridge_modules::{
     dependency_generic_specialization_module_refs, dependency_generic_specialization_modules,
-    dependency_interface_module_import_path, package_under_test_bridge_modules,
+    package_under_test_bridge_modules,
 };
-use crate::dependency_bridge_names::DependencyExternOwner;
+use crate::dependency_bridge_package_under_test_collection::{
+    PackageUnderTestBridgeCollectionError, collect_package_under_test_bridge_items,
+};
 use crate::dependency_bridge_public_function_errors::report_package_under_test_function_forwarder_error;
-use crate::dependency_bridge_public_function_forwarders::collect_dependency_module_public_function_forwarders;
-use crate::dependency_bridge_public_type_declaration_collection::collect_dependency_module_public_type_declarations;
 use crate::dependency_bridge_public_type_errors::report_package_under_test_type_bridge_error;
 
 pub(crate) fn render_package_under_test_bridge_items(
@@ -54,74 +50,38 @@ pub(crate) fn render_package_under_test_bridge_items(
         dependency_generic_specialization_modules(command_label, &owner_manifest, report_failure)?;
     let specialization_modules =
         dependency_generic_specialization_module_refs(&specialization_modules);
-    let module_import_paths = bridge_modules
-        .iter()
-        .map(|module| dependency_interface_module_import_path(package_name, &module.module))
-        .collect::<BTreeSet<_>>();
-    let imported_externs =
-        collect_imported_dependency_externs(&root_source_module, &module_import_paths);
-    let occupied_root_names = collect_top_level_definition_names(&root_source_module);
-
-    let mut forwarders = Vec::new();
-    let mut source_rewrites = Vec::new();
-    let mut required_types_by_module_path = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
-    let mut function_owners = BTreeMap::<String, DependencyExternOwner>::new();
-    let mut rendered_specializations = BTreeSet::new();
-    for module in &bridge_modules {
-        collect_dependency_module_public_function_forwarders(
-            package_name,
-            manifest_path,
-            &module.module,
-            &module.source,
-            &root_source_module,
-            Some(&imported_externs),
-            None,
-            &occupied_root_names,
-            &specialization_modules,
-            &mut required_types_by_module_path,
-            &mut function_owners,
-            &mut forwarders,
-            &mut source_rewrites,
-            &mut rendered_specializations,
-        )
-        .map_err(|error| {
-            if !report_failure {
-                return 1;
+    let collected = collect_package_under_test_bridge_items(
+        package_name,
+        manifest_path,
+        &root_source_module,
+        &bridge_modules,
+        &specialization_modules,
+    )
+    .map_err(|error| {
+        if report_failure {
+            match error {
+                PackageUnderTestBridgeCollectionError::Function(error) => {
+                    report_package_under_test_function_forwarder_error(
+                        command_label,
+                        package_name,
+                        error,
+                    );
+                }
+                PackageUnderTestBridgeCollectionError::Type(error) => {
+                    report_package_under_test_type_bridge_error(command_label, package_name, error);
+                }
             }
-            report_package_under_test_function_forwarder_error(command_label, package_name, error);
-            1
-        })?;
-    }
+        }
+        1
+    })?;
 
-    let mut type_declarations = Vec::new();
-    let mut type_owners = BTreeMap::<String, DependencyExternOwner>::new();
-    for module in &bridge_modules {
-        let module_import_path =
-            dependency_interface_module_import_path(package_name, &module.module);
-        collect_dependency_module_public_type_declarations(
-            package_name,
-            manifest_path,
-            &module.module,
-            &module.source,
-            Some(&imported_externs),
-            required_types_by_module_path.get(&module_import_path),
-            &occupied_root_names,
-            &mut type_owners,
-            &mut type_declarations,
-        )
-        .map_err(|error| {
-            if report_failure {
-                report_package_under_test_type_bridge_error(command_label, package_name, error);
-            }
-            1
-        })?;
-    }
-
-    let declarations =
-        join_dependency_bridge_sections(&type_declarations.join("\n\n"), &forwarders.join("\n\n"));
+    let declarations = join_dependency_bridge_sections(
+        &collected.type_declarations.join("\n\n"),
+        &collected.function_forwarders.join("\n\n"),
+    );
     Ok(RenderedDependencyBridgeItems {
         declarations,
-        source_rewrites,
+        source_rewrites: collected.source_rewrites,
     })
 }
 
