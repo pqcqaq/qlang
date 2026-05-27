@@ -3,10 +3,11 @@ use std::collections::BTreeSet;
 use ql_ast::{self, Expr, ExprKind, FunctionDecl, ItemKind, TypeExpr};
 use ql_span::Span;
 
+use super::call_inference::{
+    call_arg_expr, infer_dependency_generic_function_substitutions, ordered_call_arg_expected_types,
+};
 use super::expr_inference::{
-    ValueTypeBindings, call_arg_expr, collect_function_param_type_bindings,
-    infer_dependency_generic_function_substitutions, ordered_call_arg_expected_types,
-    record_let_type_bindings,
+    ValueTypeBindings, collect_function_param_type_bindings, record_let_type_bindings,
 };
 use super::function_bindings::FunctionTypeBindings;
 use super::substitutions::TypeSubstitutions;
