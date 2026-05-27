@@ -4,6 +4,7 @@ use ql_ast::{FunctionDecl, Module, Param, Visibility};
 #[cfg(test)]
 use std::collections::BTreeSet;
 
+mod expr_inference;
 mod function_bindings;
 mod inferred_types;
 mod instantiations;
