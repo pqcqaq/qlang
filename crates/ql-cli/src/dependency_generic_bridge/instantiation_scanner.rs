@@ -3,12 +3,12 @@ use std::collections::BTreeSet;
 use ql_ast::{self, FunctionDecl, ItemKind, TypeExpr};
 use ql_span::Span;
 
-use super::expr_inference::{
-    ValueTypeBindings, collect_function_param_type_bindings, record_let_type_bindings,
-};
 use super::function_bindings::FunctionTypeBindings;
 use super::instantiation_expr_scanner::collect_dependency_generic_function_instantiations_from_expr;
 use super::substitutions::TypeSubstitutions;
+use super::value_bindings::{
+    ValueTypeBindings, collect_function_param_type_bindings, record_let_type_bindings,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct PublicFunctionCallInstantiation {

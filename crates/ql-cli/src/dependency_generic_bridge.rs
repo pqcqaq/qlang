@@ -17,6 +17,7 @@ mod instantiations;
 mod rendering;
 mod specializations;
 mod substitutions;
+mod value_bindings;
 
 pub(crate) use self::specializations::{
     render_local_function_specializations,

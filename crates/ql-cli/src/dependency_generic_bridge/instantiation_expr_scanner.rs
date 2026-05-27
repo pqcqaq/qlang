@@ -4,11 +4,11 @@ use ql_ast::{self, Expr, ExprKind, FunctionDecl, TypeExpr};
 
 use super::call_args::{call_arg_expr, ordered_call_arg_expected_types};
 use super::call_inference::infer_dependency_generic_function_substitutions;
-use super::expr_inference::ValueTypeBindings;
 use super::function_bindings::FunctionTypeBindings;
 use super::instantiation_scanner::{
     PublicFunctionCallInstantiation, collect_dependency_generic_function_instantiations_from_block,
 };
+use super::value_bindings::ValueTypeBindings;
 
 pub(super) fn collect_dependency_generic_function_instantiations_from_expr(
     expr: &Expr,

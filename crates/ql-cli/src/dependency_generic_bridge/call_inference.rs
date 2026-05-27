@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use ql_ast::{CallArg, Expr, ExprKind, FunctionDecl, TypeExpr, TypeExprKind};
 
 use super::call_args::{call_arg_expr, ordered_dependency_generic_call_args};
-use super::expr_inference::{ValueTypeBindings, infer_dependency_generic_expr_type};
+use super::expr_inference::infer_dependency_generic_expr_type;
 use super::function_bindings::FunctionTypeBindings;
 use super::inferred_type_conversion::inferred_type_from_type_expr_with_substitutions;
 use super::inferred_types::InferredType;
@@ -12,6 +12,7 @@ use super::substitutions::{
     collect_generic_type_substitutions, generic_param_name_for_type_expr,
     type_expr_mentions_generic,
 };
+use super::value_bindings::ValueTypeBindings;
 
 pub(super) fn infer_dependency_generic_function_substitutions(
     function: &FunctionDecl,

@@ -1,7 +1,6 @@
 use ql_ast::{CallArg, Expr, ExprKind, FunctionDecl, Param, TypeExpr};
 
 use super::call_inference::collect_generic_type_substitutions_from_arg_expr;
-use super::expr_inference::ValueTypeBindings;
 use super::function_bindings::FunctionTypeBindings;
 use super::inferred_type_conversion::{
     inferred_type_from_type_expr_with_substitutions, type_expr_from_inferred_type,
@@ -10,6 +9,7 @@ use super::inferred_types::InferredType;
 use super::substitutions::{
     TypeSubstitutions, collect_generic_type_substitutions, type_expr_mentions_generic,
 };
+use super::value_bindings::ValueTypeBindings;
 
 pub(super) fn call_arg_expr(arg: &CallArg) -> &Expr {
     match arg {
