@@ -1,11 +1,9 @@
 use std::collections::BTreeSet;
 
 use super::function_bindings::{FunctionTypeBindings, dependency_imported_local_names};
+use super::instantiation_block_scanner::collect_dependency_generic_function_instantiations_from_block;
 pub(super) use super::instantiation_scanner::PublicFunctionCallInstantiation;
-use super::instantiation_scanner::{
-    collect_dependency_generic_function_instantiations_from_block,
-    collect_dependency_generic_function_instantiations_from_item,
-};
+use super::instantiation_scanner::collect_dependency_generic_function_instantiations_from_item;
 use super::substitutions::TypeSubstitutions;
 use super::value_bindings::{
     ValueTypeBindings, collect_function_param_type_bindings_with_substitutions,

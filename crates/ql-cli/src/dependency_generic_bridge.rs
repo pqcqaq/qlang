@@ -11,6 +11,7 @@ mod function_bindings;
 mod inferred_type_conversion;
 mod inferred_type_predicates;
 mod inferred_types;
+mod instantiation_block_scanner;
 mod instantiation_expr_scanner;
 mod instantiation_scanner;
 mod instantiations;
