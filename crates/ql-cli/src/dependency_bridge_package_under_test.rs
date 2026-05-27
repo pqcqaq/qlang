@@ -19,12 +19,8 @@ use crate::dependency_bridge_modules::{
 use crate::dependency_bridge_names::DependencyExternOwner;
 use crate::dependency_bridge_public_function_errors::report_package_under_test_function_forwarder_error;
 use crate::dependency_bridge_public_functions::collect_dependency_module_public_function_forwarders;
-use crate::dependency_bridge_public_type_declarations::{
-    DependencyPublicTypeBridgeError, collect_dependency_module_public_type_declarations,
-};
-use crate::dependency_bridge_reporting::{
-    report_package_under_test_local_conflict, report_package_under_test_symbol_conflict,
-};
+use crate::dependency_bridge_public_type_declarations::collect_dependency_module_public_type_declarations;
+use crate::dependency_bridge_public_type_errors::report_package_under_test_type_bridge_error;
 
 pub(crate) fn render_package_under_test_bridge_items(
     command_label: &str,
@@ -127,32 +123,6 @@ pub(crate) fn render_package_under_test_bridge_items(
         declarations,
         source_rewrites,
     })
-}
-
-fn report_package_under_test_type_bridge_error(
-    command_label: &str,
-    package_name: &str,
-    error: DependencyPublicTypeBridgeError,
-) {
-    match error {
-        DependencyPublicTypeBridgeError::DependencyConflict { symbol, owner } => {
-            report_package_under_test_symbol_conflict(
-                command_label,
-                "public type",
-                &symbol,
-                &owner.package_name,
-                package_name,
-            );
-        }
-        DependencyPublicTypeBridgeError::LocalConflict { symbol } => {
-            report_package_under_test_local_conflict(
-                command_label,
-                "public type",
-                &symbol,
-                "rename the local top-level item or avoid importing a package-under-test public type with the same original symbol name",
-            );
-        }
-    }
 }
 
 #[cfg(test)]
