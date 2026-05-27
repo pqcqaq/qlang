@@ -4,6 +4,7 @@ use std::process::ExitCode;
 mod analysis_commands;
 mod build_command;
 mod build_failure_reporting;
+mod build_interface_emission;
 mod build_json_report;
 mod build_outputs;
 mod build_pipeline;

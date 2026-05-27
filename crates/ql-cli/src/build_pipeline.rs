@@ -2,6 +2,9 @@ use std::path::Path;
 
 use ql_driver::BuildOptions;
 
+use crate::build_interface_emission::{
+    emit_built_package_interface, emit_built_package_interface_quiet,
+};
 use crate::build_json_report::{BuildJsonReport, emit_build_json_failure};
 use crate::build_outputs::{
     first_colliding_project_build_header_output_path, first_colliding_project_build_output_path,
@@ -16,10 +19,7 @@ use crate::build_reporting::{
     load_workspace_build_targets_for_build_json_from_request_root,
     select_workspace_build_targets_for_build_json,
 };
-use crate::build_single_source::{
-    build_single_source_target, build_single_source_target_result, emit_built_package_interface,
-    emit_built_package_interface_quiet,
-};
+use crate::build_single_source::{build_single_source_target, build_single_source_target_result};
 use crate::cli_utils::normalize_path;
 use crate::project_interfaces::prepare_reference_interfaces_for_manifests_quiet;
 use crate::project_reference_interfaces::prepare_reference_interfaces_for_manifests;

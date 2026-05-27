@@ -3,14 +3,14 @@ use std::path::{Path, PathBuf};
 use ql_driver::{BuildArtifact, BuildOptions};
 use ql_project::{BuildTarget, BuildTargetKind, WorkspaceBuildTargets};
 
+use crate::build_interface_emission::{
+    emit_built_package_interface, emit_built_package_interface_quiet,
+};
 use crate::build_json_report::{BuildJsonReport, emit_build_json_failure};
 use crate::build_outputs::{project_dependency_target_build_options, project_target_build_options};
 use crate::build_plan::{BuildTargetJsonError, ProjectBuildPlanMember};
 use crate::build_reporting::{
     build_json_emit_interface_failure, build_json_preflight_failure, build_json_target_prep_failure,
-};
-use crate::build_single_source::{
-    emit_built_package_interface, emit_built_package_interface_quiet,
 };
 use crate::cli_utils::normalize_path;
 use crate::project_target_build::{
