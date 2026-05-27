@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use ql_driver::ToolchainError;
+use ql_driver::{BuildError, ToolchainError};
 use ql_project::{BuildTargetKind, ManifestBuildProfile};
 
 use crate::project_interfaces::ReferenceInterfacePrepFailure;
