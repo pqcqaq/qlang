@@ -1,8 +1,8 @@
 use ql_ast::{self, CallArg, Expr, ExprKind, TypeExpr};
 
-use super::call_args::{call_arg_expr, ordered_call_arg_expected_types};
-use super::call_inference::infer_dependency_generic_function_substitutions;
+use super::call_args::call_arg_expr;
 use super::instantiation_block_scanner::collect_dependency_generic_function_instantiations_from_block;
+use super::instantiation_call_scanner::scan_call_instantiation;
 use super::instantiation_scan_context::InstantiationScanContext;
 use super::value_bindings::ValueTypeBindings;
 
@@ -105,27 +105,8 @@ impl ExprInstantiationScanner<'_, '_> {
         return_expected_ty: Option<&TypeExpr>,
         bindings: &ValueTypeBindings,
     ) {
-        let ordered_arg_expected_types = ordered_call_arg_expected_types(
-            callee,
-            args,
-            expected_ty,
-            bindings,
-            self.context.function_bindings,
-        );
-        if let ExprKind::Name(name) = &callee.kind
-            && self.context.local_names.contains(name)
-        {
-            self.context.mark_call_seen();
-            if let Some(substitutions) = infer_dependency_generic_function_substitutions(
-                self.context.target_function,
-                args,
-                expected_ty,
-                bindings,
-                self.context.function_bindings,
-            ) {
-                self.context.push_instantiation(callee.span, substitutions);
-            }
-        }
+        let ordered_arg_expected_types =
+            scan_call_instantiation(callee, args, expected_ty, bindings, self.context);
         self.scan_child_expr(callee, return_expected_ty, bindings);
         for (arg, arg_expected_ty) in args.iter().zip(ordered_arg_expected_types.iter()) {
             self.scan_expr(

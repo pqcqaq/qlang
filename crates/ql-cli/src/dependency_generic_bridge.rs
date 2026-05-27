@@ -12,6 +12,7 @@ mod inferred_type_conversion;
 mod inferred_type_predicates;
 mod inferred_types;
 mod instantiation_block_scanner;
+mod instantiation_call_scanner;
 mod instantiation_expr_scanner;
 mod instantiation_scan_context;
 mod instantiation_scanner;
