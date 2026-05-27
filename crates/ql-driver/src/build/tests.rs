@@ -12,7 +12,8 @@
     use super::{
         BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderSurface,
         build_file, default_build_c_header_output_path, default_output_path,
-        prepare_build_codegen, resolve_build_outputs,
+        emit_build_artifact, object_extension, prepare_build_codegen, resolve_build_outputs,
+        ToolchainEmissionWorkspace,
     };
 
     fn compact_test_prefix(prefix: &str) -> String {
@@ -325,6 +326,78 @@ fn helper() -> Int {
             ),
             other => panic!("expected invalid input error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn toolchain_emission_workspace_tracks_intermediate_and_cleanup_paths() {
+        let dir = TestDir::new("ql-driver-emission-workspace");
+        let output = dir.path().join("artifacts/module.bin");
+
+        let assembly_workspace = ToolchainEmissionWorkspace::without_object(&output);
+        assert_eq!(
+            assembly_workspace.intermediate_ir.parent(),
+            output.parent()
+        );
+        assert!(assembly_workspace.intermediate_object.is_none());
+        assert!(
+            assembly_workspace
+                .intermediate_ir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains(".codegen.ll"))
+        );
+        assert_eq!(
+            assembly_workspace.cleanup_ir(),
+            vec![assembly_workspace.intermediate_ir.clone()]
+        );
+
+        let link_workspace = ToolchainEmissionWorkspace::with_object(&output);
+        let intermediate_object = link_workspace.intermediate_object();
+        assert_eq!(intermediate_object.parent(), output.parent());
+        assert_eq!(
+            intermediate_object.extension().and_then(|extension| extension.to_str()),
+            Some(object_extension())
+        );
+        assert_eq!(
+            link_workspace.preserve_ir_and_object(),
+            vec![
+                link_workspace.intermediate_ir.clone(),
+                intermediate_object.clone()
+            ]
+        );
+        assert_eq!(
+            link_workspace
+                .temp_output_path
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("bin")
+        );
+    }
+
+    #[test]
+    fn emit_build_artifact_writes_llvm_ir_directly() {
+        let dir = TestDir::new("ql-driver-emission-llvm-ir");
+        let output = dir.path().join("artifacts/direct.ll");
+        fs::create_dir_all(output.parent().expect("output should have a parent"))
+            .expect("create output directory");
+
+        emit_build_artifact(
+            BuildEmit::LlvmIr,
+            &output,
+            "define i32 @main() { ret i32 0 }\n",
+            &[],
+            &[],
+            &ToolchainOptions {
+                clang: Some(ProgramInvocation::new("missing-clang-should-not-run")),
+                ..ToolchainOptions::default()
+            },
+        )
+        .expect("LLVM IR emission should not require toolchain discovery");
+
+        assert_eq!(
+            fs::read_to_string(&output).expect("read emitted LLVM IR"),
+            "define i32 @main() { ret i32 0 }\n"
+        );
     }
 
     #[test]
