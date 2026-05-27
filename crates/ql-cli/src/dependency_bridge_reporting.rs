@@ -26,6 +26,10 @@ fn package_under_test_note(package_name: &str) -> String {
     format!("note: package under test: `{package_name}`")
 }
 
+fn render_dependency_bridge_prep_error(command_label: &str, error: impl Display) -> [String; 1] {
+    [format!("error: {command_label} {error}")]
+}
+
 pub(crate) fn dependency_interface_load_message(
     interface_path: &Path,
     error: impl Display,
@@ -226,6 +230,12 @@ pub(crate) fn report_dependency_interface_load_failure(
     }
 }
 
+pub(crate) fn report_dependency_bridge_prep_error(command_label: &str, error: impl Display) {
+    for line in render_dependency_bridge_prep_error(command_label, error) {
+        eprintln!("{line}");
+    }
+}
+
 pub(crate) fn report_package_under_test_source_read_failure(
     command_label: &str,
     source_path: &Path,
@@ -372,6 +382,13 @@ pub(crate) fn report_package_under_test_unsupported_generic_function(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dependency_bridge_prep_error_preserves_single_line_contract() {
+        let lines = render_dependency_bridge_prep_error("`ql build`", "invalid manifest");
+
+        assert_eq!(lines, ["error: `ql build` invalid manifest"]);
+    }
 
     #[test]
     fn interface_load_failure_lines_preserve_context() {

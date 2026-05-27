@@ -13,6 +13,7 @@ use crate::dependency_bridge_names::{
 use crate::dependency_bridge_public_types::{
     dependency_public_struct_method_bridge_candidates, dependency_public_type_bridge_candidates,
 };
+use crate::dependency_bridge_reporting::report_dependency_bridge_prep_error;
 
 pub(crate) fn render_public_dependency_function_export_wrappers(
     command_label: &str,
@@ -22,13 +23,13 @@ pub(crate) fn render_public_dependency_function_export_wrappers(
 ) -> Result<String, u8> {
     let manifest = load_project_manifest(manifest_path).map_err(|error| {
         if report_failure {
-            eprintln!("error: {command_label} {error}");
+            report_dependency_bridge_prep_error(command_label, &error);
         }
         1
     })?;
     let package_name = package_name(&manifest).map_err(|error| {
         if report_failure {
-            eprintln!("error: {command_label} {error}");
+            report_dependency_bridge_prep_error(command_label, &error);
         }
         1
     })?;
