@@ -7,12 +7,12 @@ use ql_ast::{
 
 use super::call_inference::infer_function_call_return_type;
 use super::function_bindings::FunctionTypeBindings;
-use super::inferred_types::{
-    InferredType, InferredTypeKind, are_inferred_bool_types,
-    inferred_type_from_type_expr_with_substitutions, is_inferred_bool_type,
-    is_inferred_equality_comparable_type, is_inferred_numeric_type,
-    is_inferred_ordered_comparable_type, render_inferred_tuple_type,
+use super::inferred_type_conversion::inferred_type_from_type_expr_with_substitutions;
+use super::inferred_type_predicates::{
+    are_inferred_bool_types, is_inferred_bool_type, is_inferred_equality_comparable_type,
+    is_inferred_numeric_type, is_inferred_ordered_comparable_type,
 };
+use super::inferred_types::{InferredType, InferredTypeKind, render_inferred_tuple_type};
 use super::substitutions::TypeSubstitutions;
 
 pub(super) type ValueTypeBindings = BTreeMap<String, InferredType>;

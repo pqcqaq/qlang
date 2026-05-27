@@ -1,3 +1,6 @@
+use super::super::inferred_type_conversion::{
+    inferred_type_from_rendered_substitution, type_expr_from_inferred_type,
+};
 use super::*;
 
 #[test]
