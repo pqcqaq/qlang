@@ -14,7 +14,6 @@ use ql_project::{
     render_manifest_with_added_local_dependency,
 };
 use ql_span::Span;
-use serde_json::json;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::{Error, Result};
 use tower_lsp::lsp_types::request::{
@@ -24,29 +23,22 @@ use tower_lsp::lsp_types::request::{
 use tower_lsp::lsp_types::{
     CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
     CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
-    CallHierarchyServerCapability, CodeAction, CodeActionKind, CodeActionOptions,
-    CodeActionOrCommand, CodeActionParams, CodeActionProviderCapability, CodeLens, CodeLensOptions,
-    CodeLensParams, CompletionItem as LspCompletionItem, CompletionOptions, CompletionParams,
-    CompletionResponse, DeclarationCapability, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFilter,
-    DocumentFormattingParams, DocumentHighlight, DocumentHighlightParams, DocumentLink,
-    DocumentLinkOptions, DocumentLinkParams, DocumentOnTypeFormattingOptions,
-    DocumentOnTypeFormattingParams, DocumentRangeFormattingParams, DocumentSymbolParams,
-    DocumentSymbolResponse, FoldingRange, FoldingRangeParams, FoldingRangeProviderCapability,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
-    ImplementationProviderCapability, InitializeParams, InitializeResult, InitializedParams,
-    InlayHint, InlayHintParams, Location, MessageType, NumberOrString, OneOf,
-    PrepareRenameResponse, ReferenceParams, Registration, RenameOptions, RenameParams,
-    SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability,
-    SemanticTokensFullOptions, SemanticTokensOptions, SemanticTokensParams,
-    SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult,
-    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
-    SignatureHelpOptions, SignatureHelpParams, StaticRegistrationOptions, SymbolInformation,
-    SymbolKind as LspSymbolKind, TextDocumentPositionParams, TextDocumentRegistrationOptions,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit,
-    TypeDefinitionProviderCapability, TypeHierarchyItem, TypeHierarchyOptions,
-    TypeHierarchyPrepareParams, TypeHierarchyRegistrationOptions, TypeHierarchySubtypesParams,
-    TypeHierarchySupertypesParams, Url, WorkspaceEdit, WorkspaceSymbolParams,
+    CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams, CodeLens, CodeLensParams,
+    CompletionItem as LspCompletionItem, CompletionParams, CompletionResponse,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DocumentFilter, DocumentFormattingParams, DocumentHighlight, DocumentHighlightParams,
+    DocumentLink, DocumentLinkParams, DocumentOnTypeFormattingParams,
+    DocumentRangeFormattingParams, DocumentSymbolParams, DocumentSymbolResponse, FoldingRange,
+    FoldingRangeParams, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
+    InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintParams, Location,
+    MessageType, NumberOrString, PrepareRenameResponse, ReferenceParams, Registration,
+    RenameParams, SelectionRange, SelectionRangeParams, SemanticTokensParams,
+    SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult, SignatureHelp,
+    SignatureHelpParams, StaticRegistrationOptions, SymbolInformation, SymbolKind as LspSymbolKind,
+    TextDocumentPositionParams, TextDocumentRegistrationOptions, TextEdit, TypeHierarchyItem,
+    TypeHierarchyOptions, TypeHierarchyPrepareParams, TypeHierarchyRegistrationOptions,
+    TypeHierarchySubtypesParams, TypeHierarchySupertypesParams, Url, WorkspaceEdit,
+    WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -70,12 +62,12 @@ use crate::bridge::{
     references_for_dependency_struct_fields, references_for_dependency_values,
     references_for_dependency_variants, references_for_package_analysis, rename_for_analysis,
     rename_for_dependency_imports, semantic_tokens_for_analysis,
-    semantic_tokens_for_analysis_range, semantic_tokens_legend, span_to_range,
-    type_definition_for_analysis, type_definition_for_dependency_imports,
-    type_definition_for_dependency_method_types, type_definition_for_dependency_struct_field_types,
-    type_definition_for_dependency_values, type_definition_for_dependency_variants,
-    type_definition_for_package_analysis, type_hierarchy_prepare_for_analysis,
-    type_hierarchy_subtypes_for_analysis, type_hierarchy_supertypes_for_analysis,
+    semantic_tokens_for_analysis_range, span_to_range, type_definition_for_analysis,
+    type_definition_for_dependency_imports, type_definition_for_dependency_method_types,
+    type_definition_for_dependency_struct_field_types, type_definition_for_dependency_values,
+    type_definition_for_dependency_variants, type_definition_for_package_analysis,
+    type_hierarchy_prepare_for_analysis, type_hierarchy_subtypes_for_analysis,
+    type_hierarchy_supertypes_for_analysis,
 };
 use crate::editor_features::{
     completion_for_keywords, folding_ranges_for_source, hover_for_keyword,
@@ -85,6 +77,7 @@ use crate::editor_features::{
 use crate::store::DocumentStore;
 
 mod call_hints;
+mod capabilities;
 mod code_lens;
 mod diagnostics;
 mod document_link;
@@ -94,6 +87,8 @@ mod semantic_tokens;
 mod workspace_symbols;
 
 use call_hints::{inlay_hints_for_workspace_context, signature_help_for_workspace_context};
+#[cfg(test)]
+use capabilities::completion_options;
 use code_lens::{code_lenses_for_analysis, code_lenses_for_workspace_package_analysis};
 use diagnostics::document_diagnostics;
 use document_link::document_links_for_package_imports;
@@ -8309,30 +8304,6 @@ fn fallback_document_highlights_for_package_at_with_open_docs(
     document_highlights_from_locations(uri, locations)
 }
 
-fn completion_options() -> CompletionOptions {
-    CompletionOptions {
-        trigger_characters: Some(
-            [".", ":", "\"", "/", "@", "<"]
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
-        ),
-        resolve_provider: Some(true),
-        ..CompletionOptions::default()
-    }
-}
-
-fn code_action_options() -> CodeActionProviderCapability {
-    CodeActionProviderCapability::Options(CodeActionOptions {
-        code_action_kinds: Some(vec![
-            CodeActionKind::QUICKFIX,
-            CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
-        ]),
-        resolve_provider: Some(true),
-        ..CodeActionOptions::default()
-    })
-}
-
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
@@ -8345,77 +8316,9 @@ impl LanguageServer for Backend {
             .and_then(|capabilities| capabilities.dynamic_registration)
             .unwrap_or(false);
         *self.type_hierarchy_dynamic_registration.write().await = supports_dynamic_type_hierarchy;
-        Ok(InitializeResult {
-            server_info: Some(ServerInfo {
-                name: "qlsp".to_owned(),
-                version: Some(env!("CARGO_PKG_VERSION").to_owned()),
-            }),
-            capabilities: ServerCapabilities {
-                text_document_sync: Some(TextDocumentSyncCapability::Options(
-                    TextDocumentSyncOptions {
-                        open_close: Some(true),
-                        change: Some(TextDocumentSyncKind::FULL),
-                        ..Default::default()
-                    },
-                )),
-                selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
-                hover_provider: Some(HoverProviderCapability::Simple(true)),
-                definition_provider: Some(OneOf::Left(true)),
-                declaration_provider: Some(DeclarationCapability::Simple(true)),
-                type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
-                implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
-                references_provider: Some(OneOf::Left(true)),
-                document_highlight_provider: Some(OneOf::Left(true)),
-                document_link_provider: Some(DocumentLinkOptions {
-                    resolve_provider: Some(false),
-                    work_done_progress_options: Default::default(),
-                }),
-                document_symbol_provider: Some(OneOf::Left(true)),
-                workspace_symbol_provider: Some(OneOf::Left(true)),
-                call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
-                code_lens_provider: Some(CodeLensOptions {
-                    resolve_provider: Some(true),
-                }),
-                completion_provider: Some(completion_options()),
-                signature_help_provider: Some(SignatureHelpOptions {
-                    trigger_characters: Some(
-                        ["(", ",", "<"].into_iter().map(str::to_owned).collect(),
-                    ),
-                    retrigger_characters: Some([")"].into_iter().map(str::to_owned).collect()),
-                    work_done_progress_options: Default::default(),
-                }),
-                code_action_provider: Some(code_action_options()),
-                document_formatting_provider: Some(OneOf::Left(true)),
-                document_range_formatting_provider: Some(OneOf::Left(true)),
-                document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
-                    first_trigger_character: "\n".to_owned(),
-                    more_trigger_character: Some(
-                        ["}", ";", ","].into_iter().map(str::to_owned).collect(),
-                    ),
-                }),
-                folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
-                semantic_tokens_provider: Some(
-                    SemanticTokensServerCapabilities::SemanticTokensOptions(
-                        SemanticTokensOptions {
-                            legend: semantic_tokens_legend(),
-                            range: Some(true),
-                            full: Some(SemanticTokensFullOptions::Bool(true)),
-                            ..Default::default()
-                        },
-                    ),
-                ),
-                inlay_hint_provider: Some(OneOf::Left(true)),
-                rename_provider: Some(OneOf::Right(RenameOptions {
-                    prepare_provider: Some(true),
-                    work_done_progress_options: Default::default(),
-                })),
-                experimental: Some(json!({
-                    "typeHierarchyProvider": true,
-                    "qlspDynamicTypeHierarchyProvider": supports_dynamic_type_hierarchy,
-                })),
-                ..Default::default()
-            },
-        })
+        Ok(capabilities::initialize_result(
+            supports_dynamic_type_hierarchy,
+        ))
     }
 
     async fn initialized(&self, _: InitializedParams) {

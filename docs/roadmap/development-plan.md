@@ -29,7 +29,7 @@
 - `project init --stdlib` starter 是 downstream 可用性入口；package/workspace 的 `check/build/run/test`、interface sync/check、graph/status/targets/dependencies/dependents、lock stale failure 和 JSON/listing 合同都必须持续覆盖。
 - `ql test` 已覆盖 package-under-test、direct dependency 和 local generic source override 的组合路径；后续重点是继续与 build/run 的 selector、profile、JSON failure 合同保持一致。
 - stdlib public API 继续优先用泛型、数组长度泛型和语言能力表达；新增 API 必须进入 package-local smoke 或 starter/downstream smoke。
-- LSP 已共享 request context 并拆出主要 request family；下一步是稳定 workspace index/cache 生命周期，减少重复扫描。
+- LSP 已共享 request context 并拆出主要 request family；initialize capabilities 和 `qlsp` binary tests 已外置；下一步是稳定 workspace index/cache 生命周期，减少重复扫描。
 - README、roadmap、stdlib、VSCode 文档必须跟实现同步；实现未落地时文档写成未支持。
 - JSON 输出继续覆盖成功和 preflight/render/selection failure；新增命令路径必须同时考虑文本和 JSON 合同。
 

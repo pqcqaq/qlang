@@ -12,9 +12,7 @@ async fn main() {
     if let Some(command) = remaining.first() {
         if is_version_command(command) {
             if remaining.len() > 1 {
-                eprintln!(
-                    "error: `qlsp {command}` does not accept additional arguments"
-                );
+                eprintln!("error: `qlsp {command}` does not accept additional arguments");
                 std::process::exit(1);
             }
             println!("{}", version_text(SERVER_NAME));
@@ -38,22 +36,5 @@ fn version_text(binary_name: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{is_version_command, version_text};
-
-    #[test]
-    fn version_text_includes_package_version() {
-        assert_eq!(
-            version_text("qlsp"),
-            format!("qlsp {}", env!("CARGO_PKG_VERSION"))
-        );
-    }
-
-    #[test]
-    fn version_command_recognizes_global_aliases() {
-        for command in ["--version", "-V", "version"] {
-            assert!(is_version_command(command), "expected {command} to be recognized");
-        }
-        assert!(!is_version_command("stdio"));
-    }
-}
+#[path = "main_tests.rs"]
+mod tests;
