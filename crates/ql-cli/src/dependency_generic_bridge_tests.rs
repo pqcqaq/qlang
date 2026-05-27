@@ -139,10 +139,10 @@ pub fn reverse_array[T, N](values: [T; N]) -> [T; N] {
     let dependency_source = r#"
 package dep
 
-use helper.reverse_array as reverse_array
+use helper.reverse_array as rev
 
 pub fn reverse_wrapped[T, N](values: [T; N]) -> [T; N] {
-    return reverse_array(values)
+    return rev(values)
 }
 "#;
     let helper = parse_module(helper_source);
@@ -184,11 +184,7 @@ fn run() -> [String; 3] {
             .declarations
             .contains("return __ql_bridge_local_helper_reverse_array__generic_String_3(values)")
     );
-    assert!(
-        !rendered
-            .declarations
-            .contains("return reverse_array(values)")
-    );
+    assert!(!rendered.declarations.contains("return rev(values)"));
     assert_eq!(rendered.call_rewrites.len(), 1);
     assert_eq!(
         rendered.call_rewrites[0].replacement,

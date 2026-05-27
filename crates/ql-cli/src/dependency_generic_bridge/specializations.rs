@@ -4,15 +4,14 @@ use ql_ast::{FunctionDecl, Module};
 
 use super::function_bindings::{FunctionTypeBindings, collect_local_function_type_bindings};
 use super::instantiations;
-use super::rendering::dependency_public_function_specialized_local_forwarder_name;
 use super::specialization_function_bindings::{
     collect_root_call_function_type_bindings, collect_specialization_function_type_bindings,
 };
 use super::specialized_forwarders::{
-    has_complete_generic_substitutions, render_public_function_specialized_forwarder,
+    SpecializedForwarderRenderContext, has_complete_generic_substitutions, specialized_call_rewrite,
 };
 use super::{
-    PublicFunctionSpecializationRender, RenderedPublicFunctionSpecializations, SourceRewrite,
+    PublicFunctionSpecializationRender, RenderedPublicFunctionSpecializations,
     SpecializationModule, supports_local_function_specialization,
     supports_public_function_specialization,
 };
@@ -156,30 +155,31 @@ fn render_function_specializations(
     }
 
     let mut declarations = Vec::new();
+    let mut forwarder_context = SpecializedForwarderRenderContext::new(
+        function_bindings,
+        specialization_modules,
+        rendered_specializations,
+        &mut declarations,
+    );
     for substitutions in &concrete_instantiations {
-        render_public_function_specialized_forwarder(
+        forwarder_context.render_public_function_specialized_forwarder(
             module_import_path,
             function,
             contents,
             specialization_module,
-            function_bindings,
-            specialization_modules,
             substitutions,
-            rendered_specializations,
-            &mut declarations,
         )?;
     }
 
     let call_rewrites = call_instantiations
         .into_iter()
-        .map(|instantiation| SourceRewrite {
-            span: instantiation.callee_span,
-            replacement: dependency_public_function_specialized_local_forwarder_name(
+        .map(|instantiation| {
+            specialized_call_rewrite(
                 module_import_path,
-                &function.name,
                 function,
                 &instantiation.substitutions,
-            ),
+                instantiation.callee_span,
+            )
         })
         .collect();
 
