@@ -24,7 +24,7 @@
 
 ## 当前工作项
 
-- `ql-cli` 主入口已收口到命令分发，check/build/run/test 的主要 pipeline、reporting、target selection/discovery、execution 和 project build execution 已模块化；dependency bridge 的 error/reporting/collection/rendering、interface traversal 和 direct dependency source traversal 也已分层。下一步继续拆 dependency bridge 模块边界，所有移动必须保持行为不变并跑真实 workspace smoke。
+- `ql-cli` 主入口已收口到命令分发，check/build/run/test 的主要 pipeline、reporting、target selection/discovery、execution 和 project build execution 已模块化；dependency bridge 的 error/reporting/collection/rendering、interface traversal 和 direct dependency source traversal 也已分层，source traversal 测试已从生产模块外置。下一步继续拆 dependency bridge 模块边界，所有移动必须保持行为不变并跑真实 workspace smoke。
 - 关键输出写入已统一走同目录临时文件替换和输出路径锁，覆盖 artifact、header、source、manifest、lockfile、interface 以及 `run/test` 执行期 executable。后续并发问题继续按“先保护真实产物，再补 CLI smoke”的顺序处理。
 - `project init --stdlib` starter 是 downstream 可用性入口；package/workspace 的 `check/build/run/test`、interface sync/check、graph/status/targets/dependencies/dependents、lock stale failure 和 JSON/listing 合同都必须持续覆盖。
 - `ql test` 已覆盖 package-under-test、direct dependency 和 local generic source override 的组合路径；后续重点是继续与 build/run 的 selector、profile、JSON failure 合同保持一致。
