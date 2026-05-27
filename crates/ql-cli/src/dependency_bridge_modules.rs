@@ -9,15 +9,18 @@ use ql_project::{
 };
 
 use crate::build_plan::{
-    PrepareProjectTargetBuildError, PrepareProjectTargetBuildFailureKind,
-    report_project_build_dependency_error, target_prep_dependency_manifest_failure,
+    PrepareProjectTargetBuildError, report_project_build_dependency_error,
+    target_prep_dependency_interface_failure, target_prep_dependency_manifest_failure,
+    target_prep_dependency_source_parse_failure, target_prep_dependency_source_read_failure,
 };
-use crate::cli_utils::normalize_path;
 use crate::dependency_bridge_reporting::{
     report_dependency_interface_load_failure, report_dependency_source_parse_failure,
-    report_dependency_source_read_failure,
+    report_dependency_source_read_failure, report_package_under_test_source_parse_failure,
+    report_package_under_test_source_read_failure,
 };
 use crate::dependency_generic_bridge;
+
+const DEPENDENCY_GENERIC_SPECIALIZATION_CONTEXT: &str = "imported generic helper specializations";
 
 pub(crate) struct PackageBridgeModule {
     pub(crate) source: String,
@@ -52,19 +55,18 @@ enum DependencyGenericSpecializationModuleLoadError {
         dependency_manifest_path: PathBuf,
         dependency_package: String,
         interface_path: PathBuf,
-        message: String,
+        detail: String,
     },
     DependencySourceRead {
         dependency_manifest_path: PathBuf,
         dependency_package: String,
         source_path: PathBuf,
-        message: String,
+        detail: String,
     },
     DependencySourceParse {
         dependency_manifest_path: PathBuf,
         dependency_package: String,
         source_path: PathBuf,
-        message: String,
     },
 }
 
@@ -111,19 +113,13 @@ pub(crate) fn package_under_test_bridge_modules(
         }
         let source = fs::read_to_string(&target.path).map_err(|error| {
             if report_failure {
-                eprintln!(
-                    "error: {command_label} failed to access package-under-test source `{}`: {error}",
-                    normalize_path(&target.path)
-                );
+                report_package_under_test_source_read_failure(command_label, &target.path, error);
             }
             1
         })?;
         let module = parse_source(&source).map_err(|_| {
             if report_failure {
-                eprintln!(
-                    "error: {command_label} failed to parse package-under-test source `{}` while preparing test bridges",
-                    normalize_path(&target.path)
-                );
+                report_package_under_test_source_parse_failure(command_label, &target.path);
             }
             1
         })?;
@@ -197,10 +193,7 @@ fn load_dependency_generic_specialization_modules_from_dependencies(
                 dependency_manifest_path: dependency.manifest_path.clone(),
                 dependency_package: dependency_package.clone(),
                 interface_path: interface_path.clone(),
-                message: format!(
-                    "failed to load referenced package interface `{}`: {error}",
-                    normalize_path(&interface_path)
-                ),
+                detail: error.to_string(),
             }
         })?;
         for module in &artifact.modules {
@@ -211,10 +204,7 @@ fn load_dependency_generic_specialization_modules_from_dependencies(
                     dependency_manifest_path: dependency.manifest_path.clone(),
                     dependency_package: dependency_package.clone(),
                     source_path: dependency_source_path.clone(),
-                    message: format!(
-                        "failed to access dependency source `{}`: {error}",
-                        normalize_path(&dependency_source_path)
-                    ),
+                    detail: error.to_string(),
                 }
             })?;
             let parsed = parse_source(&source).map_err(|_| {
@@ -222,10 +212,6 @@ fn load_dependency_generic_specialization_modules_from_dependencies(
                     dependency_manifest_path: dependency.manifest_path.clone(),
                     dependency_package: dependency_package.clone(),
                     source_path: dependency_source_path.clone(),
-                    message: format!(
-                        "failed to parse dependency source `{}` while preparing imported generic helper specializations",
-                        normalize_path(&dependency_source_path)
-                    ),
                 }
             })?;
             let module_import_path =
@@ -252,25 +238,25 @@ fn report_dependency_generic_specialization_module_load_error(
         } => report_project_build_dependency_error(command_label, Some(manifest_path), error),
         DependencyGenericSpecializationModuleLoadError::DependencyInterface {
             interface_path,
-            message,
+            detail,
             ..
         } => report_dependency_interface_load_failure(
             command_label,
             &owner_manifest.manifest_path,
-            "imported generic helper specializations",
+            DEPENDENCY_GENERIC_SPECIALIZATION_CONTEXT,
             interface_path,
-            dependency_interface_load_detail(interface_path, message),
+            detail,
         ),
         DependencyGenericSpecializationModuleLoadError::DependencySourceRead {
             source_path,
-            message,
+            detail,
             ..
         } => report_dependency_source_read_failure(
             command_label,
             &owner_manifest.manifest_path,
-            "imported generic helper specializations",
+            DEPENDENCY_GENERIC_SPECIALIZATION_CONTEXT,
             source_path,
-            dependency_source_read_detail(source_path, message),
+            detail,
         ),
         DependencyGenericSpecializationModuleLoadError::DependencySourceParse {
             dependency_package,
@@ -281,26 +267,10 @@ fn report_dependency_generic_specialization_module_load_error(
                 command_label,
                 dependency_package,
                 source_path,
-                "imported generic helper specializations",
+                DEPENDENCY_GENERIC_SPECIALIZATION_CONTEXT,
             );
         }
     }
-}
-
-fn dependency_interface_load_detail<'a>(interface_path: &Path, message: &'a str) -> &'a str {
-    let prefix = format!(
-        "failed to load referenced package interface `{}`: ",
-        normalize_path(interface_path)
-    );
-    message.strip_prefix(&prefix).unwrap_or(message)
-}
-
-fn dependency_source_read_detail<'a>(source_path: &Path, message: &'a str) -> &'a str {
-    let prefix = format!(
-        "failed to access dependency source `{}`: ",
-        normalize_path(source_path)
-    );
-    message.strip_prefix(&prefix).unwrap_or(message)
 }
 
 fn dependency_generic_specialization_module_load_error_to_target_prep_error(
@@ -315,33 +285,99 @@ fn dependency_generic_specialization_module_load_error_to_target_prep_error(
             dependency_manifest_path,
             dependency_package,
             interface_path,
-            message,
-        } => PrepareProjectTargetBuildError {
-            failure_kind: PrepareProjectTargetBuildFailureKind::DependencyInterface {
-                dependency_manifest_path,
-                dependency_package,
-                interface_path,
-                message,
-            },
-        },
+            detail,
+        } => target_prep_dependency_interface_failure(
+            &dependency_manifest_path,
+            &dependency_package,
+            &interface_path,
+            detail,
+        ),
         DependencyGenericSpecializationModuleLoadError::DependencySourceRead {
             dependency_manifest_path,
             dependency_package,
             source_path,
-            message,
-        }
-        | DependencyGenericSpecializationModuleLoadError::DependencySourceParse {
+            detail,
+        } => target_prep_dependency_source_read_failure(
+            &dependency_manifest_path,
+            &dependency_package,
+            &source_path,
+            detail,
+        ),
+        DependencyGenericSpecializationModuleLoadError::DependencySourceParse {
             dependency_manifest_path,
             dependency_package,
             source_path,
-            message,
-        } => PrepareProjectTargetBuildError {
-            failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
-                dependency_manifest_path,
-                dependency_package,
-                source_path,
+        } => target_prep_dependency_source_parse_failure(
+            &dependency_manifest_path,
+            &dependency_package,
+            &source_path,
+            DEPENDENCY_GENERIC_SPECIALIZATION_CONTEXT,
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dependency_generic_specialization_quiet_mapping_reuses_target_prep_helpers() {
+        let interface_failure =
+            dependency_generic_specialization_module_load_error_to_target_prep_error(
+                DependencyGenericSpecializationModuleLoadError::DependencyInterface {
+                    dependency_manifest_path: PathBuf::from("workspace/dep/qlang.toml"),
+                    dependency_package: "dep".to_owned(),
+                    interface_path: PathBuf::from("workspace/dep/dep.qi"),
+                    detail: "missing interface".to_owned(),
+                },
+            );
+        let source_read_failure =
+            dependency_generic_specialization_module_load_error_to_target_prep_error(
+                DependencyGenericSpecializationModuleLoadError::DependencySourceRead {
+                    dependency_manifest_path: PathBuf::from("workspace/dep/qlang.toml"),
+                    dependency_package: "dep".to_owned(),
+                    source_path: PathBuf::from("workspace/dep/src/lib.ql"),
+                    detail: "access denied".to_owned(),
+                },
+            );
+        let source_parse_failure =
+            dependency_generic_specialization_module_load_error_to_target_prep_error(
+                DependencyGenericSpecializationModuleLoadError::DependencySourceParse {
+                    dependency_manifest_path: PathBuf::from("workspace/dep/qlang.toml"),
+                    dependency_package: "dep".to_owned(),
+                    source_path: PathBuf::from("workspace/dep/src/lib.ql"),
+                },
+            );
+
+        match interface_failure.failure_kind {
+            crate::build_plan::PrepareProjectTargetBuildFailureKind::DependencyInterface {
                 message,
-            },
-        },
+                ..
+            } => assert_eq!(
+                message,
+                "failed to load referenced package interface `workspace/dep/dep.qi`: missing interface"
+            ),
+            _ => panic!("expected dependency interface failure"),
+        }
+        match source_read_failure.failure_kind {
+            crate::build_plan::PrepareProjectTargetBuildFailureKind::DependencySource {
+                message,
+                ..
+            } => assert_eq!(
+                message,
+                "failed to access dependency source `workspace/dep/src/lib.ql`: access denied"
+            ),
+            _ => panic!("expected dependency source read failure"),
+        }
+        match source_parse_failure.failure_kind {
+            crate::build_plan::PrepareProjectTargetBuildFailureKind::DependencySource {
+                message,
+                ..
+            } => assert_eq!(
+                message,
+                "failed to parse dependency source `workspace/dep/src/lib.ql` while preparing imported generic helper specializations"
+            ),
+            _ => panic!("expected dependency source parse failure"),
+        }
     }
 }

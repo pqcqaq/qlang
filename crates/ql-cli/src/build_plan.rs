@@ -3,14 +3,18 @@ use std::path::{Path, PathBuf};
 
 use ql_driver::{BuildError, BuildOptions};
 use ql_project::{
-    discover_package_build_targets, load_project_manifest, package_name, BuildTargetKind,
-    WorkspaceBuildTargets,
+    BuildTargetKind, WorkspaceBuildTargets, discover_package_build_targets, load_project_manifest,
+    package_name,
 };
 
 use crate::build_outputs::project_dependency_target_build_options;
 use crate::cli_utils::{
     normalize_path, package_check_manifest_path_from_project_error,
     package_missing_name_manifest_path_from_project_error,
+};
+use crate::dependency_bridge_reporting::{
+    dependency_interface_load_message, dependency_source_parse_message,
+    dependency_source_read_message,
 };
 use crate::project_manifest_paths::reference_manifest_path;
 use crate::project_target_build::build_project_source_target_silent;
@@ -644,10 +648,7 @@ pub(crate) fn target_prep_dependency_interface_failure(
             dependency_manifest_path: dependency_manifest_path.to_path_buf(),
             dependency_package: dependency_package.to_owned(),
             interface_path: interface_path.to_path_buf(),
-            message: format!(
-                "failed to load referenced package interface `{}`: {error}",
-                normalize_path(interface_path)
-            ),
+            message: dependency_interface_load_message(interface_path, error),
         },
     }
 }
@@ -663,10 +664,7 @@ pub(crate) fn target_prep_dependency_source_read_failure(
             dependency_manifest_path: dependency_manifest_path.to_path_buf(),
             dependency_package: dependency_package.to_owned(),
             source_path: source_path.to_path_buf(),
-            message: format!(
-                "failed to access dependency source `{}`: {error}",
-                normalize_path(source_path)
-            ),
+            message: dependency_source_read_message(source_path, error),
         },
     }
 }
@@ -682,10 +680,7 @@ pub(crate) fn target_prep_dependency_source_parse_failure(
             dependency_manifest_path: dependency_manifest_path.to_path_buf(),
             dependency_package: dependency_package.to_owned(),
             source_path: source_path.to_path_buf(),
-            message: format!(
-                "failed to parse dependency source `{}` while preparing {bridge_context}",
-                normalize_path(source_path)
-            ),
+            message: dependency_source_parse_message(source_path, bridge_context),
         },
     }
 }

@@ -26,6 +26,51 @@ fn package_under_test_note(package_name: &str) -> String {
     format!("note: package under test: `{package_name}`")
 }
 
+pub(crate) fn dependency_interface_load_message(
+    interface_path: &Path,
+    error: impl Display,
+) -> String {
+    format!(
+        "failed to load referenced package interface `{}`: {error}",
+        normalize_path(interface_path)
+    )
+}
+
+pub(crate) fn dependency_source_read_message(source_path: &Path, error: impl Display) -> String {
+    format!(
+        "failed to access dependency source `{}`: {error}",
+        normalize_path(source_path)
+    )
+}
+
+pub(crate) fn dependency_source_parse_message(source_path: &Path, bridge_context: &str) -> String {
+    format!(
+        "failed to parse dependency source `{}` while preparing {bridge_context}",
+        normalize_path(source_path)
+    )
+}
+
+fn render_package_under_test_source_read_failure(
+    command_label: &str,
+    source_path: &Path,
+    error: impl Display,
+) -> [String; 1] {
+    [format!(
+        "error: {command_label} failed to access package-under-test source `{}`: {error}",
+        normalize_path(source_path)
+    )]
+}
+
+fn render_package_under_test_source_parse_failure(
+    command_label: &str,
+    source_path: &Path,
+) -> [String; 1] {
+    [format!(
+        "error: {command_label} failed to parse package-under-test source `{}` while preparing test bridges",
+        normalize_path(source_path)
+    )]
+}
+
 fn render_dependency_interface_load_failure(
     command_label: &str,
     owner_manifest_path: &Path,
@@ -35,8 +80,8 @@ fn render_dependency_interface_load_failure(
 ) -> [String; 2] {
     [
         format!(
-            "error: {command_label} failed to load referenced package interface `{}`: {error}",
-            normalize_path(interface_path)
+            "error: {command_label} {}",
+            dependency_interface_load_message(interface_path, error)
         ),
         dependency_bridge_owner_note(owner_manifest_path, bridge_context),
     ]
@@ -51,8 +96,8 @@ fn render_dependency_source_read_failure(
 ) -> [String; 2] {
     [
         format!(
-            "error: {command_label} failed to access dependency source `{}`: {error}",
-            normalize_path(source_path)
+            "error: {command_label} {}",
+            dependency_source_read_message(source_path, error)
         ),
         dependency_bridge_owner_note(owner_manifest_path, bridge_context),
     ]
@@ -66,8 +111,8 @@ fn render_dependency_source_parse_failure(
 ) -> [String; 2] {
     [
         format!(
-            "error: {command_label} failed to parse dependency source `{}` while preparing {bridge_context}",
-            normalize_path(source_path)
+            "error: {command_label} {}",
+            dependency_source_parse_message(source_path, bridge_context)
         ),
         dependency_bridge_package_note(dependency_package),
     ]
@@ -177,6 +222,25 @@ pub(crate) fn report_dependency_interface_load_failure(
         interface_path,
         error,
     ) {
+        eprintln!("{line}");
+    }
+}
+
+pub(crate) fn report_package_under_test_source_read_failure(
+    command_label: &str,
+    source_path: &Path,
+    error: impl Display,
+) {
+    for line in render_package_under_test_source_read_failure(command_label, source_path, error) {
+        eprintln!("{line}");
+    }
+}
+
+pub(crate) fn report_package_under_test_source_parse_failure(
+    command_label: &str,
+    source_path: &Path,
+) {
+    for line in render_package_under_test_source_parse_failure(command_label, source_path) {
         eprintln!("{line}");
     }
 }
@@ -324,6 +388,32 @@ mod tests {
             [
                 "error: `ql build` failed to load referenced package interface `workspace/dep/dep.qi`: invalid header",
                 "note: while preparing dependency public function wrappers for `workspace/app/qlang.toml`",
+            ]
+        );
+    }
+
+    #[test]
+    fn package_under_test_source_failure_lines_preserve_read_and_parse_contracts() {
+        let read_lines = render_package_under_test_source_read_failure(
+            "`ql test`",
+            Path::new("workspace/app/src/lib.ql"),
+            "access denied",
+        );
+        let parse_lines = render_package_under_test_source_parse_failure(
+            "`ql test`",
+            Path::new("workspace/app/src/lib.ql"),
+        );
+
+        assert_eq!(
+            read_lines,
+            [
+                "error: `ql test` failed to access package-under-test source `workspace/app/src/lib.ql`: access denied",
+            ]
+        );
+        assert_eq!(
+            parse_lines,
+            [
+                "error: `ql test` failed to parse package-under-test source `workspace/app/src/lib.ql` while preparing test bridges",
             ]
         );
     }
