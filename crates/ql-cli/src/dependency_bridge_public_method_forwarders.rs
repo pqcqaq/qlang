@@ -3,14 +3,13 @@ use std::path::Path;
 
 use ql_ast::Module;
 
-use crate::dependency_bridge_modules::{
-    dependency_interface_module_import_path, dependency_module_source_path,
-};
+use crate::dependency_bridge_modules::dependency_interface_module_import_path;
 use crate::dependency_bridge_names::render_imported_dependency_public_method_forwarder;
 use crate::dependency_bridge_public_types::{
     collect_dependency_public_function_type_dependencies,
     dependency_public_struct_method_bridge_candidates, dependency_public_type_bridge_candidates,
 };
+use crate::dependency_bridge_source_modules::collect_dependency_source_modules;
 
 pub(crate) fn collect_dependency_public_method_forwarders_from_modules<E>(
     dependency_package: &str,
@@ -19,25 +18,26 @@ pub(crate) fn collect_dependency_public_method_forwarders_from_modules<E>(
     required_types_by_module_path: &BTreeMap<Vec<String>, BTreeSet<String>>,
     discovered_required_types: &mut BTreeMap<Vec<String>, BTreeSet<String>>,
     forwarders: &mut Vec<String>,
-    mut read_source: impl FnMut(&Path) -> Result<String, E>,
-    mut parse_source_module: impl FnMut(&Path, &str) -> Result<Module, E>,
+    read_source: impl FnMut(&Path) -> Result<String, E>,
+    parse_source_module: impl FnMut(&Path, &str) -> Result<Module, E>,
 ) -> Result<(), E> {
-    for module in modules {
-        let dependency_source_path =
-            dependency_module_source_path(dependency_manifest_path, &module.source_path);
-        let dependency_source = read_source(&dependency_source_path)?;
-        let source_module = parse_source_module(&dependency_source_path, &dependency_source)?;
-        collect_dependency_module_public_method_forwarders(
-            dependency_package,
-            &source_module,
-            &dependency_source,
-            required_types_by_module_path,
-            discovered_required_types,
-            forwarders,
-        );
-    }
-
-    Ok(())
+    collect_dependency_source_modules(
+        dependency_manifest_path,
+        modules,
+        read_source,
+        parse_source_module,
+        |source_module, dependency_source| {
+            collect_dependency_module_public_method_forwarders(
+                dependency_package,
+                source_module,
+                dependency_source,
+                required_types_by_module_path,
+                discovered_required_types,
+                forwarders,
+            );
+            Ok(())
+        },
+    )
 }
 
 fn collect_dependency_module_public_method_forwarders(

@@ -11,13 +11,31 @@ use crate::dependency_bridge_modules::{
     dependency_module_source_path,
 };
 
+pub(crate) fn collect_dependency_source_modules<E>(
+    dependency_manifest_path: &Path,
+    interface_modules: &[InterfaceModule],
+    mut read_source: impl FnMut(&Path) -> Result<String, E>,
+    mut parse_source_module: impl FnMut(&Path, &str) -> Result<Module, E>,
+    mut collect_source_module: impl FnMut(&Module, &str) -> Result<(), E>,
+) -> Result<(), E> {
+    for module in interface_modules {
+        let dependency_source_path =
+            dependency_module_source_path(dependency_manifest_path, &module.source_path);
+        let dependency_source = read_source(&dependency_source_path)?;
+        let source_module = parse_source_module(&dependency_source_path, &dependency_source)?;
+        collect_source_module(&source_module, &dependency_source)?;
+    }
+
+    Ok(())
+}
+
 pub(crate) fn collect_dependency_source_module_bridge_items<E>(
     dependency_package: &str,
     dependency_manifest_path: &Path,
     interface_modules: &[InterfaceModule],
     root_source_module: &Module,
-    mut read_source: impl FnMut(&Path) -> Result<String, E>,
-    mut parse_source_module: impl FnMut(&Path, &str) -> Result<Module, E>,
+    read_source: impl FnMut(&Path) -> Result<String, E>,
+    parse_source_module: impl FnMut(&Path, &str) -> Result<Module, E>,
     mut collect_source_module: impl FnMut(
         &Module,
         &str,
@@ -30,22 +48,22 @@ pub(crate) fn collect_dependency_source_module_bridge_items<E>(
     let imported_externs =
         collect_imported_dependency_externs(root_source_module, &module_import_paths);
 
-    for module in interface_modules {
-        let dependency_source_path =
-            dependency_module_source_path(dependency_manifest_path, &module.source_path);
-        let dependency_source = read_source(&dependency_source_path)?;
-        let source_module = parse_source_module(&dependency_source_path, &dependency_source)?;
-        let module_import_path =
-            dependency_interface_module_import_path(dependency_package, &source_module);
-        collect_source_module(
-            &source_module,
-            &dependency_source,
-            &imported_externs,
-            &module_import_path,
-        )?;
-    }
-
-    Ok(())
+    collect_dependency_source_modules(
+        dependency_manifest_path,
+        interface_modules,
+        read_source,
+        parse_source_module,
+        |source_module, dependency_source| {
+            let module_import_path =
+                dependency_interface_module_import_path(dependency_package, source_module);
+            collect_source_module(
+                source_module,
+                dependency_source,
+                &imported_externs,
+                &module_import_path,
+            )
+        },
+    )
 }
 
 #[cfg(test)]
@@ -63,6 +81,42 @@ mod tests {
             contents: source.to_owned(),
             syntax: parse_source(source).unwrap(),
         }
+    }
+
+    #[test]
+    fn source_modules_read_parse_and_collect_in_interface_order() {
+        let first_source = "pub const FIRST: Int = 1\n";
+        let second_source = "pub const SECOND: Int = 2\n";
+        let interface_modules = [
+            interface_module("src/first.ql", first_source),
+            interface_module("src/second.ql", second_source),
+        ];
+        let mut visited = Vec::new();
+
+        collect_dependency_source_modules(
+            &PathBuf::from("dep/qlang.toml"),
+            &interface_modules,
+            |dependency_source_path| match dependency_source_path
+                .to_string_lossy()
+                .replace('\\', "/")
+                .as_str()
+            {
+                "dep/src/first.ql" => Ok::<_, String>(first_source.to_owned()),
+                "dep/src/second.ql" => Ok(second_source.to_owned()),
+                other => Err(format!("unexpected path: {other}")),
+            },
+            |_dependency_source_path, source| Ok(parse_source(source).unwrap()),
+            |_module, source| {
+                visited.push(source.to_owned());
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            visited,
+            vec![first_source.to_owned(), second_source.to_owned()]
+        );
     }
 
     #[test]
