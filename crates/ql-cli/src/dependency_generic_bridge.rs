@@ -15,6 +15,7 @@ mod instantiation_expr_scanner;
 mod instantiation_scanner;
 mod instantiations;
 mod rendering;
+mod specialization_function_bindings;
 mod specializations;
 mod specialized_forwarders;
 mod substitutions;

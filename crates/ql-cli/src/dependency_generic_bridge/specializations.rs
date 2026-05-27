@@ -2,12 +2,12 @@ use std::collections::BTreeSet;
 
 use ql_ast::{FunctionDecl, Module};
 
-use super::function_bindings::{
-    FunctionTypeBindings, collect_imported_function_type_bindings,
-    collect_local_function_type_bindings,
-};
+use super::function_bindings::{FunctionTypeBindings, collect_local_function_type_bindings};
 use super::instantiations;
 use super::rendering::dependency_public_function_specialized_local_forwarder_name;
+use super::specialization_function_bindings::{
+    collect_root_call_function_type_bindings, collect_specialization_function_type_bindings,
+};
 use super::specialized_forwarders::{
     has_complete_generic_substitutions, render_public_function_specialized_forwarder,
 };
@@ -74,12 +74,11 @@ pub(crate) fn render_public_function_specialization_status_with_context(
     }
     let dependency_function_bindings =
         collect_specialization_function_type_bindings(dependency_module, specialization_modules);
-    let mut root_function_bindings = collect_local_function_type_bindings(root_module);
-    root_function_bindings.extend(collect_imported_function_type_bindings(
+    let root_function_bindings = collect_root_call_function_type_bindings(
         root_module,
         module_import_path,
         dependency_module,
-    ));
+    );
     let call_instantiations = instantiations::collect_public_function_call_instantiation_status(
         root_module,
         module_import_path,
@@ -188,31 +187,4 @@ fn render_function_specializations(
         declarations: declarations.join("\n\n"),
         call_rewrites,
     })
-}
-
-fn collect_specialization_function_type_bindings(
-    dependency_module: &Module,
-    specialization_modules: &[SpecializationModule<'_>],
-) -> FunctionTypeBindings {
-    let mut bindings = collect_local_function_type_bindings(dependency_module);
-    for module in specialization_modules {
-        bindings.extend(collect_local_function_type_bindings(module.module));
-    }
-    for target in specialization_modules {
-        bindings.extend(collect_imported_function_type_bindings(
-            dependency_module,
-            target.module_import_path,
-            target.module,
-        ));
-    }
-    for caller in specialization_modules {
-        for target in specialization_modules {
-            bindings.extend(collect_imported_function_type_bindings(
-                caller.module,
-                target.module_import_path,
-                target.module,
-            ));
-        }
-    }
-    bindings
 }
