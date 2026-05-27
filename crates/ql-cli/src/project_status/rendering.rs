@@ -13,8 +13,8 @@ use crate::project_dependencies::project_dependency_json;
 use crate::project_targets::project_target_display_path;
 
 #[cfg(test)]
-use super::ProjectStatusInterface;
-use super::{ProjectStatusMember, ProjectStatusSelectionFailure};
+use super::collection::ProjectStatusInterface;
+use super::collection::{ProjectStatusMember, ProjectStatusSelectionFailure};
 
 pub(super) fn render_project_status_preflight_failure_json(
     path: &Path,
