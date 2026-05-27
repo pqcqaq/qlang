@@ -7,6 +7,10 @@ use ql_project::{
 };
 use serde_json::{Value as JsonValue, json};
 
+use crate::build_plan::{
+    BuildPlanResolveError, BuildPlanResolveFailureKind, PrepareProjectTargetBuildError,
+    PrepareProjectTargetBuildFailureKind,
+};
 use crate::cli_json_diagnostics::diagnostics_json;
 use crate::cli_utils::normalize_path;
 use crate::project_interfaces::{
@@ -15,10 +19,6 @@ use crate::project_interfaces::{
 };
 use crate::project_targets::{
     ProjectCommandScope, project_target_display_path, resolve_project_command_scope,
-};
-use crate::{
-    BuildPlanResolveError, BuildPlanResolveFailureKind, PrepareProjectTargetBuildError,
-    PrepareProjectTargetBuildFailureKind,
 };
 
 pub(crate) fn build_emit_cli_value(emit: BuildEmit) -> &'static str {

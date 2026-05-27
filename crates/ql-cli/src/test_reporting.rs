@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use ql_driver::BuildOptions;
 use serde_json::{Value as JsonValue, json};
 
-use crate::build_json_preflight_failure;
+use crate::build_reporting::build_json_preflight_failure;
 use crate::cli_utils::normalize_path;
 use crate::test_command::TestCommandOptions;
 

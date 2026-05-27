@@ -63,57 +63,8 @@ mod test_command;
 mod test_pipeline;
 mod test_reporting;
 
-pub(crate) use build_outputs::{
-    apply_manifest_default_profile, first_colliding_project_build_header_output_path,
-    first_colliding_project_build_output_path, project_dependency_target_build_options,
-    project_target_build_options, project_target_output_path,
-};
-pub(crate) use build_plan::{
-    BuildPlanResolveError, BuildPlanResolveFailureKind, BuildTargetJsonError,
-    PrepareProjectTargetBuildError, PrepareProjectTargetBuildFailureKind, ProjectBuildPlanMember,
-    prepare_project_dependency_builds, prepare_project_test_package_builds,
-    report_project_build_dependency_error, resolve_project_build_plan_members,
-    resolve_project_build_plan_members_quiet, select_project_build_plan_root_members,
-    target_prep_dependency_manifest_failure,
-};
-pub(crate) use build_reporting::{
-    BuildJsonReport, build_emit_cli_value, build_json_build_plan_failure,
-    build_json_dependency_interface_prep_failure, build_json_emit_interface_failure,
-    build_json_failure, build_json_preflight_failure, build_json_project_error, build_json_target,
-    build_json_target_prep_failure, load_workspace_build_targets_for_build_json_from_request_root,
-    select_workspace_build_targets_for_build_json,
-};
-pub(crate) use build_single_source::{
-    build_output_lock_error_message, build_single_source_target, build_single_source_target_quiet,
-    build_single_source_target_result, build_single_source_target_silent,
-    build_single_source_target_with_inputs_impl, build_single_source_target_with_inputs_result,
-    emit_built_package_interface, emit_built_package_interface_quiet,
-};
 use cli_usage::print_usage;
 use cli_version::{CLI_NAME, is_version_command, version_text};
-#[cfg(test)]
-pub(crate) use dependency_bridge_public_types::dependency_public_type_bridge_order;
-#[cfg(test)]
-pub(crate) use dependency_bridge_public_types::{
-    dependency_public_struct_method_bridge_candidates, dependency_public_type_bridge_candidates,
-};
-pub(crate) use project_emit_interface::project_emit_interface_path;
-pub(crate) use project_target_build::{
-    build_project_source_target, build_project_source_target_result,
-    build_project_source_target_silent, build_project_test_source_target_quiet,
-    build_project_test_source_target_silent,
-};
-pub(crate) use test_pipeline::{
-    discover_test_targets, execute_test_targets, filter_test_targets, list_test_targets,
-    report_no_matching_test_target, report_no_matching_tests, report_no_tests_discovered,
-    select_test_targets_by_path, test_build_options, test_no_matching_filter_message,
-    test_no_matching_target_message, test_no_tests_message,
-};
-pub(crate) use test_reporting::{
-    TestExecutionReport, TestFailure, TestTarget, TestTargetKind,
-    render_test_json_preflight_failure_report, render_test_json_preflight_message_report,
-    render_test_json_report, render_test_json_selection_failure_report,
-};
 
 fn main() -> ExitCode {
     match run() {

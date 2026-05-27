@@ -3,28 +3,36 @@ use std::path::Path;
 use ql_driver::BuildOptions;
 use ql_project::BuildTargetKind;
 
+use crate::build_outputs::{
+    first_colliding_project_build_header_output_path, first_colliding_project_build_output_path,
+    project_dependency_target_build_options, project_target_build_options,
+};
+use crate::build_plan::{
+    BuildTargetJsonError, resolve_project_build_plan_members,
+    resolve_project_build_plan_members_quiet,
+};
+use crate::build_reporting::{
+    BuildJsonReport, build_json_build_plan_failure, build_json_dependency_interface_prep_failure,
+    build_json_emit_interface_failure, build_json_preflight_failure,
+    build_json_target_prep_failure, load_workspace_build_targets_for_build_json_from_request_root,
+    select_workspace_build_targets_for_build_json,
+};
+use crate::build_single_source::{
+    build_single_source_target, build_single_source_target_result, emit_built_package_interface,
+    emit_built_package_interface_quiet,
+};
 use crate::cli_utils::normalize_path;
 use crate::project_interfaces::prepare_reference_interfaces_for_manifests_quiet;
 use crate::project_reference_interfaces::prepare_reference_interfaces_for_manifests;
+use crate::project_target_build::{
+    build_project_source_target, build_project_source_target_result,
+};
 use crate::project_targets::{
     ProjectCommandPathError, ProjectTargetSelector, ResolvedProjectCommandPath,
     load_workspace_build_targets_for_command_from_request_root,
     report_project_source_path_rejects_target_selector,
     report_project_target_selector_requires_project_context, resolve_project_command_path,
     select_workspace_build_targets,
-};
-use crate::{
-    BuildJsonReport, BuildTargetJsonError, build_json_build_plan_failure,
-    build_json_dependency_interface_prep_failure, build_json_emit_interface_failure,
-    build_json_preflight_failure, build_json_target_prep_failure, build_project_source_target,
-    build_project_source_target_result, build_single_source_target,
-    build_single_source_target_result, emit_built_package_interface,
-    emit_built_package_interface_quiet, first_colliding_project_build_header_output_path,
-    first_colliding_project_build_output_path,
-    load_workspace_build_targets_for_build_json_from_request_root,
-    project_dependency_target_build_options, project_target_build_options,
-    resolve_project_build_plan_members, resolve_project_build_plan_members_quiet,
-    select_workspace_build_targets_for_build_json,
 };
 
 pub(crate) fn build_path(

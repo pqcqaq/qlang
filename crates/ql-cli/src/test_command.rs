@@ -5,13 +5,13 @@ use ql_driver::BuildProfile;
 use crate::cli_build_profile::{parse_cli_build_profile, set_cli_build_profile};
 use crate::cli_utils::normalize_path;
 use crate::project_targets::{ProjectCommandScope, resolve_project_command_scope};
-use crate::{
+use crate::test_pipeline::{
     discover_test_targets, execute_test_targets, filter_test_targets, list_test_targets,
-    render_test_json_report, render_test_json_selection_failure_report,
     report_no_matching_test_target, report_no_matching_tests, report_no_tests_discovered,
     select_test_targets_by_path, test_build_options, test_no_matching_filter_message,
     test_no_matching_target_message, test_no_tests_message,
 };
+use crate::test_reporting::{render_test_json_report, render_test_json_selection_failure_report};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TestCommandOptions {

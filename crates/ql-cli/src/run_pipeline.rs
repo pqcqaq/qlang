@@ -8,25 +8,31 @@ use ql_driver::{
 use ql_project::{BuildTarget, ManifestBuildProfile, WorkspaceBuildTargets};
 use serde_json::{Value as JsonValue, json};
 
+use crate::build_outputs::{apply_manifest_default_profile, project_target_output_path};
+use crate::build_plan::{
+    BuildTargetJsonError, PrepareProjectTargetBuildError, prepare_project_dependency_builds,
+    resolve_project_build_plan_members, select_project_build_plan_root_members,
+};
+use crate::build_reporting::{
+    BuildJsonReport, build_json_failure, build_json_preflight_failure, build_json_target,
+    build_json_target_prep_failure, load_workspace_build_targets_for_build_json_from_request_root,
+    select_workspace_build_targets_for_build_json,
+};
+use crate::build_single_source::{
+    build_output_lock_error_message, build_single_source_target_result,
+    build_single_source_target_silent,
+};
 use crate::cli_utils::normalize_path;
 use crate::project_reference_interfaces::prepare_reference_interfaces_for_manifests;
+use crate::project_target_build::{
+    build_project_source_target_result, build_project_source_target_silent,
+};
 use crate::project_targets::{
     ProjectCommandPathError, ProjectTargetSelector, ResolvedProjectCommandPath,
     is_runnable_project_target, load_workspace_build_targets_for_command_from_request_root,
     project_target_display_path, report_project_source_path_rejects_target_selector,
     report_project_target_selector_requires_project_context, resolve_project_command_path,
     select_workspace_build_targets,
-};
-use crate::{
-    BuildJsonReport, BuildTargetJsonError, PrepareProjectTargetBuildError,
-    apply_manifest_default_profile, build_json_failure, build_json_preflight_failure,
-    build_json_target, build_json_target_prep_failure, build_output_lock_error_message,
-    build_project_source_target_result, build_project_source_target_silent,
-    build_single_source_target_result, build_single_source_target_silent,
-    load_workspace_build_targets_for_build_json_from_request_root,
-    prepare_project_dependency_builds, project_target_output_path,
-    resolve_project_build_plan_members, select_project_build_plan_root_members,
-    select_workspace_build_targets_for_build_json,
 };
 
 #[derive(Debug)]

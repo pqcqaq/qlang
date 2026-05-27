@@ -1,7 +1,7 @@
 use std::env;
 use std::path::PathBuf;
 
-use crate::project_emit_interface_path;
+use crate::project_emit_interface::project_emit_interface_path;
 use crate::project_lock::project_lock_path;
 use crate::project_members::project_add_binary_target_path;
 

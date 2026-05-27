@@ -13,6 +13,16 @@ use ql_project::{
     load_project_manifest, package_name,
 };
 
+use crate::build_outputs::apply_manifest_default_profile;
+use crate::build_plan::{
+    prepare_project_dependency_builds, prepare_project_test_package_builds,
+    select_project_build_plan_root_members,
+};
+use crate::build_reporting::build_json_project_error;
+use crate::build_single_source::{
+    build_output_lock_error_message, build_single_source_target_quiet,
+    build_single_source_target_silent,
+};
 use crate::cli_analysis::analyze_source;
 use crate::cli_scan::collect_ql_files;
 use crate::cli_utils::{
@@ -20,6 +30,9 @@ use crate::cli_utils::{
     package_missing_name_manifest_path_from_project_error, validate_project_package_name,
 };
 use crate::project_reference_interfaces::prepare_reference_interfaces_for_manifests;
+use crate::project_target_build::{
+    build_project_test_source_target_quiet, build_project_test_source_target_silent,
+};
 use crate::project_targets::{
     ProjectCommandScope, display_relative_to_root,
     load_workspace_build_targets_for_command_from_request_root, project_request_root,
@@ -30,14 +43,9 @@ use crate::project_workspace::{
     resolve_selected_workspace_member_manifest, resolve_workspace_member_entry_by_package_name,
 };
 use crate::test_command::TestCommandOptions;
-use crate::{
-    TestExecutionReport, TestFailure, TestTarget, TestTargetKind, apply_manifest_default_profile,
-    build_json_project_error, build_output_lock_error_message,
-    build_project_test_source_target_quiet, build_project_test_source_target_silent,
-    build_single_source_target_quiet, build_single_source_target_silent,
-    prepare_project_dependency_builds, prepare_project_test_package_builds,
+use crate::test_reporting::{
+    TestExecutionReport, TestFailure, TestTarget, TestTargetKind,
     render_test_json_preflight_failure_report, render_test_json_preflight_message_report,
-    select_project_build_plan_root_members,
 };
 
 pub(crate) fn discover_test_targets(

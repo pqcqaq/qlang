@@ -7,12 +7,13 @@ use ql_project::{
     package_name,
 };
 
+use crate::build_outputs::project_dependency_target_build_options;
 use crate::cli_utils::{
     normalize_path, package_check_manifest_path_from_project_error,
     package_missing_name_manifest_path_from_project_error,
 };
 use crate::project_manifest_paths::reference_manifest_path;
-use crate::{build_project_source_target_silent, project_dependency_target_build_options};
+use crate::project_target_build::build_project_source_target_silent;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ProjectBuildPlanMember {

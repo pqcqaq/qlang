@@ -5,6 +5,15 @@ use ql_driver::{BuildArtifact, BuildOptions};
 use ql_project::{BuildTargetKind, WorkspaceBuildTargets};
 
 use crate::build_failure_reporting::report_build_input_path_failure;
+use crate::build_outputs::project_dependency_target_build_options;
+use crate::build_plan::{
+    BuildTargetJsonError, PrepareProjectTargetBuildError, PrepareProjectTargetBuildFailureKind,
+    ProjectBuildPlanMember, resolve_project_build_plan_members,
+    select_project_build_plan_root_members,
+};
+use crate::build_single_source::{
+    build_single_source_target_with_inputs_impl, build_single_source_target_with_inputs_result,
+};
 use crate::build_source_rewrites::render_local_generic_function_specializations;
 use crate::cli_utils::normalize_path;
 use crate::dependency_bridge_direct::{
@@ -14,12 +23,6 @@ use crate::dependency_bridge_package_under_test::render_package_under_test_bridg
 use crate::dependency_bridge_public_export_wrappers::{
     render_public_dependency_function_export_wrappers,
     render_public_dependency_function_export_wrappers_quiet,
-};
-use crate::{
-    BuildTargetJsonError, PrepareProjectTargetBuildError, PrepareProjectTargetBuildFailureKind,
-    ProjectBuildPlanMember, build_single_source_target_with_inputs_impl,
-    build_single_source_target_with_inputs_result, project_dependency_target_build_options,
-    resolve_project_build_plan_members, select_project_build_plan_root_members,
 };
 
 #[derive(Clone, Debug, Default)]

@@ -8,12 +8,12 @@ use ql_project::{
     load_reference_manifests, package_name,
 };
 
-use crate::cli_utils::normalize_path;
-use crate::dependency_generic_bridge;
-use crate::{
+use crate::build_plan::{
     PrepareProjectTargetBuildError, PrepareProjectTargetBuildFailureKind,
     report_project_build_dependency_error, target_prep_dependency_manifest_failure,
 };
+use crate::cli_utils::normalize_path;
+use crate::dependency_generic_bridge;
 
 pub(crate) struct PackageBridgeModule {
     pub(crate) source: String,

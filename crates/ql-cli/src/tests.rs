@@ -14,11 +14,11 @@ use crate::analysis_commands::{
 };
 use crate::build_pipeline::build_path;
 use crate::cli_analysis::analyze_source;
-use crate::project_targets::ProjectTargetSelector;
-use crate::{
+use crate::dependency_bridge_public_types::{
     dependency_public_struct_method_bridge_candidates, dependency_public_type_bridge_candidates,
     dependency_public_type_bridge_order,
 };
+use crate::project_targets::ProjectTargetSelector;
 use ql_analysis::analyze_source as analyze_semantics;
 
 struct TestDir {

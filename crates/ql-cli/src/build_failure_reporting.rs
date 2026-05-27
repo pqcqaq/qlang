@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use ql_driver::{BuildEmit, BuildOptions, BuildProfile, CHeaderSurface};
 use ql_project::load_project_manifest;
 
-use crate::build_emit_cli_value;
+use crate::build_reporting::build_emit_cli_value;
 use crate::cli_utils::normalize_path;
 
 pub(crate) fn report_remaining_build_artifacts(paths: &[PathBuf]) {
