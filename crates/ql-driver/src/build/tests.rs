@@ -359,7 +359,7 @@ fn helper() -> Int {
             Some(object_extension())
         );
         assert_eq!(
-            link_workspace.preserve_ir_and_object(),
+            link_workspace.preserved_ir_and_object(),
             vec![
                 link_workspace.intermediate_ir.clone(),
                 intermediate_object.clone()
@@ -397,6 +397,40 @@ fn helper() -> Int {
         assert_eq!(
             fs::read_to_string(&output).expect("read emitted LLVM IR"),
             "define i32 @main() { ret i32 0 }\n"
+        );
+    }
+
+    #[test]
+    fn toolchain_emission_workspace_promotes_output_and_removes_intermediates() {
+        let dir = TestDir::new("ql-driver-emission-promote-cleanup");
+        let output = dir.path().join("artifacts/module.bin");
+        fs::create_dir_all(output.parent().expect("output should have a parent"))
+            .expect("create output directory");
+        let workspace = ToolchainEmissionWorkspace::with_object(&output);
+        fs::write(&workspace.intermediate_ir, "preserved-ir").expect("write intermediate IR");
+        fs::write(workspace.intermediate_object(), "preserved-object")
+            .expect("write intermediate object");
+        fs::write(&workspace.temp_output_path, "fresh-output").expect("write temp output");
+
+        workspace
+            .promote_to_output(&output)
+            .expect("promotion should replace final output");
+
+        assert_eq!(
+            fs::read_to_string(&output).expect("read promoted output"),
+            "fresh-output"
+        );
+        assert!(
+            !workspace.intermediate_ir.exists(),
+            "promotion should remove intermediate IR"
+        );
+        assert!(
+            !workspace.intermediate_object().exists(),
+            "promotion should remove intermediate object"
+        );
+        assert!(
+            !workspace.temp_output_path.exists(),
+            "promotion should consume the temp output"
         );
     }
 
@@ -4940,7 +4974,7 @@ fn add_one(value: Int) -> Int {
                         tool: "archiver",
                         hint: "test prepare failure".to_owned(),
                     },
-                    preserved_artifacts: workspace.preserve_ir(),
+                    preserved_artifacts: workspace.preserved_ir(),
                 })
             },
             |toolchain, workspace| {

@@ -68,11 +68,11 @@ impl ToolchainEmissionWorkspace {
             .expect("object-based emission should have an intermediate object path")
     }
 
-    fn preserve_ir(&self) -> Vec<PathBuf> {
+    fn preserved_ir(&self) -> Vec<PathBuf> {
         vec![self.intermediate_ir.clone()]
     }
 
-    fn preserve_ir_and_object(&self) -> Vec<PathBuf> {
+    fn preserved_ir_and_object(&self) -> Vec<PathBuf> {
         vec![
             self.intermediate_ir.clone(),
             self.intermediate_object().clone(),
@@ -80,11 +80,11 @@ impl ToolchainEmissionWorkspace {
     }
 
     fn cleanup_ir(&self) -> Vec<PathBuf> {
-        self.preserve_ir()
+        self.preserved_ir()
     }
 
     fn cleanup_ir_and_object(&self) -> Vec<PathBuf> {
-        self.preserve_ir_and_object()
+        self.preserved_ir_and_object()
     }
 
     fn cleanup_after_success(&self) -> Vec<PathBuf> {
@@ -93,6 +93,31 @@ impl ToolchainEmissionWorkspace {
         } else {
             self.cleanup_ir()
         }
+    }
+
+    fn toolchain_failure_with_ir(&self, error: ToolchainError) -> BuildError {
+        toolchain_failure(error, self.preserved_ir())
+    }
+
+    fn toolchain_failure_with_ir_and_object(&self, error: ToolchainError) -> BuildError {
+        toolchain_failure(error, self.preserved_ir_and_object())
+    }
+
+    fn remove_temp_output(&self) {
+        let _ = fs::remove_file(&self.temp_output_path);
+    }
+
+    fn remove_intermediate_object(&self) {
+        if let Some(path) = self.intermediate_object.as_ref() {
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    fn promote_to_output(&self, output_path: &Path) -> Result<(), BuildError> {
+        let cleanup = self.cleanup_after_success();
+        promote_final_artifact(output_path, &self.temp_output_path, &cleanup)?;
+        cleanup_artifacts(&cleanup);
+        Ok(())
     }
 }
 
@@ -852,17 +877,14 @@ fn run_ir_to_final_artifact(
     })?;
 
     let toolchain = discover_toolchain(toolchain_options)
-        .map_err(|error| toolchain_failure(error, workspace.preserve_ir()))?;
+        .map_err(|error| workspace.toolchain_failure_with_ir(error))?;
 
     if let Err(error) = emit(&toolchain, &workspace) {
-        let _ = fs::remove_file(&workspace.temp_output_path);
-        return Err(toolchain_failure(error, workspace.preserve_ir()));
+        workspace.remove_temp_output();
+        return Err(workspace.toolchain_failure_with_ir(error));
     }
 
-    let cleanup = workspace.cleanup_after_success();
-    promote_final_artifact(output_path, &workspace.temp_output_path, &cleanup)?;
-    cleanup_artifacts(&cleanup);
-    Ok(())
+    workspace.promote_to_output(output_path)
 }
 
 fn build_executable_file(
@@ -898,7 +920,7 @@ fn build_static_library_file(
         |toolchain, workspace| {
             toolchain
                 .ensure_archiver_available()
-                .map_err(|error| toolchain_failure(error, workspace.preserve_ir()))
+                .map_err(|error| workspace.toolchain_failure_with_ir(error))
         },
         |toolchain, workspace| {
             toolchain.archive_object_to_static_library(
@@ -949,27 +971,24 @@ fn run_object_backed_final_artifact(
     })?;
 
     let toolchain = discover_toolchain(toolchain_options)
-        .map_err(|error| toolchain_failure(error, workspace.preserve_ir()))?;
+        .map_err(|error| workspace.toolchain_failure_with_ir(error))?;
     prepare(&toolchain, &workspace)?;
     let intermediate_object = workspace.intermediate_object();
 
     if let Err(error) =
         toolchain.compile_llvm_ir_to_object(&workspace.intermediate_ir, intermediate_object)
     {
-        let _ = fs::remove_file(intermediate_object);
-        let _ = fs::remove_file(&workspace.temp_output_path);
-        return Err(toolchain_failure(error, workspace.preserve_ir()));
+        workspace.remove_intermediate_object();
+        workspace.remove_temp_output();
+        return Err(workspace.toolchain_failure_with_ir(error));
     }
 
     if let Err(error) = emit(&toolchain, &workspace) {
-        let _ = fs::remove_file(&workspace.temp_output_path);
-        return Err(toolchain_failure(error, workspace.preserve_ir_and_object()));
+        workspace.remove_temp_output();
+        return Err(workspace.toolchain_failure_with_ir_and_object(error));
     }
 
-    let cleanup = workspace.cleanup_after_success();
-    promote_final_artifact(output_path, &workspace.temp_output_path, &cleanup)?;
-    cleanup_artifacts(&cleanup);
-    Ok(())
+    workspace.promote_to_output(output_path)
 }
 
 fn promote_final_artifact(
