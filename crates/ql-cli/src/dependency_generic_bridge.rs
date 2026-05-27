@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 mod expr_inference;
 mod function_bindings;
 mod inferred_types;
+mod instantiation_scanner;
 mod instantiations;
 mod rendering;
 mod specializations;

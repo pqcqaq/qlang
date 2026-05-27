@@ -625,3 +625,49 @@ fn run() -> Int {
         .expect("none_option should infer one substitution");
     assert_eq!(substitutions.get("T").map(String::as_str), Some("Int"));
 }
+
+#[test]
+fn scans_global_and_struct_default_instantiations() {
+    let dependency = parse_module(
+        r#"
+package dep
+
+pub fn identity[T](value: T) -> T {
+    return value
+}
+"#,
+    );
+    let root = parse_module(
+        r#"
+use dep.identity as identity
+
+const DEFAULT_COUNT: Int = identity(1)
+
+struct Settings {
+    enabled: Bool = identity(true),
+}
+
+fn run() -> Int {
+    return DEFAULT_COUNT
+}
+"#,
+    );
+
+    let instantiations = collect_public_function_instantiations(
+        &root,
+        &["dep".to_owned()],
+        function(&dependency, "identity"),
+    );
+
+    assert_eq!(instantiations.len(), 2);
+    assert!(
+        instantiations
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Int") })
+    );
+    assert!(
+        instantiations
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Bool") })
+    );
+}
