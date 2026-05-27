@@ -8,14 +8,10 @@ use crate::cli_utils::{
 };
 use crate::project_interface_reporting::{
     check_package_interface_artifact, format_project_emit_interface_command_label,
-    format_workspace_member_emit_rerun_command, report_emit_interface_result,
-    report_package_interface_check, report_package_interface_failure,
-    report_package_interface_manifest_failure, report_package_interface_no_sources_failure,
-    report_package_interface_output_failure, report_package_interface_source_failure,
-    report_package_interface_source_root_failure,
+    format_workspace_member_emit_rerun_command, report_package_interface_check,
+    report_package_interface_failure, report_package_interface_manifest_failure,
     report_project_emit_interface_package_context_failure,
 };
-use crate::project_interfaces::{EmitPackageInterfaceError, emit_package_interface_path};
 use crate::project_manifest_paths::{
     record_reference_failure_manifest, workspace_member_manifest_path,
 };
@@ -24,6 +20,10 @@ use crate::project_targets::resolve_project_workspace_member_command_request_roo
 use crate::project_workspace::{
     resolve_selected_workspace_member_manifest, select_workspace_members,
 };
+
+mod package_emit;
+
+use package_emit::emit_single_package_interface;
 
 fn report_workspace_member_package_interface_check_manifest_failure(
     manifest_path: &Path,
@@ -156,87 +156,14 @@ pub(crate) fn project_emit_interface_path(
                 emit_command_label.as_str(),
                 "--package",
             )?;
-            match emit_package_interface_path(
+            emit_single_package_interface(
                 &package_manifest.manifest_path,
+                &package_manifest.manifest_path,
+                None,
                 output,
                 emit_command_label.as_str(),
                 changed_only,
-            ) {
-                Ok(result) => report_emit_interface_result(result),
-                Err(EmitPackageInterfaceError::ManifestNotFound { .. }) => {
-                    report_package_interface_failure(
-                        &package_manifest.manifest_path,
-                        None,
-                        output,
-                        changed_only,
-                        None,
-                    );
-                    return Err(1);
-                }
-                Err(EmitPackageInterfaceError::SourceFailure { code, .. }) => {
-                    report_package_interface_source_failure(
-                        &package_manifest.manifest_path,
-                        None,
-                        output,
-                        changed_only,
-                        None,
-                    );
-                    return Err(code);
-                }
-                Err(EmitPackageInterfaceError::Code { code, .. }) => {
-                    report_package_interface_failure(
-                        &package_manifest.manifest_path,
-                        None,
-                        output,
-                        changed_only,
-                        None,
-                    );
-                    return Err(code);
-                }
-                Err(EmitPackageInterfaceError::ManifestFailure { .. }) => {
-                    report_package_interface_manifest_failure(
-                        &package_manifest.manifest_path,
-                        None,
-                        output,
-                        changed_only,
-                        None,
-                    );
-                    return Err(1);
-                }
-                Err(EmitPackageInterfaceError::NoSourceFilesFailure { source_root, .. }) => {
-                    report_package_interface_no_sources_failure(
-                        &package_manifest.manifest_path,
-                        None,
-                        &source_root,
-                        output,
-                        changed_only,
-                        None,
-                    );
-                    return Err(1);
-                }
-                Err(EmitPackageInterfaceError::SourceRootFailure { source_root, .. }) => {
-                    report_package_interface_source_root_failure(
-                        &package_manifest.manifest_path,
-                        None,
-                        &source_root,
-                        output,
-                        changed_only,
-                        None,
-                    );
-                    return Err(1);
-                }
-                Err(EmitPackageInterfaceError::OutputPathFailure { output_path, .. }) => {
-                    report_package_interface_output_failure(
-                        &package_manifest.manifest_path,
-                        None,
-                        &output_path,
-                        output,
-                        changed_only,
-                        None,
-                    );
-                    return Err(1);
-                }
-            }
+            )?;
             return Ok(());
         }
     }
@@ -294,82 +221,14 @@ pub(crate) fn project_emit_interface_path(
                 changed_only,
             );
         }
-        match emit_package_interface_path(path, output, emit_command_label.as_str(), changed_only) {
-            Ok(result) => report_emit_interface_result(result),
-            Err(EmitPackageInterfaceError::ManifestNotFound { .. }) => {
-                report_package_interface_failure(
-                    &manifest.manifest_path,
-                    None,
-                    output,
-                    changed_only,
-                    None,
-                );
-                return Err(1);
-            }
-            Err(EmitPackageInterfaceError::SourceFailure { code, .. }) => {
-                report_package_interface_source_failure(
-                    &manifest.manifest_path,
-                    None,
-                    output,
-                    changed_only,
-                    None,
-                );
-                return Err(code);
-            }
-            Err(EmitPackageInterfaceError::Code { code, .. }) => {
-                report_package_interface_failure(
-                    &manifest.manifest_path,
-                    None,
-                    output,
-                    changed_only,
-                    None,
-                );
-                return Err(code);
-            }
-            Err(EmitPackageInterfaceError::ManifestFailure { .. }) => {
-                report_package_interface_manifest_failure(
-                    &manifest.manifest_path,
-                    None,
-                    output,
-                    changed_only,
-                    None,
-                );
-                return Err(1);
-            }
-            Err(EmitPackageInterfaceError::NoSourceFilesFailure { source_root, .. }) => {
-                report_package_interface_no_sources_failure(
-                    &manifest.manifest_path,
-                    None,
-                    &source_root,
-                    output,
-                    changed_only,
-                    None,
-                );
-                return Err(1);
-            }
-            Err(EmitPackageInterfaceError::SourceRootFailure { source_root, .. }) => {
-                report_package_interface_source_root_failure(
-                    &manifest.manifest_path,
-                    None,
-                    &source_root,
-                    output,
-                    changed_only,
-                    None,
-                );
-                return Err(1);
-            }
-            Err(EmitPackageInterfaceError::OutputPathFailure { output_path, .. }) => {
-                report_package_interface_output_failure(
-                    &manifest.manifest_path,
-                    None,
-                    &output_path,
-                    output,
-                    changed_only,
-                    None,
-                );
-                return Err(1);
-            }
-        }
+        emit_single_package_interface(
+            path,
+            &manifest.manifest_path,
+            None,
+            output,
+            emit_command_label.as_str(),
+            changed_only,
+        )?;
         return Ok(());
     }
 
@@ -550,108 +409,16 @@ pub(crate) fn project_emit_interface_path(
                     continue;
                 }
             };
-            match emit_package_interface_path(
+            match emit_single_package_interface(
                 &member_manifest.manifest_path,
+                &member_manifest.manifest_path,
+                Some(&member_manifest.manifest_path),
                 None,
                 emit_command_label.as_str(),
                 changed_only,
             ) {
-                Ok(result) => report_emit_interface_result(result),
-                Err(EmitPackageInterfaceError::ManifestNotFound { .. }) => {
-                    report_package_interface_failure(
-                        &member_manifest.manifest_path,
-                        Some(&member_manifest.manifest_path),
-                        None,
-                        changed_only,
-                        None,
-                    );
-                    emission_failure_count += 1;
-                    record_reference_failure_manifest(
-                        &mut first_failing_member_manifest,
-                        member_manifest.manifest_path.clone(),
-                    );
-                }
-                Err(EmitPackageInterfaceError::SourceFailure { .. }) => {
-                    report_package_interface_source_failure(
-                        &member_manifest.manifest_path,
-                        Some(&member_manifest.manifest_path),
-                        None,
-                        changed_only,
-                        None,
-                    );
-                    emission_failure_count += 1;
-                    record_reference_failure_manifest(
-                        &mut first_failing_member_manifest,
-                        member_manifest.manifest_path.clone(),
-                    );
-                }
-                Err(EmitPackageInterfaceError::Code { .. }) => {
-                    report_package_interface_failure(
-                        &member_manifest.manifest_path,
-                        Some(&member_manifest.manifest_path),
-                        None,
-                        changed_only,
-                        None,
-                    );
-                    emission_failure_count += 1;
-                    record_reference_failure_manifest(
-                        &mut first_failing_member_manifest,
-                        member_manifest.manifest_path.clone(),
-                    );
-                }
-                Err(EmitPackageInterfaceError::NoSourceFilesFailure { source_root, .. }) => {
-                    report_package_interface_no_sources_failure(
-                        &member_manifest.manifest_path,
-                        Some(&member_manifest.manifest_path),
-                        &source_root,
-                        None,
-                        changed_only,
-                        None,
-                    );
-                    emission_failure_count += 1;
-                    record_reference_failure_manifest(
-                        &mut first_failing_member_manifest,
-                        member_manifest.manifest_path.clone(),
-                    );
-                }
-                Err(EmitPackageInterfaceError::ManifestFailure { .. }) => {
-                    report_package_interface_manifest_failure(
-                        &member_manifest.manifest_path,
-                        Some(&member_manifest.manifest_path),
-                        None,
-                        changed_only,
-                        None,
-                    );
-                    emission_failure_count += 1;
-                    record_reference_failure_manifest(
-                        &mut first_failing_member_manifest,
-                        member_manifest.manifest_path.clone(),
-                    );
-                }
-                Err(EmitPackageInterfaceError::SourceRootFailure { source_root, .. }) => {
-                    report_package_interface_source_root_failure(
-                        &member_manifest.manifest_path,
-                        Some(&member_manifest.manifest_path),
-                        &source_root,
-                        None,
-                        changed_only,
-                        None,
-                    );
-                    emission_failure_count += 1;
-                    record_reference_failure_manifest(
-                        &mut first_failing_member_manifest,
-                        member_manifest.manifest_path.clone(),
-                    );
-                }
-                Err(EmitPackageInterfaceError::OutputPathFailure { output_path, .. }) => {
-                    report_package_interface_output_failure(
-                        &member_manifest.manifest_path,
-                        Some(&member_manifest.manifest_path),
-                        &output_path,
-                        None,
-                        changed_only,
-                        None,
-                    );
+                Ok(()) => {}
+                Err(_) => {
                     emission_failure_count += 1;
                     record_reference_failure_manifest(
                         &mut first_failing_member_manifest,
