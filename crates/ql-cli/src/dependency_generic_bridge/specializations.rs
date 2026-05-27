@@ -2,6 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ql_ast::{FunctionDecl, ItemKind, Module};
 
+use super::function_bindings::{
+    FunctionTypeBindings, collect_imported_function_type_bindings,
+    collect_local_function_type_bindings, dependency_imported_local_names,
+};
 use super::instantiations;
 use super::rendering::{
     apply_specialized_body_rewrites, dependency_public_function_specialized_local_forwarder_name,
@@ -73,9 +77,8 @@ pub(crate) fn render_public_function_specialization_status_with_context(
     }
     let dependency_function_bindings =
         collect_specialization_function_type_bindings(dependency_module, specialization_modules);
-    let mut root_function_bindings =
-        instantiations::collect_local_function_type_bindings(root_module);
-    root_function_bindings.extend(instantiations::collect_imported_function_type_bindings(
+    let mut root_function_bindings = collect_local_function_type_bindings(root_module);
+    root_function_bindings.extend(collect_imported_function_type_bindings(
         root_module,
         module_import_path,
         dependency_module,
@@ -121,14 +124,14 @@ pub(crate) fn render_local_function_specializations(
     let call_instantiations = instantiations::collect_local_function_call_instantiations(
         root_module,
         function,
-        &instantiations::collect_local_function_type_bindings(root_module),
+        &collect_local_function_type_bindings(root_module),
     );
     render_function_specializations(
         module_import_path,
         function,
         contents,
         root_module,
-        &instantiations::collect_local_function_type_bindings(root_module),
+        &collect_local_function_type_bindings(root_module),
         &[],
         call_instantiations,
         rendered_specializations,
@@ -140,7 +143,7 @@ fn render_function_specializations(
     function: &FunctionDecl,
     contents: &str,
     specialization_module: &Module,
-    function_bindings: &instantiations::FunctionTypeBindings,
+    function_bindings: &FunctionTypeBindings,
     specialization_modules: &[SpecializationModule<'_>],
     call_instantiations: Vec<instantiations::PublicFunctionCallInstantiation>,
     rendered_specializations: &mut BTreeSet<String>,
@@ -199,7 +202,7 @@ fn render_public_function_specialized_forwarder(
     function: &FunctionDecl,
     contents: &str,
     specialization_module: &Module,
-    function_bindings: &instantiations::FunctionTypeBindings,
+    function_bindings: &FunctionTypeBindings,
     specialization_modules: &[SpecializationModule<'_>],
     substitutions: &BTreeMap<String, String>,
     rendered_specializations: &mut BTreeSet<String>,
@@ -294,15 +297,13 @@ fn render_public_function_specialized_forwarder(
 fn collect_specialization_function_type_bindings(
     dependency_module: &Module,
     specialization_modules: &[SpecializationModule<'_>],
-) -> instantiations::FunctionTypeBindings {
-    let mut bindings = instantiations::collect_local_function_type_bindings(dependency_module);
+) -> FunctionTypeBindings {
+    let mut bindings = collect_local_function_type_bindings(dependency_module);
     for module in specialization_modules {
-        bindings.extend(instantiations::collect_local_function_type_bindings(
-            module.module,
-        ));
+        bindings.extend(collect_local_function_type_bindings(module.module));
     }
     for target in specialization_modules {
-        bindings.extend(instantiations::collect_imported_function_type_bindings(
+        bindings.extend(collect_imported_function_type_bindings(
             dependency_module,
             target.module_import_path,
             target.module,
@@ -310,7 +311,7 @@ fn collect_specialization_function_type_bindings(
     }
     for caller in specialization_modules {
         for target in specialization_modules {
-            bindings.extend(instantiations::collect_imported_function_type_bindings(
+            bindings.extend(collect_imported_function_type_bindings(
                 caller.module,
                 target.module_import_path,
                 target.module,
@@ -323,7 +324,7 @@ fn collect_specialization_function_type_bindings(
 fn collect_imported_specialized_body_call_rewrites(
     function: &FunctionDecl,
     specialization_module: &Module,
-    function_bindings: &instantiations::FunctionTypeBindings,
+    function_bindings: &FunctionTypeBindings,
     specialization_modules: &[SpecializationModule<'_>],
     substitutions: &BTreeMap<String, String>,
     rendered_specializations: &mut BTreeSet<String>,
@@ -338,7 +339,7 @@ fn collect_imported_specialized_body_call_rewrites(
             if !supports_public_function_specialization(callee) || callee.body.is_none() {
                 continue;
             }
-            let local_names = instantiations::dependency_imported_local_names(
+            let local_names = dependency_imported_local_names(
                 specialization_module,
                 target_module.module_import_path,
                 callee.name.as_str(),
