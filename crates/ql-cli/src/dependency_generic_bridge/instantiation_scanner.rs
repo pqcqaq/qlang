@@ -10,18 +10,6 @@ pub(super) fn collect_dependency_generic_function_instantiations_from_item(
     root_bindings: &ValueTypeBindings,
     context: &mut InstantiationScanContext<'_>,
 ) {
-    collect_dependency_generic_function_instantiations_from_item_with_context(
-        item,
-        root_bindings,
-        context,
-    );
-}
-
-fn collect_dependency_generic_function_instantiations_from_item_with_context(
-    item: &ql_ast::Item,
-    root_bindings: &ValueTypeBindings,
-    context: &mut InstantiationScanContext<'_>,
-) {
     match &item.kind {
         ItemKind::Function(root_function) => {
             collect_callable_body_instantiations(root_function, root_bindings, context);
