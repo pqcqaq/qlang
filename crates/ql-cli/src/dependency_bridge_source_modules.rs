@@ -11,6 +11,30 @@ use crate::dependency_bridge_modules::{
     dependency_module_source_path,
 };
 
+pub(crate) fn collect_dependency_interface_module_bridge_items<E>(
+    dependency_package: &str,
+    interface_modules: &[InterfaceModule],
+    root_source_module: &Module,
+    mut collect_interface_module: impl FnMut(
+        &InterfaceModule,
+        &ImportedDependencyExterns,
+        &Vec<String>,
+    ) -> Result<(), E>,
+) -> Result<(), E> {
+    let module_import_paths =
+        dependency_interface_module_import_paths(dependency_package, interface_modules);
+    let imported_externs =
+        collect_imported_dependency_externs(root_source_module, &module_import_paths);
+
+    for module in interface_modules {
+        let module_import_path =
+            dependency_interface_module_import_path(dependency_package, &module.syntax);
+        collect_interface_module(module, &imported_externs, &module_import_path)?;
+    }
+
+    Ok(())
+}
+
 pub(crate) fn collect_dependency_source_modules<E>(
     dependency_manifest_path: &Path,
     interface_modules: &[InterfaceModule],
@@ -34,8 +58,8 @@ pub(crate) fn collect_dependency_source_module_bridge_items<E>(
     dependency_manifest_path: &Path,
     interface_modules: &[InterfaceModule],
     root_source_module: &Module,
-    read_source: impl FnMut(&Path) -> Result<String, E>,
-    parse_source_module: impl FnMut(&Path, &str) -> Result<Module, E>,
+    mut read_source: impl FnMut(&Path) -> Result<String, E>,
+    mut parse_source_module: impl FnMut(&Path, &str) -> Result<Module, E>,
     mut collect_source_module: impl FnMut(
         &Module,
         &str,
@@ -43,23 +67,23 @@ pub(crate) fn collect_dependency_source_module_bridge_items<E>(
         &Vec<String>,
     ) -> Result<(), E>,
 ) -> Result<(), E> {
-    let module_import_paths =
-        dependency_interface_module_import_paths(dependency_package, interface_modules);
-    let imported_externs =
-        collect_imported_dependency_externs(root_source_module, &module_import_paths);
-
-    collect_dependency_source_modules(
-        dependency_manifest_path,
+    collect_dependency_interface_module_bridge_items(
+        dependency_package,
         interface_modules,
-        read_source,
-        parse_source_module,
-        |source_module, dependency_source| {
+        root_source_module,
+        |interface_module, imported_externs, _interface_module_import_path| {
+            let source_path = dependency_module_source_path(
+                dependency_manifest_path,
+                &interface_module.source_path,
+            );
+            let dependency_source = read_source(&source_path)?;
+            let source_module = parse_source_module(&source_path, &dependency_source)?;
             let module_import_path =
-                dependency_interface_module_import_path(dependency_package, source_module);
+                dependency_interface_module_import_path(dependency_package, &source_module);
             collect_source_module(
-                source_module,
-                dependency_source,
-                &imported_externs,
+                &source_module,
+                &dependency_source,
+                imported_externs,
                 &module_import_path,
             )
         },
@@ -81,6 +105,56 @@ mod tests {
             contents: source.to_owned(),
             syntax: parse_source(source).unwrap(),
         }
+    }
+
+    #[test]
+    fn interface_module_bridge_items_share_import_filtering_context() {
+        let first_source = "package dep.alpha\npub const FIRST: Int = 1\n";
+        let second_source = "package dep.beta\npub const SECOND: Int = 2\n";
+        let interface_modules = [
+            interface_module("src/alpha.ql", first_source),
+            interface_module("src/beta.ql", second_source),
+        ];
+        let root_source_module = parse_source("use dep.alpha.FIRST\n").unwrap();
+        let mut visited = Vec::new();
+
+        collect_dependency_interface_module_bridge_items(
+            "dep",
+            &interface_modules,
+            &root_source_module,
+            |module, imported_externs, module_import_path| {
+                visited.push((module.source_path.clone(), module_import_path.clone()));
+                let symbol = module
+                    .syntax
+                    .items
+                    .first()
+                    .and_then(|item| match &item.kind {
+                        ql_ast::ItemKind::Const(global) => Some(global.name.as_str()),
+                        _ => None,
+                    });
+                if let Some(symbol) = symbol {
+                    let imported =
+                        dependency_extern_is_imported(imported_externs, module_import_path, symbol);
+                    assert_eq!(imported, symbol == "FIRST");
+                }
+                Ok::<_, String>(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            visited,
+            vec![
+                (
+                    "src/alpha.ql".to_owned(),
+                    vec!["dep".to_owned(), "alpha".to_owned()]
+                ),
+                (
+                    "src/beta.ql".to_owned(),
+                    vec!["dep".to_owned(), "beta".to_owned()]
+                ),
+            ]
+        );
     }
 
     #[test]

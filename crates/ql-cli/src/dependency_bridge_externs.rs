@@ -15,10 +15,9 @@ use crate::dependency_bridge_extern_declarations::collect_dependency_module_exte
 use crate::dependency_bridge_extern_errors::{
     dependency_extern_bridge_target_prep_error, report_direct_dependency_extern_bridge_error,
 };
-use crate::dependency_bridge_imports::collect_imported_dependency_externs;
-use crate::dependency_bridge_modules::dependency_interface_module_import_paths;
 use crate::dependency_bridge_names::DependencyExternOwner;
 use crate::dependency_bridge_reporting::report_dependency_interface_load_failure;
+use crate::dependency_bridge_source_modules::collect_dependency_interface_module_bridge_items;
 use crate::project_manifest_paths::reference_manifest_path;
 
 pub(crate) fn render_direct_dependency_extern_declarations(
@@ -79,32 +78,32 @@ pub(crate) fn render_direct_dependency_extern_declarations(
             }
             1
         })?;
-        let module_import_paths =
-            dependency_interface_module_import_paths(&dependency_package, &artifact.modules);
-        let imported_externs =
-            collect_imported_dependency_externs(&root_source_module, &module_import_paths);
-
-        for module in &artifact.modules {
-            collect_dependency_module_extern_declarations(
-                &dependency_package,
-                &dependency.manifest_path,
-                &module.syntax,
-                &module.contents,
-                Some(&imported_externs),
-                &mut owners_by_symbol,
-                &mut declarations,
-            )
-            .map_err(|error| {
-                if report_failure {
-                    report_direct_dependency_extern_bridge_error(
-                        command_label,
-                        &dependency_package,
-                        error,
-                    );
-                }
-                1
-            })?;
-        }
+        collect_dependency_interface_module_bridge_items(
+            &dependency_package,
+            &artifact.modules,
+            &root_source_module,
+            |module, imported_externs, _module_import_path| {
+                collect_dependency_module_extern_declarations(
+                    &dependency_package,
+                    &dependency.manifest_path,
+                    &module.syntax,
+                    &module.contents,
+                    Some(imported_externs),
+                    &mut owners_by_symbol,
+                    &mut declarations,
+                )
+                .map_err(|error| {
+                    if report_failure {
+                        report_direct_dependency_extern_bridge_error(
+                            command_label,
+                            &dependency_package,
+                            error,
+                        );
+                    }
+                    1
+                })
+            },
+        )?;
     }
 
     Ok(declarations.join("\n\n"))
@@ -161,29 +160,29 @@ pub(crate) fn render_direct_dependency_extern_declarations_quiet(
                 error,
             )
         })?;
-        let module_import_paths =
-            dependency_interface_module_import_paths(&dependency_package, &artifact.modules);
-        let imported_externs =
-            collect_imported_dependency_externs(&root_source_module, &module_import_paths);
-
-        for module in &artifact.modules {
-            collect_dependency_module_extern_declarations(
-                &dependency_package,
-                &dependency_manifest.manifest_path,
-                &module.syntax,
-                &module.contents,
-                Some(&imported_externs),
-                &mut owners_by_symbol,
-                &mut declarations,
-            )
-            .map_err(|error| {
-                dependency_extern_bridge_target_prep_error(
-                    error,
+        collect_dependency_interface_module_bridge_items(
+            &dependency_package,
+            &artifact.modules,
+            &root_source_module,
+            |module, imported_externs, _module_import_path| {
+                collect_dependency_module_extern_declarations(
                     &dependency_package,
                     &dependency_manifest.manifest_path,
+                    &module.syntax,
+                    &module.contents,
+                    Some(imported_externs),
+                    &mut owners_by_symbol,
+                    &mut declarations,
                 )
-            })?;
-        }
+                .map_err(|error| {
+                    dependency_extern_bridge_target_prep_error(
+                        error,
+                        &dependency_package,
+                        &dependency_manifest.manifest_path,
+                    )
+                })
+            },
+        )?;
     }
 
     Ok(declarations.join("\n\n"))
