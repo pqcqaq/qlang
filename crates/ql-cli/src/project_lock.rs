@@ -1,3 +1,4 @@
+#[cfg(test)]
 use std::fs;
 use std::path::Path;
 
@@ -5,11 +6,12 @@ use ql_driver::acquire_build_output_locks;
 use ql_driver::write_file_atomically;
 use ql_project::{load_project_manifest, project_lockfile_path, render_project_lockfile};
 
-use crate::cli_utils::{normalize_line_endings, normalize_path};
+use crate::cli_utils::normalize_path;
 use crate::project_targets::resolve_project_workspace_member_command_request_root;
 
 mod json_report;
 mod reporting;
+mod status;
 
 use json_report::{
     ProjectLockJsonReport, render_project_lock_manifest_failure_json,
@@ -20,30 +22,7 @@ use reporting::{
     report_project_lock_load_error, report_project_lock_output_lock_error,
     report_project_lock_render_error,
 };
-
-#[derive(Debug, PartialEq, Eq)]
-enum ProjectLockCheckStatus {
-    UpToDate,
-    Stale,
-    Missing,
-    ReadError(String),
-}
-
-fn project_lockfile_check_status(lockfile_path: &Path, expected: &str) -> ProjectLockCheckStatus {
-    match fs::read_to_string(lockfile_path) {
-        Ok(actual) => {
-            if normalize_line_endings(&actual) == normalize_line_endings(expected) {
-                ProjectLockCheckStatus::UpToDate
-            } else {
-                ProjectLockCheckStatus::Stale
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            ProjectLockCheckStatus::Missing
-        }
-        Err(error) => ProjectLockCheckStatus::ReadError(error.to_string()),
-    }
-}
+use status::{ProjectLockCheckStatus, check_project_lockfile, project_lockfile_check_status};
 
 pub(crate) fn project_lock_path(path: &Path, check_only: bool, json: bool) -> Result<(), u8> {
     let command_label = if check_only {
@@ -193,44 +172,6 @@ pub(crate) fn project_lock_path(path: &Path, check_only: bool, json: bool) -> Re
 
     println!("wrote lockfile: {}", normalize_path(&lockfile_path));
     Ok(())
-}
-
-fn check_project_lockfile(
-    manifest: &ql_project::ProjectManifest,
-    lockfile_path: &Path,
-    expected: &str,
-) -> Result<(), u8> {
-    let normalized_lockfile_path = normalize_path(lockfile_path);
-    let rerun_command = format!(
-        "ql project lock {}",
-        normalize_path(&manifest.manifest_path)
-    );
-
-    match project_lockfile_check_status(lockfile_path, expected) {
-        ProjectLockCheckStatus::UpToDate => return Ok(()),
-        ProjectLockCheckStatus::Stale => {
-            eprintln!(
-                "error: `ql project lock --check` lockfile `{normalized_lockfile_path}` is stale"
-            );
-        }
-        ProjectLockCheckStatus::Missing => {
-            eprintln!(
-                "error: `ql project lock --check` lockfile `{normalized_lockfile_path}` is missing"
-            );
-        }
-        ProjectLockCheckStatus::ReadError(error) => {
-            eprintln!(
-                "error: `ql project lock --check` failed to read lockfile `{normalized_lockfile_path}`: {error}"
-            );
-        }
-    }
-
-    eprintln!(
-        "note: failing package manifest: {}",
-        normalize_path(&manifest.manifest_path)
-    );
-    eprintln!("hint: rerun `{rerun_command}` to regenerate `qlang.lock`");
-    Err(1)
 }
 
 #[cfg(test)]
