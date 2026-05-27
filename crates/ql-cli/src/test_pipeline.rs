@@ -1,13 +1,8 @@
 use std::env;
-use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-use ql_diagnostics::render_diagnostics;
-use ql_driver::{
-    BuildEmit, BuildOptions, BuildProfile, acquire_build_output_locks, default_output_path,
-};
+use ql_driver::{BuildEmit, BuildOptions, BuildProfile, default_output_path};
 use ql_project::{
     WorkspaceBuildTargets, discover_package_build_targets, discover_workspace_build_targets,
     load_project_manifest, package_name,
@@ -22,8 +17,6 @@ use crate::build_reporting::build_json_project_error;
 use crate::build_single_source::{
     build_single_source_target_quiet, build_single_source_target_silent,
 };
-use crate::build_single_source_reporting::build_output_lock_error_message;
-use crate::cli_analysis::analyze_source;
 use crate::cli_scan::collect_ql_files;
 use crate::cli_utils::{
     normalize_path, package_check_manifest_path_from_project_error,
@@ -43,6 +36,9 @@ use crate::project_workspace::{
     resolve_selected_workspace_member_manifest, resolve_workspace_member_entry_by_package_name,
 };
 use crate::test_command::TestCommandOptions;
+use crate::test_execution::{
+    execute_test_binary, execute_ui_test, report_test_failure, test_target_manifest_paths,
+};
 use crate::test_reporting::{
     TestExecutionReport, TestFailure, TestTarget, TestTargetKind,
     render_test_json_preflight_failure_report, render_test_json_preflight_message_report,
@@ -915,137 +911,4 @@ pub(crate) fn execute_test_targets(
         report.passed, report.failed
     );
     Ok(report)
-}
-
-fn execute_test_binary(
-    executable_path: &Path,
-    working_directory: &Path,
-) -> Result<(Option<i32>, String, String), String> {
-    let _execution_lock = acquire_build_output_locks(vec![executable_path.to_path_buf()])
-        .map_err(build_output_lock_error_message)?;
-    let output = Command::new(executable_path)
-        .current_dir(working_directory)
-        .output()
-        .map_err(|error| {
-            format!(
-                "failed to run `{}`: {error}",
-                normalize_path(executable_path)
-            )
-        })?;
-    Ok((
-        output.status.code(),
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-        String::from_utf8_lossy(&output.stderr).into_owned(),
-    ))
-}
-
-fn execute_ui_test(
-    source_path: &Path,
-    diagnostic_path: &Path,
-    snapshot_path: &Path,
-) -> Result<(), String> {
-    let expected = fs::read_to_string(snapshot_path).map_err(|error| {
-        format!(
-            "reason: failed to read expected stderr snapshot `{}`: {error}",
-            normalize_path(snapshot_path)
-        )
-    })?;
-    let source = fs::read_to_string(source_path).map_err(|error| {
-        format!(
-            "reason: failed to read ui test source `{}`: {error}",
-            normalize_path(source_path)
-        )
-    })?;
-    let expected = normalize_output_text(&expected);
-    let actual = match analyze_source(&source) {
-        Ok(()) => {
-            return Err(
-                "reason: ui test expected diagnostics, but the source analyzed successfully"
-                    .to_owned(),
-            );
-        }
-        Err(diagnostics) => normalize_output_text(&render_diagnostics(
-            Path::new(&normalize_path(diagnostic_path)),
-            &source,
-            &diagnostics,
-        )),
-    };
-
-    if actual != expected {
-        return Err(format!(
-            "reason: ui stderr snapshot mismatch\n--- expected ---\n{expected}\n--- actual ---\n{actual}"
-        ));
-    }
-
-    Ok(())
-}
-
-fn report_test_failure(failure: &TestFailure) {
-    match failure {
-        TestFailure::Build { display_path } => {
-            eprintln!("  {display_path}");
-            eprintln!("    reason: test failed to build");
-        }
-        TestFailure::Run {
-            display_path,
-            exit_code,
-            stdout,
-            stderr,
-        } => {
-            eprintln!("  {display_path}");
-            match exit_code {
-                Some(code) => eprintln!("    reason: test process exited with code {code}"),
-                None => eprintln!("    reason: test process terminated without an exit code"),
-            }
-            if !stdout.trim().is_empty() {
-                eprintln!("    stdout:");
-                for line in stdout.lines() {
-                    eprintln!("      {line}");
-                }
-            }
-            if !stderr.trim().is_empty() {
-                eprintln!("    stderr:");
-                for line in stderr.lines() {
-                    eprintln!("      {line}");
-                }
-            }
-        }
-        TestFailure::Spawn {
-            display_path,
-            error,
-        } => {
-            eprintln!("  {display_path}");
-            eprintln!("    reason: {error}");
-        }
-        TestFailure::Ui {
-            display_path,
-            detail,
-        } => {
-            eprintln!("  {display_path}");
-            for line in detail.lines() {
-                eprintln!("    {line}");
-            }
-        }
-    }
-}
-
-fn test_target_manifest_paths(targets: &[TestTarget]) -> Vec<PathBuf> {
-    let mut manifest_paths = Vec::new();
-    for target in targets {
-        let TestTargetKind::Smoke {
-            package_manifest_path: Some(manifest_path),
-            ..
-        } = &target.kind
-        else {
-            continue;
-        };
-        if !manifest_paths.contains(manifest_path) {
-            manifest_paths.push(manifest_path.clone());
-        }
-    }
-    manifest_paths
-}
-
-fn normalize_output_text(text: &str) -> String {
-    text.replace("\r\n", "\n")
 }
