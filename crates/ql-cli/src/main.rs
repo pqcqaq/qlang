@@ -58,6 +58,7 @@ mod project_reference_interfaces;
 mod project_reporting;
 mod project_status;
 mod project_target_build;
+mod project_target_build_prep;
 mod project_targets;
 mod project_workspace;
 mod run_command;
