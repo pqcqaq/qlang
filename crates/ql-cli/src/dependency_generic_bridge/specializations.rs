@@ -153,11 +153,7 @@ fn render_function_specializations(
     }
     let mut concrete_instantiations = BTreeSet::new();
     for instantiation in &call_instantiations {
-        if function
-            .generics
-            .iter()
-            .any(|generic| !instantiation.substitutions.contains_key(&generic.name))
-        {
+        if !has_complete_generic_substitutions(function, &instantiation.substitutions) {
             return None;
         }
         concrete_instantiations.insert(instantiation.substitutions.clone());
@@ -226,6 +222,56 @@ fn render_public_function_specialized_forwarder(
     }
 
     let mut body_call_rewrites = Vec::new();
+    collect_same_module_specialized_body_call_rewrites(
+        module_import_path,
+        function,
+        contents,
+        specialization_module,
+        function_bindings,
+        specialization_modules,
+        substitutions,
+        rendered_specializations,
+        declarations,
+        &mut body_call_rewrites,
+    )?;
+    collect_imported_specialized_body_call_rewrites(
+        function,
+        specialization_module,
+        function_bindings,
+        specialization_modules,
+        substitutions,
+        rendered_specializations,
+        declarations,
+        &mut body_call_rewrites,
+    )?;
+
+    let body_span = function.body.as_ref()?.span;
+    let body_source = span_text(contents, body_span);
+    let leading_trim = body_source.len() - body_source.trim_start().len();
+    let body_start = body_span.start + leading_trim;
+    let body = apply_specialized_body_rewrites(body_source.trim(), body_start, &body_call_rewrites);
+    let body = replace_generic_identifiers(&body, substitutions);
+    let generic_params =
+        render_dependency_bridge_generic_params_with_substitutions(function, substitutions);
+
+    declarations.push(format!(
+        "fn {specialized_name}{generic_params}({params}){return_suffix} {body}"
+    ));
+    Some(())
+}
+
+fn collect_same_module_specialized_body_call_rewrites(
+    module_import_path: &[String],
+    function: &FunctionDecl,
+    contents: &str,
+    specialization_module: &Module,
+    function_bindings: &FunctionTypeBindings,
+    specialization_modules: &[SpecializationModule<'_>],
+    substitutions: &BTreeMap<String, String>,
+    rendered_specializations: &mut BTreeSet<String>,
+    declarations: &mut Vec<String>,
+    body_call_rewrites: &mut Vec<SourceRewrite>,
+) -> Option<()> {
     for item in &specialization_module.items {
         let ItemKind::Function(callee) = &item.kind else {
             continue;
@@ -239,11 +285,7 @@ fn render_public_function_specialized_forwarder(
             substitutions,
             function_bindings,
         ) {
-            if callee
-                .generics
-                .iter()
-                .any(|generic| !instantiation.substitutions.contains_key(&generic.name))
-            {
+            if !has_complete_generic_substitutions(callee, &instantiation.substitutions) {
                 return None;
             }
             render_public_function_specialized_forwarder(
@@ -268,29 +310,6 @@ fn render_public_function_specialized_forwarder(
             });
         }
     }
-    collect_imported_specialized_body_call_rewrites(
-        function,
-        specialization_module,
-        function_bindings,
-        specialization_modules,
-        substitutions,
-        rendered_specializations,
-        declarations,
-        &mut body_call_rewrites,
-    )?;
-
-    let body_span = function.body.as_ref()?.span;
-    let body_source = span_text(contents, body_span);
-    let leading_trim = body_source.len() - body_source.trim_start().len();
-    let body_start = body_span.start + leading_trim;
-    let body = apply_specialized_body_rewrites(body_source.trim(), body_start, &body_call_rewrites);
-    let body = replace_generic_identifiers(&body, substitutions);
-    let generic_params =
-        render_dependency_bridge_generic_params_with_substitutions(function, substitutions);
-
-    declarations.push(format!(
-        "fn {specialized_name}{generic_params}({params}){return_suffix} {body}"
-    ));
     Some(())
 }
 
@@ -356,11 +375,7 @@ fn collect_imported_specialized_body_call_rewrites(
                     function_bindings,
                 )
             {
-                if callee
-                    .generics
-                    .iter()
-                    .any(|generic| !instantiation.substitutions.contains_key(&generic.name))
-                {
+                if !has_complete_generic_substitutions(callee, &instantiation.substitutions) {
                     return None;
                 }
                 render_public_function_specialized_forwarder(
@@ -387,4 +402,14 @@ fn collect_imported_specialized_body_call_rewrites(
         }
     }
     Some(())
+}
+
+fn has_complete_generic_substitutions(
+    function: &FunctionDecl,
+    substitutions: &BTreeMap<String, String>,
+) -> bool {
+    function
+        .generics
+        .iter()
+        .all(|generic| substitutions.contains_key(&generic.name))
 }
