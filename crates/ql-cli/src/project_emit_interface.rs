@@ -1,38 +1,30 @@
 use std::path::Path;
 
-use ql_project::{load_project_manifest, package_name};
+use ql_project::package_name;
 
-use crate::cli_utils::{
-    normalize_path, package_check_manifest_path_from_project_error,
-    package_missing_name_manifest_path_from_project_error, validate_project_package_name,
-};
+use crate::cli_utils::normalize_path;
 use crate::project_interface_reporting::{
-    check_package_interface_artifact, format_project_emit_interface_command_label,
-    format_workspace_member_emit_rerun_command, report_package_interface_check,
+    check_package_interface_artifact, report_package_interface_check,
     report_package_interface_failure, report_package_interface_manifest_failure,
-    report_project_emit_interface_package_context_failure,
 };
 use crate::project_manifest_paths::workspace_member_manifest_path;
-use crate::project_targets::resolve_project_workspace_member_command_request_root;
 use crate::project_workspace::{
     resolve_selected_workspace_member_manifest, select_workspace_members,
 };
 
 mod package_emit;
+mod preflight;
 mod workspace_check;
 mod workspace_emit;
 
 use package_emit::emit_single_package_interface;
+use preflight::{
+    load_project_emit_interface_manifest, project_emit_interface_labels,
+    report_package_interface_check_manifest_failure,
+    validate_project_emit_interface_package_selector,
+};
 use workspace_check::check_workspace_member_interface;
 use workspace_emit::emit_workspace_member_interface;
-
-fn report_package_interface_check_manifest_failure(manifest_path: &Path, changed_only: bool) {
-    let manifest_path = normalize_path(manifest_path);
-    let rerun_command =
-        format_workspace_member_emit_rerun_command(&manifest_path, changed_only, true);
-    eprintln!("note: failing package manifest: {manifest_path}");
-    eprintln!("hint: rerun `{rerun_command}` after fixing the package manifest");
-}
 
 pub(crate) fn project_emit_interface_path(
     path: &Path,
@@ -46,95 +38,13 @@ pub(crate) fn project_emit_interface_path(
         return Err(1);
     }
 
-    let emit_command_label =
-        format_project_emit_interface_command_label(output, changed_only, false);
-    let check_command_label = format_project_emit_interface_command_label(None, changed_only, true);
-    let command_label = if check_only {
-        check_command_label.as_str()
-    } else {
-        emit_command_label.as_str()
-    };
-    if let Some(package_name) = selected_package_name
-        && let Err(message) = validate_project_package_name(package_name)
-    {
-        eprintln!("error: {command_label} {message}");
-        return Err(1);
-    }
-    let request_root = if output.is_none() {
-        resolve_project_workspace_member_command_request_root(path)
-    } else {
-        None
-    };
-    let manifest = load_project_manifest(request_root.as_deref().unwrap_or(path)).map_err(|error| {
-        if let ql_project::ProjectError::ManifestNotFound { start } = &error {
-            let command_label = if check_only {
-                check_command_label.as_str()
-            } else {
-                emit_command_label.as_str()
-            };
-            eprintln!(
-                "error: {} requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
-                command_label,
-                normalize_path(start)
-            );
-            report_project_emit_interface_package_context_failure(
-                path,
-                output,
-                changed_only,
-                check_only,
-            );
-            return 1;
-        }
-        if check_only {
-            if let Some(manifest_path) =
-                package_missing_name_manifest_path_from_project_error(&error)
-            {
-                eprintln!(
-                    "error: {} manifest `{}` does not declare `[package].name`",
-                    check_command_label,
-                    normalize_path(manifest_path)
-                );
-                report_package_interface_check_manifest_failure(manifest_path, changed_only);
-                return 1;
-            }
-            if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error) {
-                eprintln!("error: {check_command_label} {error}");
-                report_package_interface_check_manifest_failure(manifest_path, changed_only);
-                return 1;
-            }
-        } else {
-            if let Some(manifest_path) =
-                package_missing_name_manifest_path_from_project_error(&error)
-            {
-                eprintln!(
-                    "error: {} manifest `{}` does not declare `[package].name`",
-                    emit_command_label,
-                    normalize_path(manifest_path)
-                );
-                report_package_interface_manifest_failure(
-                    manifest_path,
-                    None,
-                    output,
-                    changed_only,
-                    None,
-                );
-                return 1;
-            }
-            if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error) {
-                eprintln!("error: {emit_command_label} {error}");
-                report_package_interface_manifest_failure(
-                    manifest_path,
-                    None,
-                    output,
-                    changed_only,
-                    None,
-                );
-                return 1;
-            }
-        }
-        eprintln!("error: {error}");
-        1
-    })?;
+    let labels = project_emit_interface_labels(output, changed_only, check_only);
+    validate_project_emit_interface_package_selector(
+        selected_package_name,
+        labels.active.as_str(),
+    )?;
+    let manifest =
+        load_project_emit_interface_manifest(path, output, changed_only, check_only, &labels)?;
 
     if output.is_some() && manifest.workspace.is_some() {
         if let Some(selected_package_name) = selected_package_name {
@@ -142,7 +52,7 @@ pub(crate) fn project_emit_interface_path(
                 &manifest,
                 path,
                 selected_package_name,
-                emit_command_label.as_str(),
+                labels.emit.as_str(),
                 "--package",
             )?;
             emit_single_package_interface(
@@ -150,7 +60,7 @@ pub(crate) fn project_emit_interface_path(
                 &package_manifest.manifest_path,
                 None,
                 output,
-                emit_command_label.as_str(),
+                labels.emit.as_str(),
                 changed_only,
             )?;
             return Ok(());
@@ -160,7 +70,7 @@ pub(crate) fn project_emit_interface_path(
     if manifest.package.is_some() {
         if let Some(selected_package_name) = selected_package_name {
             let actual_package_name = package_name(&manifest).map_err(|error| {
-                eprintln!("error: {command_label} {error}");
+                eprintln!("error: {} {error}", labels.active);
                 if check_only {
                     report_package_interface_check_manifest_failure(
                         &manifest.manifest_path,
@@ -179,7 +89,8 @@ pub(crate) fn project_emit_interface_path(
             })?;
             if actual_package_name != selected_package_name {
                 eprintln!(
-                    "error: {command_label} package selector expected `{selected_package_name}` but `{}` resolves to package `{actual_package_name}`",
+                    "error: {} package selector expected `{selected_package_name}` but `{}` resolves to package `{actual_package_name}`",
+                    labels.active,
                     normalize_path(path)
                 );
                 return Err(1);
@@ -188,7 +99,7 @@ pub(crate) fn project_emit_interface_path(
         if check_only {
             let result = match check_package_interface_artifact(
                 &manifest,
-                check_command_label.as_str(),
+                labels.check.as_str(),
                 changed_only,
             ) {
                 Ok(result) => result,
@@ -206,7 +117,7 @@ pub(crate) fn project_emit_interface_path(
             return report_package_interface_check(
                 result,
                 None,
-                check_command_label.as_str(),
+                labels.check.as_str(),
                 changed_only,
             );
         }
@@ -215,7 +126,7 @@ pub(crate) fn project_emit_interface_path(
             &manifest.manifest_path,
             None,
             output,
-            emit_command_label.as_str(),
+            labels.emit.as_str(),
             changed_only,
         )?;
         return Ok(());
@@ -236,7 +147,7 @@ pub(crate) fn project_emit_interface_path(
         &manifest,
         path,
         selected_package_name,
-        command_label,
+        labels.active.as_str(),
         "--package",
     )?;
     let mut failing_member_count = 0usize;
@@ -248,7 +159,7 @@ pub(crate) fn project_emit_interface_path(
             if !check_workspace_member_interface(
                 &member_manifest_path,
                 changed_only,
-                check_command_label.as_str(),
+                labels.check.as_str(),
                 &mut first_failing_member_manifest,
             ) {
                 failing_member_count += 1;
@@ -257,7 +168,7 @@ pub(crate) fn project_emit_interface_path(
             if !emit_workspace_member_interface(
                 &member_manifest_path,
                 changed_only,
-                emit_command_label.as_str(),
+                labels.emit.as_str(),
                 &mut first_failing_member_manifest,
             ) {
                 emission_failure_count += 1;
@@ -266,7 +177,10 @@ pub(crate) fn project_emit_interface_path(
     }
 
     if check_only && failing_member_count > 0 {
-        eprintln!("error: {check_command_label} found {failing_member_count} failing member(s)");
+        eprintln!(
+            "error: {} found {failing_member_count} failing member(s)",
+            labels.check
+        );
         if failing_member_count > 1 {
             if let Some(path) = &first_failing_member_manifest {
                 eprintln!(
@@ -279,7 +193,10 @@ pub(crate) fn project_emit_interface_path(
     }
 
     if !check_only && emission_failure_count > 0 {
-        eprintln!("error: {emit_command_label} found {emission_failure_count} failing member(s)");
+        eprintln!(
+            "error: {} found {emission_failure_count} failing member(s)",
+            labels.emit
+        );
         if emission_failure_count > 1 {
             if let Some(path) = &first_failing_member_manifest {
                 eprintln!(
