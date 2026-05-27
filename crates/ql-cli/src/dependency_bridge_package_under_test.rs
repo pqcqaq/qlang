@@ -18,7 +18,7 @@ use crate::dependency_bridge_modules::{
 };
 use crate::dependency_bridge_names::DependencyExternOwner;
 use crate::dependency_bridge_public_function_errors::report_package_under_test_function_forwarder_error;
-use crate::dependency_bridge_public_functions::collect_dependency_module_public_function_forwarders;
+use crate::dependency_bridge_public_function_forwarders::collect_dependency_module_public_function_forwarders;
 use crate::dependency_bridge_public_type_declaration_collection::collect_dependency_module_public_type_declarations;
 use crate::dependency_bridge_public_type_errors::report_package_under_test_type_bridge_error;
 
