@@ -108,29 +108,20 @@ fn collect_same_module_specialized_body_call_rewrites(
             substitutions,
             function_bindings,
         ) {
-            if !has_complete_generic_substitutions(callee, &instantiation.substitutions) {
-                return None;
-            }
-            render_public_function_specialized_forwarder(
-                module_import_path,
-                callee,
-                contents,
-                specialization_module,
+            render_specialized_body_call_rewrite(
+                SpecializedBodyCallTarget {
+                    module_import_path,
+                    contents,
+                    module: specialization_module,
+                    callee,
+                },
+                instantiation,
                 function_bindings,
                 specialization_modules,
-                &instantiation.substitutions,
                 rendered_specializations,
                 declarations,
+                body_call_rewrites,
             )?;
-            body_call_rewrites.push(SourceRewrite {
-                span: instantiation.callee_span,
-                replacement: dependency_public_function_specialized_local_forwarder_name(
-                    module_import_path,
-                    &callee.name,
-                    callee,
-                    &instantiation.substitutions,
-                ),
-            });
         }
     }
     Some(())
@@ -171,32 +162,65 @@ fn collect_imported_specialized_body_call_rewrites(
                     function_bindings,
                 )
             {
-                if !has_complete_generic_substitutions(callee, &instantiation.substitutions) {
-                    return None;
-                }
-                render_public_function_specialized_forwarder(
-                    target_module.module_import_path,
-                    callee,
-                    target_module.contents,
-                    target_module.module,
+                render_specialized_body_call_rewrite(
+                    SpecializedBodyCallTarget {
+                        module_import_path: target_module.module_import_path,
+                        contents: target_module.contents,
+                        module: target_module.module,
+                        callee,
+                    },
+                    instantiation,
                     function_bindings,
                     specialization_modules,
-                    &instantiation.substitutions,
                     rendered_specializations,
                     declarations,
+                    body_call_rewrites,
                 )?;
-                body_call_rewrites.push(SourceRewrite {
-                    span: instantiation.callee_span,
-                    replacement: dependency_public_function_specialized_local_forwarder_name(
-                        target_module.module_import_path,
-                        &callee.name,
-                        callee,
-                        &instantiation.substitutions,
-                    ),
-                });
             }
         }
     }
+    Some(())
+}
+
+struct SpecializedBodyCallTarget<'a> {
+    module_import_path: &'a [String],
+    contents: &'a str,
+    module: &'a Module,
+    callee: &'a FunctionDecl,
+}
+
+fn render_specialized_body_call_rewrite(
+    target: SpecializedBodyCallTarget<'_>,
+    instantiation: instantiations::PublicFunctionCallInstantiation,
+    function_bindings: &FunctionTypeBindings,
+    specialization_modules: &[SpecializationModule<'_>],
+    rendered_specializations: &mut BTreeSet<String>,
+    declarations: &mut Vec<String>,
+    body_call_rewrites: &mut Vec<SourceRewrite>,
+) -> Option<()> {
+    if !has_complete_generic_substitutions(target.callee, &instantiation.substitutions) {
+        return None;
+    }
+    render_public_function_specialized_forwarder(
+        target.module_import_path,
+        target.callee,
+        target.contents,
+        target.module,
+        function_bindings,
+        specialization_modules,
+        &instantiation.substitutions,
+        rendered_specializations,
+        declarations,
+    )?;
+    body_call_rewrites.push(SourceRewrite {
+        span: instantiation.callee_span,
+        replacement: dependency_public_function_specialized_local_forwarder_name(
+            target.module_import_path,
+            &target.callee.name,
+            target.callee,
+            &instantiation.substitutions,
+        ),
+    });
     Some(())
 }
 
