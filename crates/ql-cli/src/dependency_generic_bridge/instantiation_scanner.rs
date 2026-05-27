@@ -27,21 +27,15 @@ pub(super) fn collect_dependency_generic_function_instantiations_from_item(
 ) {
     match &item.kind {
         ItemKind::Function(root_function) => {
-            if let Some(body) = &root_function.body {
-                let mut bindings = root_bindings.clone();
-                collect_function_param_type_bindings(root_function, &mut bindings);
-                collect_dependency_generic_function_instantiations_from_block(
-                    body,
-                    local_names,
-                    dependency_function,
-                    &mut bindings,
-                    function_bindings,
-                    saw_call,
-                    instantiations,
-                    root_function.return_type.as_ref(),
-                    root_function.return_type.as_ref(),
-                );
-            }
+            collect_callable_body_instantiations(
+                root_function,
+                local_names,
+                dependency_function,
+                root_bindings,
+                function_bindings,
+                saw_call,
+                instantiations,
+            );
         }
         ItemKind::Const(global) | ItemKind::Static(global) => {
             collect_dependency_generic_function_instantiations_from_expr(
@@ -75,63 +69,72 @@ pub(super) fn collect_dependency_generic_function_instantiations_from_item(
         }
         ItemKind::Trait(trait_decl) => {
             for method in &trait_decl.methods {
-                if let Some(body) = &method.body {
-                    let mut bindings = root_bindings.clone();
-                    collect_function_param_type_bindings(method, &mut bindings);
-                    collect_dependency_generic_function_instantiations_from_block(
-                        body,
-                        local_names,
-                        dependency_function,
-                        &mut bindings,
-                        function_bindings,
-                        saw_call,
-                        instantiations,
-                        method.return_type.as_ref(),
-                        method.return_type.as_ref(),
-                    );
-                }
+                collect_callable_body_instantiations(
+                    method,
+                    local_names,
+                    dependency_function,
+                    root_bindings,
+                    function_bindings,
+                    saw_call,
+                    instantiations,
+                );
             }
         }
         ItemKind::Impl(impl_block) => {
             for method in &impl_block.methods {
-                if let Some(body) = &method.body {
-                    let mut bindings = root_bindings.clone();
-                    collect_function_param_type_bindings(method, &mut bindings);
-                    collect_dependency_generic_function_instantiations_from_block(
-                        body,
-                        local_names,
-                        dependency_function,
-                        &mut bindings,
-                        function_bindings,
-                        saw_call,
-                        instantiations,
-                        method.return_type.as_ref(),
-                        method.return_type.as_ref(),
-                    );
-                }
+                collect_callable_body_instantiations(
+                    method,
+                    local_names,
+                    dependency_function,
+                    root_bindings,
+                    function_bindings,
+                    saw_call,
+                    instantiations,
+                );
             }
         }
         ItemKind::Extend(extend_block) => {
             for method in &extend_block.methods {
-                if let Some(body) = &method.body {
-                    let mut bindings = root_bindings.clone();
-                    collect_function_param_type_bindings(method, &mut bindings);
-                    collect_dependency_generic_function_instantiations_from_block(
-                        body,
-                        local_names,
-                        dependency_function,
-                        &mut bindings,
-                        function_bindings,
-                        saw_call,
-                        instantiations,
-                        method.return_type.as_ref(),
-                        method.return_type.as_ref(),
-                    );
-                }
+                collect_callable_body_instantiations(
+                    method,
+                    local_names,
+                    dependency_function,
+                    root_bindings,
+                    function_bindings,
+                    saw_call,
+                    instantiations,
+                );
             }
         }
         ItemKind::Enum(_) | ItemKind::TypeAlias(_) | ItemKind::ExternBlock(_) => {}
     }
+}
+
+fn collect_callable_body_instantiations(
+    callable: &FunctionDecl,
+    local_names: &BTreeSet<String>,
+    dependency_function: &FunctionDecl,
+    root_bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
+    saw_call: &mut bool,
+    instantiations: &mut Vec<PublicFunctionCallInstantiation>,
+) {
+    let Some(body) = &callable.body else {
+        return;
+    };
+    let mut bindings = root_bindings.clone();
+    collect_function_param_type_bindings(callable, &mut bindings);
+    collect_dependency_generic_function_instantiations_from_block(
+        body,
+        local_names,
+        dependency_function,
+        &mut bindings,
+        function_bindings,
+        saw_call,
+        instantiations,
+        callable.return_type.as_ref(),
+        callable.return_type.as_ref(),
+    );
 }
 
 pub(super) fn collect_dependency_generic_function_instantiations_from_block(
