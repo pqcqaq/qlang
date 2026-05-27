@@ -17,15 +17,13 @@ use crate::dependency_bridge_modules::{
     dependency_interface_module_import_path, package_under_test_bridge_modules,
 };
 use crate::dependency_bridge_names::DependencyExternOwner;
-use crate::dependency_bridge_public_functions::{
-    DependencyPublicFunctionForwarderError, collect_dependency_module_public_function_forwarders,
-};
+use crate::dependency_bridge_public_function_errors::report_package_under_test_function_forwarder_error;
+use crate::dependency_bridge_public_functions::collect_dependency_module_public_function_forwarders;
 use crate::dependency_bridge_public_type_declarations::{
     DependencyPublicTypeBridgeError, collect_dependency_module_public_type_declarations,
 };
 use crate::dependency_bridge_reporting::{
     report_package_under_test_local_conflict, report_package_under_test_symbol_conflict,
-    report_package_under_test_unsupported_generic_function,
 };
 
 pub(crate) fn render_package_under_test_bridge_items(
@@ -94,7 +92,7 @@ pub(crate) fn render_package_under_test_bridge_items(
             if !report_failure {
                 return 1;
             }
-            report_package_under_test_function_bridge_error(command_label, package_name, error);
+            report_package_under_test_function_forwarder_error(command_label, package_name, error);
             1
         })?;
     }
@@ -129,35 +127,6 @@ pub(crate) fn render_package_under_test_bridge_items(
         declarations,
         source_rewrites,
     })
-}
-
-fn report_package_under_test_function_bridge_error(
-    command_label: &str,
-    package_name: &str,
-    error: DependencyPublicFunctionForwarderError,
-) {
-    match error {
-        DependencyPublicFunctionForwarderError::DependencyConflict { symbol, owner } => {
-            report_package_under_test_symbol_conflict(
-                command_label,
-                "public function",
-                &symbol,
-                &owner.package_name,
-                package_name,
-            );
-        }
-        DependencyPublicFunctionForwarderError::LocalConflict { symbol } => {
-            report_package_under_test_local_conflict(
-                command_label,
-                "public function",
-                &symbol,
-                "rename the local top-level item or avoid importing the package-under-test public function with the same original symbol name",
-            );
-        }
-        DependencyPublicFunctionForwarderError::UnsupportedGeneric { symbol } => {
-            report_package_under_test_unsupported_generic_function(command_label, &symbol);
-        }
-    }
 }
 
 fn report_package_under_test_type_bridge_error(

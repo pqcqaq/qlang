@@ -10,10 +10,9 @@ use ql_project::{
 };
 
 use crate::build_plan::{
-    PrepareProjectTargetBuildError, PrepareProjectTargetBuildFailureKind,
-    report_project_build_dependency_error, target_prep_dependency_interface_failure,
-    target_prep_dependency_manifest_failure, target_prep_dependency_source_parse_failure,
-    target_prep_dependency_source_read_failure,
+    PrepareProjectTargetBuildError, report_project_build_dependency_error,
+    target_prep_dependency_interface_failure, target_prep_dependency_manifest_failure,
+    target_prep_dependency_source_parse_failure, target_prep_dependency_source_read_failure,
 };
 use crate::dependency_bridge_imports::{
     ImportedDependencyExterns, collect_imported_dependency_externs,
@@ -29,14 +28,16 @@ use crate::dependency_bridge_names::{
     render_imported_dependency_public_function_forwarder,
     supports_dependency_public_function_import_bridge,
 };
+use crate::dependency_bridge_public_function_errors::{
+    DependencyPublicFunctionForwarderError, dependency_function_forwarder_target_prep_error,
+    report_direct_dependency_function_forwarder_error,
+};
 use crate::dependency_bridge_public_types::{
     collect_dependency_public_function_type_dependencies, dependency_public_type_bridge_candidates,
 };
 use crate::dependency_bridge_reporting::{
     report_dependency_interface_load_failure, report_dependency_source_parse_failure,
-    report_dependency_source_read_failure, report_direct_dependency_local_conflict,
-    report_direct_dependency_symbol_conflict,
-    report_direct_dependency_unsupported_generic_function,
+    report_dependency_source_read_failure,
 };
 use crate::dependency_generic_bridge;
 use crate::project_manifest_paths::reference_manifest_path;
@@ -157,35 +158,11 @@ pub(crate) fn render_direct_dependency_public_function_forwarders(
             },
             |error| {
                 if report_failure {
-                    match error {
-                        DependencyPublicFunctionForwarderError::DependencyConflict {
-                            symbol,
-                            owner,
-                        } => report_direct_dependency_symbol_conflict(
-                            command_label,
-                            "public function",
-                            &symbol,
-                            &owner.package_name,
-                            &dependency_package,
-                            "keep direct dependency public function names unique until package-qualified dependency call lowering lands",
-                        ),
-                        DependencyPublicFunctionForwarderError::LocalConflict { symbol } => {
-                            report_direct_dependency_local_conflict(
-                                command_label,
-                                "public function",
-                                &symbol,
-                                &dependency_package,
-                                "rename the local top-level item or avoid importing a direct dependency public function with the same original symbol name",
-                            );
-                        }
-                        DependencyPublicFunctionForwarderError::UnsupportedGeneric { symbol } => {
-                            report_direct_dependency_unsupported_generic_function(
-                                command_label,
-                                &symbol,
-                                &dependency_package,
-                            );
-                        }
-                    }
+                    report_direct_dependency_function_forwarder_error(
+                        command_label,
+                        &dependency_package,
+                        error,
+                    );
                 }
                 1
             },
@@ -476,52 +453,6 @@ pub(crate) fn collect_dependency_module_public_function_forwarders(
     }
 
     Ok(())
-}
-
-pub(crate) enum DependencyPublicFunctionForwarderError {
-    DependencyConflict {
-        symbol: String,
-        owner: DependencyExternOwner,
-    },
-    LocalConflict {
-        symbol: String,
-    },
-    UnsupportedGeneric {
-        symbol: String,
-    },
-}
-
-fn dependency_function_forwarder_target_prep_error(
-    error: DependencyPublicFunctionForwarderError,
-    dependency_package: &str,
-    dependency_manifest_path: &Path,
-) -> PrepareProjectTargetBuildError {
-    let failure_kind = match error {
-        DependencyPublicFunctionForwarderError::DependencyConflict { symbol, owner } => {
-            PrepareProjectTargetBuildFailureKind::DependencyFunctionConflict {
-                symbol,
-                first_package: owner.package_name,
-                first_manifest_path: owner.manifest_path,
-                conflicting_package: dependency_package.to_owned(),
-                conflicting_manifest_path: dependency_manifest_path.to_path_buf(),
-            }
-        }
-        DependencyPublicFunctionForwarderError::LocalConflict { symbol } => {
-            PrepareProjectTargetBuildFailureKind::DependencyFunctionLocalConflict {
-                symbol,
-                dependency_package: dependency_package.to_owned(),
-                dependency_manifest_path: dependency_manifest_path.to_path_buf(),
-            }
-        }
-        DependencyPublicFunctionForwarderError::UnsupportedGeneric { symbol } => {
-            PrepareProjectTargetBuildFailureKind::DependencyFunctionUnsupportedGeneric {
-                symbol,
-                dependency_package: dependency_package.to_owned(),
-                dependency_manifest_path: dependency_manifest_path.to_path_buf(),
-            }
-        }
-    };
-    PrepareProjectTargetBuildError { failure_kind }
 }
 
 #[cfg(test)]
