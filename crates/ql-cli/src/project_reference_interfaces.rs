@@ -12,16 +12,15 @@ use crate::cli_utils::{
     normalize_path, package_check_manifest_path_from_project_error,
     package_missing_name_manifest_path_from_project_error,
 };
-use crate::project_interface_reporting::{
-    report_package_interface_failure, report_package_interface_manifest_failure,
-    report_package_interface_no_sources_failure, report_package_interface_output_failure,
-    report_package_interface_source_failure, report_package_interface_source_root_failure,
-};
-use crate::project_interfaces::{
-    EmitPackageInterfaceError, EmitPackageInterfaceResult, emit_package_interface_path,
-};
+use crate::project_interfaces::{EmitPackageInterfaceResult, emit_package_interface_path};
 use crate::project_manifest_paths::{record_reference_failure_manifest, reference_manifest_path};
 use crate::project_reporting::report_interface_artifact_failure;
+
+mod emit;
+
+#[cfg(test)]
+use emit::format_reference_interface_sync_note;
+use emit::report_reference_interface_sync_emit_error;
 
 #[derive(Default)]
 struct ReferenceInterfaceSyncResult {
@@ -135,119 +134,17 @@ fn sync_reference_interfaces_recursive(
             match emit_result {
                 Ok(EmitPackageInterfaceResult::Wrote(path)) => result.written.push(path),
                 Ok(EmitPackageInterfaceResult::UpToDate(_)) => {}
-                Err(EmitPackageInterfaceError::ManifestNotFound { .. }) => {
-                    let owner_note =
-                        format_reference_interface_sync_note(&manifest.manifest_path, reference);
-                    report_package_interface_failure(
-                        &dependency_manifest.manifest_path,
-                        None,
-                        None,
-                        false,
-                        Some(owner_note.as_str()),
+                Err(error) => {
+                    let failure_manifest = report_reference_interface_sync_emit_error(
+                        error,
+                        &dependency_manifest,
+                        &manifest.manifest_path,
+                        reference,
                     );
                     result.failure_count += 1;
                     record_reference_failure_manifest(
                         &mut result.first_failure_manifest,
-                        dependency_manifest.manifest_path.clone(),
-                    );
-                }
-                Err(EmitPackageInterfaceError::SourceFailure { .. }) => {
-                    let owner_note =
-                        format_reference_interface_sync_note(&manifest.manifest_path, reference);
-                    report_package_interface_source_failure(
-                        &dependency_manifest.manifest_path,
-                        None,
-                        None,
-                        false,
-                        Some(owner_note.as_str()),
-                    );
-                    result.failure_count += 1;
-                    record_reference_failure_manifest(
-                        &mut result.first_failure_manifest,
-                        dependency_manifest.manifest_path.clone(),
-                    );
-                }
-                Err(EmitPackageInterfaceError::Code { .. }) => {
-                    let owner_note =
-                        format_reference_interface_sync_note(&manifest.manifest_path, reference);
-                    report_package_interface_failure(
-                        &dependency_manifest.manifest_path,
-                        None,
-                        None,
-                        false,
-                        Some(owner_note.as_str()),
-                    );
-                    result.failure_count += 1;
-                    record_reference_failure_manifest(
-                        &mut result.first_failure_manifest,
-                        dependency_manifest.manifest_path.clone(),
-                    );
-                }
-                Err(EmitPackageInterfaceError::NoSourceFilesFailure { source_root, .. }) => {
-                    let owner_note =
-                        format_reference_interface_sync_note(&manifest.manifest_path, reference);
-                    report_package_interface_no_sources_failure(
-                        &dependency_manifest.manifest_path,
-                        None,
-                        &source_root,
-                        None,
-                        false,
-                        Some(owner_note.as_str()),
-                    );
-                    result.failure_count += 1;
-                    record_reference_failure_manifest(
-                        &mut result.first_failure_manifest,
-                        dependency_manifest.manifest_path.clone(),
-                    );
-                }
-                Err(EmitPackageInterfaceError::ManifestFailure { manifest_path, .. }) => {
-                    let owner_note =
-                        format_reference_interface_sync_note(&manifest.manifest_path, reference);
-                    report_package_interface_manifest_failure(
-                        &manifest_path,
-                        None,
-                        None,
-                        false,
-                        Some(owner_note.as_str()),
-                    );
-                    result.failure_count += 1;
-                    record_reference_failure_manifest(
-                        &mut result.first_failure_manifest,
-                        dependency_manifest.manifest_path.clone(),
-                    );
-                }
-                Err(EmitPackageInterfaceError::SourceRootFailure { source_root, .. }) => {
-                    let owner_note =
-                        format_reference_interface_sync_note(&manifest.manifest_path, reference);
-                    report_package_interface_source_root_failure(
-                        &dependency_manifest.manifest_path,
-                        None,
-                        &source_root,
-                        None,
-                        false,
-                        Some(owner_note.as_str()),
-                    );
-                    result.failure_count += 1;
-                    record_reference_failure_manifest(
-                        &mut result.first_failure_manifest,
-                        dependency_manifest.manifest_path.clone(),
-                    );
-                }
-                Err(EmitPackageInterfaceError::OutputPathFailure { output_path, .. }) => {
-                    let owner_note =
-                        format_reference_interface_sync_note(&manifest.manifest_path, reference);
-                    report_package_interface_output_failure(
-                        &dependency_manifest.manifest_path,
-                        None,
-                        &output_path,
-                        None,
-                        false,
-                        Some(owner_note.as_str()),
-                    );
-                    result.failure_count += 1;
-                    record_reference_failure_manifest(
-                        &mut result.first_failure_manifest,
-                        dependency_manifest.manifest_path.clone(),
+                        failure_manifest,
                     );
                 }
             }
@@ -579,11 +476,6 @@ fn report_reference_manifest_issue_for_command(
         normalize_path(owner_manifest_path),
         normalize_path(reference_manifest_path)
     );
-}
-
-fn format_reference_interface_sync_note(owner_manifest_path: &Path, reference: &str) -> String {
-    let owner_manifest_path = normalize_path(owner_manifest_path);
-    format!("note: while syncing referenced package `{reference}` from `{owner_manifest_path}`")
 }
 
 fn report_reference_interface_artifact_issue(
