@@ -13,6 +13,10 @@ use crate::build_plan::{
     report_project_build_dependency_error, target_prep_dependency_manifest_failure,
 };
 use crate::cli_utils::normalize_path;
+use crate::dependency_bridge_reporting::{
+    report_dependency_interface_load_failure, report_dependency_source_parse_failure,
+    report_dependency_source_read_failure,
+};
 use crate::dependency_generic_bridge;
 
 pub(crate) struct PackageBridgeModule {
@@ -246,25 +250,57 @@ fn report_dependency_generic_specialization_module_load_error(
             manifest_path,
             error,
         } => report_project_build_dependency_error(command_label, Some(manifest_path), error),
-        DependencyGenericSpecializationModuleLoadError::DependencyInterface { message, .. }
-        | DependencyGenericSpecializationModuleLoadError::DependencySourceRead {
-            message, ..
-        } => {
-            eprintln!("error: {command_label} {message}");
-            eprintln!(
-                "note: while preparing imported generic helper specializations for `{}`",
-                normalize_path(&owner_manifest.manifest_path)
-            );
-        }
-        DependencyGenericSpecializationModuleLoadError::DependencySourceParse {
-            dependency_package,
+        DependencyGenericSpecializationModuleLoadError::DependencyInterface {
+            interface_path,
             message,
             ..
+        } => report_dependency_interface_load_failure(
+            command_label,
+            &owner_manifest.manifest_path,
+            "imported generic helper specializations",
+            interface_path,
+            dependency_interface_load_detail(interface_path, message),
+        ),
+        DependencyGenericSpecializationModuleLoadError::DependencySourceRead {
+            source_path,
+            message,
+            ..
+        } => report_dependency_source_read_failure(
+            command_label,
+            &owner_manifest.manifest_path,
+            "imported generic helper specializations",
+            source_path,
+            dependency_source_read_detail(source_path, message),
+        ),
+        DependencyGenericSpecializationModuleLoadError::DependencySourceParse {
+            dependency_package,
+            source_path,
+            ..
         } => {
-            eprintln!("error: {command_label} {message}");
-            eprintln!("note: dependency package: `{dependency_package}`");
+            report_dependency_source_parse_failure(
+                command_label,
+                dependency_package,
+                source_path,
+                "imported generic helper specializations",
+            );
         }
     }
+}
+
+fn dependency_interface_load_detail<'a>(interface_path: &Path, message: &'a str) -> &'a str {
+    let prefix = format!(
+        "failed to load referenced package interface `{}`: ",
+        normalize_path(interface_path)
+    );
+    message.strip_prefix(&prefix).unwrap_or(message)
+}
+
+fn dependency_source_read_detail<'a>(source_path: &Path, message: &'a str) -> &'a str {
+    let prefix = format!(
+        "failed to access dependency source `{}`: ",
+        normalize_path(source_path)
+    );
+    message.strip_prefix(&prefix).unwrap_or(message)
 }
 
 fn dependency_generic_specialization_module_load_error_to_target_prep_error(

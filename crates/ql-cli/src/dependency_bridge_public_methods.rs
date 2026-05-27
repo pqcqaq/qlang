@@ -10,11 +10,10 @@ use ql_project::{
 };
 
 use crate::build_plan::{
-    report_project_build_dependency_error, target_prep_dependency_interface_failure,
-    target_prep_dependency_manifest_failure, target_prep_dependency_source_parse_failure,
-    target_prep_dependency_source_read_failure, PrepareProjectTargetBuildError,
+    PrepareProjectTargetBuildError, report_project_build_dependency_error,
+    target_prep_dependency_interface_failure, target_prep_dependency_manifest_failure,
+    target_prep_dependency_source_parse_failure, target_prep_dependency_source_read_failure,
 };
-use crate::cli_utils::normalize_path;
 use crate::dependency_bridge_modules::{
     dependency_interface_module_import_path, dependency_module_source_path,
 };
@@ -22,6 +21,10 @@ use crate::dependency_bridge_names::render_imported_dependency_public_method_for
 use crate::dependency_bridge_public_types::{
     collect_dependency_public_function_type_dependencies,
     dependency_public_struct_method_bridge_candidates, dependency_public_type_bridge_candidates,
+};
+use crate::dependency_bridge_reporting::{
+    report_dependency_interface_load_failure, report_dependency_source_parse_failure,
+    report_dependency_source_read_failure,
 };
 use crate::project_manifest_paths::reference_manifest_path;
 
@@ -75,13 +78,12 @@ pub(crate) fn render_direct_dependency_public_method_forwarders(
         })?;
         let artifact = load_interface_artifact(&interface_path).map_err(|error| {
             if report_failure {
-                eprintln!(
-                    "error: {command_label} failed to load referenced package interface `{}`: {error}",
-                    normalize_path(&interface_path)
-                );
-                eprintln!(
-                    "note: while preparing dependency public method bridges for `{}`",
-                    normalize_path(manifest_path)
+                report_dependency_interface_load_failure(
+                    command_label,
+                    manifest_path,
+                    "dependency public method bridges",
+                    &interface_path,
+                    error,
                 );
             }
             1
@@ -97,13 +99,12 @@ pub(crate) fn render_direct_dependency_public_method_forwarders(
             |dependency_source_path| {
                 fs::read_to_string(dependency_source_path).map_err(|error| {
                     if report_failure {
-                        eprintln!(
-                            "error: {command_label} failed to access dependency source `{}`: {error}",
-                            normalize_path(dependency_source_path)
-                        );
-                        eprintln!(
-                            "note: while preparing dependency public method bridges for `{}`",
-                            normalize_path(manifest_path)
+                        report_dependency_source_read_failure(
+                            command_label,
+                            manifest_path,
+                            "dependency public method bridges",
+                            dependency_source_path,
+                            error,
                         );
                     }
                     1
@@ -112,11 +113,12 @@ pub(crate) fn render_direct_dependency_public_method_forwarders(
             |dependency_source_path, dependency_source| {
                 parse_source(dependency_source).map_err(|_| {
                     if report_failure {
-                        eprintln!(
-                            "error: {command_label} failed to parse dependency source `{}` while preparing public method bridges",
-                            normalize_path(dependency_source_path)
+                        report_dependency_source_parse_failure(
+                            command_label,
+                            &dependency_package,
+                            dependency_source_path,
+                            "public method bridges",
                         );
-                        eprintln!("note: dependency package: `{dependency_package}`");
                     }
                     1
                 })

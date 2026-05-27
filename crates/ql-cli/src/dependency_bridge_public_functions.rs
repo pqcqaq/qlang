@@ -10,15 +10,14 @@ use ql_project::{
 };
 
 use crate::build_plan::{
+    PrepareProjectTargetBuildError, PrepareProjectTargetBuildFailureKind,
     report_project_build_dependency_error, target_prep_dependency_interface_failure,
     target_prep_dependency_manifest_failure, target_prep_dependency_source_parse_failure,
-    target_prep_dependency_source_read_failure, PrepareProjectTargetBuildError,
-    PrepareProjectTargetBuildFailureKind,
+    target_prep_dependency_source_read_failure,
 };
-use crate::cli_utils::normalize_path;
 use crate::dependency_bridge_imports::{
-    collect_imported_dependency_externs, collect_top_level_definition_names,
-    dependency_extern_is_imported, ImportedDependencyExterns,
+    ImportedDependencyExterns, collect_imported_dependency_externs,
+    collect_top_level_definition_names, dependency_extern_is_imported,
 };
 use crate::dependency_bridge_modules::{
     dependency_generic_specialization_module_refs, dependency_generic_specialization_modules,
@@ -26,11 +25,16 @@ use crate::dependency_bridge_modules::{
     dependency_interface_module_import_paths, dependency_module_source_path,
 };
 use crate::dependency_bridge_names::{
-    record_dependency_extern_declaration, render_imported_dependency_public_function_forwarder,
-    supports_dependency_public_function_import_bridge, DependencyExternOwner,
+    DependencyExternOwner, record_dependency_extern_declaration,
+    render_imported_dependency_public_function_forwarder,
+    supports_dependency_public_function_import_bridge,
 };
 use crate::dependency_bridge_public_types::{
     collect_dependency_public_function_type_dependencies, dependency_public_type_bridge_candidates,
+};
+use crate::dependency_bridge_reporting::{
+    report_dependency_interface_load_failure, report_dependency_source_parse_failure,
+    report_dependency_source_read_failure,
 };
 use crate::dependency_generic_bridge;
 use crate::project_manifest_paths::reference_manifest_path;
@@ -95,13 +99,12 @@ pub(crate) fn render_direct_dependency_public_function_forwarders(
         })?;
         let artifact = load_interface_artifact(&interface_path).map_err(|error| {
             if report_failure {
-                eprintln!(
-                    "error: {command_label} failed to load referenced package interface `{}`: {error}",
-                    normalize_path(&interface_path)
-                );
-                eprintln!(
-                    "note: while preparing dependency public function wrappers for `{}`",
-                    normalize_path(manifest_path)
+                report_dependency_interface_load_failure(
+                    command_label,
+                    manifest_path,
+                    "dependency public function wrappers",
+                    &interface_path,
+                    error,
                 );
             }
             1
@@ -126,13 +129,12 @@ pub(crate) fn render_direct_dependency_public_function_forwarders(
             |dependency_source_path| {
                 fs::read_to_string(dependency_source_path).map_err(|error| {
                     if report_failure {
-                        eprintln!(
-                            "error: {command_label} failed to access dependency source `{}`: {error}",
-                            normalize_path(dependency_source_path)
-                        );
-                        eprintln!(
-                            "note: while preparing dependency public function wrappers for `{}`",
-                            normalize_path(manifest_path)
+                        report_dependency_source_read_failure(
+                            command_label,
+                            manifest_path,
+                            "dependency public function wrappers",
+                            dependency_source_path,
+                            error,
                         );
                     }
                     1
@@ -141,11 +143,12 @@ pub(crate) fn render_direct_dependency_public_function_forwarders(
             |dependency_source_path, dependency_source| {
                 parse_source(dependency_source).map_err(|_| {
                     if report_failure {
-                        eprintln!(
-                            "error: {command_label} failed to parse dependency source `{}` while preparing public function wrappers",
-                            normalize_path(dependency_source_path)
+                        report_dependency_source_parse_failure(
+                            command_label,
+                            &dependency_package,
+                            dependency_source_path,
+                            "public function wrappers",
                         );
-                        eprintln!("note: dependency package: `{dependency_package}`");
                     }
                     1
                 })
