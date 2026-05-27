@@ -10,8 +10,9 @@ use ql_project::{
 };
 
 use crate::build_plan::{
-    PrepareProjectTargetBuildError, PrepareProjectTargetBuildFailureKind,
-    report_project_build_dependency_error, target_prep_dependency_manifest_failure,
+    report_project_build_dependency_error, target_prep_dependency_interface_failure,
+    target_prep_dependency_manifest_failure, target_prep_dependency_source_parse_failure,
+    target_prep_dependency_source_read_failure, PrepareProjectTargetBuildError,
 };
 use crate::cli_utils::normalize_path;
 use crate::dependency_bridge_modules::{
@@ -169,17 +170,12 @@ pub(crate) fn render_direct_dependency_public_method_forwarders_quiet(
             )
         })?;
         let artifact = load_interface_artifact(&interface_path).map_err(|error| {
-            PrepareProjectTargetBuildError {
-                failure_kind: PrepareProjectTargetBuildFailureKind::DependencyInterface {
-                    dependency_manifest_path: dependency_manifest.manifest_path.clone(),
-                    dependency_package: dependency_package.clone(),
-                    interface_path: interface_path.clone(),
-                    message: format!(
-                        "failed to load referenced package interface `{}`: {error}",
-                        normalize_path(&interface_path)
-                    ),
-                },
-            }
+            target_prep_dependency_interface_failure(
+                &dependency_manifest.manifest_path,
+                &dependency_package,
+                &interface_path,
+                error,
+            )
         })?;
 
         collect_dependency_public_method_forwarders_from_modules(
@@ -191,30 +187,22 @@ pub(crate) fn render_direct_dependency_public_method_forwarders_quiet(
             &mut forwarders,
             |dependency_source_path| {
                 fs::read_to_string(dependency_source_path).map_err(|error| {
-                    PrepareProjectTargetBuildError {
-                        failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
-                            dependency_manifest_path: dependency_manifest.manifest_path.clone(),
-                            dependency_package: dependency_package.clone(),
-                            source_path: dependency_source_path.to_path_buf(),
-                            message: format!(
-                                "failed to access dependency source `{}`: {error}",
-                                normalize_path(dependency_source_path)
-                            ),
-                        },
-                    }
+                    target_prep_dependency_source_read_failure(
+                        &dependency_manifest.manifest_path,
+                        &dependency_package,
+                        dependency_source_path,
+                        error,
+                    )
                 })
             },
             |dependency_source_path, dependency_source| {
-                parse_source(dependency_source).map_err(|_| PrepareProjectTargetBuildError {
-                    failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
-                        dependency_manifest_path: dependency_manifest.manifest_path.clone(),
-                        dependency_package: dependency_package.clone(),
-                        source_path: dependency_source_path.to_path_buf(),
-                        message: format!(
-                            "failed to parse dependency source `{}` while preparing public method bridges",
-                            normalize_path(dependency_source_path)
-                        ),
-                    },
+                parse_source(dependency_source).map_err(|_| {
+                    target_prep_dependency_source_parse_failure(
+                        &dependency_manifest.manifest_path,
+                        &dependency_package,
+                        dependency_source_path,
+                        "public method bridges",
+                    )
                 })
             },
         )?;

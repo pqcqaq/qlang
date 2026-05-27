@@ -9,16 +9,17 @@ use ql_project::{
 };
 
 use crate::build_plan::{
-    PrepareProjectTargetBuildError, PrepareProjectTargetBuildFailureKind,
-    report_project_build_dependency_error, target_prep_dependency_manifest_failure,
+    report_project_build_dependency_error, target_prep_dependency_interface_failure,
+    target_prep_dependency_manifest_failure, PrepareProjectTargetBuildError,
+    PrepareProjectTargetBuildFailureKind,
 };
 use crate::cli_utils::normalize_path;
 use crate::dependency_bridge_imports::{
-    ImportedDependencyExterns, collect_imported_dependency_externs, dependency_extern_is_imported,
+    collect_imported_dependency_externs, dependency_extern_is_imported, ImportedDependencyExterns,
 };
 use crate::dependency_bridge_modules::dependency_interface_module_import_paths;
 use crate::dependency_bridge_names::{
-    DependencyExternOwner, record_dependency_extern_declaration, span_text,
+    record_dependency_extern_declaration, span_text, DependencyExternOwner,
 };
 use crate::project_manifest_paths::reference_manifest_path;
 
@@ -159,17 +160,12 @@ pub(crate) fn render_direct_dependency_extern_declarations_quiet(
             )
         })?;
         let artifact = load_interface_artifact(&interface_path).map_err(|error| {
-            PrepareProjectTargetBuildError {
-                failure_kind: PrepareProjectTargetBuildFailureKind::DependencyInterface {
-                    dependency_manifest_path: dependency_manifest.manifest_path.clone(),
-                    dependency_package: dependency_package.clone(),
-                    interface_path: interface_path.clone(),
-                    message: format!(
-                        "failed to load referenced package interface `{}`: {error}",
-                        normalize_path(&interface_path)
-                    ),
-                },
-            }
+            target_prep_dependency_interface_failure(
+                &dependency_manifest.manifest_path,
+                &dependency_package,
+                &interface_path,
+                error,
+            )
         })?;
         let module_import_paths =
             dependency_interface_module_import_paths(&dependency_package, &artifact.modules);

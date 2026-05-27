@@ -10,20 +10,22 @@ use ql_project::{
 };
 
 use crate::build_plan::{
-    PrepareProjectTargetBuildError, PrepareProjectTargetBuildFailureKind,
-    report_project_build_dependency_error, target_prep_dependency_manifest_failure,
+    report_project_build_dependency_error, target_prep_dependency_interface_failure,
+    target_prep_dependency_manifest_failure, target_prep_dependency_source_parse_failure,
+    target_prep_dependency_source_read_failure, PrepareProjectTargetBuildError,
+    PrepareProjectTargetBuildFailureKind,
 };
 use crate::cli_utils::normalize_path;
 use crate::dependency_bridge_imports::{
-    ImportedDependencyExterns, collect_imported_dependency_externs,
-    collect_top_level_definition_names, dependency_extern_is_imported,
+    collect_imported_dependency_externs, collect_top_level_definition_names,
+    dependency_extern_is_imported, ImportedDependencyExterns,
 };
 use crate::dependency_bridge_modules::{
     dependency_interface_module_import_path, dependency_interface_module_import_paths,
     dependency_module_source_path,
 };
 use crate::dependency_bridge_names::{
-    DependencyExternOwner, record_dependency_extern_declaration, span_text,
+    record_dependency_extern_declaration, span_text, DependencyExternOwner,
 };
 use crate::dependency_bridge_public_types::{
     dependency_public_type_bridge_candidates, dependency_public_type_bridge_order,
@@ -99,19 +101,20 @@ pub(crate) fn render_direct_dependency_public_type_declarations(
         for module in &artifact.modules {
             let dependency_source_path =
                 dependency_module_source_path(&dependency.manifest_path, &module.source_path);
-            let dependency_source = fs::read_to_string(&dependency_source_path).map_err(|error| {
-                if report_failure {
-                    eprintln!(
+            let dependency_source =
+                fs::read_to_string(&dependency_source_path).map_err(|error| {
+                    if report_failure {
+                        eprintln!(
                         "error: {command_label} failed to access dependency source `{}`: {error}",
                         normalize_path(&dependency_source_path)
                     );
-                    eprintln!(
-                        "note: while preparing dependency public type bridges for `{}`",
-                        normalize_path(manifest_path)
-                    );
-                }
-                1
-            })?;
+                        eprintln!(
+                            "note: while preparing dependency public type bridges for `{}`",
+                            normalize_path(manifest_path)
+                        );
+                    }
+                    1
+                })?;
             let source_module = match parse_source(&dependency_source) {
                 Ok(module) => module,
                 Err(_) => {
@@ -216,17 +219,12 @@ pub(crate) fn render_direct_dependency_public_type_declarations_quiet(
             )
         })?;
         let artifact = load_interface_artifact(&interface_path).map_err(|error| {
-            PrepareProjectTargetBuildError {
-                failure_kind: PrepareProjectTargetBuildFailureKind::DependencyInterface {
-                    dependency_manifest_path: dependency_manifest.manifest_path.clone(),
-                    dependency_package: dependency_package.clone(),
-                    interface_path: interface_path.clone(),
-                    message: format!(
-                        "failed to load referenced package interface `{}`: {error}",
-                        normalize_path(&interface_path)
-                    ),
-                },
-            }
+            target_prep_dependency_interface_failure(
+                &dependency_manifest.manifest_path,
+                &dependency_package,
+                &interface_path,
+                error,
+            )
         })?;
         let module_import_paths =
             dependency_interface_module_import_paths(&dependency_package, &artifact.modules);
@@ -240,30 +238,20 @@ pub(crate) fn render_direct_dependency_public_type_declarations_quiet(
             );
             let dependency_source =
                 fs::read_to_string(&dependency_source_path).map_err(|error| {
-                    PrepareProjectTargetBuildError {
-                        failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
-                            dependency_manifest_path: dependency_manifest.manifest_path.clone(),
-                            dependency_package: dependency_package.clone(),
-                            source_path: dependency_source_path.clone(),
-                            message: format!(
-                                "failed to access dependency source `{}`: {error}",
-                                normalize_path(&dependency_source_path)
-                            ),
-                        },
-                    }
+                    target_prep_dependency_source_read_failure(
+                        &dependency_manifest.manifest_path,
+                        &dependency_package,
+                        &dependency_source_path,
+                        error,
+                    )
                 })?;
             let source_module = parse_source(&dependency_source).map_err(|_| {
-                PrepareProjectTargetBuildError {
-                    failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
-                        dependency_manifest_path: dependency_manifest.manifest_path.clone(),
-                        dependency_package: dependency_package.clone(),
-                        source_path: dependency_source_path.clone(),
-                        message: format!(
-                            "failed to parse dependency source `{}` while preparing public type bridges",
-                            normalize_path(&dependency_source_path)
-                        ),
-                    },
-                }
+                target_prep_dependency_source_parse_failure(
+                    &dependency_manifest.manifest_path,
+                    &dependency_package,
+                    &dependency_source_path,
+                    "public type bridges",
+                )
             })?;
             let module_import_path =
                 dependency_interface_module_import_path(&dependency_package, &source_module);

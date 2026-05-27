@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use ql_driver::{BuildError, BuildOptions};
 use ql_project::{
-    BuildTargetKind, WorkspaceBuildTargets, discover_package_build_targets, load_project_manifest,
-    package_name,
+    discover_package_build_targets, load_project_manifest, package_name, BuildTargetKind,
+    WorkspaceBuildTargets,
 };
 
 use crate::build_outputs::project_dependency_target_build_options;
@@ -633,6 +633,63 @@ pub(crate) fn target_prep_dependency_manifest_failure(
     }
 }
 
+pub(crate) fn target_prep_dependency_interface_failure(
+    dependency_manifest_path: &Path,
+    dependency_package: &str,
+    interface_path: &Path,
+    error: impl std::fmt::Display,
+) -> PrepareProjectTargetBuildError {
+    PrepareProjectTargetBuildError {
+        failure_kind: PrepareProjectTargetBuildFailureKind::DependencyInterface {
+            dependency_manifest_path: dependency_manifest_path.to_path_buf(),
+            dependency_package: dependency_package.to_owned(),
+            interface_path: interface_path.to_path_buf(),
+            message: format!(
+                "failed to load referenced package interface `{}`: {error}",
+                normalize_path(interface_path)
+            ),
+        },
+    }
+}
+
+pub(crate) fn target_prep_dependency_source_read_failure(
+    dependency_manifest_path: &Path,
+    dependency_package: &str,
+    source_path: &Path,
+    error: impl std::fmt::Display,
+) -> PrepareProjectTargetBuildError {
+    PrepareProjectTargetBuildError {
+        failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
+            dependency_manifest_path: dependency_manifest_path.to_path_buf(),
+            dependency_package: dependency_package.to_owned(),
+            source_path: source_path.to_path_buf(),
+            message: format!(
+                "failed to access dependency source `{}`: {error}",
+                normalize_path(source_path)
+            ),
+        },
+    }
+}
+
+pub(crate) fn target_prep_dependency_source_parse_failure(
+    dependency_manifest_path: &Path,
+    dependency_package: &str,
+    source_path: &Path,
+    bridge_context: &str,
+) -> PrepareProjectTargetBuildError {
+    PrepareProjectTargetBuildError {
+        failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
+            dependency_manifest_path: dependency_manifest_path.to_path_buf(),
+            dependency_package: dependency_package.to_owned(),
+            source_path: source_path.to_path_buf(),
+            message: format!(
+                "failed to parse dependency source `{}` while preparing {bridge_context}",
+                normalize_path(source_path)
+            ),
+        },
+    }
+}
+
 fn report_project_build_dependency_cycle(
     command_label: &str,
     visiting: &[String],
@@ -646,4 +703,86 @@ fn report_project_build_dependency_cycle(
     cycle.push(repeated_manifest_path.to_owned());
     eprintln!("error: {command_label} local package build dependencies contain a cycle");
     eprintln!("note: cycle manifests: {}", cycle.join(" -> "));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn target_prep_dependency_interface_failure_preserves_dependency_context() {
+        let error = target_prep_dependency_interface_failure(
+            Path::new("workspace/dep/qlang.toml"),
+            "dep",
+            Path::new("workspace/dep/dep.qi"),
+            "missing interface",
+        );
+
+        let PrepareProjectTargetBuildFailureKind::DependencyInterface {
+            dependency_manifest_path,
+            dependency_package,
+            interface_path,
+            message,
+        } = error.failure_kind
+        else {
+            panic!("expected dependency interface target-prep failure");
+        };
+
+        assert_eq!(
+            dependency_manifest_path,
+            PathBuf::from("workspace/dep/qlang.toml")
+        );
+        assert_eq!(dependency_package, "dep");
+        assert_eq!(interface_path, PathBuf::from("workspace/dep/dep.qi"));
+        assert_eq!(
+            message,
+            "failed to load referenced package interface `workspace/dep/dep.qi`: missing interface"
+        );
+    }
+
+    #[test]
+    fn target_prep_dependency_source_failures_preserve_message_contracts() {
+        let read_error = target_prep_dependency_source_read_failure(
+            Path::new("workspace/dep/qlang.toml"),
+            "dep",
+            Path::new("workspace/dep/src/lib.ql"),
+            "access denied",
+        );
+        let parse_error = target_prep_dependency_source_parse_failure(
+            Path::new("workspace/dep/qlang.toml"),
+            "dep",
+            Path::new("workspace/dep/src/lib.ql"),
+            "public value bridges",
+        );
+
+        let PrepareProjectTargetBuildFailureKind::DependencySource {
+            dependency_manifest_path,
+            dependency_package,
+            source_path,
+            message,
+        } = read_error.failure_kind
+        else {
+            panic!("expected dependency source read target-prep failure");
+        };
+        assert_eq!(
+            dependency_manifest_path,
+            PathBuf::from("workspace/dep/qlang.toml")
+        );
+        assert_eq!(dependency_package, "dep");
+        assert_eq!(source_path, PathBuf::from("workspace/dep/src/lib.ql"));
+        assert_eq!(
+            message,
+            "failed to access dependency source `workspace/dep/src/lib.ql`: access denied"
+        );
+
+        let PrepareProjectTargetBuildFailureKind::DependencySource { message, .. } =
+            parse_error.failure_kind
+        else {
+            panic!("expected dependency source parse target-prep failure");
+        };
+        assert_eq!(
+            message,
+            "failed to parse dependency source `workspace/dep/src/lib.ql` while preparing public value bridges"
+        );
+    }
 }

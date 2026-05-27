@@ -151,6 +151,71 @@ impl BuildJsonFailureEnvelope {
 }
 
 #[derive(Clone, Debug)]
+struct BuildJsonInterfaceFailureDetails {
+    error_kind: &'static str,
+    message: String,
+    output_path: Option<String>,
+    source_root: Option<String>,
+    failing_source_count: Option<usize>,
+    first_failing_source: Option<String>,
+}
+
+impl BuildJsonInterfaceFailureDetails {
+    fn new(error_kind: &'static str, message: String) -> Self {
+        Self {
+            error_kind,
+            message,
+            output_path: None,
+            source_root: None,
+            failing_source_count: None,
+            first_failing_source: None,
+        }
+    }
+
+    fn output_path(mut self, path: &Path) -> Self {
+        self.output_path = Some(normalize_path(path));
+        self
+    }
+
+    fn source_root(mut self, path: &Path) -> Self {
+        self.source_root = Some(normalize_path(path));
+        self
+    }
+
+    fn failing_sources(mut self, count: usize, first_failing_source: Option<&Path>) -> Self {
+        self.failing_source_count = Some(count);
+        self.first_failing_source = first_failing_source.map(normalize_path);
+        self
+    }
+
+    fn display_path(&self, request_path: &Path, manifest_path: Option<&Path>) -> String {
+        self.output_path
+            .clone()
+            .or_else(|| manifest_path.map(normalize_path))
+            .unwrap_or_else(|| normalize_path(request_path))
+    }
+
+    fn dependency_display_path(
+        &self,
+        manifest_path: Option<&Path>,
+        reference_manifest_path: &str,
+    ) -> String {
+        self.output_path
+            .clone()
+            .or_else(|| self.source_root.clone())
+            .or_else(|| manifest_path.map(normalize_path))
+            .unwrap_or_else(|| reference_manifest_path.to_owned())
+    }
+
+    fn apply_to(self, json_failure: &mut JsonValue) {
+        json_failure["output_path"] = json!(self.output_path);
+        json_failure["source_root"] = json!(self.source_root);
+        json_failure["failing_source_count"] = json!(self.failing_source_count);
+        json_failure["first_failing_source"] = json!(self.first_failing_source);
+    }
+}
+
+#[derive(Clone, Debug)]
 struct BuildJsonTargetPrepDetails {
     error_kind: &'static str,
     message: String,
@@ -390,24 +455,17 @@ fn build_json_interface_failure(
     request_path: &Path,
     manifest_path: Option<&Path>,
     package_name: Option<&str>,
-    error_kind: &str,
-    message: String,
-    output_path: Option<String>,
-    source_root: Option<String>,
-    failing_source_count: Option<usize>,
-    first_failing_source: Option<String>,
+    details: BuildJsonInterfaceFailureDetails,
 ) -> JsonValue {
-    let display_path = output_path
-        .clone()
-        .or_else(|| manifest_path.map(normalize_path))
-        .unwrap_or_else(|| normalize_path(request_path));
+    let display_path = details.display_path(request_path, manifest_path);
     let envelope =
         BuildJsonFailureEnvelope::interface(display_path, manifest_path, package_name, true);
-    let mut failure = envelope.staged_json(error_kind, "emit-interface", message);
-    failure["output_path"] = json!(output_path);
-    failure["source_root"] = json!(source_root);
-    failure["failing_source_count"] = json!(failing_source_count);
-    failure["first_failing_source"] = json!(first_failing_source);
+    let mut failure = envelope.staged_json(
+        details.error_kind,
+        "emit-interface",
+        details.message.clone(),
+    );
+    details.apply_to(&mut failure);
     failure
 }
 
@@ -417,113 +475,90 @@ pub(crate) fn build_json_emit_interface_failure(
     package_name: Option<&str>,
     error: &EmitPackageInterfaceError,
 ) -> JsonValue {
-    match error {
-        EmitPackageInterfaceError::ManifestNotFound { start } => build_json_interface_failure(
-            request_path,
-            None,
-            package_name,
-            "project-context",
-            format!(
-                "build-side interface emission requires a package manifest; could not find `qlang.toml` starting from `{}`",
-                normalize_path(start)
-            ),
-            None,
-            None,
-            None,
-            None,
-        ),
-        EmitPackageInterfaceError::ManifestFailure {
-            manifest_path,
-            message,
-        } => build_json_interface_failure(
-            request_path,
-            Some(manifest_path),
-            package_name,
-            "manifest",
-            message.clone(),
-            None,
-            None,
-            None,
-            None,
-        ),
-        EmitPackageInterfaceError::NoSourceFilesFailure {
-            manifest_path,
-            source_root,
-        } => build_json_interface_failure(
-            request_path,
-            Some(manifest_path),
-            package_name,
-            "package-sources",
-            format!(
-                "no `.ql` files found under `{}`",
-                normalize_path(source_root)
-            ),
-            None,
-            Some(normalize_path(source_root)),
-            None,
-            None,
-        ),
-        EmitPackageInterfaceError::SourceRootFailure {
-            manifest_path,
-            source_root,
-        } => build_json_interface_failure(
-            request_path,
-            Some(manifest_path),
-            package_name,
-            "package-source-root",
-            format!(
-                "package source directory `{}` does not exist",
-                normalize_path(source_root)
-            ),
-            None,
-            Some(normalize_path(source_root)),
-            None,
-            None,
-        ),
+    let failure_manifest_path = match error {
+        EmitPackageInterfaceError::ManifestNotFound { .. } => None,
+        EmitPackageInterfaceError::ManifestFailure { manifest_path, .. }
+        | EmitPackageInterfaceError::NoSourceFilesFailure { manifest_path, .. }
+        | EmitPackageInterfaceError::SourceRootFailure { manifest_path, .. } => {
+            Some(manifest_path.as_path())
+        }
         EmitPackageInterfaceError::OutputPathFailure {
             manifest_path: output_manifest_path,
+            ..
+        } => output_manifest_path.as_deref().or(manifest_path),
+        EmitPackageInterfaceError::SourceFailure { .. }
+        | EmitPackageInterfaceError::Code { .. } => manifest_path,
+    };
+    build_json_interface_failure(
+        request_path,
+        failure_manifest_path,
+        package_name,
+        build_json_interface_failure_details(
+            error,
+            "build-side interface emission requires a package manifest; ",
+            "build-side interface emission failed",
+        ),
+    )
+}
+
+fn build_json_interface_failure_details(
+    error: &EmitPackageInterfaceError,
+    manifest_not_found_prefix: &str,
+    code_default_message: &str,
+) -> BuildJsonInterfaceFailureDetails {
+    match error {
+        EmitPackageInterfaceError::ManifestNotFound { start } => {
+            BuildJsonInterfaceFailureDetails::new(
+                "project-context",
+                format!(
+                    "{manifest_not_found_prefix}could not find `qlang.toml` starting from `{}`",
+                    normalize_path(start)
+                ),
+            )
+        }
+        EmitPackageInterfaceError::ManifestFailure { message, .. } => {
+            BuildJsonInterfaceFailureDetails::new("manifest", message.clone())
+        }
+        EmitPackageInterfaceError::NoSourceFilesFailure { source_root, .. } => {
+            BuildJsonInterfaceFailureDetails::new(
+                "package-sources",
+                format!(
+                    "no `.ql` files found under `{}`",
+                    normalize_path(source_root)
+                ),
+            )
+            .source_root(source_root)
+        }
+        EmitPackageInterfaceError::SourceRootFailure { source_root, .. } => {
+            BuildJsonInterfaceFailureDetails::new(
+                "package-source-root",
+                format!(
+                    "package source directory `{}` does not exist",
+                    normalize_path(source_root)
+                ),
+            )
+            .source_root(source_root)
+        }
+        EmitPackageInterfaceError::OutputPathFailure {
             output_path,
             message,
-        } => build_json_interface_failure(
-            request_path,
-            output_manifest_path.as_deref().or(manifest_path),
-            package_name,
-            "interface-output",
-            message.clone(),
-            Some(normalize_path(output_path)),
-            None,
-            None,
-            None,
-        ),
+            ..
+        } => BuildJsonInterfaceFailureDetails::new("interface-output", message.clone())
+            .output_path(output_path),
         EmitPackageInterfaceError::SourceFailure {
             failure_count,
             first_failing_source,
             ..
-        } => build_json_interface_failure(
-            request_path,
-            manifest_path,
-            package_name,
+        } => BuildJsonInterfaceFailureDetails::new(
             "package-sources",
             format!("package interface emission found {failure_count} failing source file(s)"),
-            None,
-            None,
-            Some(*failure_count),
-            first_failing_source
-                .as_ref()
-                .map(|path| normalize_path(path)),
-        ),
-        EmitPackageInterfaceError::Code { message, .. } => build_json_interface_failure(
-            request_path,
-            manifest_path,
-            package_name,
+        )
+        .failing_sources(*failure_count, first_failing_source.as_deref()),
+        EmitPackageInterfaceError::Code { message, .. } => BuildJsonInterfaceFailureDetails::new(
             "interface",
             message
                 .clone()
-                .unwrap_or_else(|| "build-side interface emission failed".to_owned()),
-            None,
-            None,
-            None,
-            None,
+                .unwrap_or_else(|| code_default_message.to_owned()),
         ),
     }
 }
@@ -545,108 +580,35 @@ pub(crate) fn build_json_dependency_interface_prep_failure(
         .first_failure_manifest
         .as_ref()
         .map(|path| normalize_path(path));
-    let (error_kind, message, output_path, source_root, failing_source_count, first_failing_source) =
-        match &failure.first_failure.failure_kind {
-            ReferenceInterfacePrepFailureKind::Project {
-                error_kind,
-                message,
-                source_root,
-            } => (
-                *error_kind,
-                message.clone(),
-                None,
-                source_root.as_ref().map(|path| normalize_path(path)),
-                None,
-                None,
-            ),
-            ReferenceInterfacePrepFailureKind::InterfaceEmit(error) => match error {
-                EmitPackageInterfaceError::ManifestNotFound { start } => (
-                    "project-context",
-                    format!(
-                        "could not find `qlang.toml` starting from `{}`",
-                        normalize_path(start)
-                    ),
-                    None,
-                    None,
-                    None,
-                    None,
-                ),
-                EmitPackageInterfaceError::ManifestFailure { message, .. } => {
-                    ("manifest", message.clone(), None, None, None, None)
-                }
-                EmitPackageInterfaceError::NoSourceFilesFailure { source_root, .. } => (
-                    "package-sources",
-                    format!(
-                        "no `.ql` files found under `{}`",
-                        normalize_path(source_root)
-                    ),
-                    None,
-                    Some(normalize_path(source_root)),
-                    None,
-                    None,
-                ),
-                EmitPackageInterfaceError::SourceRootFailure { source_root, .. } => (
-                    "package-source-root",
-                    format!(
-                        "package source directory `{}` does not exist",
-                        normalize_path(source_root)
-                    ),
-                    None,
-                    Some(normalize_path(source_root)),
-                    None,
-                    None,
-                ),
-                EmitPackageInterfaceError::OutputPathFailure {
-                    output_path,
-                    message,
-                    ..
-                } => (
-                    "interface-output",
-                    message.clone(),
-                    Some(normalize_path(output_path)),
-                    None,
-                    None,
-                    None,
-                ),
-                EmitPackageInterfaceError::SourceFailure {
-                    failure_count,
-                    first_failing_source,
-                    ..
-                } => (
-                    "package-sources",
-                    format!(
-                        "package interface emission found {failure_count} failing source file(s)"
-                    ),
-                    None,
-                    None,
-                    Some(*failure_count),
-                    first_failing_source
-                        .as_ref()
-                        .map(|path| normalize_path(path)),
-                ),
-                EmitPackageInterfaceError::Code { message, .. } => (
-                    "interface",
-                    message
-                        .clone()
-                        .unwrap_or_else(|| "dependency interface preparation failed".to_owned()),
-                    None,
-                    None,
-                    None,
-                    None,
-                ),
-            },
-        };
-    let display_path = output_path
-        .clone()
-        .or_else(|| source_root.clone())
-        .or_else(|| manifest_path.map(normalize_path))
-        .unwrap_or_else(|| reference_manifest_path.clone());
+    let details = match &failure.first_failure.failure_kind {
+        ReferenceInterfacePrepFailureKind::Project {
+            error_kind,
+            message,
+            source_root,
+        } => {
+            let details = BuildJsonInterfaceFailureDetails::new(*error_kind, message.clone());
+            if let Some(source_root) = source_root {
+                details.source_root(source_root)
+            } else {
+                details
+            }
+        }
+        ReferenceInterfacePrepFailureKind::InterfaceEmit(error) => {
+            build_json_interface_failure_details(
+                error,
+                "",
+                "dependency interface preparation failed",
+            )
+        }
+    };
+    let display_path = details.dependency_display_path(manifest_path, &reference_manifest_path);
     let envelope = BuildJsonFailureEnvelope::interface(display_path, manifest_path, None, false);
-    let mut json_failure = envelope.staged_json(error_kind, "dependency-interface-prep", message);
-    json_failure["output_path"] = json!(output_path);
-    json_failure["source_root"] = json!(source_root);
-    json_failure["failing_source_count"] = json!(failing_source_count);
-    json_failure["first_failing_source"] = json!(first_failing_source);
+    let mut json_failure = envelope.staged_json(
+        details.error_kind,
+        "dependency-interface-prep",
+        details.message.clone(),
+    );
+    details.apply_to(&mut json_failure);
     json_failure["owner_manifest_path"] = json!(owner_manifest_path);
     json_failure["reference_manifest_path"] = json!(reference_manifest_path);
     json_failure["reference"] = json!(failure.first_failure.reference.clone());
