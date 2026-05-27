@@ -8,6 +8,7 @@ mod inferred_types;
 mod instantiations;
 mod rendering;
 mod specializations;
+mod substitutions;
 
 pub(crate) use self::specializations::{
     render_local_function_specializations,
