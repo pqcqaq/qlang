@@ -150,6 +150,94 @@ impl BuildJsonFailureEnvelope {
     }
 }
 
+#[derive(Clone, Debug)]
+struct BuildJsonTargetPrepDetails {
+    error_kind: &'static str,
+    message: String,
+    dependency_manifest_path: JsonValue,
+    dependency_package: JsonValue,
+    interface_path: JsonValue,
+    symbol: JsonValue,
+    first_dependency_package: JsonValue,
+    first_dependency_manifest_path: JsonValue,
+    conflicting_dependency_package: JsonValue,
+    conflicting_dependency_manifest_path: JsonValue,
+    io_path: JsonValue,
+}
+
+impl BuildJsonTargetPrepDetails {
+    fn new(error_kind: &'static str, message: String) -> Self {
+        Self {
+            error_kind,
+            message,
+            dependency_manifest_path: JsonValue::Null,
+            dependency_package: JsonValue::Null,
+            interface_path: JsonValue::Null,
+            symbol: JsonValue::Null,
+            first_dependency_package: JsonValue::Null,
+            first_dependency_manifest_path: JsonValue::Null,
+            conflicting_dependency_package: JsonValue::Null,
+            conflicting_dependency_manifest_path: JsonValue::Null,
+            io_path: JsonValue::Null,
+        }
+    }
+
+    fn dependency_manifest_path(mut self, path: &Path) -> Self {
+        self.dependency_manifest_path = json!(normalize_path(path));
+        self
+    }
+
+    fn dependency_package(mut self, package: &str) -> Self {
+        self.dependency_package = json!(package);
+        self
+    }
+
+    fn interface_path(mut self, path: &Path) -> Self {
+        self.interface_path = json!(normalize_path(path));
+        self
+    }
+
+    fn symbol(mut self, symbol: &str) -> Self {
+        self.symbol = json!(symbol);
+        self
+    }
+
+    fn io_path(mut self, path: &Path) -> Self {
+        self.io_path = json!(normalize_path(path));
+        self
+    }
+
+    fn dependency_conflict(
+        mut self,
+        symbol: &str,
+        first_package: &str,
+        first_manifest_path: &Path,
+        conflicting_package: &str,
+        conflicting_manifest_path: &Path,
+    ) -> Self {
+        self.symbol = json!(symbol);
+        self.first_dependency_package = json!(first_package);
+        self.first_dependency_manifest_path = json!(normalize_path(first_manifest_path));
+        self.conflicting_dependency_package = json!(conflicting_package);
+        self.conflicting_dependency_manifest_path =
+            json!(normalize_path(conflicting_manifest_path));
+        self
+    }
+
+    fn apply_to(self, json_failure: &mut JsonValue) {
+        json_failure["dependency_manifest_path"] = self.dependency_manifest_path;
+        json_failure["dependency_package"] = self.dependency_package;
+        json_failure["interface_path"] = self.interface_path;
+        json_failure["symbol"] = self.symbol;
+        json_failure["first_dependency_package"] = self.first_dependency_package;
+        json_failure["first_dependency_manifest_path"] = self.first_dependency_manifest_path;
+        json_failure["conflicting_dependency_package"] = self.conflicting_dependency_package;
+        json_failure["conflicting_dependency_manifest_path"] =
+            self.conflicting_dependency_manifest_path;
+        json_failure["io_path"] = self.io_path;
+    }
+}
+
 pub(crate) fn build_json_failure(
     manifest_path: Option<&Path>,
     package_name: Option<&str>,
@@ -617,75 +705,44 @@ pub(crate) fn build_json_target_prep_failure(
     selected: bool,
     failure: &PrepareProjectTargetBuildError,
 ) -> JsonValue {
-    let (
-        error_kind,
-        message,
-        dependency_manifest_path,
-        dependency_package,
-        interface_path,
-        symbol,
-        first_dependency_package,
-        first_dependency_manifest_path,
-        conflicting_dependency_package,
-        conflicting_dependency_manifest_path,
-        io_path,
-    ) = match &failure.failure_kind {
+    let details = match &failure.failure_kind {
         PrepareProjectTargetBuildFailureKind::DependencyManifest {
             dependency_manifest_path,
             error_kind,
             message,
-        } => (
-            *error_kind,
-            message.clone(),
-            dependency_manifest_path
-                .as_ref()
-                .map(|path| json!(normalize_path(path)))
-                .unwrap_or(JsonValue::Null),
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-        ),
+        } => {
+            let details = BuildJsonTargetPrepDetails::new(*error_kind, message.clone());
+            if let Some(path) = dependency_manifest_path {
+                details.dependency_manifest_path(path)
+            } else {
+                details
+            }
+        }
         PrepareProjectTargetBuildFailureKind::DependencyInterface {
             dependency_manifest_path,
             dependency_package,
             interface_path,
             message,
-        } => (
-            "dependency-interface",
-            message.clone(),
-            json!(normalize_path(dependency_manifest_path)),
-            json!(dependency_package),
-            json!(normalize_path(interface_path)),
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-        ),
+        } => BuildJsonTargetPrepDetails::new("dependency-interface", message.clone())
+            .dependency_manifest_path(dependency_manifest_path)
+            .dependency_package(dependency_package)
+            .interface_path(interface_path),
         PrepareProjectTargetBuildFailureKind::DependencyExternConflict {
             symbol,
             first_package,
             first_manifest_path,
             conflicting_package,
             conflicting_manifest_path,
-        } => (
+        } => BuildJsonTargetPrepDetails::new(
             "dependency-extern-conflict",
             format!("found conflicting direct dependency extern imports for `{symbol}`"),
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            json!(symbol),
-            json!(first_package),
-            json!(normalize_path(first_manifest_path)),
-            json!(conflicting_package),
-            json!(normalize_path(conflicting_manifest_path)),
-            JsonValue::Null,
+        )
+        .dependency_conflict(
+            symbol,
+            first_package,
+            first_manifest_path,
+            conflicting_package,
+            conflicting_manifest_path,
         ),
         PrepareProjectTargetBuildFailureKind::DependencyFunctionConflict {
             symbol,
@@ -693,164 +750,115 @@ pub(crate) fn build_json_target_prep_failure(
             first_manifest_path,
             conflicting_package,
             conflicting_manifest_path,
-        } => (
+        } => BuildJsonTargetPrepDetails::new(
             "dependency-function-conflict",
             format!("found conflicting direct dependency public function imports for `{symbol}`"),
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            json!(symbol),
-            json!(first_package),
-            json!(normalize_path(first_manifest_path)),
-            json!(conflicting_package),
-            json!(normalize_path(conflicting_manifest_path)),
-            JsonValue::Null,
+        )
+        .dependency_conflict(
+            symbol,
+            first_package,
+            first_manifest_path,
+            conflicting_package,
+            conflicting_manifest_path,
         ),
         PrepareProjectTargetBuildFailureKind::DependencySource {
             dependency_manifest_path,
             dependency_package,
             source_path,
             message,
-        } => (
-            "dependency-source",
-            message.clone(),
-            json!(normalize_path(dependency_manifest_path)),
-            json!(dependency_package),
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            json!(normalize_path(source_path)),
-        ),
+        } => BuildJsonTargetPrepDetails::new("dependency-source", message.clone())
+            .dependency_manifest_path(dependency_manifest_path)
+            .dependency_package(dependency_package)
+            .io_path(source_path),
         PrepareProjectTargetBuildFailureKind::DependencyFunctionLocalConflict {
             symbol,
             dependency_package,
             dependency_manifest_path,
-        } => (
+        } => BuildJsonTargetPrepDetails::new(
             "dependency-function-local-conflict",
             format!(
                 "cannot synthesize direct dependency public function bridge for `{symbol}` because the root source already defines the same top-level name"
             ),
-            json!(normalize_path(dependency_manifest_path)),
-            json!(dependency_package),
-            JsonValue::Null,
-            json!(symbol),
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-        ),
+        )
+        .dependency_manifest_path(dependency_manifest_path)
+        .dependency_package(dependency_package)
+        .symbol(symbol),
         PrepareProjectTargetBuildFailureKind::DependencyFunctionUnsupportedGeneric {
             symbol,
             dependency_package,
             dependency_manifest_path,
-        } => (
+        } => BuildJsonTargetPrepDetails::new(
             "dependency-function-unsupported-generic",
             format!(
                 "cannot synthesize direct dependency public function bridge for generic function `{symbol}` yet"
             ),
-            json!(normalize_path(dependency_manifest_path)),
-            json!(dependency_package),
-            JsonValue::Null,
-            json!(symbol),
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-        ),
+        )
+        .dependency_manifest_path(dependency_manifest_path)
+        .dependency_package(dependency_package)
+        .symbol(symbol),
         PrepareProjectTargetBuildFailureKind::DependencyTypeConflict {
             symbol,
             first_package,
             first_manifest_path,
             conflicting_package,
             conflicting_manifest_path,
-        } => (
+        } => BuildJsonTargetPrepDetails::new(
             "dependency-type-conflict",
             format!("found conflicting direct dependency public type imports for `{symbol}`"),
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            json!(symbol),
-            json!(first_package),
-            json!(normalize_path(first_manifest_path)),
-            json!(conflicting_package),
-            json!(normalize_path(conflicting_manifest_path)),
-            JsonValue::Null,
+        )
+        .dependency_conflict(
+            symbol,
+            first_package,
+            first_manifest_path,
+            conflicting_package,
+            conflicting_manifest_path,
         ),
         PrepareProjectTargetBuildFailureKind::DependencyTypeLocalConflict {
             symbol,
             dependency_package,
             dependency_manifest_path,
-        } => (
+        } => BuildJsonTargetPrepDetails::new(
             "dependency-type-local-conflict",
             format!(
                 "cannot synthesize direct dependency public type bridge for `{symbol}` because the root source already defines the same top-level name"
             ),
-            json!(normalize_path(dependency_manifest_path)),
-            json!(dependency_package),
-            JsonValue::Null,
-            json!(symbol),
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-        ),
+        )
+        .dependency_manifest_path(dependency_manifest_path)
+        .dependency_package(dependency_package)
+        .symbol(symbol),
         PrepareProjectTargetBuildFailureKind::DependencyValueConflict {
             symbol,
             first_package,
             first_manifest_path,
             conflicting_package,
             conflicting_manifest_path,
-        } => (
+        } => BuildJsonTargetPrepDetails::new(
             "dependency-value-conflict",
             format!("found conflicting direct dependency public value imports for `{symbol}`"),
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            json!(symbol),
-            json!(first_package),
-            json!(normalize_path(first_manifest_path)),
-            json!(conflicting_package),
-            json!(normalize_path(conflicting_manifest_path)),
-            JsonValue::Null,
+        )
+        .dependency_conflict(
+            symbol,
+            first_package,
+            first_manifest_path,
+            conflicting_package,
+            conflicting_manifest_path,
         ),
         PrepareProjectTargetBuildFailureKind::DependencyValueLocalConflict {
             symbol,
             dependency_package,
             dependency_manifest_path,
-        } => (
+        } => BuildJsonTargetPrepDetails::new(
             "dependency-value-local-conflict",
             format!(
                 "cannot synthesize direct dependency public value bridge for `{symbol}` because the root source already defines the same top-level name"
             ),
-            json!(normalize_path(dependency_manifest_path)),
-            json!(dependency_package),
-            JsonValue::Null,
-            json!(symbol),
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-        ),
-        PrepareProjectTargetBuildFailureKind::SourceRead { path, message } => (
-            "io",
-            message.clone(),
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            JsonValue::Null,
-            json!(normalize_path(path)),
-        ),
+        )
+        .dependency_manifest_path(dependency_manifest_path)
+        .dependency_package(dependency_package)
+        .symbol(symbol),
+        PrepareProjectTargetBuildFailureKind::SourceRead { path, message } => {
+            BuildJsonTargetPrepDetails::new("io", message.clone()).io_path(path)
+        }
     };
 
     let envelope = BuildJsonFailureEnvelope::target(
@@ -860,16 +868,9 @@ pub(crate) fn build_json_target_prep_failure(
         project_target_display_path(&member.member_manifest_path, &target.path),
         selected,
     );
-    let mut json_failure = envelope.staged_json(error_kind, "target-prep", message);
-    json_failure["dependency_manifest_path"] = dependency_manifest_path;
-    json_failure["dependency_package"] = dependency_package;
-    json_failure["interface_path"] = interface_path;
-    json_failure["symbol"] = symbol;
-    json_failure["first_dependency_package"] = first_dependency_package;
-    json_failure["first_dependency_manifest_path"] = first_dependency_manifest_path;
-    json_failure["conflicting_dependency_package"] = conflicting_dependency_package;
-    json_failure["conflicting_dependency_manifest_path"] = conflicting_dependency_manifest_path;
-    json_failure["io_path"] = io_path;
+    let mut json_failure =
+        envelope.staged_json(details.error_kind, "target-prep", details.message.clone());
+    details.apply_to(&mut json_failure);
     json_failure
 }
 
@@ -1194,5 +1195,85 @@ mod tests {
         assert_eq!(failure["interface_path"], "workspace/lib/lib.qi");
         assert!(failure["symbol"].is_null());
         assert!(failure["io_path"].is_null());
+    }
+
+    #[test]
+    fn build_json_target_prep_failure_preserves_conflict_detail_fields() {
+        let member = WorkspaceBuildTargets {
+            member_manifest_path: PathBuf::from("workspace/app/qlang.toml"),
+            package_name: "app".to_owned(),
+            default_profile: Some(ManifestBuildProfile::Debug),
+            targets: Vec::new(),
+        };
+        let target = BuildTarget {
+            kind: BuildTargetKind::Library,
+            path: PathBuf::from("workspace/app/src/lib.ql"),
+        };
+        let failure = build_json_target_prep_failure(
+            &member,
+            &target,
+            true,
+            &PrepareProjectTargetBuildError {
+                failure_kind: PrepareProjectTargetBuildFailureKind::DependencyTypeConflict {
+                    symbol: "SharedType".to_owned(),
+                    first_package: "dep_a".to_owned(),
+                    first_manifest_path: PathBuf::from("workspace/dep_a/qlang.toml"),
+                    conflicting_package: "dep_b".to_owned(),
+                    conflicting_manifest_path: PathBuf::from("workspace/dep_b/qlang.toml"),
+                },
+            },
+        );
+
+        assert_eq!(failure["selected"], true);
+        assert_eq!(failure["dependency_only"], false);
+        assert_eq!(failure["kind"], "lib");
+        assert_eq!(failure["path"], "src/lib.ql");
+        assert_eq!(failure["error_kind"], "dependency-type-conflict");
+        assert_eq!(failure["symbol"], "SharedType");
+        assert_eq!(failure["first_dependency_package"], "dep_a");
+        assert_eq!(
+            failure["first_dependency_manifest_path"],
+            "workspace/dep_a/qlang.toml"
+        );
+        assert_eq!(failure["conflicting_dependency_package"], "dep_b");
+        assert_eq!(
+            failure["conflicting_dependency_manifest_path"],
+            "workspace/dep_b/qlang.toml"
+        );
+        assert!(failure["dependency_manifest_path"].is_null());
+        assert!(failure["io_path"].is_null());
+    }
+
+    #[test]
+    fn build_json_target_prep_failure_preserves_source_read_io_path() {
+        let member = WorkspaceBuildTargets {
+            member_manifest_path: PathBuf::from("workspace/app/qlang.toml"),
+            package_name: "app".to_owned(),
+            default_profile: Some(ManifestBuildProfile::Debug),
+            targets: Vec::new(),
+        };
+        let target = BuildTarget {
+            kind: BuildTargetKind::Source,
+            path: PathBuf::from("workspace/app/src/main.ql"),
+        };
+        let failure = build_json_target_prep_failure(
+            &member,
+            &target,
+            true,
+            &PrepareProjectTargetBuildError {
+                failure_kind: PrepareProjectTargetBuildFailureKind::SourceRead {
+                    path: PathBuf::from("workspace/app/src/main.ql"),
+                    message: "failed to read source".to_owned(),
+                },
+            },
+        );
+
+        assert_eq!(failure["kind"], "source");
+        assert_eq!(failure["error_kind"], "io");
+        assert_eq!(failure["message"], "failed to read source");
+        assert_eq!(failure["io_path"], "workspace/app/src/main.ql");
+        assert!(failure["dependency_manifest_path"].is_null());
+        assert!(failure["dependency_package"].is_null());
+        assert!(failure["symbol"].is_null());
     }
 }
