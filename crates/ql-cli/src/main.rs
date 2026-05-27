@@ -16,6 +16,7 @@ mod build_single_source_input;
 mod build_single_source_reporting;
 mod build_source_rewrites;
 mod check_command;
+mod check_json_report;
 mod check_reporting;
 mod cli_analysis;
 mod cli_build_profile;
