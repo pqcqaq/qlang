@@ -22,6 +22,10 @@ fn direct_dependency_package_note(dependency_package: &str) -> String {
     format!("note: direct dependency package: `{dependency_package}`")
 }
 
+fn package_under_test_note(package_name: &str) -> String {
+    format!("note: package under test: `{package_name}`")
+}
+
 fn render_dependency_interface_load_failure(
     command_label: &str,
     owner_manifest_path: &Path,
@@ -113,6 +117,48 @@ fn render_direct_dependency_unsupported_generic_function(
             "error: {command_label} cannot synthesize direct dependency public function bridge for generic function `{symbol}` yet"
         ),
         direct_dependency_package_note(dependency_package),
+        "hint: generic function monomorphization is not implemented yet; use a non-generic wrapper with concrete parameter and return types".to_owned(),
+    ]
+}
+
+fn render_package_under_test_symbol_conflict(
+    command_label: &str,
+    symbol_kind: &str,
+    symbol: &str,
+    first_package: &str,
+    package_name: &str,
+) -> [String; 3] {
+    [
+        format!(
+            "error: {command_label} found conflicting package-under-test {symbol_kind} imports for `{symbol}`"
+        ),
+        format!("note: first package: `{first_package}`"),
+        package_under_test_note(package_name),
+    ]
+}
+
+fn render_package_under_test_local_conflict(
+    command_label: &str,
+    bridge_kind: &str,
+    symbol: &str,
+    hint: &str,
+) -> [String; 2] {
+    [
+        format!(
+            "error: {command_label} cannot synthesize package-under-test {bridge_kind} bridge for `{symbol}` because the test source already defines the same top-level name"
+        ),
+        format!("hint: {hint}"),
+    ]
+}
+
+fn render_package_under_test_unsupported_generic_function(
+    command_label: &str,
+    symbol: &str,
+) -> [String; 2] {
+    [
+        format!(
+            "error: {command_label} cannot synthesize package-under-test public function bridge for generic function `{symbol}` yet"
+        ),
         "hint: generic function monomorphization is not implemented yet; use a non-generic wrapper with concrete parameter and return types".to_owned(),
     ]
 }
@@ -221,6 +267,44 @@ pub(crate) fn report_direct_dependency_unsupported_generic_function(
     }
 }
 
+pub(crate) fn report_package_under_test_symbol_conflict(
+    command_label: &str,
+    symbol_kind: &str,
+    symbol: &str,
+    first_package: &str,
+    package_name: &str,
+) {
+    for line in render_package_under_test_symbol_conflict(
+        command_label,
+        symbol_kind,
+        symbol,
+        first_package,
+        package_name,
+    ) {
+        eprintln!("{line}");
+    }
+}
+
+pub(crate) fn report_package_under_test_local_conflict(
+    command_label: &str,
+    bridge_kind: &str,
+    symbol: &str,
+    hint: &str,
+) {
+    for line in render_package_under_test_local_conflict(command_label, bridge_kind, symbol, hint) {
+        eprintln!("{line}");
+    }
+}
+
+pub(crate) fn report_package_under_test_unsupported_generic_function(
+    command_label: &str,
+    symbol: &str,
+) {
+    for line in render_package_under_test_unsupported_generic_function(command_label, symbol) {
+        eprintln!("{line}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -323,6 +407,53 @@ mod tests {
             [
                 "error: `ql build` cannot synthesize direct dependency public function bridge for generic function `map` yet",
                 "note: direct dependency package: `dep`",
+                "hint: generic function monomorphization is not implemented yet; use a non-generic wrapper with concrete parameter and return types",
+            ]
+        );
+    }
+
+    #[test]
+    fn package_under_test_symbol_conflict_lines_preserve_context() {
+        let lines = render_package_under_test_symbol_conflict(
+            "`ql test`",
+            "public function",
+            "parse",
+            "dep",
+            "app",
+        );
+
+        assert_eq!(
+            lines,
+            [
+                "error: `ql test` found conflicting package-under-test public function imports for `parse`",
+                "note: first package: `dep`",
+                "note: package under test: `app`",
+            ]
+        );
+    }
+
+    #[test]
+    fn package_under_test_local_and_generic_conflict_lines_preserve_context() {
+        let local_lines = render_package_under_test_local_conflict(
+            "`ql test`",
+            "public type",
+            "Box",
+            "rename the local top-level item or avoid importing a package-under-test public type with the same original symbol name",
+        );
+        let generic_lines =
+            render_package_under_test_unsupported_generic_function("`ql test`", "map");
+
+        assert_eq!(
+            local_lines,
+            [
+                "error: `ql test` cannot synthesize package-under-test public type bridge for `Box` because the test source already defines the same top-level name",
+                "hint: rename the local top-level item or avoid importing a package-under-test public type with the same original symbol name",
+            ]
+        );
+        assert_eq!(
+            generic_lines,
+            [
+                "error: `ql test` cannot synthesize package-under-test public function bridge for generic function `map` yet",
                 "hint: generic function monomorphization is not implemented yet; use a non-generic wrapper with concrete parameter and return types",
             ]
         );

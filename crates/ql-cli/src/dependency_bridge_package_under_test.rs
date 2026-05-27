@@ -23,6 +23,10 @@ use crate::dependency_bridge_public_functions::{
 use crate::dependency_bridge_public_type_declarations::{
     DependencyPublicTypeBridgeError, collect_dependency_module_public_type_declarations,
 };
+use crate::dependency_bridge_reporting::{
+    report_package_under_test_local_conflict, report_package_under_test_symbol_conflict,
+    report_package_under_test_unsupported_generic_function,
+};
 
 pub(crate) fn render_package_under_test_bridge_items(
     command_label: &str,
@@ -134,27 +138,24 @@ fn report_package_under_test_function_bridge_error(
 ) {
     match error {
         DependencyPublicFunctionForwarderError::DependencyConflict { symbol, owner } => {
-            eprintln!(
-                "error: {command_label} found conflicting package-under-test public function imports for `{symbol}`"
+            report_package_under_test_symbol_conflict(
+                command_label,
+                "public function",
+                &symbol,
+                &owner.package_name,
+                package_name,
             );
-            eprintln!("note: first package: `{}`", owner.package_name);
-            eprintln!("note: package under test: `{package_name}`");
         }
         DependencyPublicFunctionForwarderError::LocalConflict { symbol } => {
-            eprintln!(
-                "error: {command_label} cannot synthesize package-under-test public function bridge for `{symbol}` because the test source already defines the same top-level name"
-            );
-            eprintln!(
-                "hint: rename the local top-level item or avoid importing the package-under-test public function with the same original symbol name"
+            report_package_under_test_local_conflict(
+                command_label,
+                "public function",
+                &symbol,
+                "rename the local top-level item or avoid importing the package-under-test public function with the same original symbol name",
             );
         }
         DependencyPublicFunctionForwarderError::UnsupportedGeneric { symbol } => {
-            eprintln!(
-                "error: {command_label} cannot synthesize package-under-test public function bridge for generic function `{symbol}` yet"
-            );
-            eprintln!(
-                "hint: generic function monomorphization is not implemented yet; use a non-generic wrapper with concrete parameter and return types"
-            );
+            report_package_under_test_unsupported_generic_function(command_label, &symbol);
         }
     }
 }
@@ -166,18 +167,20 @@ fn report_package_under_test_type_bridge_error(
 ) {
     match error {
         DependencyPublicTypeBridgeError::DependencyConflict { symbol, owner } => {
-            eprintln!(
-                "error: {command_label} found conflicting package-under-test public type imports for `{symbol}`"
+            report_package_under_test_symbol_conflict(
+                command_label,
+                "public type",
+                &symbol,
+                &owner.package_name,
+                package_name,
             );
-            eprintln!("note: first package: `{}`", owner.package_name);
-            eprintln!("note: package under test: `{package_name}`");
         }
         DependencyPublicTypeBridgeError::LocalConflict { symbol } => {
-            eprintln!(
-                "error: {command_label} cannot synthesize package-under-test public type bridge for `{symbol}` because the test source already defines the same top-level name"
-            );
-            eprintln!(
-                "hint: rename the local top-level item or avoid importing a package-under-test public type with the same original symbol name"
+            report_package_under_test_local_conflict(
+                command_label,
+                "public type",
+                &symbol,
+                "rename the local top-level item or avoid importing a package-under-test public type with the same original symbol name",
             );
         }
     }
