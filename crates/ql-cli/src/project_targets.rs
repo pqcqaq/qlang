@@ -1,8 +1,10 @@
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+use ql_project::{BuildTarget, BuildTargetKind};
 use ql_project::{
-    BuildTarget, BuildTargetKind, WorkspaceBuildTargets, discover_package_build_targets,
-    discover_workspace_build_targets, load_project_manifest, package_name,
+    WorkspaceBuildTargets, discover_package_build_targets, discover_workspace_build_targets,
+    load_project_manifest, package_name,
 };
 
 use crate::cli_utils::{
@@ -11,6 +13,7 @@ use crate::cli_utils::{
 };
 
 mod rendering;
+mod selection;
 mod selector;
 
 #[cfg(test)]
@@ -18,6 +21,13 @@ pub(crate) use rendering::render_project_targets_json;
 use rendering::{
     render_project_target_members, render_project_targets_preflight_failure_json,
     render_project_targets_selection_failure_json,
+};
+use selection::{
+    ProjectTargetSelectionFailure, report_project_target_selection_failure,
+    select_workspace_build_targets_with_failure,
+};
+pub(crate) use selection::{
+    filter_workspace_build_targets, is_runnable_project_target, select_workspace_build_targets,
 };
 pub(crate) use selector::{
     ProjectTargetSelector, ProjectTargetSelectorKind, parse_project_target_selector_option,
@@ -278,126 +288,6 @@ pub(crate) fn report_project_source_path_rejects_target_selector(
     eprintln!("note: selector: {}", selector.describe());
 }
 
-pub(crate) fn select_workspace_build_targets(
-    path: &Path,
-    members: &[WorkspaceBuildTargets],
-    selector: &ProjectTargetSelector,
-    command_label: &str,
-    target_label: &str,
-) -> Result<Vec<WorkspaceBuildTargets>, u8> {
-    select_workspace_build_targets_with_failure(path, members, selector, target_label).map_err(
-        |failure| {
-            report_project_target_selection_failure(command_label, &failure);
-            1
-        },
-    )
-}
-
-fn select_workspace_build_targets_with_failure(
-    path: &Path,
-    members: &[WorkspaceBuildTargets],
-    selector: &ProjectTargetSelector,
-    target_label: &str,
-) -> Result<Vec<WorkspaceBuildTargets>, ProjectTargetSelectionFailure> {
-    if !selector.is_active() {
-        return Ok(members.to_vec());
-    }
-
-    let mut selected = Vec::new();
-    for member in members {
-        let targets = member
-            .targets
-            .iter()
-            .filter(|target| {
-                selector.matches(
-                    member.member_manifest_path.as_path(),
-                    &member.package_name,
-                    target,
-                )
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        if !targets.is_empty() {
-            selected.push(WorkspaceBuildTargets {
-                member_manifest_path: member.member_manifest_path.clone(),
-                package_name: member.package_name.clone(),
-                default_profile: member.default_profile,
-                targets,
-            });
-        }
-    }
-
-    if selected
-        .iter()
-        .map(|member| member.targets.len())
-        .sum::<usize>()
-        == 0
-    {
-        return Err(ProjectTargetSelectionFailure {
-            stage: "target-selection",
-            path: normalize_path(path),
-            message: format!(
-                "target selector matched no {target_label} under `{}`",
-                normalize_path(path)
-            ),
-            selector: selector.describe(),
-            target_count: members
-                .iter()
-                .map(|member| member.targets.len())
-                .sum::<usize>(),
-        });
-    }
-
-    Ok(selected)
-}
-
-struct ProjectTargetSelectionFailure {
-    stage: &'static str,
-    path: String,
-    message: String,
-    selector: String,
-    target_count: usize,
-}
-
-fn report_project_target_selection_failure(
-    command_label: &str,
-    failure: &ProjectTargetSelectionFailure,
-) {
-    eprintln!("error: {command_label} {}", failure.message);
-    eprintln!("note: selector: {}", failure.selector);
-    eprintln!(
-        "hint: rerun `ql project targets {}` to inspect the discovered build targets",
-        failure.path
-    );
-}
-
-fn filter_workspace_build_targets(
-    members: &[WorkspaceBuildTargets],
-    keep_empty_members: bool,
-    predicate: impl Fn(&BuildTarget) -> bool,
-) -> Vec<WorkspaceBuildTargets> {
-    members
-        .iter()
-        .filter_map(|member| {
-            let targets = member
-                .targets
-                .iter()
-                .filter(|target| predicate(target))
-                .cloned()
-                .collect::<Vec<_>>();
-            if targets.is_empty() && !keep_empty_members {
-                return None;
-            }
-            Some(WorkspaceBuildTargets {
-                member_manifest_path: member.member_manifest_path.clone(),
-                package_name: member.package_name.clone(),
-                default_profile: member.default_profile,
-                targets,
-            })
-        })
-        .collect()
-}
-
 fn load_project_target_members_for_workspace_member_path(
     path: &Path,
     command_label: &str,
@@ -621,10 +511,6 @@ pub(crate) fn list_runnable_targets_path(
     }
     render_project_target_members(&runnable_members, json);
     Ok(())
-}
-
-pub(crate) fn is_runnable_project_target(kind: BuildTargetKind) -> bool {
-    matches!(kind, BuildTargetKind::Binary | BuildTargetKind::Source)
 }
 
 pub(crate) fn project_target_display_path(manifest_path: &Path, target_path: &Path) -> String {

@@ -5,7 +5,7 @@ use serde_json::json;
 
 use crate::cli_utils::{json_string, normalize_path};
 
-use super::{ProjectTargetSelectionFailure, project_target_display_path};
+use super::{project_target_display_path, selection::ProjectTargetSelectionFailure};
 
 pub(super) fn render_project_target_members(members: &[WorkspaceBuildTargets], json: bool) {
     if json {
