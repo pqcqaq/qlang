@@ -3,9 +3,8 @@ use std::env;
 use std::path::Path;
 use std::process::ExitCode;
 
-use ql_ast::ItemKind;
 use ql_parser::parse_source;
-use ql_project::{WorkspaceBuildTargets, load_project_manifest, package_name};
+use ql_project::{WorkspaceBuildTargets, load_project_manifest};
 mod analysis_commands;
 mod build_command;
 mod build_failure_reporting;
@@ -29,6 +28,7 @@ mod dependency_bridge_externs;
 mod dependency_bridge_imports;
 mod dependency_bridge_modules;
 mod dependency_bridge_names;
+mod dependency_bridge_public_export_wrappers;
 mod dependency_bridge_public_functions;
 mod dependency_bridge_public_globals;
 mod dependency_bridge_public_methods;
@@ -107,9 +107,10 @@ use dependency_bridge_modules::{
     dependency_generic_specialization_module_refs, dependency_generic_specialization_modules,
     dependency_interface_module_import_path, package_under_test_bridge_modules,
 };
-use dependency_bridge_names::{
-    DependencyExternOwner, render_dependency_public_function_export_wrapper,
-    render_dependency_public_method_export_wrapper,
+use dependency_bridge_names::DependencyExternOwner;
+use dependency_bridge_public_export_wrappers::{
+    render_public_dependency_function_export_wrappers,
+    render_public_dependency_function_export_wrappers_quiet,
 };
 use dependency_bridge_public_functions::{
     DependencyPublicFunctionForwarderError, collect_dependency_module_public_function_forwarders,
@@ -127,6 +128,7 @@ use dependency_bridge_public_type_declarations::{
 };
 #[cfg(test)]
 pub(crate) use dependency_bridge_public_types::dependency_public_type_bridge_order;
+#[cfg(test)]
 pub(crate) use dependency_bridge_public_types::{
     dependency_public_struct_method_bridge_candidates, dependency_public_type_bridge_candidates,
 };
@@ -471,83 +473,6 @@ pub(crate) fn render_package_under_test_bridge_items(
         declarations,
         source_rewrites,
     })
-}
-
-pub(crate) fn render_public_dependency_function_export_wrappers(
-    command_label: &str,
-    manifest_path: &Path,
-    source: &str,
-    report_failure: bool,
-) -> Result<String, u8> {
-    let manifest = load_project_manifest(manifest_path).map_err(|error| {
-        if report_failure {
-            eprintln!("error: {command_label} {error}");
-        }
-        1
-    })?;
-    let package_name = package_name(&manifest).map_err(|error| {
-        if report_failure {
-            eprintln!("error: {command_label} {error}");
-        }
-        1
-    })?;
-    Ok(render_public_dependency_function_export_wrappers_for_package(package_name, source))
-}
-
-pub(crate) fn render_public_dependency_function_export_wrappers_quiet(
-    manifest_path: &Path,
-    source: &str,
-) -> Result<String, PrepareProjectTargetBuildError> {
-    let manifest = load_project_manifest(manifest_path)
-        .map_err(|error| target_prep_dependency_manifest_failure(None, &error))?;
-    let package_name = package_name(&manifest)
-        .map_err(|error| target_prep_dependency_manifest_failure(Some(manifest_path), &error))?;
-    Ok(render_public_dependency_function_export_wrappers_for_package(package_name, source))
-}
-
-fn render_public_dependency_function_export_wrappers_for_package(
-    package_name: &str,
-    source: &str,
-) -> String {
-    let Ok(module) = parse_source(source) else {
-        return String::new();
-    };
-
-    let mut wrappers = Vec::new();
-    let module_import_path = dependency_interface_module_import_path(package_name, &module);
-    let type_candidates = dependency_public_type_bridge_candidates(&module);
-    for item in &module.items {
-        let ItemKind::Function(function) = &item.kind else {
-            continue;
-        };
-        if let Some(wrapper) =
-            render_dependency_public_function_export_wrapper(&module_import_path, function, source)
-        {
-            wrappers.push(wrapper);
-        }
-    }
-    for struct_name in type_candidates.keys() {
-        if type_candidates
-            .get(struct_name)
-            .is_some_and(|candidate| candidate.decl.is_generic())
-        {
-            continue;
-        }
-        for method in
-            dependency_public_struct_method_bridge_candidates(&module, struct_name).values()
-        {
-            if let Some(wrapper) = render_dependency_public_method_export_wrapper(
-                &module_import_path,
-                struct_name,
-                method,
-                source,
-            ) {
-                wrappers.push(wrapper);
-            }
-        }
-    }
-
-    wrappers.join("\n\n")
 }
 
 #[cfg(test)]
