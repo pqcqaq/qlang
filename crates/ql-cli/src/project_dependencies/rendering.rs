@@ -6,7 +6,8 @@ use serde_json::{Value as JsonValue, json};
 
 use crate::cli_utils::normalize_path;
 
-use super::{ProjectDependencyMember, ProjectDependencySelectionFailure, ProjectDependentMember};
+use super::query_context::ProjectDependencySelectionFailure;
+use super::{ProjectDependencyMember, ProjectDependentMember};
 
 pub(super) fn render_project_dependents(
     workspace_manifest: &ql_project::ProjectManifest,
