@@ -20,7 +20,9 @@ use crate::dependency_bridge_modules::dependency_interface_module_import_paths;
 use crate::dependency_bridge_names::{
     DependencyExternOwner, record_dependency_extern_declaration, span_text,
 };
-use crate::dependency_bridge_reporting::report_dependency_interface_load_failure;
+use crate::dependency_bridge_reporting::{
+    report_dependency_interface_load_failure, report_direct_dependency_symbol_conflict,
+};
 use crate::project_manifest_paths::reference_manifest_path;
 
 pub(crate) fn render_direct_dependency_extern_declarations(
@@ -98,13 +100,13 @@ pub(crate) fn render_direct_dependency_extern_declarations(
             )
             .map_err(|(symbol, owner)| {
                 if report_failure {
-                    eprintln!(
-                        "error: {command_label} found conflicting direct dependency extern imports for `{symbol}`"
-                    );
-                    eprintln!("note: first package: `{}`", owner.package_name);
-                    eprintln!("note: conflicting package: `{dependency_package}`");
-                    eprintln!(
-                        "hint: keep direct dependency `extern \"c\"` names unique until package-qualified extern resolution lands"
+                    report_direct_dependency_symbol_conflict(
+                        command_label,
+                        "extern",
+                        &symbol,
+                        &owner.package_name,
+                        &dependency_package,
+                        "keep direct dependency `extern \"c\"` names unique until package-qualified extern resolution lands",
                     );
                 }
                 1

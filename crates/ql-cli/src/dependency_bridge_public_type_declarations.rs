@@ -31,7 +31,8 @@ use crate::dependency_bridge_public_types::{
 };
 use crate::dependency_bridge_reporting::{
     report_dependency_interface_load_failure, report_dependency_source_parse_failure,
-    report_dependency_source_read_failure,
+    report_dependency_source_read_failure, report_direct_dependency_local_conflict,
+    report_direct_dependency_symbol_conflict,
 };
 use crate::project_manifest_paths::reference_manifest_path;
 
@@ -147,22 +148,22 @@ pub(crate) fn render_direct_dependency_public_type_declarations(
                 if report_failure {
                     match error {
                         DependencyPublicTypeBridgeError::DependencyConflict { symbol, owner } => {
-                            eprintln!(
-                                "error: {command_label} found conflicting direct dependency public type imports for `{symbol}`"
-                            );
-                            eprintln!("note: first package: `{}`", owner.package_name);
-                            eprintln!("note: conflicting package: `{dependency_package}`");
-                            eprintln!(
-                                "hint: keep direct dependency public type names unique until package-qualified dependency type lowering lands"
+                            report_direct_dependency_symbol_conflict(
+                                command_label,
+                                "public type",
+                                &symbol,
+                                &owner.package_name,
+                                &dependency_package,
+                                "keep direct dependency public type names unique until package-qualified dependency type lowering lands",
                             );
                         }
                         DependencyPublicTypeBridgeError::LocalConflict { symbol } => {
-                            eprintln!(
-                                "error: {command_label} cannot synthesize direct dependency public type bridge for `{symbol}` because the root source already defines the same top-level name"
-                            );
-                            eprintln!("note: conflicting direct dependency package: `{dependency_package}`");
-                            eprintln!(
-                                "hint: rename the local top-level item or avoid importing a direct dependency public type with the same original symbol name"
+                            report_direct_dependency_local_conflict(
+                                command_label,
+                                "public type",
+                                &symbol,
+                                &dependency_package,
+                                "rename the local top-level item or avoid importing a direct dependency public type with the same original symbol name",
                             );
                         }
                     }

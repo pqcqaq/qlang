@@ -14,6 +14,14 @@ fn dependency_bridge_package_note(dependency_package: &str) -> String {
     format!("note: dependency package: `{dependency_package}`")
 }
 
+fn direct_dependency_conflicting_package_note(dependency_package: &str) -> String {
+    format!("note: conflicting direct dependency package: `{dependency_package}`")
+}
+
+fn direct_dependency_package_note(dependency_package: &str) -> String {
+    format!("note: direct dependency package: `{dependency_package}`")
+}
+
 fn render_dependency_interface_load_failure(
     command_label: &str,
     owner_manifest_path: &Path,
@@ -58,6 +66,54 @@ fn render_dependency_source_parse_failure(
             normalize_path(source_path)
         ),
         dependency_bridge_package_note(dependency_package),
+    ]
+}
+
+fn render_direct_dependency_symbol_conflict(
+    command_label: &str,
+    symbol_kind: &str,
+    symbol: &str,
+    first_package: &str,
+    conflicting_package: &str,
+    hint: &str,
+) -> [String; 4] {
+    [
+        format!(
+            "error: {command_label} found conflicting direct dependency {symbol_kind} imports for `{symbol}`"
+        ),
+        format!("note: first package: `{first_package}`"),
+        format!("note: conflicting package: `{conflicting_package}`"),
+        format!("hint: {hint}"),
+    ]
+}
+
+fn render_direct_dependency_local_conflict(
+    command_label: &str,
+    bridge_kind: &str,
+    symbol: &str,
+    dependency_package: &str,
+    hint: &str,
+) -> [String; 3] {
+    [
+        format!(
+            "error: {command_label} cannot synthesize direct dependency {bridge_kind} bridge for `{symbol}` because the root source already defines the same top-level name"
+        ),
+        direct_dependency_conflicting_package_note(dependency_package),
+        format!("hint: {hint}"),
+    ]
+}
+
+fn render_direct_dependency_unsupported_generic_function(
+    command_label: &str,
+    symbol: &str,
+    dependency_package: &str,
+) -> [String; 3] {
+    [
+        format!(
+            "error: {command_label} cannot synthesize direct dependency public function bridge for generic function `{symbol}` yet"
+        ),
+        direct_dependency_package_note(dependency_package),
+        "hint: generic function monomorphization is not implemented yet; use a non-generic wrapper with concrete parameter and return types".to_owned(),
     ]
 }
 
@@ -108,6 +164,58 @@ pub(crate) fn report_dependency_source_parse_failure(
         dependency_package,
         source_path,
         bridge_context,
+    ) {
+        eprintln!("{line}");
+    }
+}
+
+pub(crate) fn report_direct_dependency_symbol_conflict(
+    command_label: &str,
+    symbol_kind: &str,
+    symbol: &str,
+    first_package: &str,
+    conflicting_package: &str,
+    hint: &str,
+) {
+    for line in render_direct_dependency_symbol_conflict(
+        command_label,
+        symbol_kind,
+        symbol,
+        first_package,
+        conflicting_package,
+        hint,
+    ) {
+        eprintln!("{line}");
+    }
+}
+
+pub(crate) fn report_direct_dependency_local_conflict(
+    command_label: &str,
+    bridge_kind: &str,
+    symbol: &str,
+    dependency_package: &str,
+    hint: &str,
+) {
+    for line in render_direct_dependency_local_conflict(
+        command_label,
+        bridge_kind,
+        symbol,
+        dependency_package,
+        hint,
+    ) {
+        eprintln!("{line}");
+    }
+}
+
+pub(crate) fn report_direct_dependency_unsupported_generic_function(
+    command_label: &str,
+    symbol: &str,
+    dependency_package: &str,
+) {
+    for line in render_direct_dependency_unsupported_generic_function(
+        command_label,
+        symbol,
+        dependency_package,
     ) {
         eprintln!("{line}");
     }
@@ -164,6 +272,58 @@ mod tests {
             [
                 "error: `ql test` failed to parse dependency source `workspace/dep/src/lib.ql` while preparing public type bridges",
                 "note: dependency package: `dep`",
+            ]
+        );
+    }
+
+    #[test]
+    fn direct_dependency_symbol_conflict_lines_preserve_context() {
+        let lines = render_direct_dependency_symbol_conflict(
+            "`ql build`",
+            "public function",
+            "parse",
+            "dep_a",
+            "dep_b",
+            "keep direct dependency public function names unique until package-qualified dependency call lowering lands",
+        );
+
+        assert_eq!(
+            lines,
+            [
+                "error: `ql build` found conflicting direct dependency public function imports for `parse`",
+                "note: first package: `dep_a`",
+                "note: conflicting package: `dep_b`",
+                "hint: keep direct dependency public function names unique until package-qualified dependency call lowering lands",
+            ]
+        );
+    }
+
+    #[test]
+    fn direct_dependency_local_and_generic_conflict_lines_preserve_context() {
+        let local_lines = render_direct_dependency_local_conflict(
+            "`ql build`",
+            "public type",
+            "Box",
+            "dep",
+            "rename the local top-level item or avoid importing a direct dependency public type with the same original symbol name",
+        );
+        let generic_lines =
+            render_direct_dependency_unsupported_generic_function("`ql build`", "map", "dep");
+
+        assert_eq!(
+            local_lines,
+            [
+                "error: `ql build` cannot synthesize direct dependency public type bridge for `Box` because the root source already defines the same top-level name",
+                "note: conflicting direct dependency package: `dep`",
+                "hint: rename the local top-level item or avoid importing a direct dependency public type with the same original symbol name",
+            ]
+        );
+        assert_eq!(
+            generic_lines,
+            [
+                "error: `ql build` cannot synthesize direct dependency public function bridge for generic function `map` yet",
+                "note: direct dependency package: `dep`",
+                "hint: generic function monomorphization is not implemented yet; use a non-generic wrapper with concrete parameter and return types",
             ]
         );
     }
