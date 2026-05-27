@@ -3,10 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use ql_parser::parse_source;
-use ql_project::{
-    default_interface_path, load_interface_artifact, load_project_manifest,
-    load_reference_manifests, package_name,
-};
+use ql_project::{load_project_manifest, load_reference_manifests};
 
 use crate::build_plan::{
     PrepareProjectTargetBuildError, report_project_build_dependency_error,
@@ -23,7 +20,7 @@ use crate::dependency_bridge_reporting::{
     report_dependency_interface_load_failure, report_dependency_source_parse_failure,
     report_dependency_source_read_failure,
 };
-use crate::dependency_bridge_source_modules::collect_dependency_source_module_bridge_items;
+use crate::dependency_bridge_source_modules::collect_direct_dependency_source_module_bridge_items;
 use crate::project_manifest_paths::reference_manifest_path;
 
 pub(crate) fn render_direct_dependency_public_type_declarations(
@@ -54,95 +51,89 @@ pub(crate) fn render_direct_dependency_public_type_declarations(
     let mut declarations = Vec::new();
     let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
 
-    for dependency in direct_dependencies {
-        let dependency_package = match package_name(&dependency) {
-            Ok(name) => name.to_owned(),
-            Err(error) => {
-                if report_failure {
-                    report_project_build_dependency_error(
-                        command_label,
-                        Some(manifest_path),
-                        &error,
-                    );
-                }
-                return Err(1);
-            }
-        };
-        let interface_path = default_interface_path(&dependency).map_err(|error| {
+    collect_direct_dependency_source_module_bridge_items(
+        &direct_dependencies,
+        &root_source_module,
+        |_dependency, error| {
             if report_failure {
-                report_project_build_dependency_error(command_label, Some(manifest_path), &error);
+                report_project_build_dependency_error(command_label, Some(manifest_path), error);
             }
             1
-        })?;
-        let artifact = load_interface_artifact(&interface_path).map_err(|error| {
+        },
+        |_dependency, error| {
+            if report_failure {
+                report_project_build_dependency_error(command_label, Some(manifest_path), error);
+            }
+            1
+        },
+        |_dependency, _dependency_package, interface_path, error| {
             if report_failure {
                 report_dependency_interface_load_failure(
                     command_label,
                     manifest_path,
                     "dependency public type bridges",
-                    &interface_path,
+                    interface_path,
                     error,
                 );
             }
             1
-        })?;
-        collect_dependency_source_module_bridge_items(
-            &dependency_package,
-            &dependency.manifest_path,
-            &artifact.modules,
-            &root_source_module,
-            |dependency_source_path| {
-                fs::read_to_string(dependency_source_path).map_err(|error| {
-                    if report_failure {
-                        report_dependency_source_read_failure(
-                            command_label,
-                            manifest_path,
-                            "dependency public type bridges",
-                            dependency_source_path,
-                            error,
-                        );
-                    }
-                    1
-                })
-            },
-            |dependency_source_path, dependency_source| {
-                parse_source(dependency_source).map_err(|_| {
-                    if report_failure {
-                        report_dependency_source_parse_failure(
-                            command_label,
-                            &dependency_package,
-                            dependency_source_path,
-                            "public type bridges",
-                        );
-                    }
-                    1
-                })
-            },
-            |source_module, dependency_source, imported_externs, module_import_path| {
-                collect_dependency_module_public_type_declarations(
-                    &dependency_package,
-                    &dependency.manifest_path,
-                    source_module,
-                    dependency_source,
-                    Some(imported_externs),
-                    required_types_by_module_path.get(module_import_path),
-                    &occupied_root_names,
-                    &mut owners_by_symbol,
-                    &mut declarations,
-                )
-                .map_err(|error| {
-                    if report_failure {
-                        report_direct_dependency_type_bridge_error(
-                            command_label,
-                            &dependency_package,
-                            error,
-                        );
-                    }
-                    1
-                })
-            },
-        )?;
-    }
+        },
+        |_dependency, _dependency_package, dependency_source_path| {
+            fs::read_to_string(dependency_source_path).map_err(|error| {
+                if report_failure {
+                    report_dependency_source_read_failure(
+                        command_label,
+                        manifest_path,
+                        "dependency public type bridges",
+                        dependency_source_path,
+                        error,
+                    );
+                }
+                1
+            })
+        },
+        |_dependency, dependency_package, dependency_source_path, dependency_source| {
+            parse_source(dependency_source).map_err(|_| {
+                if report_failure {
+                    report_dependency_source_parse_failure(
+                        command_label,
+                        dependency_package,
+                        dependency_source_path,
+                        "public type bridges",
+                    );
+                }
+                1
+            })
+        },
+        |dependency,
+         dependency_package,
+         source_module,
+         dependency_source,
+         imported_externs,
+         module_import_path| {
+            collect_dependency_module_public_type_declarations(
+                dependency_package,
+                &dependency.manifest_path,
+                source_module,
+                dependency_source,
+                Some(imported_externs),
+                required_types_by_module_path.get(module_import_path),
+                &occupied_root_names,
+                &mut owners_by_symbol,
+                &mut declarations,
+            )
+            .map_err(|error| {
+                if report_failure {
+                    report_direct_dependency_type_bridge_error(
+                        command_label,
+                        dependency_package,
+                        error,
+                    );
+                }
+                1
+            })
+        },
+    )?;
 
     Ok(declarations.join("\n\n"))
 }
@@ -177,76 +168,69 @@ pub(crate) fn render_direct_dependency_public_type_declarations_quiet(
     let mut declarations = Vec::new();
     let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
 
-    for dependency_manifest in direct_dependencies {
-        let dependency_package = package_name(&dependency_manifest)
-            .map(str::to_owned)
-            .map_err(|error| {
-                target_prep_dependency_manifest_failure(
-                    Some(&dependency_manifest.manifest_path),
-                    &error,
-                )
-            })?;
-        let interface_path = default_interface_path(&dependency_manifest).map_err(|error| {
-            target_prep_dependency_manifest_failure(
-                Some(&dependency_manifest.manifest_path),
-                &error,
-            )
-        })?;
-        let artifact = load_interface_artifact(&interface_path).map_err(|error| {
+    collect_direct_dependency_source_module_bridge_items(
+        &direct_dependencies,
+        &root_source_module,
+        |dependency_manifest, error| {
+            target_prep_dependency_manifest_failure(Some(&dependency_manifest.manifest_path), error)
+        },
+        |dependency_manifest, error| {
+            target_prep_dependency_manifest_failure(Some(&dependency_manifest.manifest_path), error)
+        },
+        |dependency_manifest, dependency_package, interface_path, error| {
             target_prep_dependency_interface_failure(
                 &dependency_manifest.manifest_path,
-                &dependency_package,
-                &interface_path,
+                dependency_package,
+                interface_path,
                 error,
             )
-        })?;
-        collect_dependency_source_module_bridge_items(
-            &dependency_package,
-            &dependency_manifest.manifest_path,
-            &artifact.modules,
-            &root_source_module,
-            |dependency_source_path| {
-                fs::read_to_string(dependency_source_path).map_err(|error| {
-                    target_prep_dependency_source_read_failure(
-                        &dependency_manifest.manifest_path,
-                        &dependency_package,
-                        dependency_source_path,
-                        error,
-                    )
-                })
-            },
-            |dependency_source_path, dependency_source| {
-                parse_source(dependency_source).map_err(|_| {
-                    target_prep_dependency_source_parse_failure(
-                        &dependency_manifest.manifest_path,
-                        &dependency_package,
-                        dependency_source_path,
-                        "public type bridges",
-                    )
-                })
-            },
-            |source_module, dependency_source, imported_externs, module_import_path| {
-                collect_dependency_module_public_type_declarations(
-                    &dependency_package,
+        },
+        |dependency_manifest, dependency_package, dependency_source_path| {
+            fs::read_to_string(dependency_source_path).map_err(|error| {
+                target_prep_dependency_source_read_failure(
                     &dependency_manifest.manifest_path,
-                    source_module,
-                    dependency_source,
-                    Some(imported_externs),
-                    required_types_by_module_path.get(module_import_path),
-                    &occupied_root_names,
-                    &mut owners_by_symbol,
-                    &mut declarations,
+                    dependency_package,
+                    dependency_source_path,
+                    error,
                 )
-                .map_err(|error| {
-                    dependency_type_bridge_target_prep_error(
-                        error,
-                        &dependency_package,
-                        &dependency_manifest.manifest_path,
-                    )
-                })
-            },
-        )?;
-    }
+            })
+        },
+        |dependency_manifest, dependency_package, dependency_source_path, dependency_source| {
+            parse_source(dependency_source).map_err(|_| {
+                target_prep_dependency_source_parse_failure(
+                    &dependency_manifest.manifest_path,
+                    dependency_package,
+                    dependency_source_path,
+                    "public type bridges",
+                )
+            })
+        },
+        |dependency_manifest,
+         dependency_package,
+         source_module,
+         dependency_source,
+         imported_externs,
+         module_import_path| {
+            collect_dependency_module_public_type_declarations(
+                dependency_package,
+                &dependency_manifest.manifest_path,
+                source_module,
+                dependency_source,
+                Some(imported_externs),
+                required_types_by_module_path.get(module_import_path),
+                &occupied_root_names,
+                &mut owners_by_symbol,
+                &mut declarations,
+            )
+            .map_err(|error| {
+                dependency_type_bridge_target_prep_error(
+                    error,
+                    dependency_package,
+                    &dependency_manifest.manifest_path,
+                )
+            })
+        },
+    )?;
 
     Ok(declarations.join("\n\n"))
 }
