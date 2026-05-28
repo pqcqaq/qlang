@@ -104,37 +104,6 @@ fn render_test_target_listing_preserves_paths_and_summary() {
 }
 
 #[test]
-fn no_tests_message_includes_package_selector_context() {
-    let message = test_no_tests_message(Path::new("workspace"), Some("core"));
-
-    assert_eq!(
-        message,
-        "`ql test` found no `.ql` test files for package `core` under `workspace`"
-    );
-}
-
-#[test]
-fn no_matching_filter_message_includes_package_selector_context() {
-    let message = test_no_matching_filter_message(Path::new("workspace"), "slow", Some("core"));
-
-    assert_eq!(
-        message,
-        "`ql test` found no test files matching `slow` for package `core` under `workspace`"
-    );
-}
-
-#[test]
-fn no_matching_target_message_includes_package_selector_context() {
-    let message =
-        test_no_matching_target_message(Path::new("workspace"), "tests/smoke.ql", Some("core"));
-
-    assert_eq!(
-        message,
-        "`ql test` found no test target `tests/smoke.ql` for package `core` under `workspace`"
-    );
-}
-
-#[test]
 fn package_selector_mismatch_message_names_request_root() {
     let message = package_selector_mismatch_message(Path::new("workspace"));
 

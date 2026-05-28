@@ -14,6 +14,10 @@ mod listing;
 mod member_targets;
 mod members;
 mod no_match;
+mod no_match_messages;
+#[cfg(test)]
+#[path = "test_discovery/no_match_messages_tests.rs"]
+mod no_match_messages_tests;
 mod package_selector;
 mod paths;
 mod project;
@@ -36,6 +40,8 @@ pub(crate) use filters::{filter_test_targets, select_test_targets_by_path};
 pub(crate) use listing::list_test_targets;
 pub(crate) use no_match::{
     report_no_matching_test_target, report_no_matching_tests, report_no_tests_discovered,
+};
+pub(crate) use no_match_messages::{
     test_no_matching_filter_message, test_no_matching_target_message, test_no_tests_message,
 };
 use project::discover_project_test_targets;
