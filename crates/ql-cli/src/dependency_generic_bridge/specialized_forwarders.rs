@@ -128,23 +128,20 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
         body_call_rewrites: &mut Vec<SourceRewrite>,
     ) -> Option<()> {
         let function_bindings = self.function_bindings;
-        for callee in specializable_functions(
+        for target in same_module_specialized_call_targets(
+            module_import_path,
+            contents,
             specialization_module,
-            supports_local_function_specialization,
         ) {
+            let instantiations = instantiations::collect_specialized_body_call_instantiations(
+                function,
+                target.callee,
+                substitutions,
+                function_bindings,
+            );
             self.render_specialized_body_call_rewrites_for_callee(
-                SpecializedBodyCallTarget {
-                    module_import_path,
-                    contents,
-                    module: specialization_module,
-                    callee,
-                },
-                instantiations::collect_specialized_body_call_instantiations(
-                    function,
-                    callee,
-                    substitutions,
-                    function_bindings,
-                ),
+                target,
+                instantiations,
                 body_call_rewrites,
             )?;
         }
@@ -159,37 +156,22 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
         body_call_rewrites: &mut Vec<SourceRewrite>,
     ) -> Option<()> {
         let function_bindings = self.function_bindings;
-        let specialization_modules = self.specialization_modules;
-        for target_module in specialization_modules.iter().copied() {
-            for callee in specializable_functions(
-                target_module.module,
-                supports_public_function_specialization,
-            ) {
-                let local_names = dependency_imported_local_names(
-                    specialization_module,
-                    target_module.module_import_path,
-                    callee.name.as_str(),
+        for (target, local_names) in
+            imported_specialized_call_targets(specialization_module, self.specialization_modules)
+        {
+            let instantiations =
+                instantiations::collect_specialized_body_call_instantiations_for_local_names(
+                    function,
+                    target.callee,
+                    &local_names,
+                    substitutions,
+                    function_bindings,
                 );
-                if local_names.is_empty() {
-                    continue;
-                }
-                self.render_specialized_body_call_rewrites_for_callee(
-                    SpecializedBodyCallTarget {
-                        module_import_path: target_module.module_import_path,
-                        contents: target_module.contents,
-                        module: target_module.module,
-                        callee,
-                    },
-                    instantiations::collect_specialized_body_call_instantiations_for_local_names(
-                        function,
-                        callee,
-                        &local_names,
-                        substitutions,
-                        function_bindings,
-                    ),
-                    body_call_rewrites,
-                )?;
-            }
+            self.render_specialized_body_call_rewrites_for_callee(
+                target,
+                instantiations,
+                body_call_rewrites,
+            )?;
         }
         Some(())
     }
@@ -245,6 +227,53 @@ struct SpecializedBodyCallTarget<'a> {
     contents: &'a str,
     module: &'a Module,
     callee: &'a FunctionDecl,
+}
+
+fn same_module_specialized_call_targets<'a>(
+    module_import_path: &'a [String],
+    contents: &'a str,
+    module: &'a Module,
+) -> Vec<SpecializedBodyCallTarget<'a>> {
+    specializable_functions(module, supports_local_function_specialization)
+        .map(|callee| SpecializedBodyCallTarget {
+            module_import_path,
+            contents,
+            module,
+            callee,
+        })
+        .collect()
+}
+
+fn imported_specialized_call_targets<'modules>(
+    caller_module: &Module,
+    specialization_modules: &[SpecializationModule<'modules>],
+) -> Vec<(SpecializedBodyCallTarget<'modules>, BTreeSet<String>)> {
+    let mut targets = Vec::new();
+    for target_module in specialization_modules.iter().copied() {
+        for callee in specializable_functions(
+            target_module.module,
+            supports_public_function_specialization,
+        ) {
+            let local_names = dependency_imported_local_names(
+                caller_module,
+                target_module.module_import_path,
+                callee.name.as_str(),
+            );
+            if local_names.is_empty() {
+                continue;
+            }
+            targets.push((
+                SpecializedBodyCallTarget {
+                    module_import_path: target_module.module_import_path,
+                    contents: target_module.contents,
+                    module: target_module.module,
+                    callee,
+                },
+                local_names,
+            ));
+        }
+    }
+    targets
 }
 
 fn specializable_functions<'a>(

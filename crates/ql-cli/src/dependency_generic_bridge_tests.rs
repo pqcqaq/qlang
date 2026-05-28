@@ -310,3 +310,70 @@ fn run() -> [String; 3] {
         "__ql_bridge_local_dep_reverse_wrapped__generic_String_3"
     );
 }
+
+#[test]
+fn public_specialization_rewrites_grouped_imported_dependency_generic_body_calls() {
+    let helper_source = r#"
+package helper
+
+pub fn wrap_value[T](value: T) -> T {
+    return value
+}
+"#;
+    let dependency_source = r#"
+package dep
+
+use helper.{wrap_value as wrap}
+
+pub fn wrapped[T](value: T) -> T {
+    return wrap(value)
+}
+"#;
+    let helper = parse_module(helper_source);
+    let dependency = parse_module(dependency_source);
+    let root = parse_module(
+        r#"
+use dep.wrapped as wrapped
+
+fn run() -> Bool {
+    return wrapped(true)
+}
+"#,
+    );
+    let helper_import_path = vec!["helper".to_owned()];
+    let helper_module = SpecializationModule {
+        module_import_path: &helper_import_path,
+        contents: helper_source,
+        module: &helper,
+    };
+
+    let rendered = render_public_function_specialization_status_with_context(
+        &["dep".to_owned()],
+        function(&dependency, "wrapped"),
+        dependency_source,
+        &root,
+        &dependency,
+        &[helper_module],
+        &mut BTreeSet::new(),
+    );
+    let PublicFunctionSpecializationRender::Rendered(rendered) = rendered else {
+        panic!("wrapped should render grouped imported helper specialization");
+    };
+
+    assert!(
+        rendered
+            .declarations
+            .contains("fn __ql_bridge_local_helper_wrap_value__generic_Bool(value: Bool) -> Bool")
+    );
+    assert!(
+        rendered
+            .declarations
+            .contains("return __ql_bridge_local_helper_wrap_value__generic_Bool(value)")
+    );
+    assert!(!rendered.declarations.contains("return wrap(value)"));
+    assert_eq!(rendered.call_rewrites.len(), 1);
+    assert_eq!(
+        rendered.call_rewrites[0].replacement,
+        "__ql_bridge_local_dep_wrapped__generic_Bool"
+    );
+}

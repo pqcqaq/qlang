@@ -43,7 +43,7 @@
 - 跨包执行仍是保守切片，但已覆盖 public const/static、free function、`extern "c"`、struct/enum/非 opaque 非泛型 type alias，以及受限的 trait method/value bridge；完整 dependency-aware backend 仍未支持。
 - public/local generic free function 支持 direct-call 多实例 specialization。
 - 数组长度泛型参数可在函数体内作为 `Int` 值读取。
-- dependency generic specialization 能递归处理同依赖模块内 generic helper 直调，以及 dependency generic body 内对直接依赖 generic helper 的导入调用；也能从 named/expression args、generic carrier、返回类型上下文、零参数泛型显式上下文和外层调用参数推断 direct-call specialization。未使用的 direct dependency generic import 不再触发 bridge 合成失败。
+- dependency generic specialization 能递归处理同依赖模块内 generic helper 直调，以及 dependency generic body 内对直接依赖 generic helper 的普通导入、别名导入和分组导入调用；也能从 named/expression args、generic carrier、返回类型上下文、零参数泛型显式上下文和外层调用参数推断 direct-call specialization。未使用的 direct dependency generic import 不再触发 bridge 合成失败。
 - `ql test` 已用真实 smoke 覆盖 package/workspace/direct test file、package-under-test bridge、direct dependency bridge、generic wrapper/helper bridge、UI snapshot、selector/listing、profile/release 和 JSON/text 合同。
 - repo stdlib workspace 的 source-only 复制 fixture 已覆盖 interface sync/check、starter package/workspace `check/build/run/test`、listing、graph/status/targets/dependencies/dependents、lock stale failure 和关键 JSON 合同；6 个 package/example smoke、接口同步产物、lockfile、构建产物与可执行产物存在性作为 downstream 可用性 gate。
 - `Option[T]`、`Result[T, E]`、`std.core` scalar/predicate/bool helpers、`std.core` / `std.array` length-generic aggregate/order/median helpers、`std.test` 泛型 equality/array/option/result assertions 和 `merge_statuses[N]` 已有真实 smoke。
