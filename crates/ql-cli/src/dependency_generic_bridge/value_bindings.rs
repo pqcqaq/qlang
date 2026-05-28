@@ -147,7 +147,7 @@ fn record_pattern_type_bindings(
     }
 }
 
-fn record_pattern_inferred_type_bindings(
+pub(super) fn record_pattern_inferred_type_bindings(
     pattern: &Pattern,
     ty: &InferredType,
     bindings: &mut ValueTypeBindings,

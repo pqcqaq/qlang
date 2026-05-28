@@ -1,4 +1,4 @@
-use ql_ast::{self, BinaryOp, CallArg, Expr, ExprKind, UnaryOp};
+use ql_ast::{self, BinaryOp, CallArg, Expr, ExprKind, MatchArm, UnaryOp};
 
 use super::call_inference::infer_function_call_return_type;
 use super::function_bindings::FunctionTypeBindings;
@@ -7,7 +7,9 @@ use super::inferred_type_predicates::{
     is_inferred_numeric_type, is_inferred_ordered_comparable_type,
 };
 use super::inferred_types::{InferredType, InferredTypeKind, render_inferred_tuple_type};
-use super::value_bindings::{ValueTypeBindings, record_let_type_bindings};
+use super::value_bindings::{
+    ValueTypeBindings, record_let_type_bindings, record_pattern_inferred_type_bindings,
+};
 
 pub(super) fn infer_dependency_generic_expr_type(
     expr: &Expr,
@@ -45,7 +47,7 @@ impl<'a> ExprTypeInferencer<'a> {
                 else_branch,
                 ..
             } => self.infer_if_type(then_branch, else_branch.as_deref()),
-            ExprKind::Match { arms, .. } => self.infer_match_type(arms),
+            ExprKind::Match { value, arms } => self.infer_match_type(value, arms),
             ExprKind::Call { callee, args } => self.infer_call_type(callee, args),
             ExprKind::Bracket { target, items } => self.infer_projection_type(target, items),
             ExprKind::Binary { left, op, right } => self.infer_binary_expr_type(left, *op, right),
@@ -127,16 +129,29 @@ impl<'a> ExprTypeInferencer<'a> {
         (then_ty == else_ty).then_some(then_ty)
     }
 
-    fn infer_match_type(&self, arms: &[ql_ast::MatchArm]) -> Option<InferredType> {
+    fn infer_match_type(&self, value: &Expr, arms: &[MatchArm]) -> Option<InferredType> {
+        let value_ty = self.infer_expr(value);
         let (first, rest) = arms.split_first()?;
-        let first_ty = self.infer_expr(&first.body)?;
+        let first_ty = self.infer_match_arm_type(first, value_ty.as_ref())?;
         for arm in rest {
-            let arm_ty = self.infer_expr(&arm.body)?;
+            let arm_ty = self.infer_match_arm_type(arm, value_ty.as_ref())?;
             if arm_ty != first_ty {
                 return None;
             }
         }
         Some(first_ty)
+    }
+
+    fn infer_match_arm_type(
+        &self,
+        arm: &MatchArm,
+        value_ty: Option<&InferredType>,
+    ) -> Option<InferredType> {
+        let mut arm_bindings = self.bindings.clone();
+        if let Some(value_ty) = value_ty {
+            record_pattern_inferred_type_bindings(&arm.pattern, value_ty, &mut arm_bindings);
+        }
+        ExprTypeInferencer::new(&arm_bindings, self.function_bindings).infer_expr(&arm.body)
     }
 
     fn infer_projection_type(&self, target: &Expr, items: &[Expr]) -> Option<InferredType> {

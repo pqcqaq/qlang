@@ -153,6 +153,56 @@ fn run() -> Int {
 }
 
 #[test]
+fn infers_substitutions_from_match_arm_pattern_bindings() {
+    let dependency = parse_module(
+        r#"
+package dep
+
+pub fn tag[T](value: T) -> Int {
+    return 1
+}
+"#,
+    );
+    let root = parse_module(
+        r#"
+use dep.tag as tag
+
+fn run() -> Int {
+    let pair = (1, true)
+    let values = [2, 3]
+    let from_tuple = match pair {
+        (number, flag) if flag => tag(flag),
+        _ => 0,
+    }
+    let from_array = match values {
+        [left, right] => tag(right),
+        _ => 0,
+    }
+    return from_tuple + from_array
+}
+"#,
+    );
+
+    let substitutions = collect_public_function_instantiations(
+        &root,
+        &["dep".to_owned()],
+        function(&dependency, "tag"),
+    );
+
+    assert_eq!(substitutions.len(), 2);
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Int"))
+    );
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Bool"))
+    );
+}
+
+#[test]
 fn infers_substitution_from_later_argument_when_nested_call_arg_is_untyped() {
     let dependency = parse_module(
         r#"

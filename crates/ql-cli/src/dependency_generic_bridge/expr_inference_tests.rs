@@ -138,3 +138,32 @@ fn choose(flag: Bool) -> Int {
 
     assert_eq!(choose_ty.rendered, "Int");
 }
+
+#[test]
+fn infers_match_arm_body_from_tuple_pattern_bindings() {
+    let module = parse_module(
+        r#"
+fn choose() -> Bool {
+    match (1, true) {
+        (number, flag) => flag,
+        _ => false,
+    }
+}
+"#,
+    );
+    let choose_body = function(&module, "choose")
+        .body
+        .as_ref()
+        .expect("choose should have a body")
+        .clone();
+    let choose_expr = Expr::new(choose_body.span, ExprKind::Block(choose_body));
+
+    let choose_ty = infer_dependency_generic_expr_type(
+        &choose_expr,
+        &ValueTypeBindings::new(),
+        &FunctionTypeBindings::new(),
+    )
+    .expect("match arm pattern bindings should infer");
+
+    assert_eq!(choose_ty.rendered, "Bool");
+}

@@ -1,10 +1,12 @@
 use ql_ast::{self, CallArg, Expr, ExprKind, MatchArm, StructLiteralField, TypeExpr};
 
 use super::call_args::call_arg_expr;
+use super::expr_inference::infer_dependency_generic_expr_type;
+use super::inferred_types::InferredType;
 use super::instantiation_block_scanner::collect_dependency_generic_function_instantiations_from_block;
 use super::instantiation_call_scanner::scan_call_instantiation;
 use super::instantiation_scan_context::InstantiationScanContext;
-use super::value_bindings::ValueTypeBindings;
+use super::value_bindings::{ValueTypeBindings, record_pattern_inferred_type_bindings};
 
 pub(super) fn collect_dependency_generic_function_instantiations_from_expr(
     expr: &Expr,
@@ -128,13 +130,29 @@ impl ExprInstantiationScanner<'_, '_> {
         return_expected_ty: Option<&TypeExpr>,
         bindings: &ValueTypeBindings,
     ) {
+        let value_ty =
+            infer_dependency_generic_expr_type(value, bindings, self.context.function_bindings);
         self.scan_child_expr(value, return_expected_ty, bindings);
         for arm in arms {
+            let arm_bindings = self.match_arm_bindings(&arm.pattern, value_ty.as_ref(), bindings);
             if let Some(guard) = &arm.guard {
-                self.scan_child_expr(guard, return_expected_ty, bindings);
+                self.scan_child_expr(guard, return_expected_ty, &arm_bindings);
             }
-            self.scan_expr(&arm.body, expected_ty, return_expected_ty, bindings);
+            self.scan_expr(&arm.body, expected_ty, return_expected_ty, &arm_bindings);
         }
+    }
+
+    fn match_arm_bindings(
+        &self,
+        pattern: &ql_ast::Pattern,
+        value_ty: Option<&InferredType>,
+        bindings: &ValueTypeBindings,
+    ) -> ValueTypeBindings {
+        let mut arm_bindings = bindings.clone();
+        if let Some(value_ty) = value_ty {
+            record_pattern_inferred_type_bindings(pattern, value_ty, &mut arm_bindings);
+        }
+        arm_bindings
     }
 
     fn scan_call_expr(
