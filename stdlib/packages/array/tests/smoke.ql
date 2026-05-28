@@ -4,6 +4,7 @@ use std.array.at_array_or as at_array_or
 use std.array.average_int_array as average_int_array
 use std.array.contains_array as contains_array
 use std.array.count_array as count_array
+use std.array.count_mismatches_array as count_mismatches_array
 use std.array.first_array as first_array
 use std.array.last_array as last_array
 use std.array.len_array as len_array
@@ -63,7 +64,8 @@ fn len_reverse_status() -> Int {
 fn contains_count_status() -> Int {
     let contains_status = sum_statuses([check_bool(contains_array([2, 3, 4], 3), true), check_bool(contains_array([2, 3, 4, 5], 9), false), check_bool(contains_array([true, false, true, false, true], false), true), check_bool(contains_array(["red", "blue", "green"], "blue"), true), check_bool(contains_array(["a", "b", "c", "d"], "z"), false)])
     let count_status = sum_statuses([check_int(count_array([2, 3, 2], 2), 2), check_int(count_array([2, 3, 2, 2], 2), 3), check_int(count_array([true, false, true, false, true], true), 3), check_int(count_array([1, 2, 3, 4, 5], 9), 0), check_int(count_array(["same", "other", "same"], "same"), 2), check_int(count_array([false, true, false, false], false), 3)])
-    return contains_status + count_status
+    let mismatch_status = sum_statuses([check_int(count_mismatches_array([1, 2, 3], [1, 2, 3]), 0), check_int(count_mismatches_array([1, 2, 3], [1, 9, 8]), 2), check_int(count_mismatches_array([true, false, true], [true, true, false]), 2), check_int(count_mismatches_array(["a", "b", "c"], ["a", "x", "c"]), 1)])
+    return contains_status + count_status + mismatch_status
 }
 
 fn numeric_status() -> Int {

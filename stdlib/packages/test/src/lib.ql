@@ -55,6 +55,7 @@ use std.core.xor_bool as xor_bool
 use std.array.at_array_or as at_array_or
 use std.array.contains_array as contains_array
 use std.array.count_array as count_array
+use std.array.count_mismatches_array as count_mismatches_array
 use std.array.first_array as first_array
 use std.array.last_array as last_array
 use std.array.reverse_array as reverse_array
@@ -117,15 +118,7 @@ pub fn expect_array_count[T, N](values: [T; N], needle: T, expected: Int) -> Int
 }
 
 pub fn expect_array_eq[T, N](actual: [T; N], expected: [T; N]) -> Int {
-    var status = 0
-    var index = 0
-    for value in actual {
-        if value != expected[index] {
-            status = status + 1
-        };
-        index = index + 1
-    }
-    return status
+    return count_mismatches_array(actual, expected)
 }
 
 pub fn expect_true(value: Bool) -> Int {

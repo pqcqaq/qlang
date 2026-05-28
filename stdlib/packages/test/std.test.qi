@@ -59,6 +59,7 @@ use std.core.xor_bool as xor_bool
 use std.array.at_array_or as at_array_or
 use std.array.contains_array as contains_array
 use std.array.count_array as count_array
+use std.array.count_mismatches_array as count_mismatches_array
 use std.array.first_array as first_array
 use std.array.last_array as last_array
 use std.array.reverse_array as reverse_array

@@ -51,6 +51,18 @@ pub fn count_array[T, N](values: [T; N], needle: T) -> Int {
     return count
 }
 
+pub fn count_mismatches_array[T, N](actual: [T; N], expected: [T; N]) -> Int {
+    var count = 0
+    var index = 0
+    for value in actual {
+        if value != expected[index] {
+            count = count + 1
+        };
+        index = index + 1
+    }
+    return count
+}
+
 pub fn len_array[T, N](values: [T; N]) -> Int {
     return N
 }
