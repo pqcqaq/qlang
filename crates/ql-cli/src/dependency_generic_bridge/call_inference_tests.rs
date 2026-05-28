@@ -117,6 +117,53 @@ fn run() -> [Int; 4] {
 }
 
 #[test]
+fn infers_nested_tuple_array_substitutions_from_call_arguments() {
+    let dependency = parse_module(
+        r#"
+package dep
+
+pub fn first_from_pair[T, N](value: (T, [T; N])) -> T {
+    return value[0]
+}
+"#,
+    );
+    let root = parse_module(
+        r#"
+use dep.first_from_pair as first_from_pair
+
+fn run() -> Int {
+    return first_from_pair((1, [2, 3, 4]))
+}
+"#,
+    );
+    let run = function(&root, "run");
+    let StmtKind::Return(Some(expr)) = &run
+        .body
+        .as_ref()
+        .expect("run should have a body")
+        .statements[0]
+        .kind
+    else {
+        panic!("run should return a call");
+    };
+    let ExprKind::Call { args, .. } = &expr.kind else {
+        panic!("return expression should be a call");
+    };
+
+    let substitutions = infer_dependency_generic_function_substitutions(
+        function(&dependency, "first_from_pair"),
+        args,
+        run.return_type.as_ref(),
+        &ValueTypeBindings::new(),
+        &FunctionTypeBindings::new(),
+    )
+    .expect("nested tuple/array substitutions should infer");
+
+    assert_eq!(substitutions.get("T").map(String::as_str), Some("Int"));
+    assert_eq!(substitutions.get("N").map(String::as_str), Some("3"));
+}
+
+#[test]
 fn orders_named_call_expected_types_after_return_substitutions() {
     let dependency = parse_module(
         r#"

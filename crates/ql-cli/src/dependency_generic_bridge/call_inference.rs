@@ -28,19 +28,20 @@ pub(super) fn infer_dependency_generic_function_substitutions(
         .map(|generic| generic.name.as_str())
         .collect::<BTreeSet<_>>();
     let mut substitutions = TypeSubstitutions::new();
-    for (param_ty, arg) in ordered_args {
-        if !type_expr_mentions_generic(param_ty, &generic_names) {
-            continue;
-        }
-        if !collect_generic_type_substitutions_from_arg_expr(
-            param_ty,
-            arg,
+    {
+        let mut collector = ArgSubstitutionCollector::new(
             &generic_names,
             bindings,
             function_bindings,
             &mut substitutions,
-        ) {
-            return None;
+        );
+        for (param_ty, arg) in ordered_args {
+            if !type_expr_mentions_generic(param_ty, &generic_names) {
+                continue;
+            }
+            if !collector.collect_arg(param_ty, arg) {
+                return None;
+            }
         }
     }
     if let (Some(return_ty), Some(expected_ty)) = (function.return_type.as_ref(), expected_ty)
@@ -67,178 +68,117 @@ pub(super) fn collect_generic_type_substitutions_from_arg_expr(
     function_bindings: &FunctionTypeBindings,
     substitutions: &mut TypeSubstitutions,
 ) -> bool {
-    collect_generic_type_substitutions_from_expr(
-        param_ty,
-        call_arg_expr(arg),
-        generic_names,
-        bindings,
-        function_bindings,
-        substitutions,
-    )
+    ArgSubstitutionCollector::new(generic_names, bindings, function_bindings, substitutions)
+        .collect_arg(param_ty, arg)
 }
 
-fn collect_generic_type_substitutions_from_expr(
-    param_ty: &TypeExpr,
-    expr: &Expr,
-    generic_names: &BTreeSet<&str>,
-    bindings: &ValueTypeBindings,
-    function_bindings: &FunctionTypeBindings,
-    substitutions: &mut TypeSubstitutions,
-) -> bool {
-    if let Some(generic_name) = generic_param_name_for_type_expr(param_ty, generic_names) {
-        return bind_generic_substitution_from_expr(
-            generic_name,
-            expr,
-            bindings,
-            function_bindings,
-            substitutions,
-        );
-    }
+struct ArgSubstitutionCollector<'ctx, 'generic> {
+    generic_names: &'ctx BTreeSet<&'generic str>,
+    bindings: &'ctx ValueTypeBindings,
+    function_bindings: &'ctx FunctionTypeBindings,
+    substitutions: &'ctx mut TypeSubstitutions,
+}
 
-    match (&param_ty.kind, &expr.kind) {
-        (
-            TypeExprKind::Array {
-                element: param_element,
-                len: param_len,
-            },
-            ExprKind::Array(items),
-        ) => collect_array_arg_substitutions(
-            param_element,
-            param_len,
-            items,
+impl<'ctx, 'generic> ArgSubstitutionCollector<'ctx, 'generic> {
+    fn new(
+        generic_names: &'ctx BTreeSet<&'generic str>,
+        bindings: &'ctx ValueTypeBindings,
+        function_bindings: &'ctx FunctionTypeBindings,
+        substitutions: &'ctx mut TypeSubstitutions,
+    ) -> Self {
+        Self {
             generic_names,
             bindings,
             function_bindings,
             substitutions,
-        ),
-        (
-            TypeExprKind::Array {
-                element: param_element,
-                len: param_len,
-            },
-            ExprKind::RepeatArray { value, len, .. },
-        ) => collect_repeat_array_arg_substitutions(
-            param_element,
-            param_len,
-            value,
-            len,
-            generic_names,
-            bindings,
-            function_bindings,
-            substitutions,
-        ),
-        (TypeExprKind::Tuple(param_items), ExprKind::Tuple(items))
-            if param_items.len() == items.len() =>
-        {
-            collect_tuple_arg_substitutions(
-                param_items,
-                items,
-                generic_names,
-                bindings,
-                function_bindings,
-                substitutions,
-            )
         }
-        _ => collect_fallback_arg_substitutions(
-            param_ty,
-            expr,
-            generic_names,
-            bindings,
-            function_bindings,
-            substitutions,
-        ),
     }
-}
 
-fn bind_generic_substitution_from_expr(
-    generic_name: &str,
-    expr: &Expr,
-    bindings: &ValueTypeBindings,
-    function_bindings: &FunctionTypeBindings,
-    substitutions: &mut TypeSubstitutions,
-) -> bool {
-    infer_dependency_generic_expr_type(expr, bindings, function_bindings)
-        .is_none_or(|arg_ty| bind_generic_type_substitution(generic_name, &arg_ty, substitutions))
-}
+    fn collect_arg(&mut self, param_ty: &TypeExpr, arg: &CallArg) -> bool {
+        self.collect_expr(param_ty, call_arg_expr(arg))
+    }
 
-fn collect_array_arg_substitutions(
-    param_element: &TypeExpr,
-    param_len: &str,
-    items: &[Expr],
-    generic_names: &BTreeSet<&str>,
-    bindings: &ValueTypeBindings,
-    function_bindings: &FunctionTypeBindings,
-    substitutions: &mut TypeSubstitutions,
-) -> bool {
-    bind_generic_len_substitution(
-        param_len,
-        &items.len().to_string(),
-        generic_names,
-        substitutions,
-    ) && items.iter().all(|item| {
-        collect_generic_type_substitutions_from_expr(
-            param_element,
-            item,
-            generic_names,
-            bindings,
-            function_bindings,
-            substitutions,
+    fn collect_expr(&mut self, param_ty: &TypeExpr, expr: &Expr) -> bool {
+        if let Some(generic_name) = generic_param_name_for_type_expr(param_ty, self.generic_names) {
+            return self.bind_generic_from_expr(generic_name, expr);
+        }
+
+        match (&param_ty.kind, &expr.kind) {
+            (
+                TypeExprKind::Array {
+                    element: param_element,
+                    len: param_len,
+                },
+                ExprKind::Array(items),
+            ) => self.collect_array_arg(param_element, param_len, items),
+            (
+                TypeExprKind::Array {
+                    element: param_element,
+                    len: param_len,
+                },
+                ExprKind::RepeatArray { value, len, .. },
+            ) => self.collect_repeat_array_arg(param_element, param_len, value, len),
+            (TypeExprKind::Tuple(param_items), ExprKind::Tuple(items))
+                if param_items.len() == items.len() =>
+            {
+                self.collect_tuple_arg(param_items, items)
+            }
+            _ => self.collect_fallback_arg(param_ty, expr),
+        }
+    }
+
+    fn bind_generic_from_expr(&mut self, generic_name: &str, expr: &Expr) -> bool {
+        infer_dependency_generic_expr_type(expr, self.bindings, self.function_bindings).is_none_or(
+            |arg_ty| bind_generic_type_substitution(generic_name, &arg_ty, self.substitutions),
         )
-    })
-}
+    }
 
-fn collect_repeat_array_arg_substitutions(
-    param_element: &TypeExpr,
-    param_len: &str,
-    value: &Expr,
-    len: &str,
-    generic_names: &BTreeSet<&str>,
-    bindings: &ValueTypeBindings,
-    function_bindings: &FunctionTypeBindings,
-    substitutions: &mut TypeSubstitutions,
-) -> bool {
-    bind_generic_len_substitution(param_len, len, generic_names, substitutions)
-        && collect_generic_type_substitutions_from_expr(
-            param_element,
-            value,
-            generic_names,
-            bindings,
-            function_bindings,
-            substitutions,
+    fn collect_array_arg(
+        &mut self,
+        param_element: &TypeExpr,
+        param_len: &str,
+        items: &[Expr],
+    ) -> bool {
+        bind_generic_len_substitution(
+            param_len,
+            &items.len().to_string(),
+            self.generic_names,
+            self.substitutions,
+        ) && items
+            .iter()
+            .all(|item| self.collect_expr(param_element, item))
+    }
+
+    fn collect_repeat_array_arg(
+        &mut self,
+        param_element: &TypeExpr,
+        param_len: &str,
+        value: &Expr,
+        len: &str,
+    ) -> bool {
+        bind_generic_len_substitution(param_len, len, self.generic_names, self.substitutions)
+            && self.collect_expr(param_element, value)
+    }
+
+    fn collect_tuple_arg(&mut self, param_items: &[TypeExpr], items: &[Expr]) -> bool {
+        param_items
+            .iter()
+            .zip(items)
+            .all(|(param_item, item)| self.collect_expr(param_item, item))
+    }
+
+    fn collect_fallback_arg(&mut self, param_ty: &TypeExpr, expr: &Expr) -> bool {
+        infer_dependency_generic_expr_type(expr, self.bindings, self.function_bindings).is_none_or(
+            |arg_ty| {
+                collect_generic_type_substitutions(
+                    param_ty,
+                    &arg_ty,
+                    self.generic_names,
+                    self.substitutions,
+                )
+            },
         )
-}
-
-fn collect_tuple_arg_substitutions(
-    param_items: &[TypeExpr],
-    items: &[Expr],
-    generic_names: &BTreeSet<&str>,
-    bindings: &ValueTypeBindings,
-    function_bindings: &FunctionTypeBindings,
-    substitutions: &mut TypeSubstitutions,
-) -> bool {
-    param_items.iter().zip(items).all(|(param_item, item)| {
-        collect_generic_type_substitutions_from_expr(
-            param_item,
-            item,
-            generic_names,
-            bindings,
-            function_bindings,
-            substitutions,
-        )
-    })
-}
-
-fn collect_fallback_arg_substitutions(
-    param_ty: &TypeExpr,
-    expr: &Expr,
-    generic_names: &BTreeSet<&str>,
-    bindings: &ValueTypeBindings,
-    function_bindings: &FunctionTypeBindings,
-    substitutions: &mut TypeSubstitutions,
-) -> bool {
-    infer_dependency_generic_expr_type(expr, bindings, function_bindings).is_none_or(|arg_ty| {
-        collect_generic_type_substitutions(param_ty, &arg_ty, generic_names, substitutions)
-    })
+    }
 }
 
 pub(super) fn infer_function_call_return_type(
