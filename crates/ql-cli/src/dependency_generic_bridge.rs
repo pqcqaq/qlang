@@ -18,8 +18,17 @@ mod rendering;
 mod specialization_function_bindings;
 mod specializations;
 #[cfg(test)]
-#[path = "dependency_generic_bridge/specializations_tests.rs"]
-mod specializations_tests;
+#[path = "dependency_generic_bridge/specializations_imports_tests.rs"]
+mod specializations_imports_tests;
+#[cfg(test)]
+#[path = "dependency_generic_bridge/specializations_local_rewrites_tests.rs"]
+mod specializations_local_rewrites_tests;
+#[cfg(test)]
+#[path = "dependency_generic_bridge/specializations_status_tests.rs"]
+mod specializations_status_tests;
+#[cfg(test)]
+#[path = "dependency_generic_bridge/specializations_test_support.rs"]
+mod specializations_test_support;
 mod specialized_forwarders;
 mod struct_bindings;
 mod substitutions;
