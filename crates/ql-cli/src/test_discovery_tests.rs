@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use ql_driver::{BuildOptions, BuildProfile};
 
+use super::targets::project_test_output_path;
 use super::*;
+use crate::test_reporting::TestTargetKind;
 
 fn smoke_target(display_path: &str, source_path: &str) -> TestTarget {
     TestTarget {
