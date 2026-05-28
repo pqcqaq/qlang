@@ -161,8 +161,12 @@ pub(super) fn collect_specialized_body_call_instantiations_for_local_names(
         caller_substitutions,
         &mut bindings,
     );
-    let mut context =
-        InstantiationScanContext::new(local_names, target_function, function_bindings);
+    let mut context = InstantiationScanContext::new_with_type_substitutions(
+        local_names,
+        target_function,
+        function_bindings,
+        caller_substitutions,
+    );
     collect_dependency_generic_function_instantiations_from_block(
         body,
         &mut bindings,

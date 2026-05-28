@@ -103,6 +103,56 @@ fn run() -> Int {
 }
 
 #[test]
+fn infers_substitutions_from_for_loop_pattern_bindings() {
+    let dependency = parse_module(
+        r#"
+package dep
+
+pub fn tag[T](value: T) -> Int {
+    return 1
+}
+"#,
+    );
+    let root = parse_module(
+        r#"
+use dep.tag as tag
+
+fn run() -> Int {
+    var total = 0
+    for value in [1, 2] {
+        total = total + tag(value)
+    }
+    for (number, flag) in [(3, true), (4, false)] {
+        total = total + tag(flag)
+    }
+    for [left, right] in [[5, 6], [7, 8]] {
+        total = total + tag(right)
+    }
+    return total
+}
+"#,
+    );
+
+    let substitutions = collect_public_function_instantiations(
+        &root,
+        &["dep".to_owned()],
+        function(&dependency, "tag"),
+    );
+
+    assert_eq!(substitutions.len(), 2);
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Int"))
+    );
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Bool"))
+    );
+}
+
+#[test]
 fn infers_substitution_from_later_argument_when_nested_call_arg_is_untyped() {
     let dependency = parse_module(
         r#"
@@ -300,6 +350,50 @@ fn run() -> Int {
         &root,
         &["dep".to_owned()],
         function(&dependency, "identity"),
+    );
+
+    assert_eq!(substitutions.len(), 2);
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Int") })
+    );
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Bool") })
+    );
+}
+
+#[test]
+fn infers_substitutions_from_array_destructuring_bindings() {
+    let dependency = parse_module(
+        r#"
+package dep
+
+pub fn tag[T](value: T) -> Int {
+    return 1
+}
+"#,
+    );
+    let root = parse_module(
+        r#"
+use dep.tag as tag
+
+fn run() -> Int {
+    let [first, second, third] = [1, 2, 3]
+    let from_inferred = tag(second)
+    let [enabled, disabled]: [Bool; 2] = [true, false]
+    let from_explicit = tag(enabled)
+    return from_inferred + from_explicit
+}
+"#,
+    );
+
+    let substitutions = collect_public_function_instantiations(
+        &root,
+        &["dep".to_owned()],
+        function(&dependency, "tag"),
     );
 
     assert_eq!(substitutions.len(), 2);

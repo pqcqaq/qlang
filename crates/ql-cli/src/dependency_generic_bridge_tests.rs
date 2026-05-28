@@ -135,6 +135,60 @@ fn main() -> Int {
 }
 
 #[test]
+fn public_specialization_rewrites_helper_after_typed_local_substitution() {
+    let dependency_source = r#"
+package dep
+
+pub fn helper[T](value: T) -> T {
+    return value
+}
+
+pub fn wrapped[T](value: T) -> T {
+    let local: T = value
+    return helper(local)
+}
+"#;
+    let dependency = parse_module(dependency_source);
+    let root = parse_module(
+        r#"
+use dep.wrapped as wrapped
+
+fn main() -> Int {
+    return wrapped(1)
+}
+"#,
+    );
+
+    let rendered = render_public_function_specializations(
+        &["dep".to_owned()],
+        function(&dependency, "wrapped"),
+        dependency_source,
+        &root,
+        &dependency,
+        &mut BTreeSet::new(),
+    )
+    .expect("wrapped should render a concrete specialization");
+
+    assert!(
+        rendered
+            .declarations
+            .contains("fn __ql_bridge_local_dep_helper__generic_Int(value: Int) -> Int")
+    );
+    assert!(rendered.declarations.contains("let local: Int = value"));
+    assert!(
+        rendered
+            .declarations
+            .contains("return __ql_bridge_local_dep_helper__generic_Int(local)")
+    );
+    assert!(!rendered.declarations.contains("__generic_T"));
+    assert_eq!(rendered.call_rewrites.len(), 1);
+    assert_eq!(
+        rendered.call_rewrites[0].replacement,
+        "__ql_bridge_local_dep_wrapped__generic_Int"
+    );
+}
+
+#[test]
 fn public_specialization_preserves_non_generic_body_helper_calls() {
     let dependency_source = r#"
 package dep
