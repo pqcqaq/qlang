@@ -12,11 +12,13 @@ use crate::test_command::TestCommandOptions;
 use crate::test_reporting::{TestTarget, render_test_json_preflight_message_report};
 
 mod filters;
+mod listing;
 mod no_match;
 mod selection;
 mod targets;
 
 pub(crate) use filters::{filter_test_targets, select_test_targets_by_path};
+pub(crate) use listing::list_test_targets;
 pub(crate) use no_match::{
     report_no_matching_test_target, report_no_matching_tests, report_no_tests_discovered,
     test_no_matching_filter_message, test_no_matching_target_message, test_no_tests_message,
@@ -151,14 +153,6 @@ fn report_test_package_selector_requires_project_context(package_name: &str) {
 fn report_test_target_selector_requires_project_context(target_path: &str) {
     eprintln!("error: `ql test` target selectors require a package or workspace path");
     eprintln!("note: selector: target `{target_path}`");
-}
-
-pub(crate) fn list_test_targets(targets: &[TestTarget]) {
-    for target in targets {
-        println!("{}", target.display_path);
-    }
-    println!();
-    println!("test listing: {} discovered", targets.len());
 }
 
 #[cfg(test)]

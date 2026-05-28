@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use ql_driver::{BuildOptions, BuildProfile};
 
+use super::listing::render_test_target_listing;
 use super::targets::project_test_output_path;
 use super::*;
 use crate::test_reporting::TestTargetKind;
@@ -62,6 +63,19 @@ fn filter_test_targets_keeps_display_path_substring_matches() {
 
     assert_eq!(selected.len(), 1);
     assert_eq!(selected[0].display_path, "tests/slow/path.ql");
+}
+
+#[test]
+fn render_test_target_listing_preserves_paths_and_summary() {
+    let targets = vec![
+        smoke_target("tests/basic.ql", "tests/basic.ql"),
+        smoke_target("tests/slow/path.ql", "tests/slow/path.ql"),
+    ];
+
+    assert_eq!(
+        render_test_target_listing(&targets),
+        "tests/basic.ql\ntests/slow/path.ql\n\ntest listing: 2 discovered\n"
+    );
 }
 
 #[test]
