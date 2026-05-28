@@ -19,42 +19,13 @@ pub(super) fn infer_dependency_generic_expr_type(
         ExprKind::Bool(_) => Some(InferredType::primitive("Bool")),
         ExprKind::String { .. } => Some(InferredType::primitive("String")),
         ExprKind::Tuple(items) => {
-            let items = items
-                .iter()
-                .map(|item| infer_dependency_generic_expr_type(item, bindings, function_bindings))
-                .collect::<Option<Vec<_>>>()?;
-            Some(InferredType {
-                rendered: render_inferred_tuple_type(&items),
-                kind: InferredTypeKind::Tuple(items),
-            })
+            infer_dependency_generic_tuple_type(items, bindings, function_bindings)
         }
         ExprKind::Array(items) => {
-            let (first, rest) = items.split_first()?;
-            let element = infer_dependency_generic_expr_type(first, bindings, function_bindings)?;
-            for item in rest {
-                let item_ty =
-                    infer_dependency_generic_expr_type(item, bindings, function_bindings)?;
-                if item_ty != element {
-                    return None;
-                }
-            }
-            Some(InferredType {
-                rendered: format!("[{}; {}]", element.rendered, items.len()),
-                kind: InferredTypeKind::Array {
-                    element: Box::new(element),
-                    len: items.len().to_string(),
-                },
-            })
+            infer_dependency_generic_array_type(items, bindings, function_bindings)
         }
         ExprKind::RepeatArray { value, len, .. } => {
-            let element = infer_dependency_generic_expr_type(value, bindings, function_bindings)?;
-            Some(InferredType {
-                rendered: format!("[{}; {len}]", element.rendered),
-                kind: InferredTypeKind::Array {
-                    element: Box::new(element),
-                    len: len.clone(),
-                },
-            })
+            infer_dependency_generic_repeat_array_type(value, len, bindings, function_bindings)
         }
         ExprKind::Name(name) => bindings.get(name).cloned(),
         ExprKind::Block(block) | ExprKind::Unsafe(block) => {
@@ -64,34 +35,17 @@ pub(super) fn infer_dependency_generic_expr_type(
             then_branch,
             else_branch,
             ..
-        } => {
-            let then_ty =
-                infer_dependency_generic_block_type(then_branch, bindings, function_bindings)?;
-            let else_ty = infer_dependency_generic_expr_type(
-                else_branch.as_deref()?,
-                bindings,
-                function_bindings,
-            )?;
-            (then_ty == else_ty).then_some(then_ty)
-        }
+        } => infer_dependency_generic_if_type(
+            then_branch,
+            else_branch.as_deref(),
+            bindings,
+            function_bindings,
+        ),
         ExprKind::Match { arms, .. } => {
-            let (first, rest) = arms.split_first()?;
-            let first_ty =
-                infer_dependency_generic_expr_type(&first.body, bindings, function_bindings)?;
-            for arm in rest {
-                let arm_ty =
-                    infer_dependency_generic_expr_type(&arm.body, bindings, function_bindings)?;
-                if arm_ty != first_ty {
-                    return None;
-                }
-            }
-            Some(first_ty)
+            infer_dependency_generic_match_type(arms, bindings, function_bindings)
         }
         ExprKind::Call { callee, args } => {
-            infer_single_field_generic_variant_call_type(callee, args, bindings, function_bindings)
-                .or_else(|| {
-                    infer_function_call_return_type(callee, args, bindings, function_bindings)
-                })
+            infer_dependency_generic_call_type(callee, args, bindings, function_bindings)
         }
         ExprKind::Bracket { target, items } => {
             infer_dependency_generic_projection_type(target, items, bindings, function_bindings)
@@ -107,6 +61,59 @@ pub(super) fn infer_dependency_generic_expr_type(
         }
         _ => None,
     }
+}
+
+fn infer_dependency_generic_tuple_type(
+    items: &[Expr],
+    bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
+) -> Option<InferredType> {
+    let items = items
+        .iter()
+        .map(|item| infer_dependency_generic_expr_type(item, bindings, function_bindings))
+        .collect::<Option<Vec<_>>>()?;
+    Some(InferredType {
+        rendered: render_inferred_tuple_type(&items),
+        kind: InferredTypeKind::Tuple(items),
+    })
+}
+
+fn infer_dependency_generic_array_type(
+    items: &[Expr],
+    bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
+) -> Option<InferredType> {
+    let (first, rest) = items.split_first()?;
+    let element = infer_dependency_generic_expr_type(first, bindings, function_bindings)?;
+    for item in rest {
+        let item_ty = infer_dependency_generic_expr_type(item, bindings, function_bindings)?;
+        if item_ty != element {
+            return None;
+        }
+    }
+    Some(InferredType {
+        rendered: format!("[{}; {}]", element.rendered, items.len()),
+        kind: InferredTypeKind::Array {
+            element: Box::new(element),
+            len: items.len().to_string(),
+        },
+    })
+}
+
+fn infer_dependency_generic_repeat_array_type(
+    value: &Expr,
+    len: &str,
+    bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
+) -> Option<InferredType> {
+    let element = infer_dependency_generic_expr_type(value, bindings, function_bindings)?;
+    Some(InferredType {
+        rendered: format!("[{}; {len}]", element.rendered),
+        kind: InferredTypeKind::Array {
+            element: Box::new(element),
+            len: len.to_owned(),
+        },
+    })
 }
 
 fn infer_dependency_generic_block_type(
@@ -132,6 +139,33 @@ fn infer_dependency_generic_block_type(
     infer_dependency_generic_expr_type(block.tail.as_deref()?, &block_bindings, function_bindings)
 }
 
+fn infer_dependency_generic_if_type(
+    then_branch: &ql_ast::Block,
+    else_branch: Option<&Expr>,
+    bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
+) -> Option<InferredType> {
+    let then_ty = infer_dependency_generic_block_type(then_branch, bindings, function_bindings)?;
+    let else_ty = infer_dependency_generic_expr_type(else_branch?, bindings, function_bindings)?;
+    (then_ty == else_ty).then_some(then_ty)
+}
+
+fn infer_dependency_generic_match_type(
+    arms: &[ql_ast::MatchArm],
+    bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
+) -> Option<InferredType> {
+    let (first, rest) = arms.split_first()?;
+    let first_ty = infer_dependency_generic_expr_type(&first.body, bindings, function_bindings)?;
+    for arm in rest {
+        let arm_ty = infer_dependency_generic_expr_type(&arm.body, bindings, function_bindings)?;
+        if arm_ty != first_ty {
+            return None;
+        }
+    }
+    Some(first_ty)
+}
+
 fn infer_dependency_generic_projection_type(
     target: &Expr,
     items: &[Expr],
@@ -155,6 +189,16 @@ fn infer_dependency_generic_projection_type(
         }
         _ => None,
     }
+}
+
+fn infer_dependency_generic_call_type(
+    callee: &Expr,
+    args: &[CallArg],
+    bindings: &ValueTypeBindings,
+    function_bindings: &FunctionTypeBindings,
+) -> Option<InferredType> {
+    infer_single_field_generic_variant_call_type(callee, args, bindings, function_bindings)
+        .or_else(|| infer_function_call_return_type(callee, args, bindings, function_bindings))
 }
 
 fn infer_dependency_generic_binary_expr_type(
