@@ -37,6 +37,24 @@ pub(super) fn collect_root_call_enum_type_bindings(
     bindings
 }
 
+pub(super) fn collect_root_call_enum_type_bindings_with_specializations(
+    root_module: &Module,
+    module_import_path: &[String],
+    dependency_module: &Module,
+    specialization_modules: &[SpecializationModule<'_>],
+) -> EnumTypeBindings {
+    let mut bindings =
+        collect_root_call_enum_type_bindings(root_module, module_import_path, dependency_module);
+    for module in specialization_modules {
+        bindings.extend(collect_imported_enum_type_bindings(
+            root_module,
+            module.module_import_path,
+            module.module,
+        ));
+    }
+    bindings
+}
+
 pub(super) fn collect_specialization_enum_type_bindings(
     dependency_module: &Module,
     specialization_modules: &[SpecializationModule<'_>],

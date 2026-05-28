@@ -40,9 +40,28 @@ use std.core.remainder_or_zero_int as remainder_or_zero_int
 use std.core.sign_int as sign_int
 use std.core.upper_bound_int as upper_bound_int
 use std.core.xor_bool as xor_bool
+use std.array.all_bool_array as all_bool_array
+use std.array.any_bool_array as any_bool_array
+use std.array.at_array_or as at_array_or
+use std.array.contains_array as contains_array
+use std.array.count_array as count_array
+use std.array.first_array as first_array
+use std.array.last_array as last_array
+use std.array.max_int_array as max_int_array
+use std.array.min_int_array as min_int_array
+use std.array.none_bool_array as none_bool_array
+use std.array.average_int_array as average_int_array
+use std.array.product_int_array as product_int_array
 use std.array.reverse_array as reverse_array
+use std.array.sum_int_array as sum_int_array
 use std.option.Option as Option
+use std.option.or_option as or_option
 use std.result.Result as Result
+use std.result.error_or as error_or
+use std.result.error_to_option as error_to_option
+use std.result.ok_or as ok_or
+use std.result.or_result as or_result
+use std.result.to_option as to_option
 
 pub fn expect_eq[T](actual: T, expected: T) -> Int {
     if actual == expected {
@@ -59,52 +78,47 @@ pub fn expect_ne[T](actual: T, unexpected: T) -> Int {
 }
 
 pub fn expect_array_first[T, N](values: [T; N], expected: T) -> Int {
-    return expect_eq(values[0], expected)
+    if first_array(values) == expected {
+        return 0
+    }
+    return 1
 }
 
 pub fn expect_array_last[T, N](values: [T; N], expected: T) -> Int {
-    var last = values[0]
-    for value in values {
-        last = value
+    if last_array(values) == expected {
+        return 0
     }
-    return expect_eq(last, expected)
+    return 1
 }
 
 pub fn expect_array_at[T, N](values: [T; N], index: Int, fallback: T, expected: T) -> Int {
-    var current_index = 0
-    for value in values {
-        if current_index == index {
-            return expect_eq(value, expected)
-        };
-        current_index = current_index + 1
+    if at_array_or(values, index, fallback) == expected {
+        return 0
     }
-    return expect_eq(fallback, expected)
+    return 1
 }
 
 pub fn expect_array_contains[T, N](values: [T; N], needle: T, expected: Bool) -> Int {
-    for value in values {
-        if value == needle {
-            return expect_eq(true, expected)
-        }
+    if contains_array(values, needle) == expected {
+        return 0
     }
-    return expect_eq(false, expected)
+    return 1
 }
 
 pub fn expect_array_count[T, N](values: [T; N], needle: T, expected: Int) -> Int {
-    var count = 0
-    for value in values {
-        if value == needle {
-            count = count + 1
-        }
+    if count_array(values, needle) == expected {
+        return 0
     }
-    return expect_eq(count, expected)
+    return 1
 }
 
 pub fn expect_array_eq[T, N](actual: [T; N], expected: [T; N]) -> Int {
     var status = 0
     var index = 0
     for value in actual {
-        status = status + expect_eq(value, expected[index]);
+        if value != expected[index] {
+            status = status + 1
+        };
         index = index + 1
     }
     return status
@@ -160,50 +174,38 @@ pub fn expect_bool_to_int(value: Bool, expected: Int) -> Int {
 }
 
 pub fn expect_int_array_sum[N](values: [Int; N], expected: Int) -> Int {
-    var total = 0
-    for value in values {
-        total = total + value
+    if sum_int_array(values) == expected {
+        return 0
     }
-    return expect_eq(total, expected)
+    return 1
 }
 
 pub fn expect_int_array_product[N](values: [Int; N], expected: Int) -> Int {
-    var total = 1
-    for value in values {
-        total = total * value
+    if product_int_array(values) == expected {
+        return 0
     }
-    return expect_eq(total, expected)
+    return 1
 }
 
 pub fn expect_int_array_average[N](values: [Int; N], expected: Int) -> Int {
-    if N == 0 {
-        return expect_eq(0, expected)
+    if average_int_array(values) == expected {
+        return 0
     }
-    var total = 0
-    for value in values {
-        total = total + value
-    }
-    return expect_eq(total / N, expected)
+    return 1
 }
 
 pub fn expect_int_array_max[N](values: [Int; N], expected: Int) -> Int {
-    var selected = values[0]
-    for value in values {
-        if value > selected {
-            selected = value
-        }
+    if max_int_array(values) == expected {
+        return 0
     }
-    return expect_eq(selected, expected)
+    return 1
 }
 
 pub fn expect_int_array_min[N](values: [Int; N], expected: Int) -> Int {
-    var selected = values[0]
-    for value in values {
-        if value < selected {
-            selected = value
-        }
+    if min_int_array(values) == expected {
+        return 0
     }
-    return expect_eq(selected, expected)
+    return 1
 }
 
 pub fn expect_int_array_ascending[N](values: [Int; N]) -> Int {
@@ -259,34 +261,36 @@ pub fn expect_int_array_strictly_descending[N](values: [Int; N]) -> Int {
 }
 
 pub fn expect_bool_array_all[N](values: [Bool; N], expected: Bool) -> Int {
-    for value in values {
-        if !value {
-            return expect_eq(false, expected)
-        }
+    if all_bool_array(values) == expected {
+        return 0
     }
-    return expect_eq(true, expected)
+    return 1
 }
 
 pub fn expect_bool_array_any[N](values: [Bool; N], expected: Bool) -> Int {
-    for value in values {
-        if value {
-            return expect_eq(true, expected)
-        }
+    if any_bool_array(values) == expected {
+        return 0
     }
-    return expect_eq(false, expected)
+    return 1
 }
 
 pub fn expect_bool_array_none[N](values: [Bool; N], expected: Bool) -> Int {
-    for value in values {
-        if value {
-            return expect_eq(false, expected)
-        }
+    if none_bool_array(values) == expected {
+        return 0
     }
-    return expect_eq(true, expected)
+    return 1
 }
 
 pub fn expect_array_reverse[T, N](values: [T; N], expected: [T; N]) -> Int {
-    return expect_array_eq(reverse_array(values), expected)
+    var status = 0
+    var index = 0
+    for value in reverse_array(values) {
+        if value != expected[index] {
+            status = status + 1
+        };
+        index = index + 1
+    }
+    return status
 }
 
 pub fn expect_int_gt(actual: Int, threshold: Int) -> Int {
@@ -586,7 +590,7 @@ pub fn expect_bool_implies(left: Bool, right: Bool) -> Int {
 
 pub fn expect_option_some[T](value: Option[T], expected: T) -> Int {
     return match value {
-        Option.Some(inner) => expect_eq(inner, expected),
+        Option.Some(inner) => if inner == expected { 0 } else { 1 },
         Option.None => 1,
     }
 }
@@ -599,78 +603,78 @@ pub fn expect_option_none[T](value: Option[T]) -> Int {
 }
 
 pub fn expect_option_or[T](value: Option[T], fallback: Option[T], expected: T) -> Int {
-    return match value {
-        Option.Some(inner) => expect_eq(inner, expected),
-        Option.None => expect_option_some(fallback, expected),
-    }
-}
-
-pub fn expect_result_ok[T, E](value: Result[T, E], expected: T) -> Int {
-    return match value {
-        Result.Ok(inner) => expect_eq(inner, expected),
-        Result.Err(_) => 1,
-    }
-}
-
-pub fn expect_result_err[T, E](value: Result[T, E], expected_error: E) -> Int {
-    return match value {
-        Result.Ok(_) => 1,
-        Result.Err(error) => expect_eq(error, expected_error),
-    }
-}
-
-pub fn expect_result_or[T, E](value: Result[T, E], fallback: Result[T, E], expected: T) -> Int {
-    return match value {
-        Result.Ok(inner) => expect_eq(inner, expected),
-        Result.Err(_) => expect_result_ok(fallback, expected),
-    }
-}
-
-pub fn expect_result_error[T, E](value: Result[T, E], fallback_error: E, expected_error: E) -> Int {
-    return match value {
-        Result.Ok(_) => expect_eq(fallback_error, expected_error),
-        Result.Err(error) => expect_eq(error, expected_error),
-    }
-}
-
-pub fn expect_result_to_option_some[T, E](value: Result[T, E], expected: T) -> Int {
-    return match value {
-        Result.Ok(inner) => expect_eq(inner, expected),
-        Result.Err(_) => 1,
-    }
-}
-
-pub fn expect_result_to_option_none[T, E](value: Result[T, E]) -> Int {
-    return match value {
-        Result.Ok(_) => 1,
-        Result.Err(_) => 0,
-    }
-}
-
-pub fn expect_result_error_some[T, E](value: Result[T, E], expected_error: E) -> Int {
-    return match value {
-        Result.Ok(_) => 1,
-        Result.Err(error) => expect_eq(error, expected_error),
-    }
-}
-
-pub fn expect_result_error_none[T, E](value: Result[T, E]) -> Int {
-    return match value {
-        Result.Ok(_) => 0,
-        Result.Err(_) => 1,
-    }
-}
-
-pub fn expect_option_ok_or[T, E](value: Option[T], error: E, expected: T) -> Int {
-    return match value {
-        Option.Some(inner) => expect_eq(inner, expected),
+    return match or_option(value, fallback) {
+        Option.Some(inner) => if inner == expected { 0 } else { 1 },
         Option.None => 1,
     }
 }
 
-pub fn expect_option_ok_or_err[T, E](value: Option[T], error: E) -> Int {
-    return match value {
+pub fn expect_result_ok[T, E](value: Result[T, E], expected: T) -> Int {
+    return match to_option(value) {
+        Option.Some(inner) => if inner == expected { 0 } else { 1 },
+        Option.None => 1,
+    }
+}
+
+pub fn expect_result_err[T, E](value: Result[T, E], expected_error: E) -> Int {
+    return match error_to_option(value) {
+        Option.Some(error) => if error == expected_error { 0 } else { 1 },
+        Option.None => 1,
+    }
+}
+
+pub fn expect_result_or[T, E](value: Result[T, E], fallback: Result[T, E], expected: T) -> Int {
+    return match or_result(value, fallback) {
+        Result.Ok(inner) => if inner == expected { 0 } else { 1 },
+        Result.Err(_) => 1,
+    }
+}
+
+pub fn expect_result_error[T, E](value: Result[T, E], fallback_error: E, expected_error: E) -> Int {
+    if error_or(value, fallback_error) == expected_error {
+        return 0
+    }
+    return 1
+}
+
+pub fn expect_result_to_option_some[T, E](value: Result[T, E], expected: T) -> Int {
+    return match to_option(value) {
+        Option.Some(inner) => if inner == expected { 0 } else { 1 },
+        Option.None => 1,
+    }
+}
+
+pub fn expect_result_to_option_none[T, E](value: Result[T, E]) -> Int {
+    return match to_option(value) {
         Option.Some(_) => 1,
         Option.None => 0,
+    }
+}
+
+pub fn expect_result_error_some[T, E](value: Result[T, E], expected_error: E) -> Int {
+    return match error_to_option(value) {
+        Option.Some(error) => if error == expected_error { 0 } else { 1 },
+        Option.None => 1,
+    }
+}
+
+pub fn expect_result_error_none[T, E](value: Result[T, E]) -> Int {
+    return match error_to_option(value) {
+        Option.Some(_) => 1,
+        Option.None => 0,
+    }
+}
+
+pub fn expect_option_ok_or[T, E](value: Option[T], error: E, expected: T) -> Int {
+    return match ok_or(value, error) {
+        Result.Ok(inner) => if inner == expected { 0 } else { 1 },
+        Result.Err(_) => 1,
+    }
+}
+
+pub fn expect_option_ok_or_err[T, E](value: Option[T], error: E) -> Int {
+    return match ok_or(value, error) {
+        Result.Ok(_) => 1,
+        Result.Err(actual_error) => if actual_error == error { 0 } else { 1 },
     }
 }

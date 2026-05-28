@@ -3,7 +3,8 @@ use std::collections::BTreeSet;
 use ql_ast::{FunctionDecl, Module};
 
 use super::enum_bindings::{
-    EnumTypeBindings, collect_local_enum_type_bindings, collect_root_call_enum_type_bindings,
+    EnumTypeBindings, collect_local_enum_type_bindings,
+    collect_root_call_enum_type_bindings_with_specializations,
     collect_specialization_enum_type_bindings,
 };
 use super::function_bindings::{FunctionTypeBindings, collect_local_function_type_bindings};
@@ -85,8 +86,12 @@ pub(crate) fn render_public_function_specialization_status_with_context(
         module_import_path,
         dependency_module,
     );
-    let root_enum_bindings =
-        collect_root_call_enum_type_bindings(root_module, module_import_path, dependency_module);
+    let root_enum_bindings = collect_root_call_enum_type_bindings_with_specializations(
+        root_module,
+        module_import_path,
+        dependency_module,
+        specialization_modules,
+    );
     let call_instantiations = instantiations::collect_public_function_call_instantiation_status(
         root_module,
         module_import_path,

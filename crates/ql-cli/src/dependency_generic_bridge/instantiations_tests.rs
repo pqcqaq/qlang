@@ -921,6 +921,156 @@ fn run() -> Int {
 }
 
 #[test]
+fn infers_generic_enum_argument_from_typed_local_binding() {
+    let dependency = parse_module(
+        r#"
+package std.option
+
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+
+pub fn is_none[T](value: Option[T]) -> Bool {
+    return match value {
+        Option.Some(_) => false,
+        Option.None => true,
+    }
+}
+"#,
+    );
+    let root = parse_module(
+        r#"
+use std.option.Option as Option
+use std.option.is_none as option_is_none
+
+fn run() -> Int {
+    let value: Option[Int] = Option.None
+    if option_is_none(value) {
+        return 0
+    }
+    return 1
+}
+"#,
+    );
+
+    let instantiations = collect_public_function_instantiations(
+        &root,
+        &["std".to_owned(), "option".to_owned()],
+        &dependency,
+        function(&dependency, "is_none"),
+    );
+
+    assert_eq!(instantiations.len(), 1);
+    let substitutions = instantiations
+        .iter()
+        .next()
+        .expect("one typed option substitution should be inferred");
+    assert_eq!(substitutions.get("T").map(String::as_str), Some("Int"));
+}
+
+#[test]
+fn infers_generic_enum_argument_when_target_reexports_imported_carrier() {
+    let dependency = parse_module(
+        r#"
+package std.test
+
+use std.option.Option as Option
+
+pub fn expect_option_none[T](value: Option[T]) -> Int {
+    return match value {
+        Option.Some(_) => 1,
+        Option.None => 0,
+    }
+}
+"#,
+    );
+    let root = parse_module(
+        r#"
+use std.option.Option as Option
+use std.test.expect_option_none as expect_option_none
+
+fn run() -> Int {
+    let value: Option[String] = Option.None
+    return expect_option_none(value)
+}
+"#,
+    );
+
+    let instantiations = collect_public_function_instantiations(
+        &root,
+        &["std".to_owned(), "test".to_owned()],
+        &dependency,
+        function(&dependency, "expect_option_none"),
+    );
+
+    assert_eq!(instantiations.len(), 1);
+    let substitutions = instantiations
+        .iter()
+        .next()
+        .expect("one reexported option substitution should be inferred");
+    assert_eq!(substitutions.get("T").map(String::as_str), Some("String"));
+}
+
+#[test]
+fn infers_generic_enum_argument_inside_nested_status_aggregates() {
+    let dependency = parse_module(
+        r#"
+package std.test
+
+use std.option.Option as Option
+
+pub fn expect_option_none[T](value: Option[T]) -> Int {
+    return match value {
+        Option.Some(_) => 1,
+        Option.None => 0,
+    }
+}
+"#,
+    );
+    let root = parse_module(
+        r#"
+use std.option.Option as Option
+use std.test.expect_option_none as expect_option_none
+
+fn check_int(actual: Int, expected: Int) -> Int {
+    if actual == expected {
+        return 0
+    }
+    return 1
+}
+
+fn sum_statuses[N](statuses: [Int; N]) -> Int {
+    var total = 0
+    for status in statuses {
+        total = total + status
+    }
+    return total
+}
+
+fn run() -> Int {
+    let missing: Option[String] = Option.None
+    return sum_statuses([check_int(expect_option_none(missing), 0)])
+}
+"#,
+    );
+
+    let instantiations = collect_public_function_instantiations(
+        &root,
+        &["std".to_owned(), "test".to_owned()],
+        &dependency,
+        function(&dependency, "expect_option_none"),
+    );
+
+    assert_eq!(instantiations.len(), 1);
+    let substitutions = instantiations
+        .iter()
+        .next()
+        .expect("one nested option substitution should be inferred");
+    assert_eq!(substitutions.get("T").map(String::as_str), Some("String"));
+}
+
+#[test]
 fn infers_substitution_from_explicit_result_context() {
     let dependency = parse_module(
         r#"

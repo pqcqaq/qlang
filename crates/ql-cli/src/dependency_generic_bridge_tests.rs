@@ -362,6 +362,70 @@ fn score[N](values: [Int; N]) -> Int {
 }
 
 #[test]
+fn public_specialization_uses_imported_enum_bindings_from_specialization_modules() {
+    let option_source = r#"
+package std.option
+
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+"#;
+    let dependency_source = r#"
+package std.test
+
+use std.option.Option as Option
+
+pub fn expect_option_none[T](value: Option[T]) -> Int {
+    return match value {
+        Option.Some(_) => 1,
+        Option.None => 0,
+    }
+}
+"#;
+    let option = parse_module(option_source);
+    let dependency = parse_module(dependency_source);
+    let root = parse_module(
+        r#"
+use std.option.Option as Option
+use std.test.expect_option_none as expect_option_none
+
+fn run() -> Int {
+    let missing: Option[String] = Option.None
+    return expect_option_none(missing) + expect_option_none(Option.Some(7))
+}
+"#,
+    );
+    let option_import_path = vec!["std".to_owned(), "option".to_owned()];
+    let option_module = SpecializationModule {
+        module_import_path: &option_import_path,
+        contents: option_source,
+        module: &option,
+    };
+
+    let rendered = render_public_function_specialization_status_with_context(
+        &["std".to_owned(), "test".to_owned()],
+        function(&dependency, "expect_option_none"),
+        dependency_source,
+        &root,
+        &dependency,
+        &[option_module],
+        &mut BTreeSet::new(),
+    );
+    let PublicFunctionSpecializationRender::Rendered(rendered) = rendered else {
+        panic!("expect_option_none should render with imported Option bindings");
+    };
+
+    assert!(rendered.declarations.contains(
+        "fn __ql_bridge_local_std_test_expect_option_none__generic_String(value: Option[String]) -> Int"
+    ));
+    assert!(rendered.declarations.contains(
+        "fn __ql_bridge_local_std_test_expect_option_none__generic_Int(value: Option[Int]) -> Int"
+    ));
+    assert_eq!(rendered.call_rewrites.len(), 2);
+}
+
+#[test]
 fn public_specialization_rewrites_imported_dependency_generic_body_calls() {
     let helper_source = r#"
 package helper
