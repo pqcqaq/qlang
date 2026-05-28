@@ -10,12 +10,29 @@ use super::value_bindings::{
     ValueTypeBindings, collect_function_param_type_bindings_with_substitutions,
     collect_root_value_type_bindings,
 };
-use ql_ast::{FunctionDecl, ItemKind, Module};
+use ql_ast::{FunctionDecl, Item, ItemKind, Module};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct PublicFunctionCallInstantiations {
     pub(super) saw_call: bool,
     pub(super) instantiations: Vec<PublicFunctionCallInstantiation>,
+}
+
+impl PublicFunctionCallInstantiations {
+    fn none() -> Self {
+        Self {
+            saw_call: false,
+            instantiations: Vec::new(),
+        }
+    }
+
+    fn from_context(context: InstantiationScanContext<'_>) -> Self {
+        let (saw_call, instantiations) = context.finish();
+        Self {
+            saw_call,
+            instantiations,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -61,26 +78,13 @@ pub(super) fn collect_public_function_call_instantiation_status(
     let local_names =
         dependency_imported_local_names(root_module, module_import_path, function.name.as_str());
     if local_names.is_empty() {
-        return PublicFunctionCallInstantiations {
-            saw_call: false,
-            instantiations: Vec::new(),
-        };
+        return PublicFunctionCallInstantiations::none();
     }
 
     let root_bindings = collect_root_value_type_bindings(root_module);
     let mut context = InstantiationScanContext::new(&local_names, function, function_bindings);
-    for item in &root_module.items {
-        collect_dependency_generic_function_instantiations_from_item(
-            item,
-            &root_bindings,
-            &mut context,
-        );
-    }
-    let (saw_call, instantiations) = context.finish();
-    PublicFunctionCallInstantiations {
-        saw_call,
-        instantiations,
-    }
+    scan_root_module_items(root_module, &root_bindings, &mut context, |_| true);
+    PublicFunctionCallInstantiations::from_context(context)
 }
 
 pub(super) fn collect_local_function_call_instantiations(
@@ -91,25 +95,38 @@ pub(super) fn collect_local_function_call_instantiations(
     let local_names = BTreeSet::from([function.name.clone()]);
     let root_bindings = collect_root_value_type_bindings(root_module);
     let mut context = InstantiationScanContext::new(&local_names, function, function_bindings);
+    scan_root_module_items(root_module, &root_bindings, &mut context, |function| {
+        function.generics.is_empty()
+    });
+    let (_, instantiations) = context.finish();
+    instantiations
+}
+
+fn scan_root_module_items(
+    root_module: &Module,
+    root_bindings: &ValueTypeBindings,
+    context: &mut InstantiationScanContext<'_>,
+    should_scan_function: impl Fn(&FunctionDecl) -> bool,
+) {
     for item in &root_module.items {
-        let ItemKind::Function(root_function) = &item.kind else {
+        if should_scan_root_item(item, &should_scan_function) {
             collect_dependency_generic_function_instantiations_from_item(
                 item,
-                &root_bindings,
-                &mut context,
-            );
-            continue;
-        };
-        if root_function.generics.is_empty() {
-            collect_dependency_generic_function_instantiations_from_item(
-                item,
-                &root_bindings,
-                &mut context,
+                root_bindings,
+                context,
             );
         }
     }
-    let (_, instantiations) = context.finish();
-    instantiations
+}
+
+fn should_scan_root_item(
+    item: &Item,
+    should_scan_function: &impl Fn(&FunctionDecl) -> bool,
+) -> bool {
+    match &item.kind {
+        ItemKind::Function(function) => should_scan_function(function),
+        _ => true,
+    }
 }
 
 pub(super) fn collect_specialized_body_call_instantiations(

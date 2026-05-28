@@ -16,6 +16,37 @@ fn function<'a>(module: &'a Module, name: &str) -> &'a FunctionDecl {
 }
 
 #[test]
+fn local_instantiations_skip_generic_root_function_bodies() {
+    let module = parse_module(
+        r#"
+fn identity[T](value: T) -> T {
+    return value
+}
+
+fn wrapper[T](value: T) -> T {
+    return identity(value)
+}
+
+fn run() -> Int {
+    return identity(1)
+}
+"#,
+    );
+
+    let instantiations = collect_local_function_call_instantiations(
+        &module,
+        function(&module, "identity"),
+        &FunctionTypeBindings::new(),
+    );
+
+    assert_eq!(instantiations.len(), 1);
+    assert_eq!(
+        instantiations[0].substitutions.get("T").map(String::as_str),
+        Some("Int")
+    );
+}
+
+#[test]
 fn infers_substitution_from_later_argument_when_nested_call_arg_is_untyped() {
     let dependency = parse_module(
         r#"
