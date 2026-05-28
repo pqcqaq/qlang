@@ -69,6 +69,65 @@ pub fn static_library_output_path(root: &Path, stem: &str) -> PathBuf {
     }
 }
 
+pub struct DependencySmokeProject {
+    pub temp: TempDir,
+    pub project_root: PathBuf,
+    pub dependency_manifest: PathBuf,
+    pub interface_output: PathBuf,
+    pub dependency_output: PathBuf,
+    pub smoke_output: PathBuf,
+}
+
+pub fn write_dependency_smoke_project(
+    prefix: &str,
+    dependency_source: &str,
+    smoke_source: &str,
+) -> DependencySmokeProject {
+    let temp = TempDir::new(prefix);
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    fs::create_dir_all(dep_root.join("src")).expect("create dependency source tree");
+    fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+
+    let dependency_manifest = temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write("dep/src/lib.ql", dependency_source);
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    temp.write("app/tests/smoke.ql", smoke_source);
+
+    let interface_output = dep_root.join("dep.qi");
+    let dependency_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+    assert!(
+        !interface_output.exists(),
+        "dependency interface should start missing for {prefix}"
+    );
+
+    DependencySmokeProject {
+        temp,
+        project_root,
+        dependency_manifest,
+        interface_output,
+        dependency_output,
+        smoke_output,
+    }
+}
+
 pub fn dynamic_library_output_path(root: &Path, stem: &str) -> PathBuf {
     if cfg!(windows) {
         root.join(format!("{stem}.dll"))
