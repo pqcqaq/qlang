@@ -2,7 +2,10 @@ package std.test
 
 use std.core.abs_diff_int as abs_diff_int
 use std.core.abs_int as abs_int
+use std.core.all_bools as all_bools
 use std.core.and_bool as and_bool
+use std.core.any_bools as any_bools
+use std.core.average_ints as average_ints
 use std.core.bool_to_int as bool_to_int
 use std.core.clamp_bounds_int as clamp_bounds_int
 use std.core.clamp_int as clamp_int
@@ -35,29 +38,26 @@ use std.core.is_strictly_descending_ints as is_strictly_descending_ints
 use std.core.is_within_int as is_within_int
 use std.core.lower_bound_int as lower_bound_int
 use std.core.max_int as max_int
+use std.core.max_ints as max_ints
 use std.core.min_int as min_int
+use std.core.min_ints as min_ints
+use std.core.none_bools as none_bools
 use std.core.not_bool as not_bool
 use std.core.or_bool as or_bool
+use std.core.product_ints as product_ints
 use std.core.quotient_or_zero_int as quotient_or_zero_int
 use std.core.range_span_int as range_span_int
 use std.core.remainder_or_zero_int as remainder_or_zero_int
 use std.core.sign_int as sign_int
+use std.core.sum_ints as sum_ints
 use std.core.upper_bound_int as upper_bound_int
 use std.core.xor_bool as xor_bool
-use std.array.all_bool_array as all_bool_array
-use std.array.any_bool_array as any_bool_array
 use std.array.at_array_or as at_array_or
 use std.array.contains_array as contains_array
 use std.array.count_array as count_array
 use std.array.first_array as first_array
 use std.array.last_array as last_array
-use std.array.max_int_array as max_int_array
-use std.array.min_int_array as min_int_array
-use std.array.none_bool_array as none_bool_array
-use std.array.average_int_array as average_int_array
-use std.array.product_int_array as product_int_array
 use std.array.reverse_array as reverse_array
-use std.array.sum_int_array as sum_int_array
 use std.option.Option as Option
 use std.option.or_option as or_option
 use std.result.Result as Result
@@ -178,35 +178,35 @@ pub fn expect_bool_to_int(value: Bool, expected: Int) -> Int {
 }
 
 pub fn expect_int_array_sum[N](values: [Int; N], expected: Int) -> Int {
-    if sum_int_array(values) == expected {
+    if sum_ints(values) == expected {
         return 0
     }
     return 1
 }
 
 pub fn expect_int_array_product[N](values: [Int; N], expected: Int) -> Int {
-    if product_int_array(values) == expected {
+    if product_ints(values) == expected {
         return 0
     }
     return 1
 }
 
 pub fn expect_int_array_average[N](values: [Int; N], expected: Int) -> Int {
-    if average_int_array(values) == expected {
+    if average_ints(values) == expected {
         return 0
     }
     return 1
 }
 
 pub fn expect_int_array_max[N](values: [Int; N], expected: Int) -> Int {
-    if max_int_array(values) == expected {
+    if max_ints(values) == expected {
         return 0
     }
     return 1
 }
 
 pub fn expect_int_array_min[N](values: [Int; N], expected: Int) -> Int {
-    if min_int_array(values) == expected {
+    if min_ints(values) == expected {
         return 0
     }
     return 1
@@ -241,21 +241,21 @@ pub fn expect_int_array_strictly_descending[N](values: [Int; N]) -> Int {
 }
 
 pub fn expect_bool_array_all[N](values: [Bool; N], expected: Bool) -> Int {
-    if all_bool_array(values) == expected {
+    if all_bools(values) == expected {
         return 0
     }
     return 1
 }
 
 pub fn expect_bool_array_any[N](values: [Bool; N], expected: Bool) -> Int {
-    if any_bool_array(values) == expected {
+    if any_bools(values) == expected {
         return 0
     }
     return 1
 }
 
 pub fn expect_bool_array_none[N](values: [Bool; N], expected: Bool) -> Int {
-    if none_bool_array(values) == expected {
+    if none_bools(values) == expected {
         return 0
     }
     return 1
