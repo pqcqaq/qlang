@@ -10,6 +10,9 @@ use crate::test_reporting::TestTarget;
 
 mod direct;
 mod filters;
+#[cfg(test)]
+#[path = "test_discovery/filters_tests.rs"]
+mod filters_tests;
 mod listing;
 mod member_targets;
 mod members;
