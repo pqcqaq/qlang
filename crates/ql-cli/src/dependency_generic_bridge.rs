@@ -1,8 +1,4 @@
-#[cfg(test)]
-use ql_ast::ItemKind;
 use ql_ast::{FunctionDecl, Module, Param, Visibility};
-#[cfg(test)]
-use std::collections::BTreeSet;
 
 mod call_args;
 mod call_inference;
@@ -21,6 +17,9 @@ mod instantiations;
 mod rendering;
 mod specialization_function_bindings;
 mod specializations;
+#[cfg(test)]
+#[path = "dependency_generic_bridge/specializations_tests.rs"]
+mod specializations_tests;
 mod specialized_forwarders;
 mod struct_bindings;
 mod substitutions;
@@ -75,7 +74,3 @@ pub fn supports_local_function_specialization(function: &FunctionDecl) -> bool {
             .iter()
             .all(|param| matches!(param, Param::Regular { .. }))
 }
-
-#[cfg(test)]
-#[path = "dependency_generic_bridge_tests.rs"]
-mod tests;

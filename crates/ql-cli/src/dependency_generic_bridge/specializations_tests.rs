@@ -1,4 +1,12 @@
-use super::*;
+use std::collections::BTreeSet;
+
+use ql_ast::{FunctionDecl, ItemKind, Module};
+
+use super::{
+    PublicFunctionSpecializationRender, SpecializationModule,
+    render_public_function_specialization_status_with_context,
+    render_public_function_specializations,
+};
 
 fn parse_module(source: &str) -> Module {
     ql_parser::parse_source(source).expect("test source should parse")
