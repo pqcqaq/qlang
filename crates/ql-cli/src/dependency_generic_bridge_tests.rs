@@ -16,6 +16,73 @@ fn function<'a>(module: &'a Module, name: &str) -> &'a FunctionDecl {
 }
 
 #[test]
+fn public_specialization_reports_not_called_for_unused_imported_generic() {
+    let dependency_source = r#"
+package dep
+
+pub fn identity[T](value: T) -> T {
+    return value
+}
+"#;
+    let dependency = parse_module(dependency_source);
+    let root = parse_module(
+        r#"
+use dep.identity as identity
+
+fn main() -> Int {
+    return 0
+}
+"#,
+    );
+
+    let status = render_public_function_specialization_status_with_context(
+        &["dep".to_owned()],
+        function(&dependency, "identity"),
+        dependency_source,
+        &root,
+        &dependency,
+        &[],
+        &mut BTreeSet::new(),
+    );
+
+    assert_eq!(status, PublicFunctionSpecializationRender::NotCalled);
+}
+
+#[test]
+fn public_specialization_reports_unsupported_for_incomplete_substitutions() {
+    let dependency_source = r#"
+package dep
+
+pub fn make[T]() -> T {
+    return 0
+}
+"#;
+    let dependency = parse_module(dependency_source);
+    let root = parse_module(
+        r#"
+use dep.make as make
+
+fn main() -> Int {
+    make()
+    return 0
+}
+"#,
+    );
+
+    let status = render_public_function_specialization_status_with_context(
+        &["dep".to_owned()],
+        function(&dependency, "make"),
+        dependency_source,
+        &root,
+        &dependency,
+        &[],
+        &mut BTreeSet::new(),
+    );
+
+    assert_eq!(status, PublicFunctionSpecializationRender::Unsupported);
+}
+
+#[test]
 fn public_specialization_rewrites_same_dependency_generic_body_calls() {
     let dependency_source = r#"
 package dep

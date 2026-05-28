@@ -10,8 +10,9 @@ use super::specialization_function_bindings::{
 use super::specialized_forwarders::{
     SpecializedForwarderRenderContext, has_complete_generic_substitutions, specialized_call_rewrite,
 };
+use super::substitutions::TypeSubstitutions;
 use super::{
-    PublicFunctionSpecializationRender, RenderedPublicFunctionSpecializations,
+    PublicFunctionSpecializationRender, RenderedPublicFunctionSpecializations, SourceRewrite,
     SpecializationModule, supports_local_function_specialization,
     supports_public_function_specialization,
 };
@@ -146,14 +147,50 @@ fn render_function_specializations(
     if call_instantiations.is_empty() {
         return None;
     }
+    let concrete_instantiations =
+        collect_complete_concrete_instantiations(function, &call_instantiations)?;
+    let declarations = render_concrete_forwarder_declarations(
+        module_import_path,
+        function,
+        contents,
+        specialization_module,
+        function_bindings,
+        specialization_modules,
+        &concrete_instantiations,
+        rendered_specializations,
+    )?;
+    let call_rewrites = render_call_rewrites(module_import_path, function, call_instantiations);
+
+    Some(RenderedPublicFunctionSpecializations {
+        declarations: declarations.join("\n\n"),
+        call_rewrites,
+    })
+}
+
+fn collect_complete_concrete_instantiations(
+    function: &FunctionDecl,
+    call_instantiations: &[instantiations::PublicFunctionCallInstantiation],
+) -> Option<BTreeSet<TypeSubstitutions>> {
     let mut concrete_instantiations = BTreeSet::new();
-    for instantiation in &call_instantiations {
+    for instantiation in call_instantiations {
         if !has_complete_generic_substitutions(function, &instantiation.substitutions) {
             return None;
         }
         concrete_instantiations.insert(instantiation.substitutions.clone());
     }
+    Some(concrete_instantiations)
+}
 
+fn render_concrete_forwarder_declarations(
+    module_import_path: &[String],
+    function: &FunctionDecl,
+    contents: &str,
+    specialization_module: &Module,
+    function_bindings: &FunctionTypeBindings,
+    specialization_modules: &[SpecializationModule<'_>],
+    concrete_instantiations: &BTreeSet<TypeSubstitutions>,
+    rendered_specializations: &mut BTreeSet<String>,
+) -> Option<Vec<String>> {
     let mut declarations = Vec::new();
     let mut forwarder_context = SpecializedForwarderRenderContext::new(
         function_bindings,
@@ -161,7 +198,7 @@ fn render_function_specializations(
         rendered_specializations,
         &mut declarations,
     );
-    for substitutions in &concrete_instantiations {
+    for substitutions in concrete_instantiations {
         forwarder_context.render_public_function_specialized_forwarder(
             module_import_path,
             function,
@@ -170,8 +207,15 @@ fn render_function_specializations(
             substitutions,
         )?;
     }
+    Some(declarations)
+}
 
-    let call_rewrites = call_instantiations
+fn render_call_rewrites(
+    module_import_path: &[String],
+    function: &FunctionDecl,
+    call_instantiations: Vec<instantiations::PublicFunctionCallInstantiation>,
+) -> Vec<SourceRewrite> {
+    call_instantiations
         .into_iter()
         .map(|instantiation| {
             specialized_call_rewrite(
@@ -181,10 +225,5 @@ fn render_function_specializations(
                 instantiation.callee_span,
             )
         })
-        .collect();
-
-    Some(RenderedPublicFunctionSpecializations {
-        declarations: declarations.join("\n\n"),
-        call_rewrites,
-    })
+        .collect()
 }
