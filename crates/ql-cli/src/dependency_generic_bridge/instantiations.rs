@@ -206,6 +206,9 @@ mod array_tests;
 #[path = "instantiations_context_tests.rs"]
 mod context_tests;
 #[cfg(test)]
+#[path = "instantiations_expressions_tests.rs"]
+mod expression_tests;
+#[cfg(test)]
 #[path = "instantiations_patterns_tests.rs"]
 mod pattern_tests;
 #[cfg(test)]
