@@ -1,8 +1,7 @@
 use std::path::Path;
 
 use ql_project::{
-    WorkspaceBuildTargets, discover_package_build_targets, discover_workspace_build_targets,
-    load_project_manifest, package_name,
+    WorkspaceBuildTargets, discover_workspace_build_targets, load_project_manifest, package_name,
 };
 
 use crate::build_reporting::build_json_project_error;
@@ -11,6 +10,7 @@ use crate::project_workspace::resolve_selected_workspace_member_manifest;
 use crate::test_command::TestCommandOptions;
 use crate::test_reporting::render_test_json_preflight_failure_report;
 
+use super::member_targets::project_test_build_targets_from_manifest;
 use super::package_selector::{
     load_workspace_selected_member_manifest_for_json, report_package_selector_mismatch,
     validate_test_package_selector,
@@ -167,44 +167,4 @@ fn load_package_selected_test_member(
         manifest,
         None,
     )?])
-}
-
-fn project_test_build_targets_from_manifest(
-    request_path: &Path,
-    command_options: &TestCommandOptions,
-    manifest: &ql_project::ProjectManifest,
-    workspace_manifest: Option<&ql_project::ProjectManifest>,
-) -> Result<WorkspaceBuildTargets, u8> {
-    let workspace_default_profile = workspace_manifest
-        .and_then(|manifest| manifest.profile.as_ref().map(|profile| profile.default));
-    Ok(WorkspaceBuildTargets {
-        member_manifest_path: manifest.manifest_path.clone(),
-        package_name: match package_name(manifest) {
-            Ok(package_name) => package_name.to_owned(),
-            Err(error) => {
-                return Err(report_ql_test_project_preflight_error(
-                    request_path,
-                    command_options,
-                    &error,
-                    "target-discovery",
-                ));
-            }
-        },
-        default_profile: manifest
-            .profile
-            .as_ref()
-            .map(|profile| profile.default)
-            .or(workspace_default_profile),
-        targets: match discover_package_build_targets(manifest) {
-            Ok(targets) => targets,
-            Err(error) => {
-                return Err(report_ql_test_project_preflight_error(
-                    request_path,
-                    command_options,
-                    &error,
-                    "target-discovery",
-                ));
-            }
-        },
-    })
 }

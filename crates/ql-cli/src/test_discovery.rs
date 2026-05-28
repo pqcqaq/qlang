@@ -11,6 +11,7 @@ use crate::test_reporting::TestTarget;
 mod direct;
 mod filters;
 mod listing;
+mod member_targets;
 mod no_match;
 mod package_selector;
 mod paths;

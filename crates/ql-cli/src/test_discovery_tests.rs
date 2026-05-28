@@ -1,8 +1,12 @@
 use std::path::{Path, PathBuf};
 
 use ql_driver::{BuildOptions, BuildProfile};
+use ql_project::{
+    ManifestBuildProfile, PackageManifest, ProfileManifest, ProjectManifest, ReferencesManifest,
+};
 
 use super::listing::render_test_target_listing;
+use super::member_targets::resolved_test_member_default_profile;
 use super::package_selector::package_selector_mismatch_message;
 use super::paths::{package_test_command_path, project_test_output_path};
 use super::project_errors::ql_test_project_error_message;
@@ -19,6 +23,24 @@ fn smoke_target(display_path: &str, source_path: &str) -> TestTarget {
             build_options: BuildOptions::default(),
             package_manifest_path: None,
         },
+    }
+}
+
+fn project_manifest(
+    manifest_path: &str,
+    package_name: Option<&str>,
+    default_profile: Option<ManifestBuildProfile>,
+) -> ProjectManifest {
+    ProjectManifest {
+        manifest_path: PathBuf::from(manifest_path),
+        package: package_name.map(|name| PackageManifest {
+            name: name.to_owned(),
+        }),
+        workspace: None,
+        references: ReferencesManifest::default(),
+        profile: default_profile.map(|default| ProfileManifest { default }),
+        lib: None,
+        bins: Vec::new(),
     }
 }
 
@@ -119,6 +141,40 @@ fn package_selector_mismatch_message_names_request_root() {
     assert_eq!(
         message,
         "package selector matched no workspace members under `workspace`"
+    );
+}
+
+#[test]
+fn test_member_default_profile_inherits_workspace_default() {
+    let workspace = project_manifest(
+        "workspace/qlang.toml",
+        None,
+        Some(ManifestBuildProfile::Release),
+    );
+    let member = project_manifest("workspace/packages/app/qlang.toml", Some("app"), None);
+
+    assert_eq!(
+        resolved_test_member_default_profile(&member, Some(&workspace)),
+        Some(ManifestBuildProfile::Release)
+    );
+}
+
+#[test]
+fn test_member_default_profile_prefers_member_default() {
+    let workspace = project_manifest(
+        "workspace/qlang.toml",
+        None,
+        Some(ManifestBuildProfile::Release),
+    );
+    let member = project_manifest(
+        "workspace/packages/app/qlang.toml",
+        Some("app"),
+        Some(ManifestBuildProfile::Debug),
+    );
+
+    assert_eq!(
+        resolved_test_member_default_profile(&member, Some(&workspace)),
+        Some(ManifestBuildProfile::Debug)
     );
 }
 
