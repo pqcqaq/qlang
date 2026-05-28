@@ -200,5 +200,8 @@ pub(super) fn collect_specialized_body_call_instantiations_for_local_names(
 }
 
 #[cfg(test)]
+#[path = "instantiations_patterns_tests.rs"]
+mod pattern_tests;
+#[cfg(test)]
 #[path = "instantiations_tests.rs"]
 mod tests;
