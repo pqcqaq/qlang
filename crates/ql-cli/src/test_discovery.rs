@@ -16,9 +16,11 @@ use crate::test_reporting::{
     TestTarget, TestTargetKind, render_test_json_preflight_message_report,
 };
 
+mod filters;
 mod no_match;
 mod selection;
 
+pub(crate) use filters::{filter_test_targets, select_test_targets_by_path};
 pub(crate) use no_match::{
     report_no_matching_test_target, report_no_matching_tests, report_no_tests_discovered,
     test_no_matching_filter_message, test_no_matching_target_message, test_no_tests_message,
@@ -223,55 +225,6 @@ fn project_test_output_path(
         output_path = output_path.join(parent);
     }
     output_path.join(file_name)
-}
-
-pub(crate) fn filter_test_targets(
-    targets: Vec<TestTarget>,
-    filter: Option<&str>,
-) -> Vec<TestTarget> {
-    let Some(filter) = filter else {
-        return targets;
-    };
-    targets
-        .into_iter()
-        .filter(|target| target.display_path.contains(filter))
-        .collect()
-}
-
-pub(crate) fn select_test_targets_by_path(
-    targets: Vec<TestTarget>,
-    target_path: &str,
-    package_name: Option<&str>,
-) -> Vec<TestTarget> {
-    targets
-        .into_iter()
-        .filter(|target| test_target_matches_path(target, target_path, package_name))
-        .collect()
-}
-
-fn test_target_matches_path(
-    target: &TestTarget,
-    target_path: &str,
-    package_name: Option<&str>,
-) -> bool {
-    if target.display_path == target_path {
-        return true;
-    }
-
-    if let Some(package_name) = package_name
-        && let Some(package_relative_path) = target
-            .display_path
-            .strip_prefix(&format!("packages/{package_name}/"))
-        && package_relative_path == target_path
-    {
-        return true;
-    }
-
-    match &target.kind {
-        TestTargetKind::Smoke { source_path, .. } | TestTargetKind::Ui { source_path, .. } => {
-            normalize_path(source_path) == target_path
-        }
-    }
 }
 
 fn report_test_package_selector_requires_project_context(package_name: &str) {

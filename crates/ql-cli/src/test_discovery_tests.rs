@@ -36,6 +36,20 @@ fn select_test_targets_matches_workspace_package_relative_path() {
 }
 
 #[test]
+fn select_test_targets_matches_normalized_source_path() {
+    let targets = vec![smoke_target(
+        "packages/core/tests/basic.ql",
+        "workspace/packages/core/tests/basic.ql",
+    )];
+
+    let selected =
+        select_test_targets_by_path(targets, "workspace/packages/core/tests/basic.ql", None);
+
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].display_path, "packages/core/tests/basic.ql");
+}
+
+#[test]
 fn filter_test_targets_keeps_display_path_substring_matches() {
     let targets = vec![
         smoke_target("tests/basic.ql", "tests/basic.ql"),
