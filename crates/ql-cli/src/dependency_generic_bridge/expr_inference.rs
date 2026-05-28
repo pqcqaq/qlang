@@ -289,4 +289,4 @@ impl<'a> ExprTypeInferencer<'a> {
 
 #[cfg(test)]
 #[path = "expr_inference_tests.rs"]
-mod tests;
+mod expr_inference_tests;

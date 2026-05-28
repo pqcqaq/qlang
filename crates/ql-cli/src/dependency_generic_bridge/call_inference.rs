@@ -241,4 +241,4 @@ pub(super) fn infer_function_call_return_type(
 
 #[cfg(test)]
 #[path = "call_inference_tests.rs"]
-mod tests;
+mod call_inference_tests;

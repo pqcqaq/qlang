@@ -331,4 +331,4 @@ pub(super) fn specialized_call_rewrite(
 
 #[cfg(test)]
 #[path = "specialized_forwarders_tests.rs"]
-mod tests;
+mod specialized_forwarders_tests;

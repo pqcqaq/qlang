@@ -159,4 +159,4 @@ fn render_inferred_named_type(path: &[String], args: &[InferredType]) -> String 
 
 #[cfg(test)]
 #[path = "inferred_types_tests.rs"]
-mod tests;
+mod inferred_types_tests;

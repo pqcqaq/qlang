@@ -182,4 +182,4 @@ pub(super) fn span_text(source: &str, span: ql_span::Span) -> String {
 
 #[cfg(test)]
 #[path = "rendering_tests.rs"]
-mod tests;
+mod rendering_tests;

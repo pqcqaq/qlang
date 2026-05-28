@@ -73,4 +73,4 @@ pub(super) fn dependency_imported_local_names(
 
 #[cfg(test)]
 #[path = "function_bindings_tests.rs"]
-mod tests;
+mod function_bindings_tests;

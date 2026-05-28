@@ -228,4 +228,4 @@ fn bind_generic_rendered_substitution(
 
 #[cfg(test)]
 #[path = "substitutions_tests.rs"]
-mod tests;
+mod substitutions_tests;
