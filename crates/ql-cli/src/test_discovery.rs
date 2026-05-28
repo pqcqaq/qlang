@@ -15,6 +15,7 @@ mod no_match;
 mod package_selector;
 mod paths;
 mod project;
+mod project_errors;
 mod selection;
 mod targets;
 mod ui;

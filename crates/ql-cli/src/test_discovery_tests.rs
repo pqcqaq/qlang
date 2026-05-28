@@ -5,6 +5,7 @@ use ql_driver::{BuildOptions, BuildProfile};
 use super::listing::render_test_target_listing;
 use super::package_selector::package_selector_mismatch_message;
 use super::paths::{package_test_command_path, project_test_output_path};
+use super::project_errors::ql_test_project_error_message;
 use super::ui::is_project_ui_test;
 use super::*;
 use crate::test_reporting::TestTargetKind;
@@ -164,4 +165,31 @@ fn project_ui_test_detection_requires_tests_ui_prefix() {
         Path::new("pkg"),
         Path::new("other/tests/ui/basic.ql")
     ));
+}
+
+#[test]
+fn ql_test_project_error_message_names_missing_manifest_start() {
+    let message = ql_test_project_error_message(&ql_project::ProjectError::ManifestNotFound {
+        start: PathBuf::from("missing"),
+    });
+
+    assert_eq!(
+        message,
+        vec![
+            "error: `ql test` requires a package or workspace manifest; could not find `qlang.toml` starting from `missing`"
+                .to_owned()
+        ]
+    );
+}
+
+#[test]
+fn ql_test_project_error_message_names_missing_package_manifest() {
+    let message = ql_test_project_error_message(&ql_project::ProjectError::PackageNotDefined {
+        path: PathBuf::from("pkg/qlang.toml"),
+    });
+
+    assert_eq!(
+        message,
+        vec!["error: `ql test` manifest `pkg/qlang.toml` does not declare `[package].name`"]
+    );
 }

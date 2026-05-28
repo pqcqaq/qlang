@@ -6,10 +6,6 @@ use ql_project::{
 };
 
 use crate::build_reporting::build_json_project_error;
-use crate::cli_utils::{
-    normalize_path, package_check_manifest_path_from_project_error,
-    package_missing_name_manifest_path_from_project_error,
-};
 use crate::project_targets::load_workspace_build_targets_for_command_from_request_root;
 use crate::project_workspace::resolve_selected_workspace_member_manifest;
 use crate::test_command::TestCommandOptions;
@@ -19,6 +15,7 @@ use super::package_selector::{
     load_workspace_selected_member_manifest_for_json, report_package_selector_mismatch,
     validate_test_package_selector,
 };
+use super::project_errors::{report_ql_test_project_error, report_ql_test_project_preflight_error};
 
 pub(super) fn load_project_test_members(
     request_path: &Path,
@@ -217,54 +214,4 @@ fn project_test_build_targets_from_manifest(
             }
         },
     })
-}
-
-fn report_ql_test_project_preflight_error(
-    request_path: &Path,
-    command_options: &TestCommandOptions,
-    error: &ql_project::ProjectError,
-    stage: &str,
-) -> u8 {
-    if command_options.json {
-        print!(
-            "{}",
-            render_test_json_preflight_failure_report(
-                request_path,
-                command_options,
-                build_json_project_error(request_path, error, stage),
-            )
-        );
-        return 1;
-    }
-
-    report_ql_test_project_error(error)
-}
-
-fn report_ql_test_project_error(error: &ql_project::ProjectError) -> u8 {
-    if let ql_project::ProjectError::ManifestNotFound { start } = error {
-        eprintln!(
-            "error: `ql test` requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
-            normalize_path(start)
-        );
-    } else if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(error)
-    {
-        eprintln!(
-            "error: `ql test` manifest `{}` does not declare `[package].name`",
-            normalize_path(manifest_path)
-        );
-    } else if let ql_project::ProjectError::PackageSourceRootNotFound { path } = error {
-        eprintln!(
-            "error: `ql test` package source directory `{}` does not exist",
-            normalize_path(path)
-        );
-    } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(error) {
-        eprintln!("error: `ql test` {error}");
-        eprintln!(
-            "note: failing package manifest: {}",
-            normalize_path(manifest_path)
-        );
-    } else {
-        eprintln!("error: `ql test` {error}");
-    }
-    1
 }
