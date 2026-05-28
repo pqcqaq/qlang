@@ -19,6 +19,10 @@ mod no_match_messages;
 #[path = "test_discovery/no_match_messages_tests.rs"]
 mod no_match_messages_tests;
 mod package_selector;
+mod package_selector_messages;
+#[cfg(test)]
+#[path = "test_discovery/package_selector_messages_tests.rs"]
+mod package_selector_messages_tests;
 mod paths;
 mod project;
 mod project_error_messages;

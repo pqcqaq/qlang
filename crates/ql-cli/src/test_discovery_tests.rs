@@ -7,7 +7,6 @@ use ql_project::{
 
 use super::listing::render_test_target_listing;
 use super::member_targets::resolved_test_member_default_profile;
-use super::package_selector::package_selector_mismatch_message;
 use super::paths::{package_test_command_path, project_test_output_path};
 use super::ui::is_project_ui_test;
 use super::*;
@@ -99,16 +98,6 @@ fn render_test_target_listing_preserves_paths_and_summary() {
     assert_eq!(
         render_test_target_listing(&targets),
         "tests/basic.ql\ntests/slow/path.ql\n\ntest listing: 2 discovered\n"
-    );
-}
-
-#[test]
-fn package_selector_mismatch_message_names_request_root() {
-    let message = package_selector_mismatch_message(Path::new("workspace"));
-
-    assert_eq!(
-        message,
-        "package selector matched no workspace members under `workspace`"
     );
 }
 

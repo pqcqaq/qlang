@@ -4,6 +4,8 @@ use crate::cli_utils::{normalize_path, validate_project_package_name};
 use crate::test_command::TestCommandOptions;
 use crate::test_reporting::render_test_json_preflight_message_report;
 
+use super::package_selector_messages::package_selector_mismatch_message;
+
 pub(super) fn validate_test_package_selector(
     request_path: &Path,
     command_options: &TestCommandOptions,
@@ -58,11 +60,4 @@ pub(super) fn report_package_selector_mismatch(
             normalize_path(request_path)
         );
     }
-}
-
-pub(super) fn package_selector_mismatch_message(request_path: &Path) -> String {
-    format!(
-        "package selector matched no workspace members under `{}`",
-        normalize_path(request_path)
-    )
 }
