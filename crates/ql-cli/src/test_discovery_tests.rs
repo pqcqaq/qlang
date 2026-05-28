@@ -59,6 +59,27 @@ fn no_tests_message_includes_package_selector_context() {
 }
 
 #[test]
+fn no_matching_filter_message_includes_package_selector_context() {
+    let message = test_no_matching_filter_message(Path::new("workspace"), "slow", Some("core"));
+
+    assert_eq!(
+        message,
+        "`ql test` found no test files matching `slow` for package `core` under `workspace`"
+    );
+}
+
+#[test]
+fn no_matching_target_message_includes_package_selector_context() {
+    let message =
+        test_no_matching_target_message(Path::new("workspace"), "tests/smoke.ql", Some("core"));
+
+    assert_eq!(
+        message,
+        "`ql test` found no test target `tests/smoke.ql` for package `core` under `workspace`"
+    );
+}
+
+#[test]
 fn project_test_output_path_preserves_nested_test_layout() {
     let output_path = project_test_output_path(
         Path::new("pkg/qlang.toml"),

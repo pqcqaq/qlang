@@ -27,7 +27,7 @@
 - `ql-cli` 主入口、check/build/run/test pipeline、project selection/reporting、dependency bridge 和 build reporting 已持续模块化；dependency generic bridge 的 specialized forwarder 已统一 same-module/imported helper target collection，并有单元测试锁住 alias/group import 行为。下一步继续拆 CLI 大边界并外置剩余内联测试，所有移动必须保持行为不变并跑真实 workspace smoke。
 - 关键输出写入已统一走同目录临时文件替换和输出路径锁，覆盖 artifact、header、source、manifest、lockfile、interface 以及 `run/test` 执行期 executable。后续并发问题继续按“先保护真实产物，再补 CLI smoke”的顺序处理。
 - `project init --stdlib` starter 是 downstream 可用性入口；package/workspace 的 `check/build/run/test`、interface sync/check、graph/status/targets/dependencies/dependents、lock stale failure 和 JSON/listing 合同都必须持续覆盖。
-- `ql test` 已覆盖 package-under-test、direct dependency 和 local generic source override 的组合路径；后续重点是继续与 build/run 的 selector、profile、JSON failure 合同保持一致。
+- `ql test` 已覆盖 package-under-test、direct dependency 和 local generic source override 的组合路径；test discovery 的 no-tests/no-match reporting 已独立拆分并保留消息合同测试。后续重点是继续与 build/run 的 selector、profile、JSON failure 合同保持一致。
 - stdlib public API 继续优先用泛型、数组长度泛型和语言能力表达；新增 API 必须进入 package-local smoke 或 starter/downstream smoke。
 - LSP 已共享 request context 并拆出主要 request family；initialize capabilities 和 `qlsp` binary tests 已外置；下一步是稳定 workspace index/cache 生命周期，减少重复扫描。
 - README、roadmap、stdlib、VSCode 文档必须跟实现同步；实现未落地时文档写成未支持。
