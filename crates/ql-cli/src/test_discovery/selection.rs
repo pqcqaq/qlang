@@ -149,19 +149,12 @@ fn load_package_selected_test_member(
     let current_package_name = match package_name(manifest) {
         Ok(package_name) => package_name,
         Err(error) => {
-            if command_options.json {
-                print!(
-                    "{}",
-                    render_test_json_preflight_failure_report(
-                        request_path,
-                        command_options,
-                        build_json_project_error(request_path, &error, "package-selection"),
-                    )
-                );
-            } else {
-                eprintln!("error: `ql test` {error}");
-            }
-            return Err(1);
+            return Err(report_ql_test_project_preflight_error(
+                request_path,
+                command_options,
+                &error,
+                "package-selection",
+            ));
         }
     };
     if current_package_name != selected_package_name {
