@@ -2,6 +2,10 @@ use std::collections::BTreeSet;
 
 use ql_ast::{FunctionDecl, Module};
 
+use super::enum_bindings::{
+    EnumTypeBindings, collect_local_enum_type_bindings, collect_root_call_enum_type_bindings,
+    collect_specialization_enum_type_bindings,
+};
 use super::function_bindings::{FunctionTypeBindings, collect_local_function_type_bindings};
 use super::instantiations;
 use super::specialization_function_bindings::{
@@ -74,16 +78,21 @@ pub(crate) fn render_public_function_specialization_status_with_context(
     }
     let dependency_function_bindings =
         collect_specialization_function_type_bindings(dependency_module, specialization_modules);
+    let dependency_enum_bindings =
+        collect_specialization_enum_type_bindings(dependency_module, specialization_modules);
     let root_function_bindings = collect_root_call_function_type_bindings(
         root_module,
         module_import_path,
         dependency_module,
     );
+    let root_enum_bindings =
+        collect_root_call_enum_type_bindings(root_module, module_import_path, dependency_module);
     let call_instantiations = instantiations::collect_public_function_call_instantiation_status(
         root_module,
         module_import_path,
         function,
         &root_function_bindings,
+        &root_enum_bindings,
     );
     if !call_instantiations.saw_call {
         return PublicFunctionSpecializationRender::NotCalled;
@@ -94,6 +103,7 @@ pub(crate) fn render_public_function_specialization_status_with_context(
         contents,
         dependency_module,
         &dependency_function_bindings,
+        &dependency_enum_bindings,
         specialization_modules,
         call_instantiations.instantiations,
         rendered_specializations,
@@ -121,6 +131,7 @@ pub(crate) fn render_local_function_specializations(
         root_module,
         function,
         &collect_local_function_type_bindings(root_module),
+        &collect_local_enum_type_bindings(root_module),
     );
     render_function_specializations(
         module_import_path,
@@ -128,6 +139,7 @@ pub(crate) fn render_local_function_specializations(
         contents,
         root_module,
         &collect_local_function_type_bindings(root_module),
+        &collect_local_enum_type_bindings(root_module),
         &[],
         call_instantiations,
         rendered_specializations,
@@ -140,6 +152,7 @@ fn render_function_specializations(
     contents: &str,
     specialization_module: &Module,
     function_bindings: &FunctionTypeBindings,
+    enum_bindings: &EnumTypeBindings,
     specialization_modules: &[SpecializationModule<'_>],
     call_instantiations: Vec<instantiations::PublicFunctionCallInstantiation>,
     rendered_specializations: &mut BTreeSet<String>,
@@ -155,6 +168,7 @@ fn render_function_specializations(
         contents,
         specialization_module,
         function_bindings,
+        enum_bindings,
         specialization_modules,
         &concrete_instantiations,
         rendered_specializations,
@@ -187,6 +201,7 @@ fn render_concrete_forwarder_declarations(
     contents: &str,
     specialization_module: &Module,
     function_bindings: &FunctionTypeBindings,
+    enum_bindings: &EnumTypeBindings,
     specialization_modules: &[SpecializationModule<'_>],
     concrete_instantiations: &BTreeSet<TypeSubstitutions>,
     rendered_specializations: &mut BTreeSet<String>,
@@ -194,6 +209,7 @@ fn render_concrete_forwarder_declarations(
     let mut declarations = Vec::new();
     let mut forwarder_context = SpecializedForwarderRenderContext::new(
         function_bindings,
+        enum_bindings,
         specialization_modules,
         rendered_specializations,
         &mut declarations,

@@ -130,8 +130,12 @@ impl ExprInstantiationScanner<'_, '_> {
         return_expected_ty: Option<&TypeExpr>,
         bindings: &ValueTypeBindings,
     ) {
-        let value_ty =
-            infer_dependency_generic_expr_type(value, bindings, self.context.function_bindings);
+        let value_ty = infer_dependency_generic_expr_type(
+            value,
+            bindings,
+            self.context.function_bindings,
+            self.context.enum_bindings,
+        );
         self.scan_child_expr(value, return_expected_ty, bindings);
         for arm in arms {
             let arm_bindings = self.match_arm_bindings(&arm.pattern, value_ty.as_ref(), bindings);
@@ -150,7 +154,12 @@ impl ExprInstantiationScanner<'_, '_> {
     ) -> ValueTypeBindings {
         let mut arm_bindings = bindings.clone();
         if let Some(value_ty) = value_ty {
-            record_pattern_inferred_type_bindings(pattern, value_ty, &mut arm_bindings);
+            record_pattern_inferred_type_bindings(
+                pattern,
+                value_ty,
+                &mut arm_bindings,
+                self.context.enum_bindings,
+            );
         }
         arm_bindings
     }

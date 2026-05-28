@@ -1,6 +1,7 @@
 use ql_ast::{CallArg, Expr, ExprKind, FunctionDecl, Param, TypeExpr};
 
 use super::call_inference::collect_generic_type_substitutions_from_arg_expr;
+use super::enum_bindings::EnumTypeBindings;
 use super::function_bindings::FunctionTypeBindings;
 use super::inferred_type_conversion::{
     inferred_type_from_type_expr_with_substitutions, type_expr_from_inferred_type,
@@ -82,6 +83,7 @@ pub(super) fn ordered_call_arg_expected_types(
     expected_ty: Option<&TypeExpr>,
     bindings: &ValueTypeBindings,
     function_bindings: &FunctionTypeBindings,
+    enum_bindings: &EnumTypeBindings,
 ) -> Vec<Option<TypeExpr>> {
     let mut expected_types = vec![None; args.len()];
     let ExprKind::Name(name) = &callee.kind else {
@@ -114,6 +116,7 @@ pub(super) fn ordered_call_arg_expected_types(
             &generic_names,
             bindings,
             function_bindings,
+            enum_bindings,
             &mut substitutions,
         );
     }

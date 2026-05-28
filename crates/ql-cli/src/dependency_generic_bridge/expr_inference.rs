@@ -1,6 +1,7 @@
 use ql_ast::{self, BinaryOp, CallArg, Expr, ExprKind, MatchArm, UnaryOp};
 
 use super::call_inference::infer_function_call_return_type;
+use super::enum_bindings::{EnumTypeBindings, infer_tuple_variant_enum_type};
 use super::function_bindings::FunctionTypeBindings;
 use super::inferred_type_predicates::{
     are_inferred_bool_types, is_inferred_bool_type, is_inferred_equality_comparable_type,
@@ -15,20 +16,27 @@ pub(super) fn infer_dependency_generic_expr_type(
     expr: &Expr,
     bindings: &ValueTypeBindings,
     function_bindings: &FunctionTypeBindings,
+    enum_bindings: &EnumTypeBindings,
 ) -> Option<InferredType> {
-    ExprTypeInferencer::new(bindings, function_bindings).infer_expr(expr)
+    ExprTypeInferencer::new(bindings, function_bindings, enum_bindings).infer_expr(expr)
 }
 
 struct ExprTypeInferencer<'a> {
     bindings: &'a ValueTypeBindings,
     function_bindings: &'a FunctionTypeBindings,
+    enum_bindings: &'a EnumTypeBindings,
 }
 
 impl<'a> ExprTypeInferencer<'a> {
-    fn new(bindings: &'a ValueTypeBindings, function_bindings: &'a FunctionTypeBindings) -> Self {
+    fn new(
+        bindings: &'a ValueTypeBindings,
+        function_bindings: &'a FunctionTypeBindings,
+        enum_bindings: &'a EnumTypeBindings,
+    ) -> Self {
         Self {
             bindings,
             function_bindings,
+            enum_bindings,
         }
     }
 
@@ -109,6 +117,7 @@ impl<'a> ExprTypeInferencer<'a> {
                     value,
                     &mut block_bindings,
                     self.function_bindings,
+                    self.enum_bindings,
                 );
             }
         }
@@ -116,6 +125,7 @@ impl<'a> ExprTypeInferencer<'a> {
             block.tail.as_deref()?,
             &block_bindings,
             self.function_bindings,
+            self.enum_bindings,
         )
     }
 
@@ -149,9 +159,15 @@ impl<'a> ExprTypeInferencer<'a> {
     ) -> Option<InferredType> {
         let mut arm_bindings = self.bindings.clone();
         if let Some(value_ty) = value_ty {
-            record_pattern_inferred_type_bindings(&arm.pattern, value_ty, &mut arm_bindings);
+            record_pattern_inferred_type_bindings(
+                &arm.pattern,
+                value_ty,
+                &mut arm_bindings,
+                self.enum_bindings,
+            );
         }
-        ExprTypeInferencer::new(&arm_bindings, self.function_bindings).infer_expr(&arm.body)
+        ExprTypeInferencer::new(&arm_bindings, self.function_bindings, self.enum_bindings)
+            .infer_expr(&arm.body)
     }
 
     fn infer_projection_type(&self, target: &Expr, items: &[Expr]) -> Option<InferredType> {
@@ -177,7 +193,13 @@ impl<'a> ExprTypeInferencer<'a> {
     fn infer_call_type(&self, callee: &Expr, args: &[CallArg]) -> Option<InferredType> {
         self.infer_single_field_generic_variant_call_type(callee, args)
             .or_else(|| {
-                infer_function_call_return_type(callee, args, self.bindings, self.function_bindings)
+                infer_function_call_return_type(
+                    callee,
+                    args,
+                    self.bindings,
+                    self.function_bindings,
+                    self.enum_bindings,
+                )
             })
     }
 
@@ -228,23 +250,20 @@ impl<'a> ExprTypeInferencer<'a> {
         callee: &Expr,
         args: &[CallArg],
     ) -> Option<InferredType> {
-        let ExprKind::Member { object, .. } = &callee.kind else {
+        let ExprKind::Member { object, field, .. } = &callee.kind else {
             return None;
         };
         let ExprKind::Name(type_name) = &object.kind else {
             return None;
         };
-        let [CallArg::Positional(value)] = args else {
-            return None;
-        };
-        let arg_ty = self.infer_expr(value)?;
-        Some(InferredType {
-            rendered: format!("{type_name}[{}]", arg_ty.rendered),
-            kind: InferredTypeKind::Named {
-                path: vec![type_name.clone()],
-                args: vec![arg_ty],
-            },
-        })
+        let arg_types = args
+            .iter()
+            .map(|arg| match arg {
+                CallArg::Positional(value) => self.infer_expr(value),
+                CallArg::Named { .. } => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        infer_tuple_variant_enum_type(type_name, field, &arg_types, self.enum_bindings)
     }
 }
 

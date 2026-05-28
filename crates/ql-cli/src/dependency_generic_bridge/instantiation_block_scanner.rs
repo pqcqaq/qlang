@@ -31,6 +31,7 @@ pub(super) fn collect_dependency_generic_function_instantiations_from_block(
                     value,
                     bindings,
                     context.function_bindings,
+                    context.enum_bindings,
                     context.type_substitutions,
                 );
             }
@@ -117,6 +118,7 @@ fn scan_for_block(
         iterable,
         &mut body_bindings,
         context.function_bindings,
+        context.enum_bindings,
     );
     collect_dependency_generic_function_instantiations_from_block(
         body,

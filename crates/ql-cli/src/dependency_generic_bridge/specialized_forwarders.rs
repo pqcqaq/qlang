@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ql_ast::{FunctionDecl, Module};
 
+use super::enum_bindings::EnumTypeBindings;
 use super::function_bindings::{FunctionTypeBindings, dependency_imported_local_names};
 use super::instantiations;
 use super::rendering::{
@@ -18,6 +19,7 @@ use super::{
 
 pub(super) struct SpecializedForwarderRenderContext<'a, 'm> {
     function_bindings: &'a FunctionTypeBindings,
+    enum_bindings: &'a EnumTypeBindings,
     rendered_specializations: &'a mut BTreeSet<String>,
     declarations: &'a mut Vec<String>,
     specialization_modules: &'a [SpecializationModule<'m>],
@@ -26,12 +28,14 @@ pub(super) struct SpecializedForwarderRenderContext<'a, 'm> {
 impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
     pub(super) fn new(
         function_bindings: &'a FunctionTypeBindings,
+        enum_bindings: &'a EnumTypeBindings,
         specialization_modules: &'a [SpecializationModule<'m>],
         rendered_specializations: &'a mut BTreeSet<String>,
         declarations: &'a mut Vec<String>,
     ) -> Self {
         Self {
             function_bindings,
+            enum_bindings,
             rendered_specializations,
             declarations,
             specialization_modules,
@@ -128,6 +132,7 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
         body_call_rewrites: &mut Vec<SourceRewrite>,
     ) -> Option<()> {
         let function_bindings = self.function_bindings;
+        let enum_bindings = self.enum_bindings;
         for target in same_module_specialized_call_targets(
             module_import_path,
             contents,
@@ -138,6 +143,7 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
                 target.callee,
                 substitutions,
                 function_bindings,
+                enum_bindings,
             );
             self.render_specialized_body_call_rewrites_for_callee(
                 target,
@@ -156,6 +162,7 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
         body_call_rewrites: &mut Vec<SourceRewrite>,
     ) -> Option<()> {
         let function_bindings = self.function_bindings;
+        let enum_bindings = self.enum_bindings;
         for (target, local_names) in
             imported_specialized_call_targets(specialization_module, self.specialization_modules)
         {
@@ -166,6 +173,7 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
                     &local_names,
                     substitutions,
                     function_bindings,
+                    enum_bindings,
                 );
             self.render_specialized_body_call_rewrites_for_callee(
                 target,

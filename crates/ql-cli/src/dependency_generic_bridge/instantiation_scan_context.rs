@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 use ql_ast::FunctionDecl;
 use ql_span::Span;
 
+use super::enum_bindings::EnumTypeBindings;
 use super::function_bindings::FunctionTypeBindings;
 use super::substitutions::TypeSubstitutions;
 
@@ -16,6 +17,7 @@ pub(super) struct InstantiationScanContext<'a> {
     pub(super) local_names: &'a BTreeSet<String>,
     pub(super) target_function: &'a FunctionDecl,
     pub(super) function_bindings: &'a FunctionTypeBindings,
+    pub(super) enum_bindings: &'a EnumTypeBindings,
     pub(super) type_substitutions: Option<&'a TypeSubstitutions>,
     saw_call: bool,
     instantiations: Vec<PublicFunctionCallInstantiation>,
@@ -26,11 +28,13 @@ impl<'a> InstantiationScanContext<'a> {
         local_names: &'a BTreeSet<String>,
         target_function: &'a FunctionDecl,
         function_bindings: &'a FunctionTypeBindings,
+        enum_bindings: &'a EnumTypeBindings,
     ) -> Self {
         Self {
             local_names,
             target_function,
             function_bindings,
+            enum_bindings,
             type_substitutions: None,
             saw_call: false,
             instantiations: Vec::new(),
@@ -41,12 +45,14 @@ impl<'a> InstantiationScanContext<'a> {
         local_names: &'a BTreeSet<String>,
         target_function: &'a FunctionDecl,
         function_bindings: &'a FunctionTypeBindings,
+        enum_bindings: &'a EnumTypeBindings,
         type_substitutions: &'a TypeSubstitutions,
     ) -> Self {
         Self {
             local_names,
             target_function,
             function_bindings,
+            enum_bindings,
             type_substitutions: Some(type_substitutions),
             saw_call: false,
             instantiations: Vec::new(),

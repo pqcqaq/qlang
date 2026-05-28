@@ -1,5 +1,8 @@
 use std::collections::BTreeSet;
 
+use super::enum_bindings::EnumTypeBindings;
+#[cfg(test)]
+use super::enum_bindings::collect_root_call_enum_type_bindings;
 use super::function_bindings::{FunctionTypeBindings, dependency_imported_local_names};
 use super::instantiation_block_scanner::collect_dependency_generic_function_instantiations_from_block;
 use super::instantiation_scan_context::InstantiationScanContext;
@@ -39,14 +42,18 @@ impl PublicFunctionCallInstantiations {
 fn collect_public_function_instantiations(
     root_module: &Module,
     module_import_path: &[String],
+    dependency_module: &Module,
     function: &FunctionDecl,
 ) -> BTreeSet<TypeSubstitutions> {
     let function_bindings = FunctionTypeBindings::new();
+    let enum_bindings =
+        collect_root_call_enum_type_bindings(root_module, module_import_path, dependency_module);
     collect_public_function_call_instantiations(
         root_module,
         module_import_path,
         function,
         &function_bindings,
+        &enum_bindings,
     )
     .into_iter()
     .map(|instantiation| instantiation.substitutions)
@@ -59,12 +66,14 @@ pub(super) fn collect_public_function_call_instantiations(
     module_import_path: &[String],
     function: &FunctionDecl,
     function_bindings: &FunctionTypeBindings,
+    enum_bindings: &EnumTypeBindings,
 ) -> Vec<PublicFunctionCallInstantiation> {
     collect_public_function_call_instantiation_status(
         root_module,
         module_import_path,
         function,
         function_bindings,
+        enum_bindings,
     )
     .instantiations
 }
@@ -74,6 +83,7 @@ pub(super) fn collect_public_function_call_instantiation_status(
     module_import_path: &[String],
     function: &FunctionDecl,
     function_bindings: &FunctionTypeBindings,
+    enum_bindings: &EnumTypeBindings,
 ) -> PublicFunctionCallInstantiations {
     let local_names =
         dependency_imported_local_names(root_module, module_import_path, function.name.as_str());
@@ -82,7 +92,8 @@ pub(super) fn collect_public_function_call_instantiation_status(
     }
 
     let root_bindings = collect_root_value_type_bindings(root_module);
-    let mut context = InstantiationScanContext::new(&local_names, function, function_bindings);
+    let mut context =
+        InstantiationScanContext::new(&local_names, function, function_bindings, enum_bindings);
     scan_root_module_items(root_module, &root_bindings, &mut context, |_| true);
     PublicFunctionCallInstantiations::from_context(context)
 }
@@ -91,10 +102,12 @@ pub(super) fn collect_local_function_call_instantiations(
     root_module: &Module,
     function: &FunctionDecl,
     function_bindings: &FunctionTypeBindings,
+    enum_bindings: &EnumTypeBindings,
 ) -> Vec<PublicFunctionCallInstantiation> {
     let local_names = BTreeSet::from([function.name.clone()]);
     let root_bindings = collect_root_value_type_bindings(root_module);
-    let mut context = InstantiationScanContext::new(&local_names, function, function_bindings);
+    let mut context =
+        InstantiationScanContext::new(&local_names, function, function_bindings, enum_bindings);
     scan_root_module_items(root_module, &root_bindings, &mut context, |function| {
         function.generics.is_empty()
     });
@@ -134,6 +147,7 @@ pub(super) fn collect_specialized_body_call_instantiations(
     target_function: &FunctionDecl,
     caller_substitutions: &TypeSubstitutions,
     function_bindings: &FunctionTypeBindings,
+    enum_bindings: &EnumTypeBindings,
 ) -> Vec<PublicFunctionCallInstantiation> {
     let local_names = BTreeSet::from([target_function.name.clone()]);
     collect_specialized_body_call_instantiations_for_local_names(
@@ -142,6 +156,7 @@ pub(super) fn collect_specialized_body_call_instantiations(
         &local_names,
         caller_substitutions,
         function_bindings,
+        enum_bindings,
     )
 }
 
@@ -151,6 +166,7 @@ pub(super) fn collect_specialized_body_call_instantiations_for_local_names(
     local_names: &BTreeSet<String>,
     caller_substitutions: &TypeSubstitutions,
     function_bindings: &FunctionTypeBindings,
+    enum_bindings: &EnumTypeBindings,
 ) -> Vec<PublicFunctionCallInstantiation> {
     let Some(body) = &caller_function.body else {
         return Vec::new();
@@ -165,6 +181,7 @@ pub(super) fn collect_specialized_body_call_instantiations_for_local_names(
         local_names,
         target_function,
         function_bindings,
+        enum_bindings,
         caller_substitutions,
     );
     collect_dependency_generic_function_instantiations_from_block(

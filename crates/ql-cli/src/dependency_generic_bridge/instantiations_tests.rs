@@ -1,3 +1,4 @@
+use super::super::enum_bindings::collect_root_call_enum_type_bindings;
 use super::*;
 
 fn parse_module(source: &str) -> Module {
@@ -37,6 +38,7 @@ fn run() -> Int {
         &module,
         function(&module, "identity"),
         &FunctionTypeBindings::new(),
+        &collect_root_call_enum_type_bindings(&module, &[], &module),
     );
 
     assert_eq!(instantiations.len(), 1);
@@ -82,6 +84,7 @@ fn run() -> Int {
     let instantiations = collect_public_function_instantiations(
         &root,
         &["dep".to_owned()],
+        &dependency,
         function(&dependency, "identity"),
     );
 
@@ -136,6 +139,7 @@ fn run() -> Int {
     let substitutions = collect_public_function_instantiations(
         &root,
         &["dep".to_owned()],
+        &dependency,
         function(&dependency, "tag"),
     );
 
@@ -186,6 +190,7 @@ fn run() -> Int {
     let substitutions = collect_public_function_instantiations(
         &root,
         &["dep".to_owned()],
+        &dependency,
         function(&dependency, "tag"),
     );
 
@@ -250,6 +255,7 @@ fn run() -> Int {
     let substitutions = collect_public_function_instantiations(
         &root,
         &["dep".to_owned()],
+        &dependency,
         function(&dependency, "tag"),
     );
 
@@ -268,6 +274,54 @@ fn run() -> Int {
         substitutions
             .iter()
             .any(|item| item.get("T").map(String::as_str) == Some("String"))
+    );
+}
+
+#[test]
+fn infers_substitutions_from_custom_generic_enum_match_patterns() {
+    let dependency = parse_module(
+        r#"
+package dep
+
+pub fn tag[T](value: T) -> Int {
+    return 1
+}
+"#,
+    );
+    let root = parse_module(
+        r#"
+use dep.tag as tag
+
+enum Boxed[T] {
+    Item(T),
+    Empty,
+}
+
+fn run() -> Int {
+    let value = Boxed.Item(7)
+    return match value {
+        Boxed.Item(inner) => tag(inner),
+        Boxed.Empty => 0,
+    }
+}
+"#,
+    );
+
+    let substitutions = collect_public_function_instantiations(
+        &root,
+        &["dep".to_owned()],
+        &dependency,
+        function(&dependency, "tag"),
+    );
+
+    assert_eq!(substitutions.len(), 1);
+    assert_eq!(
+        substitutions
+            .iter()
+            .next()
+            .and_then(|item| item.get("T"))
+            .map(String::as_str),
+        Some("Int")
     );
 }
 
@@ -301,6 +355,7 @@ fn run() -> Int {
     let instantiations = collect_public_function_instantiations(
         &root,
         &["std".to_owned(), "option".to_owned()],
+        &dependency,
         function(&dependency, "unwrap_or"),
     );
 
@@ -336,6 +391,7 @@ fn run() -> Int {
     let instantiations = collect_public_function_instantiations(
         &root,
         &["dep".to_owned()],
+        &dependency,
         function(&dependency, "choose"),
     );
 
@@ -377,6 +433,7 @@ fn run() -> Int {
     let substitutions = collect_public_function_instantiations(
         &root,
         &["dep".to_owned()],
+        &dependency,
         function(&dependency, "identity"),
     );
 
@@ -422,6 +479,7 @@ fn run() -> Int {
     let substitutions = collect_public_function_instantiations(
         &root,
         &["dep".to_owned()],
+        &dependency,
         function(&dependency, "identity"),
     );
 
@@ -468,6 +526,7 @@ fn run() -> Int {
     let substitutions = collect_public_function_instantiations(
         &root,
         &["dep".to_owned()],
+        &dependency,
         function(&dependency, "identity"),
     );
 
@@ -512,6 +571,7 @@ fn run() -> Int {
     let substitutions = collect_public_function_instantiations(
         &root,
         &["dep".to_owned()],
+        &dependency,
         function(&dependency, "tag"),
     );
 
@@ -564,6 +624,7 @@ fn run(flag: Bool) -> Int {
     let substitutions = collect_public_function_instantiations(
         &root,
         &["dep".to_owned()],
+        &dependency,
         function(&dependency, "identity"),
     );
 
@@ -621,6 +682,7 @@ fn run(values: [Int; 3], flag: Bool) -> Int {
         &["dep".to_owned()],
         function(&dependency, "identity"),
         &FunctionTypeBindings::new(),
+        &collect_root_call_enum_type_bindings(&root, &["dep".to_owned()], &dependency),
     );
 
     assert_eq!(instantiations.len(), 4);
@@ -669,6 +731,7 @@ fn run() -> Int {
     let substitutions = collect_public_function_instantiations(
         &root,
         &["dep".to_owned()],
+        &dependency,
         function(&dependency, "fixed_first"),
     );
 
@@ -714,6 +777,7 @@ fn run() -> Int {
     let substitutions = collect_public_function_instantiations(
         &root,
         &["dep".to_owned()],
+        &dependency,
         function(&dependency, "first"),
     );
 
@@ -753,6 +817,7 @@ fn run() -> Int {
     let substitutions = collect_public_function_instantiations(
         &root,
         &["dep".to_owned()],
+        &dependency,
         function(&dependency, "mirror"),
     );
 
@@ -794,6 +859,7 @@ fn run() -> Int {
     let substitutions = collect_public_function_instantiations(
         &root,
         &["dep".to_owned()],
+        &dependency,
         function(&dependency, "reverse"),
     );
 
@@ -842,6 +908,7 @@ fn run() -> Int {
     let instantiations = collect_public_function_instantiations(
         &root,
         &["std".to_owned(), "option".to_owned()],
+        &dependency,
         function(&dependency, "is_some"),
     );
 
@@ -893,11 +960,13 @@ fn run() -> Int {
     let ok_instantiations = collect_public_function_instantiations(
         &root,
         &["std".to_owned(), "result".to_owned()],
+        &dependency,
         function(&dependency, "ok"),
     );
     let err_instantiations = collect_public_function_instantiations(
         &root,
         &["std".to_owned(), "result".to_owned()],
+        &dependency,
         function(&dependency, "err"),
     );
 
@@ -974,6 +1043,7 @@ fn nested(value: Result[Int, Int]) -> Option[Int] {
     let instantiations = collect_public_function_instantiations(
         &root,
         &["std".to_owned(), "result".to_owned()],
+        &dependency,
         function(&dependency, "to_option"),
     );
 
@@ -1021,6 +1091,7 @@ fn run() -> Int {
     let instantiations = collect_public_function_instantiations(
         &root,
         &["std".to_owned(), "option".to_owned()],
+        &dependency,
         function(&dependency, "none_option"),
     );
 
@@ -1062,6 +1133,7 @@ fn run() -> Int {
     let instantiations = collect_public_function_instantiations(
         &root,
         &["dep".to_owned()],
+        &dependency,
         function(&dependency, "identity"),
     );
 

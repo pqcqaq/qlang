@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use ql_ast::{Expr, FunctionDecl, ItemKind, Module, Param, Pattern, PatternKind, TypeExpr};
 
+use super::enum_bindings::{EnumTypeBindings, tuple_variant_field_types};
 use super::expr_inference::infer_dependency_generic_expr_type;
 use super::function_bindings::FunctionTypeBindings;
 use super::inferred_type_conversion::inferred_type_from_type_expr_with_substitutions;
@@ -58,6 +59,7 @@ pub(super) fn record_let_type_bindings(
     value: &Expr,
     bindings: &mut ValueTypeBindings,
     function_bindings: &FunctionTypeBindings,
+    enum_bindings: &EnumTypeBindings,
 ) {
     record_let_type_bindings_with_substitutions(
         pattern,
@@ -65,6 +67,7 @@ pub(super) fn record_let_type_bindings(
         value,
         bindings,
         function_bindings,
+        enum_bindings,
         None,
     );
 }
@@ -75,14 +78,23 @@ pub(super) fn record_let_type_bindings_with_substitutions(
     value: &Expr,
     bindings: &mut ValueTypeBindings,
     function_bindings: &FunctionTypeBindings,
+    enum_bindings: &EnumTypeBindings,
     substitutions: Option<&TypeSubstitutions>,
 ) {
     if let Some(ty) = ty {
-        record_pattern_type_bindings_with_substitutions(pattern, ty, bindings, substitutions);
+        record_pattern_type_bindings_with_substitutions(
+            pattern,
+            ty,
+            bindings,
+            enum_bindings,
+            substitutions,
+        );
         return;
     }
-    if let Some(ty) = infer_dependency_generic_expr_type(value, bindings, function_bindings) {
-        record_pattern_inferred_type_bindings(pattern, &ty, bindings);
+    if let Some(ty) =
+        infer_dependency_generic_expr_type(value, bindings, function_bindings, enum_bindings)
+    {
+        record_pattern_inferred_type_bindings(pattern, &ty, bindings, enum_bindings);
     }
 }
 
@@ -91,30 +103,32 @@ pub(super) fn record_iterable_type_bindings(
     iterable: &Expr,
     bindings: &mut ValueTypeBindings,
     function_bindings: &FunctionTypeBindings,
+    enum_bindings: &EnumTypeBindings,
 ) {
     let Some(iterable_ty) =
-        infer_dependency_generic_expr_type(iterable, bindings, function_bindings)
+        infer_dependency_generic_expr_type(iterable, bindings, function_bindings, enum_bindings)
     else {
         return;
     };
     let InferredTypeKind::Array { element, .. } = &iterable_ty.kind else {
         return;
     };
-    record_pattern_inferred_type_bindings(pattern, element, bindings);
+    record_pattern_inferred_type_bindings(pattern, element, bindings, enum_bindings);
 }
 
 fn record_pattern_type_bindings_with_substitutions(
     pattern: &Pattern,
     ty: &TypeExpr,
     bindings: &mut ValueTypeBindings,
+    enum_bindings: &EnumTypeBindings,
     substitutions: Option<&TypeSubstitutions>,
 ) {
     let Some(substitutions) = substitutions else {
-        record_pattern_type_bindings(pattern, ty, bindings);
+        record_pattern_type_bindings(pattern, ty, bindings, enum_bindings);
         return;
     };
     if let Some(ty) = inferred_type_from_type_expr_with_substitutions(ty, substitutions) {
-        record_pattern_inferred_type_bindings(pattern, &ty, bindings);
+        record_pattern_inferred_type_bindings(pattern, &ty, bindings, enum_bindings);
     }
 }
 
@@ -122,9 +136,10 @@ fn record_pattern_type_bindings(
     pattern: &Pattern,
     ty: &TypeExpr,
     bindings: &mut ValueTypeBindings,
+    enum_bindings: &EnumTypeBindings,
 ) {
     if let Some(ty) = InferredType::from_type_expr(ty) {
-        record_pattern_inferred_type_bindings(pattern, &ty, bindings);
+        record_pattern_inferred_type_bindings(pattern, &ty, bindings, enum_bindings);
     }
 }
 
@@ -132,6 +147,7 @@ pub(super) fn record_pattern_inferred_type_bindings(
     pattern: &Pattern,
     ty: &InferredType,
     bindings: &mut ValueTypeBindings,
+    enum_bindings: &EnumTypeBindings,
 ) {
     match (&pattern.kind, &ty.kind) {
         (PatternKind::Name(name), _) => {
@@ -141,20 +157,27 @@ pub(super) fn record_pattern_inferred_type_bindings(
             if patterns.len() == types.len() =>
         {
             for (pattern, ty) in patterns.iter().zip(types) {
-                record_pattern_inferred_type_bindings(pattern, ty, bindings);
+                record_pattern_inferred_type_bindings(pattern, ty, bindings, enum_bindings);
             }
         }
         (PatternKind::Array(patterns), InferredTypeKind::Array { element, .. }) => {
             for pattern in patterns {
-                record_pattern_inferred_type_bindings(pattern, element, bindings);
+                record_pattern_inferred_type_bindings(pattern, element, bindings, enum_bindings);
             }
         }
-        (PatternKind::TupleStruct { path, items }, _) => {
-            if let Some(field_types) = generic_carrier_tuple_struct_field_types(path, ty)
+        (
+            PatternKind::TupleStruct { path, items },
+            InferredTypeKind::Named {
+                path: enum_path,
+                args,
+            },
+        ) => {
+            if let Some(field_types) =
+                tuple_struct_field_types(path, enum_path, args, enum_bindings)
                 && items.len() == field_types.len()
             {
                 for (pattern, ty) in items.iter().zip(field_types) {
-                    record_pattern_inferred_type_bindings(pattern, ty, bindings);
+                    record_pattern_inferred_type_bindings(pattern, &ty, bindings, enum_bindings);
                 }
             }
         }
@@ -162,19 +185,17 @@ pub(super) fn record_pattern_inferred_type_bindings(
     }
 }
 
-fn generic_carrier_tuple_struct_field_types<'a>(
+fn tuple_struct_field_types(
     pattern_path: &ql_ast::Path,
-    ty: &'a InferredType,
-) -> Option<Vec<&'a InferredType>> {
-    let InferredTypeKind::Named { path, args } = &ty.kind else {
+    enum_path: &[String],
+    enum_args: &[InferredType],
+    enum_bindings: &EnumTypeBindings,
+) -> Option<Vec<InferredType>> {
+    let enum_name = enum_path.last()?;
+    let pattern_enum_name = pattern_path.segments.first()?;
+    if enum_name != pattern_enum_name {
         return None;
-    };
-    let carrier = path.last()?.as_str();
-    let variant = pattern_path.segments.last()?.as_str();
-    match (carrier, variant, args.as_slice()) {
-        ("Option", "Some", [inner]) => Some(vec![inner]),
-        ("Result", "Ok", [value, _]) => Some(vec![value]),
-        ("Result", "Err", [_, error]) => Some(vec![error]),
-        _ => None,
     }
+    let variant_name = pattern_path.segments.last()?;
+    tuple_variant_field_types(enum_name, variant_name, enum_args, enum_bindings)
 }

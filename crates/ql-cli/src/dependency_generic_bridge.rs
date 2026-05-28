@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 
 mod call_args;
 mod call_inference;
+mod enum_bindings;
 mod expr_inference;
 mod function_bindings;
 mod inferred_type_conversion;

@@ -1,6 +1,7 @@
 use ql_ast::{ExprKind, FunctionDecl, ItemKind, Module, StmtKind};
 
 use super::super::call_args::ordered_call_arg_expected_types;
+use super::super::enum_bindings::collect_local_enum_type_bindings;
 use super::*;
 
 fn parse_module(source: &str) -> Module {
@@ -62,6 +63,7 @@ fn run() -> [Int; 3] {
         run.return_type.as_ref(),
         &ValueTypeBindings::new(),
         &FunctionTypeBindings::new(),
+        &collect_local_enum_type_bindings(&root),
     )
     .expect("call substitutions should infer");
 
@@ -109,6 +111,7 @@ fn run() -> [Int; 4] {
         run.return_type.as_ref(),
         &ValueTypeBindings::new(),
         &FunctionTypeBindings::new(),
+        &collect_local_enum_type_bindings(&root),
     )
     .expect("repeat-array call substitutions should infer");
 
@@ -156,6 +159,7 @@ fn run() -> Int {
         run.return_type.as_ref(),
         &ValueTypeBindings::new(),
         &FunctionTypeBindings::new(),
+        &collect_local_enum_type_bindings(&root),
     )
     .expect("nested tuple/array substitutions should infer");
 
@@ -205,6 +209,7 @@ fn run() -> (Int, Bool) {
         run.return_type.as_ref(),
         &ValueTypeBindings::new(),
         &function_bindings,
+        &collect_local_enum_type_bindings(&root),
     );
 
     let rendered = expected_types
@@ -261,6 +266,7 @@ fn run() -> (Int, Bool) {
         run.return_type.as_ref(),
         &ValueTypeBindings::new(),
         &FunctionTypeBindings::new(),
+        &collect_local_enum_type_bindings(&root),
     )
     .expect("reversed named arguments should infer");
 
