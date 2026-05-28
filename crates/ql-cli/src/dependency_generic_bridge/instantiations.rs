@@ -162,26 +162,6 @@ fn should_scan_root_item(
     }
 }
 
-pub(super) fn collect_specialized_body_call_instantiations(
-    caller_function: &FunctionDecl,
-    target_function: &FunctionDecl,
-    caller_substitutions: &TypeSubstitutions,
-    function_bindings: &FunctionTypeBindings,
-    enum_bindings: &EnumTypeBindings,
-    struct_bindings: &StructTypeBindings,
-) -> Vec<PublicFunctionCallInstantiation> {
-    let local_names = BTreeSet::from([target_function.name.clone()]);
-    collect_specialized_body_call_instantiations_for_local_names(
-        caller_function,
-        target_function,
-        &local_names,
-        caller_substitutions,
-        function_bindings,
-        enum_bindings,
-        struct_bindings,
-    )
-}
-
 pub(super) fn collect_specialized_body_call_instantiations_for_local_names(
     caller_function: &FunctionDecl,
     target_function: &FunctionDecl,

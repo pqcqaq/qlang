@@ -109,16 +109,10 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
         substitutions: &BTreeMap<String, String>,
     ) -> Option<Vec<SourceRewrite>> {
         let mut body_call_rewrites = Vec::new();
-        self.collect_same_module_specialized_body_call_rewrites(
+        self.collect_specialized_body_call_rewrites_for_targets(
             module_import_path,
             function,
             contents,
-            specialization_module,
-            substitutions,
-            &mut body_call_rewrites,
-        )?;
-        self.collect_imported_specialized_body_call_rewrites(
-            function,
             specialization_module,
             substitutions,
             &mut body_call_rewrites,
@@ -126,62 +120,30 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
         Some(body_call_rewrites)
     }
 
-    fn collect_same_module_specialized_body_call_rewrites(
+    fn collect_specialized_body_call_rewrites_for_targets(
         &mut self,
-        module_import_path: &[String],
-        function: &FunctionDecl,
-        contents: &str,
-        specialization_module: &Module,
-        substitutions: &BTreeMap<String, String>,
+        caller_module_import_path: &[String],
+        caller_function: &FunctionDecl,
+        caller_contents: &str,
+        caller_module: &Module,
+        caller_substitutions: &BTreeMap<String, String>,
         body_call_rewrites: &mut Vec<SourceRewrite>,
     ) -> Option<()> {
-        let function_bindings = self.function_bindings;
-        let enum_bindings = self.enum_bindings;
-        let struct_bindings = self.struct_bindings;
-        for target in same_module_specialized_call_targets(
-            module_import_path,
-            contents,
-            specialization_module,
+        for target in specialized_body_call_targets(
+            caller_module_import_path,
+            caller_contents,
+            caller_module,
+            self.specialization_modules,
         ) {
-            let instantiations = instantiations::collect_specialized_body_call_instantiations(
-                function,
-                target.callee,
-                substitutions,
-                function_bindings,
-                enum_bindings,
-                struct_bindings,
-            );
-            self.render_specialized_body_call_rewrites_for_callee(
-                target,
-                instantiations,
-                body_call_rewrites,
-            )?;
-        }
-        Some(())
-    }
-
-    fn collect_imported_specialized_body_call_rewrites(
-        &mut self,
-        function: &FunctionDecl,
-        specialization_module: &Module,
-        substitutions: &BTreeMap<String, String>,
-        body_call_rewrites: &mut Vec<SourceRewrite>,
-    ) -> Option<()> {
-        let function_bindings = self.function_bindings;
-        let enum_bindings = self.enum_bindings;
-        let struct_bindings = self.struct_bindings;
-        for (target, local_names) in
-            imported_specialized_call_targets(specialization_module, self.specialization_modules)
-        {
             let instantiations =
                 instantiations::collect_specialized_body_call_instantiations_for_local_names(
-                    function,
+                    caller_function,
                     target.callee,
-                    &local_names,
-                    substitutions,
-                    function_bindings,
-                    enum_bindings,
-                    struct_bindings,
+                    &target.local_names,
+                    caller_substitutions,
+                    self.function_bindings,
+                    self.enum_bindings,
+                    self.struct_bindings,
                 );
             self.render_specialized_body_call_rewrites_for_callee(
                 target,
@@ -243,6 +205,24 @@ struct SpecializedBodyCallTarget<'a> {
     contents: &'a str,
     module: &'a Module,
     callee: &'a FunctionDecl,
+    local_names: BTreeSet<String>,
+}
+
+fn specialized_body_call_targets<'target, 'modules>(
+    module_import_path: &'target [String],
+    contents: &'target str,
+    module: &'target Module,
+    specialization_modules: &[SpecializationModule<'modules>],
+) -> Vec<SpecializedBodyCallTarget<'target>>
+where
+    'modules: 'target,
+{
+    let mut targets = same_module_specialized_call_targets(module_import_path, contents, module);
+    targets.extend(imported_specialized_call_targets(
+        module,
+        specialization_modules,
+    ));
+    targets
 }
 
 fn same_module_specialized_call_targets<'a>(
@@ -256,14 +236,18 @@ fn same_module_specialized_call_targets<'a>(
             contents,
             module,
             callee,
+            local_names: BTreeSet::from([callee.name.clone()]),
         })
         .collect()
 }
 
-fn imported_specialized_call_targets<'modules>(
+fn imported_specialized_call_targets<'target, 'modules>(
     caller_module: &Module,
     specialization_modules: &[SpecializationModule<'modules>],
-) -> Vec<(SpecializedBodyCallTarget<'modules>, BTreeSet<String>)> {
+) -> Vec<SpecializedBodyCallTarget<'target>>
+where
+    'modules: 'target,
+{
     let mut targets = Vec::new();
     for target_module in specialization_modules.iter().copied() {
         for callee in specializable_functions(
@@ -278,15 +262,13 @@ fn imported_specialized_call_targets<'modules>(
             if local_names.is_empty() {
                 continue;
             }
-            targets.push((
-                SpecializedBodyCallTarget {
-                    module_import_path: target_module.module_import_path,
-                    contents: target_module.contents,
-                    module: target_module.module,
-                    callee,
-                },
+            targets.push(SpecializedBodyCallTarget {
+                module_import_path: target_module.module_import_path,
+                contents: target_module.contents,
+                module: target_module.module,
+                callee,
                 local_names,
-            ));
+            });
         }
     }
     targets
@@ -346,3 +328,7 @@ pub(super) fn specialized_call_rewrite(
         ),
     }
 }
+
+#[cfg(test)]
+#[path = "specialized_forwarders_tests.rs"]
+mod tests;
