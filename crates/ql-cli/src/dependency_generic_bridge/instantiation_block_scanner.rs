@@ -57,24 +57,10 @@ pub(super) fn collect_dependency_generic_function_instantiations_from_block(
                     bindings,
                     context,
                 );
-                let mut body_bindings = bindings.clone();
-                collect_dependency_generic_function_instantiations_from_block(
-                    body,
-                    &mut body_bindings,
-                    context,
-                    return_expected_ty,
-                    None,
-                );
+                scan_nested_block(body, bindings, context, return_expected_ty);
             }
             ql_ast::StmtKind::Loop { body } => {
-                let mut body_bindings = bindings.clone();
-                collect_dependency_generic_function_instantiations_from_block(
-                    body,
-                    &mut body_bindings,
-                    context,
-                    return_expected_ty,
-                    None,
-                );
+                scan_nested_block(body, bindings, context, return_expected_ty);
             }
             ql_ast::StmtKind::For { iterable, body, .. } => {
                 collect_dependency_generic_function_instantiations_from_expr(
@@ -84,14 +70,7 @@ pub(super) fn collect_dependency_generic_function_instantiations_from_block(
                     bindings,
                     context,
                 );
-                let mut body_bindings = bindings.clone();
-                collect_dependency_generic_function_instantiations_from_block(
-                    body,
-                    &mut body_bindings,
-                    context,
-                    return_expected_ty,
-                    None,
-                );
+                scan_nested_block(body, bindings, context, return_expected_ty);
             }
             ql_ast::StmtKind::Return(None)
             | ql_ast::StmtKind::Break
@@ -107,4 +86,20 @@ pub(super) fn collect_dependency_generic_function_instantiations_from_block(
             context,
         );
     }
+}
+
+fn scan_nested_block(
+    block: &ql_ast::Block,
+    bindings: &ValueTypeBindings,
+    context: &mut InstantiationScanContext<'_>,
+    return_expected_ty: Option<&TypeExpr>,
+) {
+    let mut body_bindings = bindings.clone();
+    collect_dependency_generic_function_instantiations_from_block(
+        block,
+        &mut body_bindings,
+        context,
+        return_expected_ty,
+        None,
+    );
 }

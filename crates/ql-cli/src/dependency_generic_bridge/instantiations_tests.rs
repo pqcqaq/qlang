@@ -47,6 +47,62 @@ fn run() -> Int {
 }
 
 #[test]
+fn scans_nested_control_flow_blocks() {
+    let dependency = parse_module(
+        r#"
+package dep
+
+pub fn identity[T](value: T) -> T {
+    return value
+}
+"#,
+    );
+    let root = parse_module(
+        r#"
+use dep.identity as identity
+
+fn run() -> Int {
+    var total = 0
+    while total < 1 {
+        let current: Int = identity(1)
+        total = current
+    }
+    loop {
+        let flag: Bool = identity(true)
+        break
+    }
+    for value in ["ready"] {
+        let text: String = identity(value)
+    }
+    return total
+}
+"#,
+    );
+
+    let instantiations = collect_public_function_instantiations(
+        &root,
+        &["dep".to_owned()],
+        function(&dependency, "identity"),
+    );
+
+    assert!(
+        instantiations
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Int"))
+    );
+    assert!(
+        instantiations
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Bool"))
+    );
+    assert!(
+        instantiations
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("String"))
+    );
+}
+
+#[test]
 fn infers_substitution_from_later_argument_when_nested_call_arg_is_untyped() {
     let dependency = parse_module(
         r#"
