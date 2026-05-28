@@ -21,6 +21,10 @@ mod no_match_messages_tests;
 mod package_selector;
 mod paths;
 mod project;
+mod project_error_messages;
+#[cfg(test)]
+#[path = "test_discovery/project_error_messages_tests.rs"]
+mod project_error_messages_tests;
 mod project_errors;
 mod selected_member;
 mod selected_package;
