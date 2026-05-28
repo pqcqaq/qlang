@@ -2,6 +2,7 @@ use ql_ast::{ExprKind, FunctionDecl, ItemKind, Module, StmtKind};
 
 use super::super::call_args::ordered_call_arg_expected_types;
 use super::super::enum_bindings::collect_local_enum_type_bindings;
+use super::super::struct_bindings::collect_local_struct_type_bindings;
 use super::*;
 
 fn parse_module(source: &str) -> Module {
@@ -64,6 +65,7 @@ fn run() -> [Int; 3] {
         &ValueTypeBindings::new(),
         &FunctionTypeBindings::new(),
         &collect_local_enum_type_bindings(&root),
+        &collect_local_struct_type_bindings(&root),
     )
     .expect("call substitutions should infer");
 
@@ -112,6 +114,7 @@ fn run() -> [Int; 4] {
         &ValueTypeBindings::new(),
         &FunctionTypeBindings::new(),
         &collect_local_enum_type_bindings(&root),
+        &collect_local_struct_type_bindings(&root),
     )
     .expect("repeat-array call substitutions should infer");
 
@@ -160,6 +163,7 @@ fn run() -> Int {
         &ValueTypeBindings::new(),
         &FunctionTypeBindings::new(),
         &collect_local_enum_type_bindings(&root),
+        &collect_local_struct_type_bindings(&root),
     )
     .expect("nested tuple/array substitutions should infer");
 
@@ -210,6 +214,7 @@ fn run() -> (Int, Bool) {
         &ValueTypeBindings::new(),
         &function_bindings,
         &collect_local_enum_type_bindings(&root),
+        &collect_local_struct_type_bindings(&root),
     );
 
     let rendered = expected_types
@@ -267,9 +272,75 @@ fn run() -> (Int, Bool) {
         &ValueTypeBindings::new(),
         &FunctionTypeBindings::new(),
         &collect_local_enum_type_bindings(&root),
+        &collect_local_struct_type_bindings(&root),
     )
     .expect("reversed named arguments should infer");
 
     assert_eq!(substitutions.get("A").map(String::as_str), Some("Int"));
     assert_eq!(substitutions.get("B").map(String::as_str), Some("Bool"));
+}
+
+#[test]
+fn infers_substitution_from_struct_field_argument_projection() {
+    let dependency = parse_module(
+        r#"
+package dep
+
+pub fn is_missing[T](value: Option[T]) -> Bool {
+    return false
+}
+"#,
+    );
+    let root = parse_module(
+        r#"
+use dep.is_missing as is_missing
+
+enum Option[T] {
+    Some(T),
+    None,
+}
+
+struct OptionBox[T] {
+    value: Option[T],
+}
+
+fn run(box: OptionBox[Int]) -> Bool {
+    return is_missing(box.value)
+}
+"#,
+    );
+    let run = function(&root, "run");
+    let StmtKind::Return(Some(expr)) = &run
+        .body
+        .as_ref()
+        .expect("run should have a body")
+        .statements[0]
+        .kind
+    else {
+        panic!("run should return a call");
+    };
+    let ExprKind::Call { args, .. } = &expr.kind else {
+        panic!("return expression should be a call");
+    };
+    let mut bindings = ValueTypeBindings::new();
+    bindings.insert(
+        "box".to_owned(),
+        InferredType::named(
+            vec!["OptionBox".to_owned()],
+            vec![InferredType::primitive("Int")],
+        ),
+    );
+
+    let substitutions = infer_dependency_generic_function_substitutions(
+        function(&dependency, "is_missing"),
+        args,
+        run.return_type.as_ref(),
+        &bindings,
+        &FunctionTypeBindings::new(),
+        &collect_local_enum_type_bindings(&root),
+        &collect_local_struct_type_bindings(&root),
+    )
+    .expect("struct field argument substitutions should infer");
+
+    assert_eq!(substitutions.get("T").map(String::as_str), Some("Int"));
 }

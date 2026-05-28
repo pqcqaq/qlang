@@ -32,6 +32,7 @@ pub(super) fn collect_dependency_generic_function_instantiations_from_block(
                     bindings,
                     context.function_bindings,
                     context.enum_bindings,
+                    context.struct_bindings,
                     context.type_substitutions,
                 );
             }
@@ -119,6 +120,7 @@ fn scan_for_block(
         &mut body_bindings,
         context.function_bindings,
         context.enum_bindings,
+        context.struct_bindings,
     );
     collect_dependency_generic_function_instantiations_from_block(
         body,

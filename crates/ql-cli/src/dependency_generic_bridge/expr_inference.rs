@@ -8,6 +8,7 @@ use super::inferred_type_predicates::{
     is_inferred_numeric_type, is_inferred_ordered_comparable_type,
 };
 use super::inferred_types::{InferredType, InferredTypeKind, render_inferred_tuple_type};
+use super::struct_bindings::{StructTypeBindings, struct_field_type};
 use super::value_bindings::{
     ValueTypeBindings, record_let_type_bindings, record_pattern_inferred_type_bindings,
 };
@@ -17,14 +18,17 @@ pub(super) fn infer_dependency_generic_expr_type(
     bindings: &ValueTypeBindings,
     function_bindings: &FunctionTypeBindings,
     enum_bindings: &EnumTypeBindings,
+    struct_bindings: &StructTypeBindings,
 ) -> Option<InferredType> {
-    ExprTypeInferencer::new(bindings, function_bindings, enum_bindings).infer_expr(expr)
+    ExprTypeInferencer::new(bindings, function_bindings, enum_bindings, struct_bindings)
+        .infer_expr(expr)
 }
 
 struct ExprTypeInferencer<'a> {
     bindings: &'a ValueTypeBindings,
     function_bindings: &'a FunctionTypeBindings,
     enum_bindings: &'a EnumTypeBindings,
+    struct_bindings: &'a StructTypeBindings,
 }
 
 impl<'a> ExprTypeInferencer<'a> {
@@ -32,11 +36,13 @@ impl<'a> ExprTypeInferencer<'a> {
         bindings: &'a ValueTypeBindings,
         function_bindings: &'a FunctionTypeBindings,
         enum_bindings: &'a EnumTypeBindings,
+        struct_bindings: &'a StructTypeBindings,
     ) -> Self {
         Self {
             bindings,
             function_bindings,
             enum_bindings,
+            struct_bindings,
         }
     }
 
@@ -57,6 +63,7 @@ impl<'a> ExprTypeInferencer<'a> {
             } => self.infer_if_type(then_branch, else_branch.as_deref()),
             ExprKind::Match { value, arms } => self.infer_match_type(value, arms),
             ExprKind::Call { callee, args } => self.infer_call_type(callee, args),
+            ExprKind::Member { object, field, .. } => self.infer_member_type(object, field),
             ExprKind::Bracket { target, items } => self.infer_projection_type(target, items),
             ExprKind::Binary { left, op, right } => self.infer_binary_expr_type(left, *op, right),
             ExprKind::Unary { op, expr } => self.infer_unary_expr_type(*op, expr),
@@ -118,6 +125,7 @@ impl<'a> ExprTypeInferencer<'a> {
                     &mut block_bindings,
                     self.function_bindings,
                     self.enum_bindings,
+                    self.struct_bindings,
                 );
             }
         }
@@ -126,6 +134,7 @@ impl<'a> ExprTypeInferencer<'a> {
             &block_bindings,
             self.function_bindings,
             self.enum_bindings,
+            self.struct_bindings,
         )
     }
 
@@ -166,8 +175,18 @@ impl<'a> ExprTypeInferencer<'a> {
                 self.enum_bindings,
             );
         }
-        ExprTypeInferencer::new(&arm_bindings, self.function_bindings, self.enum_bindings)
-            .infer_expr(&arm.body)
+        ExprTypeInferencer::new(
+            &arm_bindings,
+            self.function_bindings,
+            self.enum_bindings,
+            self.struct_bindings,
+        )
+        .infer_expr(&arm.body)
+    }
+
+    fn infer_member_type(&self, object: &Expr, field: &str) -> Option<InferredType> {
+        let object_ty = self.infer_expr(object)?;
+        struct_field_type(&object_ty, field, self.struct_bindings)
     }
 
     fn infer_projection_type(&self, target: &Expr, items: &[Expr]) -> Option<InferredType> {
@@ -199,6 +218,7 @@ impl<'a> ExprTypeInferencer<'a> {
                     self.bindings,
                     self.function_bindings,
                     self.enum_bindings,
+                    self.struct_bindings,
                 )
             })
     }

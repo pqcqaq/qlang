@@ -15,6 +15,11 @@ use super::specialization_function_bindings::{
 use super::specialized_forwarders::{
     SpecializedForwarderRenderContext, has_complete_generic_substitutions, specialized_call_rewrite,
 };
+use super::struct_bindings::{
+    StructTypeBindings, collect_local_struct_type_bindings,
+    collect_root_call_struct_type_bindings_with_specializations,
+    collect_specialization_struct_type_bindings,
+};
 use super::substitutions::TypeSubstitutions;
 use super::{
     PublicFunctionSpecializationRender, RenderedPublicFunctionSpecializations, SourceRewrite,
@@ -81,6 +86,8 @@ pub(crate) fn render_public_function_specialization_status_with_context(
         collect_specialization_function_type_bindings(dependency_module, specialization_modules);
     let dependency_enum_bindings =
         collect_specialization_enum_type_bindings(dependency_module, specialization_modules);
+    let dependency_struct_bindings =
+        collect_specialization_struct_type_bindings(dependency_module, specialization_modules);
     let root_function_bindings = collect_root_call_function_type_bindings(
         root_module,
         module_import_path,
@@ -92,12 +99,19 @@ pub(crate) fn render_public_function_specialization_status_with_context(
         dependency_module,
         specialization_modules,
     );
+    let root_struct_bindings = collect_root_call_struct_type_bindings_with_specializations(
+        root_module,
+        module_import_path,
+        dependency_module,
+        specialization_modules,
+    );
     let call_instantiations = instantiations::collect_public_function_call_instantiation_status(
         root_module,
         module_import_path,
         function,
         &root_function_bindings,
         &root_enum_bindings,
+        &root_struct_bindings,
     );
     if !call_instantiations.saw_call {
         return PublicFunctionSpecializationRender::NotCalled;
@@ -109,6 +123,7 @@ pub(crate) fn render_public_function_specialization_status_with_context(
         dependency_module,
         &dependency_function_bindings,
         &dependency_enum_bindings,
+        &dependency_struct_bindings,
         specialization_modules,
         call_instantiations.instantiations,
         rendered_specializations,
@@ -137,6 +152,7 @@ pub(crate) fn render_local_function_specializations(
         function,
         &collect_local_function_type_bindings(root_module),
         &collect_local_enum_type_bindings(root_module),
+        &collect_local_struct_type_bindings(root_module),
     );
     render_function_specializations(
         module_import_path,
@@ -145,6 +161,7 @@ pub(crate) fn render_local_function_specializations(
         root_module,
         &collect_local_function_type_bindings(root_module),
         &collect_local_enum_type_bindings(root_module),
+        &collect_local_struct_type_bindings(root_module),
         &[],
         call_instantiations,
         rendered_specializations,
@@ -158,6 +175,7 @@ fn render_function_specializations(
     specialization_module: &Module,
     function_bindings: &FunctionTypeBindings,
     enum_bindings: &EnumTypeBindings,
+    struct_bindings: &StructTypeBindings,
     specialization_modules: &[SpecializationModule<'_>],
     call_instantiations: Vec<instantiations::PublicFunctionCallInstantiation>,
     rendered_specializations: &mut BTreeSet<String>,
@@ -174,6 +192,7 @@ fn render_function_specializations(
         specialization_module,
         function_bindings,
         enum_bindings,
+        struct_bindings,
         specialization_modules,
         &concrete_instantiations,
         rendered_specializations,
@@ -207,6 +226,7 @@ fn render_concrete_forwarder_declarations(
     specialization_module: &Module,
     function_bindings: &FunctionTypeBindings,
     enum_bindings: &EnumTypeBindings,
+    struct_bindings: &StructTypeBindings,
     specialization_modules: &[SpecializationModule<'_>],
     concrete_instantiations: &BTreeSet<TypeSubstitutions>,
     rendered_specializations: &mut BTreeSet<String>,
@@ -215,6 +235,7 @@ fn render_concrete_forwarder_declarations(
     let mut forwarder_context = SpecializedForwarderRenderContext::new(
         function_bindings,
         enum_bindings,
+        struct_bindings,
         specialization_modules,
         rendered_specializations,
         &mut declarations,

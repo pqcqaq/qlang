@@ -7,6 +7,7 @@ use super::inferred_type_conversion::{
     inferred_type_from_type_expr_with_substitutions, type_expr_from_inferred_type,
 };
 use super::inferred_types::InferredType;
+use super::struct_bindings::StructTypeBindings;
 use super::substitutions::{
     TypeSubstitutions, collect_generic_type_substitutions, type_expr_mentions_generic,
 };
@@ -84,6 +85,7 @@ pub(super) fn ordered_call_arg_expected_types(
     bindings: &ValueTypeBindings,
     function_bindings: &FunctionTypeBindings,
     enum_bindings: &EnumTypeBindings,
+    struct_bindings: &StructTypeBindings,
 ) -> Vec<Option<TypeExpr>> {
     let mut expected_types = vec![None; args.len()];
     let ExprKind::Name(name) = &callee.kind else {
@@ -117,6 +119,7 @@ pub(super) fn ordered_call_arg_expected_types(
             bindings,
             function_bindings,
             enum_bindings,
+            struct_bindings,
             &mut substitutions,
         );
     }

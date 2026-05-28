@@ -22,6 +22,7 @@ mod rendering;
 mod specialization_function_bindings;
 mod specializations;
 mod specialized_forwarders;
+mod struct_bindings;
 mod substitutions;
 mod value_bindings;
 

@@ -8,6 +8,7 @@ use super::expr_inference::infer_dependency_generic_expr_type;
 use super::function_bindings::FunctionTypeBindings;
 use super::inferred_type_conversion::inferred_type_from_type_expr_with_substitutions;
 use super::inferred_types::InferredType;
+use super::struct_bindings::StructTypeBindings;
 use super::substitutions::{
     TypeSubstitutions, bind_generic_len_substitution, bind_generic_type_substitution,
     collect_generic_type_substitutions, generic_param_name_for_type_expr,
@@ -22,6 +23,7 @@ pub(super) fn infer_dependency_generic_function_substitutions(
     bindings: &ValueTypeBindings,
     function_bindings: &FunctionTypeBindings,
     enum_bindings: &EnumTypeBindings,
+    struct_bindings: &StructTypeBindings,
 ) -> Option<TypeSubstitutions> {
     let ordered_args = ordered_dependency_generic_call_args(function, args)?;
     let generic_names = function
@@ -36,6 +38,7 @@ pub(super) fn infer_dependency_generic_function_substitutions(
             bindings,
             function_bindings,
             enum_bindings,
+            struct_bindings,
             &mut substitutions,
         );
         for (param_ty, arg) in ordered_args {
@@ -70,6 +73,7 @@ pub(super) fn collect_generic_type_substitutions_from_arg_expr(
     bindings: &ValueTypeBindings,
     function_bindings: &FunctionTypeBindings,
     enum_bindings: &EnumTypeBindings,
+    struct_bindings: &StructTypeBindings,
     substitutions: &mut TypeSubstitutions,
 ) -> bool {
     ArgSubstitutionCollector::new(
@@ -77,6 +81,7 @@ pub(super) fn collect_generic_type_substitutions_from_arg_expr(
         bindings,
         function_bindings,
         enum_bindings,
+        struct_bindings,
         substitutions,
     )
     .collect_arg(param_ty, arg)
@@ -87,6 +92,7 @@ struct ArgSubstitutionCollector<'ctx, 'generic> {
     bindings: &'ctx ValueTypeBindings,
     function_bindings: &'ctx FunctionTypeBindings,
     enum_bindings: &'ctx EnumTypeBindings,
+    struct_bindings: &'ctx StructTypeBindings,
     substitutions: &'ctx mut TypeSubstitutions,
 }
 
@@ -96,6 +102,7 @@ impl<'ctx, 'generic> ArgSubstitutionCollector<'ctx, 'generic> {
         bindings: &'ctx ValueTypeBindings,
         function_bindings: &'ctx FunctionTypeBindings,
         enum_bindings: &'ctx EnumTypeBindings,
+        struct_bindings: &'ctx StructTypeBindings,
         substitutions: &'ctx mut TypeSubstitutions,
     ) -> Self {
         Self {
@@ -103,6 +110,7 @@ impl<'ctx, 'generic> ArgSubstitutionCollector<'ctx, 'generic> {
             bindings,
             function_bindings,
             enum_bindings,
+            struct_bindings,
             substitutions,
         }
     }
@@ -146,6 +154,7 @@ impl<'ctx, 'generic> ArgSubstitutionCollector<'ctx, 'generic> {
             self.bindings,
             self.function_bindings,
             self.enum_bindings,
+            self.struct_bindings,
         )
         .is_none_or(|arg_ty| {
             bind_generic_type_substitution(generic_name, &arg_ty, self.substitutions)
@@ -192,6 +201,7 @@ impl<'ctx, 'generic> ArgSubstitutionCollector<'ctx, 'generic> {
             self.bindings,
             self.function_bindings,
             self.enum_bindings,
+            self.struct_bindings,
         )
         .is_none_or(|arg_ty| {
             collect_generic_type_substitutions(
@@ -210,6 +220,7 @@ pub(super) fn infer_function_call_return_type(
     bindings: &ValueTypeBindings,
     function_bindings: &FunctionTypeBindings,
     enum_bindings: &EnumTypeBindings,
+    struct_bindings: &StructTypeBindings,
 ) -> Option<InferredType> {
     let ExprKind::Name(name) = &callee.kind else {
         return None;
@@ -223,6 +234,7 @@ pub(super) fn infer_function_call_return_type(
         bindings,
         function_bindings,
         enum_bindings,
+        struct_bindings,
     )?;
     inferred_type_from_type_expr_with_substitutions(return_ty, &substitutions)
 }

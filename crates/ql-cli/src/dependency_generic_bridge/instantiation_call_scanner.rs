@@ -19,6 +19,7 @@ pub(super) fn scan_call_instantiation(
         bindings,
         context.function_bindings,
         context.enum_bindings,
+        context.struct_bindings,
     );
     record_target_call_instantiation(callee, args, expected_ty, bindings, context);
     ordered_arg_expected_types
@@ -46,6 +47,7 @@ fn record_target_call_instantiation(
         bindings,
         context.function_bindings,
         context.enum_bindings,
+        context.struct_bindings,
     ) {
         context.push_instantiation(callee.span, substitutions);
     }

@@ -12,6 +12,7 @@ use super::rendering::{
     render_dependency_bridge_return_suffix_with_substitutions, replace_generic_identifiers,
     span_text,
 };
+use super::struct_bindings::StructTypeBindings;
 use super::{
     SourceRewrite, SpecializationModule, supports_local_function_specialization,
     supports_public_function_specialization,
@@ -20,6 +21,7 @@ use super::{
 pub(super) struct SpecializedForwarderRenderContext<'a, 'm> {
     function_bindings: &'a FunctionTypeBindings,
     enum_bindings: &'a EnumTypeBindings,
+    struct_bindings: &'a StructTypeBindings,
     rendered_specializations: &'a mut BTreeSet<String>,
     declarations: &'a mut Vec<String>,
     specialization_modules: &'a [SpecializationModule<'m>],
@@ -29,6 +31,7 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
     pub(super) fn new(
         function_bindings: &'a FunctionTypeBindings,
         enum_bindings: &'a EnumTypeBindings,
+        struct_bindings: &'a StructTypeBindings,
         specialization_modules: &'a [SpecializationModule<'m>],
         rendered_specializations: &'a mut BTreeSet<String>,
         declarations: &'a mut Vec<String>,
@@ -36,6 +39,7 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
         Self {
             function_bindings,
             enum_bindings,
+            struct_bindings,
             rendered_specializations,
             declarations,
             specialization_modules,
@@ -133,6 +137,7 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
     ) -> Option<()> {
         let function_bindings = self.function_bindings;
         let enum_bindings = self.enum_bindings;
+        let struct_bindings = self.struct_bindings;
         for target in same_module_specialized_call_targets(
             module_import_path,
             contents,
@@ -144,6 +149,7 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
                 substitutions,
                 function_bindings,
                 enum_bindings,
+                struct_bindings,
             );
             self.render_specialized_body_call_rewrites_for_callee(
                 target,
@@ -163,6 +169,7 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
     ) -> Option<()> {
         let function_bindings = self.function_bindings;
         let enum_bindings = self.enum_bindings;
+        let struct_bindings = self.struct_bindings;
         for (target, local_names) in
             imported_specialized_call_targets(specialization_module, self.specialization_modules)
         {
@@ -174,6 +181,7 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
                     substitutions,
                     function_bindings,
                     enum_bindings,
+                    struct_bindings,
                 );
             self.render_specialized_body_call_rewrites_for_callee(
                 target,

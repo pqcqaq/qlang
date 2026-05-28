@@ -6,7 +6,8 @@ use super::inferred_types::InferredType;
 use super::instantiation_block_scanner::collect_dependency_generic_function_instantiations_from_block;
 use super::instantiation_call_scanner::scan_call_instantiation;
 use super::instantiation_scan_context::InstantiationScanContext;
-use super::value_bindings::{record_pattern_inferred_type_bindings, ValueTypeBindings};
+use super::struct_bindings::struct_literal_field_expected_types;
+use super::value_bindings::{ValueTypeBindings, record_pattern_inferred_type_bindings};
 
 pub(super) fn collect_dependency_generic_function_instantiations_from_expr(
     expr: &Expr,
@@ -44,8 +45,14 @@ impl ExprInstantiationScanner<'_, '_> {
             ExprKind::RepeatArray { value, .. } => {
                 self.scan_repeat_array_expr(value, expected_ty, return_expected_ty, bindings);
             }
-            ExprKind::StructLiteral { fields, .. } => {
-                self.scan_struct_literal_fields(fields, return_expected_ty, bindings);
+            ExprKind::StructLiteral { path, fields } => {
+                self.scan_struct_literal_fields(
+                    path,
+                    fields,
+                    expected_ty,
+                    return_expected_ty,
+                    bindings,
+                );
             }
             ExprKind::Binary { left, right, .. } => {
                 self.scan_binary_expr(left, right, return_expected_ty, bindings);
@@ -92,13 +99,21 @@ impl ExprInstantiationScanner<'_, '_> {
 
     fn scan_struct_literal_fields(
         &mut self,
+        path: &ql_ast::Path,
         fields: &[StructLiteralField],
+        expected_ty: Option<&TypeExpr>,
         return_expected_ty: Option<&TypeExpr>,
         bindings: &ValueTypeBindings,
     ) {
+        let expected_fields = expected_ty.and_then(|expected_ty| {
+            struct_literal_field_expected_types(path, expected_ty, self.context.struct_bindings)
+        });
         for field in fields {
             if let Some(value) = &field.value {
-                self.scan_child_expr(value, return_expected_ty, bindings);
+                let field_expected_ty = expected_fields
+                    .as_ref()
+                    .and_then(|fields| fields.get(&field.name));
+                self.scan_expr(value, field_expected_ty, return_expected_ty, bindings);
             }
         }
     }
@@ -188,6 +203,7 @@ impl ExprInstantiationScanner<'_, '_> {
             bindings,
             self.context.function_bindings,
             self.context.enum_bindings,
+            self.context.struct_bindings,
         );
         self.scan_child_expr(value, return_expected_ty, bindings);
         for arm in arms {

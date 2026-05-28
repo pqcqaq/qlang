@@ -5,6 +5,7 @@ use ql_span::Span;
 
 use super::enum_bindings::EnumTypeBindings;
 use super::function_bindings::FunctionTypeBindings;
+use super::struct_bindings::StructTypeBindings;
 use super::substitutions::TypeSubstitutions;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -18,6 +19,7 @@ pub(super) struct InstantiationScanContext<'a> {
     pub(super) target_function: &'a FunctionDecl,
     pub(super) function_bindings: &'a FunctionTypeBindings,
     pub(super) enum_bindings: &'a EnumTypeBindings,
+    pub(super) struct_bindings: &'a StructTypeBindings,
     pub(super) type_substitutions: Option<&'a TypeSubstitutions>,
     saw_call: bool,
     instantiations: Vec<PublicFunctionCallInstantiation>,
@@ -29,12 +31,14 @@ impl<'a> InstantiationScanContext<'a> {
         target_function: &'a FunctionDecl,
         function_bindings: &'a FunctionTypeBindings,
         enum_bindings: &'a EnumTypeBindings,
+        struct_bindings: &'a StructTypeBindings,
     ) -> Self {
         Self {
             local_names,
             target_function,
             function_bindings,
             enum_bindings,
+            struct_bindings,
             type_substitutions: None,
             saw_call: false,
             instantiations: Vec::new(),
@@ -46,6 +50,7 @@ impl<'a> InstantiationScanContext<'a> {
         target_function: &'a FunctionDecl,
         function_bindings: &'a FunctionTypeBindings,
         enum_bindings: &'a EnumTypeBindings,
+        struct_bindings: &'a StructTypeBindings,
         type_substitutions: &'a TypeSubstitutions,
     ) -> Self {
         Self {
@@ -53,6 +58,7 @@ impl<'a> InstantiationScanContext<'a> {
             target_function,
             function_bindings,
             enum_bindings,
+            struct_bindings,
             type_substitutions: Some(type_substitutions),
             saw_call: false,
             instantiations: Vec::new(),

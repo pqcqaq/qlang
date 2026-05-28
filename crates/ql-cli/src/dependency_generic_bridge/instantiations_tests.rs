@@ -1,4 +1,5 @@
 use super::super::enum_bindings::collect_root_call_enum_type_bindings;
+use super::super::struct_bindings::collect_root_call_struct_type_bindings;
 use super::*;
 
 fn parse_module(source: &str) -> Module {
@@ -39,6 +40,7 @@ fn run() -> Int {
         function(&module, "identity"),
         &FunctionTypeBindings::new(),
         &collect_root_call_enum_type_bindings(&module, &[], &module),
+        &collect_root_call_struct_type_bindings(&module, &[], &module),
     );
 
     assert_eq!(instantiations.len(), 1);
@@ -88,15 +90,21 @@ fn run() -> Int {
         function(&dependency, "identity"),
     );
 
-    assert!(instantiations
-        .iter()
-        .any(|item| item.get("T").map(String::as_str) == Some("Int")));
-    assert!(instantiations
-        .iter()
-        .any(|item| item.get("T").map(String::as_str) == Some("Bool")));
-    assert!(instantiations
-        .iter()
-        .any(|item| item.get("T").map(String::as_str) == Some("String")));
+    assert!(
+        instantiations
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Int"))
+    );
+    assert!(
+        instantiations
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Bool"))
+    );
+    assert!(
+        instantiations
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("String"))
+    );
 }
 
 #[test]
@@ -138,12 +146,16 @@ fn run() -> Int {
     );
 
     assert_eq!(substitutions.len(), 2);
-    assert!(substitutions
-        .iter()
-        .any(|item| item.get("T").map(String::as_str) == Some("Int")));
-    assert!(substitutions
-        .iter()
-        .any(|item| item.get("T").map(String::as_str) == Some("Bool")));
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Int"))
+    );
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Bool"))
+    );
 }
 
 #[test]
@@ -185,12 +197,16 @@ fn run() -> Int {
     );
 
     assert_eq!(substitutions.len(), 2);
-    assert!(substitutions
-        .iter()
-        .any(|item| item.get("T").map(String::as_str) == Some("Int")));
-    assert!(substitutions
-        .iter()
-        .any(|item| item.get("T").map(String::as_str) == Some("Bool")));
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Int"))
+    );
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Bool"))
+    );
 }
 
 #[test]
@@ -246,15 +262,21 @@ fn run() -> Int {
     );
 
     assert_eq!(substitutions.len(), 3);
-    assert!(substitutions
-        .iter()
-        .any(|item| item.get("T").map(String::as_str) == Some("Int")));
-    assert!(substitutions
-        .iter()
-        .any(|item| item.get("T").map(String::as_str) == Some("Bool")));
-    assert!(substitutions
-        .iter()
-        .any(|item| item.get("T").map(String::as_str) == Some("String")));
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Int"))
+    );
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Bool"))
+    );
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("String"))
+    );
 }
 
 #[test]
@@ -418,12 +440,16 @@ fn run() -> Int {
     );
 
     assert_eq!(substitutions.len(), 2);
-    assert!(substitutions
-        .iter()
-        .any(|item| { item.get("T").map(String::as_str) == Some("Int") }));
-    assert!(substitutions
-        .iter()
-        .any(|item| { item.get("T").map(String::as_str) == Some("Bool") }));
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Int") })
+    );
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Bool") })
+    );
 }
 
 #[test]
@@ -460,12 +486,16 @@ fn run() -> Int {
     );
 
     assert_eq!(substitutions.len(), 2);
-    assert!(substitutions
-        .iter()
-        .any(|item| { item.get("T").map(String::as_str) == Some("(Int, Bool)") }));
-    assert!(substitutions
-        .iter()
-        .any(|item| { item.get("T").map(String::as_str) == Some("[Int; 3]") }));
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("(Int, Bool)") })
+    );
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("[Int; 3]") })
+    );
 }
 
 #[test]
@@ -503,12 +533,16 @@ fn run() -> Int {
     );
 
     assert_eq!(substitutions.len(), 2);
-    assert!(substitutions
-        .iter()
-        .any(|item| { item.get("T").map(String::as_str) == Some("Int") }));
-    assert!(substitutions
-        .iter()
-        .any(|item| { item.get("T").map(String::as_str) == Some("Bool") }));
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Int") })
+    );
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Bool") })
+    );
 }
 
 #[test]
@@ -544,12 +578,16 @@ fn run() -> Int {
     );
 
     assert_eq!(substitutions.len(), 2);
-    assert!(substitutions
-        .iter()
-        .any(|item| { item.get("T").map(String::as_str) == Some("Int") }));
-    assert!(substitutions
-        .iter()
-        .any(|item| { item.get("T").map(String::as_str) == Some("Bool") }));
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Int") })
+    );
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Bool") })
+    );
 }
 
 #[test]
@@ -593,12 +631,16 @@ fn run(flag: Bool) -> Int {
     );
 
     assert_eq!(substitutions.len(), 2);
-    assert!(substitutions
-        .iter()
-        .any(|item| { item.get("T").map(String::as_str) == Some("Int") }));
-    assert!(substitutions
-        .iter()
-        .any(|item| { item.get("T").map(String::as_str) == Some("Bool") }));
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Int") })
+    );
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Bool") })
+    );
 }
 
 #[test]
@@ -643,6 +685,7 @@ fn run(values: [Int; 3], flag: Bool) -> Int {
         function(&dependency, "identity"),
         &FunctionTypeBindings::new(),
         &collect_root_call_enum_type_bindings(&root, &["dep".to_owned()], &dependency),
+        &collect_root_call_struct_type_bindings(&root, &["dep".to_owned()], &dependency),
     );
 
     assert_eq!(instantiations.len(), 4);
@@ -696,12 +739,16 @@ fn run() -> Int {
     );
 
     assert_eq!(substitutions.len(), 2);
-    assert!(substitutions
-        .iter()
-        .any(|item| { item.get("T").map(String::as_str) == Some("Int") }));
-    assert!(substitutions
-        .iter()
-        .any(|item| { item.get("T").map(String::as_str) == Some("Bool") }));
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Int") })
+    );
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Bool") })
+    );
 }
 
 #[test]
@@ -1247,15 +1294,79 @@ fn run() -> Int {
     );
 
     assert_eq!(instantiations.len(), 3);
-    assert!(instantiations
-        .iter()
-        .any(|item| item.get("T").map(String::as_str) == Some("Int")));
-    assert!(instantiations
-        .iter()
-        .any(|item| item.get("T").map(String::as_str) == Some("String")));
-    assert!(instantiations
-        .iter()
-        .any(|item| item.get("T").map(String::as_str) == Some("Bool")));
+    assert!(
+        instantiations
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Int"))
+    );
+    assert!(
+        instantiations
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("String"))
+    );
+    assert!(
+        instantiations
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Bool"))
+    );
+}
+
+#[test]
+fn infers_zero_argument_substitutions_from_struct_field_expected_contexts() {
+    let dependency = parse_module(
+        r#"
+package std.option
+
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+
+pub fn none_option[T]() -> Option[T] {
+    return Option.None
+}
+"#,
+    );
+    let root = parse_module(
+        r#"
+use std.option.Option as Option
+use std.option.none_option as option_none
+
+struct OptionBox[T] {
+    value: Option[T],
+}
+
+struct OptionPair[T] {
+    left: Option[T],
+    right: T,
+}
+
+fn run() -> Int {
+    let int_box: OptionBox[Int] = OptionBox { value: option_none() }
+    let string_pair: OptionPair[String] = OptionPair { left: option_none(), right: "ready" }
+    return 0
+}
+"#,
+    );
+
+    let instantiations = collect_public_function_instantiations(
+        &root,
+        &["std".to_owned(), "option".to_owned()],
+        &dependency,
+        function(&dependency, "none_option"),
+    );
+
+    assert_eq!(instantiations.len(), 2);
+    assert!(
+        instantiations
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Int"))
+    );
+    assert!(
+        instantiations
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("String"))
+    );
 }
 
 #[test]
@@ -1293,10 +1404,14 @@ fn run() -> Int {
     );
 
     assert_eq!(instantiations.len(), 2);
-    assert!(instantiations
-        .iter()
-        .any(|item| { item.get("T").map(String::as_str) == Some("Int") }));
-    assert!(instantiations
-        .iter()
-        .any(|item| { item.get("T").map(String::as_str) == Some("Bool") }));
+    assert!(
+        instantiations
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Int") })
+    );
+    assert!(
+        instantiations
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Bool") })
+    );
 }

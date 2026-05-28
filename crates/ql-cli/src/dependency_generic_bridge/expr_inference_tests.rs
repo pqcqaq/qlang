@@ -1,6 +1,7 @@
 use ql_ast::{Expr, ExprKind, FunctionDecl, ItemKind, Module};
 
 use super::super::enum_bindings::collect_local_enum_type_bindings;
+use super::super::struct_bindings::collect_local_struct_type_bindings;
 use super::*;
 
 fn parse_module(source: &str) -> Module {
@@ -44,6 +45,7 @@ fn run() -> Int {
         &ValueTypeBindings::new(),
         &FunctionTypeBindings::new(),
         &collect_local_enum_type_bindings(&module),
+        &collect_local_struct_type_bindings(&module),
     )
     .expect("block tail should infer");
 
@@ -84,6 +86,7 @@ fn wrap() -> Option[Int] {
         &ValueTypeBindings::new(),
         &FunctionTypeBindings::new(),
         &collect_local_enum_type_bindings(&module),
+        &collect_local_struct_type_bindings(&module),
     )
     .expect("if tail should infer");
 
@@ -98,6 +101,7 @@ fn wrap() -> Option[Int] {
         &ValueTypeBindings::new(),
         &FunctionTypeBindings::new(),
         &collect_local_enum_type_bindings(&module),
+        &collect_local_struct_type_bindings(&module),
     )
     .expect("single-field generic variant call should infer");
 
@@ -131,6 +135,7 @@ fn wrap() -> PairBox[Int, Bool] {
         &ValueTypeBindings::new(),
         &FunctionTypeBindings::new(),
         &collect_local_enum_type_bindings(&module),
+        &collect_local_struct_type_bindings(&module),
     )
     .expect("generic variant call should infer from enum declaration");
 
@@ -170,6 +175,7 @@ fn choose(flag: Bool) -> Int {
         &ValueTypeBindings::new(),
         &function_bindings,
         &collect_local_enum_type_bindings(&module),
+        &collect_local_struct_type_bindings(&module),
     )
     .expect("match tail with generic call return type should infer");
 
@@ -200,8 +206,54 @@ fn choose() -> Bool {
         &ValueTypeBindings::new(),
         &FunctionTypeBindings::new(),
         &collect_local_enum_type_bindings(&module),
+        &collect_local_struct_type_bindings(&module),
     )
     .expect("match arm pattern bindings should infer");
 
     assert_eq!(choose_ty.rendered, "Bool");
+}
+
+#[test]
+fn infers_generic_struct_field_projection_type() {
+    let module = parse_module(
+        r#"
+enum Option[T] {
+    Some(T),
+    None,
+}
+
+struct OptionBox[T] {
+    value: Option[T],
+}
+
+fn run(box: OptionBox[Int]) -> Option[Int] {
+    box.value
+}
+"#,
+    );
+    let run_body = function(&module, "run")
+        .body
+        .as_ref()
+        .expect("run should have a body")
+        .clone();
+    let run_expr = Expr::new(run_body.span, ExprKind::Block(run_body));
+    let mut bindings = ValueTypeBindings::new();
+    bindings.insert(
+        "box".to_owned(),
+        InferredType::named(
+            vec!["OptionBox".to_owned()],
+            vec![InferredType::primitive("Int")],
+        ),
+    );
+
+    let run_ty = infer_dependency_generic_expr_type(
+        &run_expr,
+        &bindings,
+        &FunctionTypeBindings::new(),
+        &collect_local_enum_type_bindings(&module),
+        &collect_local_struct_type_bindings(&module),
+    )
+    .expect("generic struct field projection should infer");
+
+    assert_eq!(run_ty.rendered, "Option[Int]");
 }

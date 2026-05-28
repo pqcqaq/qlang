@@ -7,6 +7,7 @@ use super::expr_inference::infer_dependency_generic_expr_type;
 use super::function_bindings::FunctionTypeBindings;
 use super::inferred_type_conversion::inferred_type_from_type_expr_with_substitutions;
 use super::inferred_types::{InferredType, InferredTypeKind};
+use super::struct_bindings::StructTypeBindings;
 use super::substitutions::TypeSubstitutions;
 
 pub(super) type ValueTypeBindings = BTreeMap<String, InferredType>;
@@ -60,6 +61,7 @@ pub(super) fn record_let_type_bindings(
     bindings: &mut ValueTypeBindings,
     function_bindings: &FunctionTypeBindings,
     enum_bindings: &EnumTypeBindings,
+    struct_bindings: &StructTypeBindings,
 ) {
     record_let_type_bindings_with_substitutions(
         pattern,
@@ -68,6 +70,7 @@ pub(super) fn record_let_type_bindings(
         bindings,
         function_bindings,
         enum_bindings,
+        struct_bindings,
         None,
     );
 }
@@ -79,6 +82,7 @@ pub(super) fn record_let_type_bindings_with_substitutions(
     bindings: &mut ValueTypeBindings,
     function_bindings: &FunctionTypeBindings,
     enum_bindings: &EnumTypeBindings,
+    struct_bindings: &StructTypeBindings,
     substitutions: Option<&TypeSubstitutions>,
 ) {
     if let Some(ty) = ty {
@@ -91,9 +95,13 @@ pub(super) fn record_let_type_bindings_with_substitutions(
         );
         return;
     }
-    if let Some(ty) =
-        infer_dependency_generic_expr_type(value, bindings, function_bindings, enum_bindings)
-    {
+    if let Some(ty) = infer_dependency_generic_expr_type(
+        value,
+        bindings,
+        function_bindings,
+        enum_bindings,
+        struct_bindings,
+    ) {
         record_pattern_inferred_type_bindings(pattern, &ty, bindings, enum_bindings);
     }
 }
@@ -104,10 +112,15 @@ pub(super) fn record_iterable_type_bindings(
     bindings: &mut ValueTypeBindings,
     function_bindings: &FunctionTypeBindings,
     enum_bindings: &EnumTypeBindings,
+    struct_bindings: &StructTypeBindings,
 ) {
-    let Some(iterable_ty) =
-        infer_dependency_generic_expr_type(iterable, bindings, function_bindings, enum_bindings)
-    else {
+    let Some(iterable_ty) = infer_dependency_generic_expr_type(
+        iterable,
+        bindings,
+        function_bindings,
+        enum_bindings,
+        struct_bindings,
+    ) else {
         return;
     };
     let InferredTypeKind::Array { element, .. } = &iterable_ty.kind else {
