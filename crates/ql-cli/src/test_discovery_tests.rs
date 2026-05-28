@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use ql_driver::{BuildOptions, BuildProfile};
 
 use super::listing::render_test_target_listing;
+use super::package_selector::package_selector_mismatch_message;
 use super::targets::project_test_output_path;
 use super::*;
 use crate::test_reporting::TestTargetKind;
@@ -106,6 +107,16 @@ fn no_matching_target_message_includes_package_selector_context() {
     assert_eq!(
         message,
         "`ql test` found no test target `tests/smoke.ql` for package `core` under `workspace`"
+    );
+}
+
+#[test]
+fn package_selector_mismatch_message_names_request_root() {
+    let message = package_selector_mismatch_message(Path::new("workspace"));
+
+    assert_eq!(
+        message,
+        "package selector matched no workspace members under `workspace`"
     );
 }
 

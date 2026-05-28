@@ -12,6 +12,7 @@ mod direct;
 mod filters;
 mod listing;
 mod no_match;
+mod package_selector;
 mod project;
 mod selection;
 mod targets;
