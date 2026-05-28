@@ -23,6 +23,8 @@ mod paths;
 mod project;
 mod project_errors;
 mod selected_member;
+mod selected_package;
+mod selected_workspace;
 mod selection;
 mod targets;
 mod test_files;
