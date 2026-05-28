@@ -18,8 +18,10 @@ mod package_selector;
 mod paths;
 mod project;
 mod project_errors;
+mod selected_member;
 mod selection;
 mod targets;
+mod test_files;
 mod ui;
 
 use direct::discover_direct_test_targets;
