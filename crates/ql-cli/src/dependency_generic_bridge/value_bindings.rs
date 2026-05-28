@@ -65,10 +65,8 @@ pub(super) fn record_let_type_bindings(
         record_pattern_type_bindings(pattern, ty, bindings);
         return;
     }
-    if let PatternKind::Name(name) = &pattern.kind
-        && let Some(ty) = infer_dependency_generic_expr_type(value, bindings, function_bindings)
-    {
-        bindings.insert(name.clone(), ty);
+    if let Some(ty) = infer_dependency_generic_expr_type(value, bindings, function_bindings) {
+        record_pattern_inferred_type_bindings(pattern, &ty, bindings);
     }
 }
 
@@ -88,6 +86,26 @@ fn record_pattern_type_bindings(
         {
             for (pattern, ty) in patterns.iter().zip(types) {
                 record_pattern_type_bindings(pattern, ty, bindings);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn record_pattern_inferred_type_bindings(
+    pattern: &Pattern,
+    ty: &InferredType,
+    bindings: &mut ValueTypeBindings,
+) {
+    match (&pattern.kind, &ty.kind) {
+        (PatternKind::Name(name), _) => {
+            bindings.insert(name.clone(), ty.clone());
+        }
+        (PatternKind::Tuple(patterns), super::inferred_types::InferredTypeKind::Tuple(types))
+            if patterns.len() == types.len() =>
+        {
+            for (pattern, ty) in patterns.iter().zip(types) {
+                record_pattern_inferred_type_bindings(pattern, ty, bindings);
             }
         }
         _ => {}

@@ -270,6 +270,52 @@ fn run() -> Int {
 }
 
 #[test]
+fn infers_substitutions_from_untyped_tuple_destructuring_bindings() {
+    let dependency = parse_module(
+        r#"
+package dep
+
+pub fn identity[T](value: T) -> T {
+    return value
+}
+"#,
+    );
+    let root = parse_module(
+        r#"
+use dep.identity as identity
+
+fn run() -> Int {
+    let (number, flag) = (1, true)
+    let picked: Int = identity(number)
+    let matched: Bool = identity(flag)
+    if matched {
+        return picked
+    }
+    return 0
+}
+"#,
+    );
+
+    let substitutions = collect_public_function_instantiations(
+        &root,
+        &["dep".to_owned()],
+        function(&dependency, "identity"),
+    );
+
+    assert_eq!(substitutions.len(), 2);
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Int") })
+    );
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| { item.get("T").map(String::as_str) == Some("Bool") })
+    );
+}
+
+#[test]
 fn infers_substitutions_from_projection_and_control_flow_expressions() {
     let dependency = parse_module(
         r#"
