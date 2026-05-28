@@ -50,10 +50,10 @@ fn at_status() -> Int {
 }
 
 fn len_reverse_status() -> Int {
-    let len_status = sum_statuses([check_int(len_array([2, 3, 4]), 3), check_int(len_array([2, 3, 4, 5]), 4), check_int(len_array([true, false, true, false, true]), 5), check_int(len_array(["red", "blue", "green"]), 3), 0, 0])
+    let len_status = sum_statuses([check_int(len_array([2, 3, 4]), 3), check_int(len_array([2, 3, 4, 5]), 4), check_int(len_array([true, false, true, false, true]), 5), check_int(len_array(["red", "blue", "green"]), 3), check_int(len_array([1, 2, 3, 4, 5, 6]), 6), check_int(len_array([false]), 1)])
     let reversed_int: [Int; 4] = reverse_array([2, 3, 4, 5])
     let reversed_bool: [Bool; 5] = reverse_array([true, false, true, false, false])
-    let reverse_status = sum_statuses([check_int(first_array(reversed_int), 5), check_int(last_array(reversed_int), 2), check_bool(first_array(reversed_bool), false), check_bool(last_array(reversed_bool), true), 0, 0])
+    let reverse_status = sum_statuses([check_int(first_array(reversed_int), 5), check_int(last_array(reversed_int), 2), check_bool(first_array(reversed_bool), false), check_bool(last_array(reversed_bool), true), check_int(reversed_int[1], 4), check_bool(reversed_bool[2], true)])
     let repeated_int: [Int; 4] = repeat_array(7)
     let repeated_bool: [Bool; 5] = repeat_array(false)
     let repeat_status = sum_statuses([check_int(first_array(repeated_int), 7), check_int(last_array(repeated_int), 7), check_int(count_array(repeated_int, 7), 4), check_bool(first_array(repeated_bool), false), check_bool(last_array(repeated_bool), false), check_int(count_array(repeated_bool, false), 5)])
@@ -61,21 +61,21 @@ fn len_reverse_status() -> Int {
 }
 
 fn contains_count_status() -> Int {
-    let contains_status = sum_statuses([check_bool(contains_array([2, 3, 4], 3), true), check_bool(contains_array([2, 3, 4, 5], 9), false), check_bool(contains_array([true, false, true, false, true], false), true), check_bool(contains_array(["red", "blue", "green"], "blue"), true), check_bool(contains_array(["a", "b", "c", "d"], "z"), false), 0])
-    let count_status = sum_statuses([check_int(count_array([2, 3, 2], 2), 2), check_int(count_array([2, 3, 2, 2], 2), 3), check_int(count_array([true, false, true, false, true], true), 3), check_int(count_array([1, 2, 3, 4, 5], 9), 0), check_int(count_array(["same", "other", "same"], "same"), 2), 0])
+    let contains_status = sum_statuses([check_bool(contains_array([2, 3, 4], 3), true), check_bool(contains_array([2, 3, 4, 5], 9), false), check_bool(contains_array([true, false, true, false, true], false), true), check_bool(contains_array(["red", "blue", "green"], "blue"), true), check_bool(contains_array(["a", "b", "c", "d"], "z"), false)])
+    let count_status = sum_statuses([check_int(count_array([2, 3, 2], 2), 2), check_int(count_array([2, 3, 2, 2], 2), 3), check_int(count_array([true, false, true, false, true], true), 3), check_int(count_array([1, 2, 3, 4, 5], 9), 0), check_int(count_array(["same", "other", "same"], "same"), 2), check_int(count_array([false, true, false, false], false), 3)])
     return contains_status + count_status
 }
 
 fn numeric_status() -> Int {
     let aggregate_status = sum_statuses([check_int(sum_int_array([2, 3, 4]), 9), check_int(sum_int_array([2, 3, 4, 5]), 14), check_int(sum_int_array([2, 3, 4, 5, 6]), 20), check_int(product_int_array([2, 3, 4]), 24), check_int(product_int_array([2, 3, 4, 5]), 120), check_int(product_int_array([2, 3, 4, 5, 6]), 720)])
-    let average_status = sum_statuses([check_int(average_int_array([5, 8]), 6), check_int(average_int_array([3, 6, 9]), 6), check_int(average_int_array([2, 4, 6, 8]), 5), check_int(average_int_array([2, 4, 6, 8, 10]), 6), 0, 0])
+    let average_status = sum_statuses([check_int(average_int_array([5, 8]), 6), check_int(average_int_array([3, 6, 9]), 6), check_int(average_int_array([2, 4, 6, 8]), 5), check_int(average_int_array([2, 4, 6, 8, 10]), 6), check_int(average_int_array([0 - 6, 0 - 3]), 0 - 4), check_int(average_int_array([0 - 9, 0, 9]), 0)])
     let extrema_status = sum_statuses([check_int(max_int_array([3, 9, 5]), 9), check_int(max_int_array([3, 9, 5, 7]), 9), check_int(max_int_array([3, 9, 5, 7, 11]), 11), check_int(min_int_array([3, 9, 5]), 3), check_int(min_int_array([3, 9, 5, 7]), 3), check_int(min_int_array([3, 9, 5, 7, 1]), 1)])
     return aggregate_status + average_status + extrema_status
 }
 
 fn bool_status() -> Int {
-    let truthy_status = sum_statuses([check_bool(all_bool_array([true, true, true]), true), check_bool(all_bool_array([true, true, true, false]), false), check_bool(any_bool_array([false, false, true]), true), check_bool(any_bool_array([false, false, false, false]), false), check_bool(any_bool_array([false, false, false, false, true]), true), 0])
-    let none_status = sum_statuses([check_bool(none_bool_array([false, false, false]), true), check_bool(none_bool_array([false, false, true, false]), false), check_bool(none_bool_array([false, false, false, false, false]), true), 0, 0, 0])
+    let truthy_status = sum_statuses([check_bool(all_bool_array([true, true, true]), true), check_bool(all_bool_array([true, true, true, false]), false), check_bool(any_bool_array([false, false, true]), true), check_bool(any_bool_array([false, false, false, false]), false), check_bool(any_bool_array([false, false, false, false, true]), true)])
+    let none_status = sum_statuses([check_bool(none_bool_array([false, false, false]), true), check_bool(none_bool_array([false, false, true, false]), false), check_bool(none_bool_array([false, false, false, false, false]), true), check_bool(none_bool_array([true]), false), check_bool(none_bool_array([false, true, false, true]), false), check_bool(none_bool_array([false]), true)])
     return truthy_status + none_status
 }
 

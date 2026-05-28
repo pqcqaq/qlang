@@ -25,6 +25,7 @@
 `std.array` 不再导出 `first3_array`、`reverse3_array`、`repeat3_array` 这类固定长度 helper；新代码只使用 length-generic API。重复数组使用语言级 `[value; N]`，标准库暴露 `repeat_array[T, N](value) -> [T; N]`。
 `std.core` 的聚合、布尔聚合、顺序判断和中位数使用数组 API；固定 arity 的 `sum3_int`、`max4_int`、`median3_int`、`all5_bool`、`is_ascending4_int` 等历史包装已删除。
 `std.test` 的 equality/array/option/result 断言统一走泛型 API，例如 `expect_eq[T]`、`expect_array_eq[T, N]`、`expect_array_contains[T, N]`、`expect_array_reverse[T, N]`、`expect_option_*`、`expect_result_*`；access/query/reverse 断言复用 `std.array` helpers，顺序断言复用 `std.core` ordering helpers，option/result 断言复用 `std.option` / `std.result` conversions，比较逻辑保持在断言函数内。历史 concrete carrier facade、固定 arity 的 `expect_*3/4/5` / `merge_status3/4/5/6`、以及 `is_status_*` / `expect_status_*` / `merge_status` 薄封装已删除；Int/Bool 专用行为断言仍是公开 API。
+package-local smoke 的 `sum_statuses[N]` 数组只放真实断言，不用裸 `0` padding 凑固定长度。
 当前 `Option.None` 这类零载荷泛型 variant 仍需要显式上下文；`none_option[T]()` 可从 typed initializer、typed array item、repeat-array item、tuple item 和 struct field 上下文推断。带载荷的 `Option.Some(...)`、`Result.Ok(...)`、`Result.Err(...)` 可从 payload 推断。
 
 ## 本地依赖
