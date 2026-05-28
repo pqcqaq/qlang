@@ -203,6 +203,9 @@ pub(super) fn collect_specialized_body_call_instantiations_for_local_names(
 #[path = "instantiations_arrays_tests.rs"]
 mod array_tests;
 #[cfg(test)]
+#[path = "instantiations_context_tests.rs"]
+mod context_tests;
+#[cfg(test)]
 #[path = "instantiations_patterns_tests.rs"]
 mod pattern_tests;
 #[cfg(test)]
