@@ -203,6 +203,75 @@ fn run() -> Int {
 }
 
 #[test]
+fn infers_substitutions_from_generic_carrier_match_patterns() {
+    let dependency = parse_module(
+        r#"
+package dep
+
+pub fn tag[T](value: T) -> Int {
+    return 1
+}
+"#,
+    );
+    let root = parse_module(
+        r#"
+use dep.tag as tag
+
+enum Option[T] {
+    Some(T),
+    None,
+}
+
+enum Result[T, E] {
+    Ok(T),
+    Err(E),
+}
+
+fn run() -> Int {
+    let maybe: Option[Int] = Option.Some(1)
+    let result: Result[Bool, String] = Result.Err("bad")
+    let from_option = match maybe {
+        Option.Some(inner) => tag(inner),
+        Option.None => 0,
+    }
+    let from_ok = match result {
+        Result.Ok(flag) => tag(flag),
+        Result.Err(_) => 0,
+    }
+    let from_err = match result {
+        Result.Ok(_) => 0,
+        Result.Err(error) => tag(error),
+    }
+    return from_option + from_ok + from_err
+}
+"#,
+    );
+
+    let substitutions = collect_public_function_instantiations(
+        &root,
+        &["dep".to_owned()],
+        function(&dependency, "tag"),
+    );
+
+    assert_eq!(substitutions.len(), 3);
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Int"))
+    );
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("Bool"))
+    );
+    assert!(
+        substitutions
+            .iter()
+            .any(|item| item.get("T").map(String::as_str) == Some("String"))
+    );
+}
+
+#[test]
 fn infers_substitution_from_later_argument_when_nested_call_arg_is_untyped() {
     let dependency = parse_module(
         r#"

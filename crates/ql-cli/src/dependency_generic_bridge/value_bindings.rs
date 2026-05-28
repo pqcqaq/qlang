@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 
-use ql_ast::{
-    Expr, FunctionDecl, ItemKind, Module, Param, Pattern, PatternKind, TypeExpr, TypeExprKind,
-};
+use ql_ast::{Expr, FunctionDecl, ItemKind, Module, Param, Pattern, PatternKind, TypeExpr};
 
 use super::expr_inference::infer_dependency_generic_expr_type;
 use super::function_bindings::FunctionTypeBindings;
@@ -125,25 +123,8 @@ fn record_pattern_type_bindings(
     ty: &TypeExpr,
     bindings: &mut ValueTypeBindings,
 ) {
-    match (&pattern.kind, &ty.kind) {
-        (PatternKind::Name(name), _) => {
-            if let Some(ty) = InferredType::from_type_expr(ty) {
-                bindings.insert(name.clone(), ty);
-            }
-        }
-        (PatternKind::Tuple(patterns), TypeExprKind::Tuple(types))
-            if patterns.len() == types.len() =>
-        {
-            for (pattern, ty) in patterns.iter().zip(types) {
-                record_pattern_type_bindings(pattern, ty, bindings);
-            }
-        }
-        (PatternKind::Array(patterns), TypeExprKind::Array { element, .. }) => {
-            for pattern in patterns {
-                record_pattern_type_bindings(pattern, element, bindings);
-            }
-        }
-        _ => {}
+    if let Some(ty) = InferredType::from_type_expr(ty) {
+        record_pattern_inferred_type_bindings(pattern, &ty, bindings);
     }
 }
 
@@ -168,6 +149,32 @@ pub(super) fn record_pattern_inferred_type_bindings(
                 record_pattern_inferred_type_bindings(pattern, element, bindings);
             }
         }
+        (PatternKind::TupleStruct { path, items }, _) => {
+            if let Some(field_types) = generic_carrier_tuple_struct_field_types(path, ty)
+                && items.len() == field_types.len()
+            {
+                for (pattern, ty) in items.iter().zip(field_types) {
+                    record_pattern_inferred_type_bindings(pattern, ty, bindings);
+                }
+            }
+        }
         _ => {}
+    }
+}
+
+fn generic_carrier_tuple_struct_field_types<'a>(
+    pattern_path: &ql_ast::Path,
+    ty: &'a InferredType,
+) -> Option<Vec<&'a InferredType>> {
+    let InferredTypeKind::Named { path, args } = &ty.kind else {
+        return None;
+    };
+    let carrier = path.last()?.as_str();
+    let variant = pattern_path.segments.last()?.as_str();
+    match (carrier, variant, args.as_slice()) {
+        ("Option", "Some", [inner]) => Some(vec![inner]),
+        ("Result", "Ok", [value, _]) => Some(vec![value]),
+        ("Result", "Err", [_, error]) => Some(vec![error]),
+        _ => None,
     }
 }
