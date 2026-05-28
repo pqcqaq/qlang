@@ -100,3 +100,41 @@ fn wrap() -> Option[Int] {
     assert_eq!(choose_ty.rendered, "Int");
     assert_eq!(wrap_ty.rendered, "Option[Int]");
 }
+
+#[test]
+fn infers_match_tail_with_generic_call_return_type() {
+    let module = parse_module(
+        r#"
+fn identity[T](value: T) -> T {
+    value
+}
+
+fn choose(flag: Bool) -> Int {
+    let base: Int = 1
+    match flag {
+        true => identity(base + 1),
+        _ => identity(2),
+    }
+}
+"#,
+    );
+    let choose_body = function(&module, "choose")
+        .body
+        .as_ref()
+        .expect("choose should have a body")
+        .clone();
+    let choose_expr = Expr::new(choose_body.span, ExprKind::Block(choose_body));
+    let function_bindings = FunctionTypeBindings::from([(
+        "identity".to_owned(),
+        function(&module, "identity").clone(),
+    )]);
+
+    let choose_ty = infer_dependency_generic_expr_type(
+        &choose_expr,
+        &ValueTypeBindings::new(),
+        &function_bindings,
+    )
+    .expect("match tail with generic call return type should infer");
+
+    assert_eq!(choose_ty.rendered, "Int");
+}
