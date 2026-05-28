@@ -21,6 +21,8 @@ use std.core.in_exclusive_bounds_int as in_exclusive_bounds_int
 use std.core.in_exclusive_range_int as in_exclusive_range_int
 use std.core.in_range_int as in_range_int
 use std.core.has_remainder_int as has_remainder_int
+use std.core.is_ascending_ints as is_ascending_ints
+use std.core.is_descending_ints as is_descending_ints
 use std.core.is_divisible_by_int as is_divisible_by_int
 use std.core.is_even_int as is_even_int
 use std.core.is_factor_of_int as is_factor_of_int
@@ -32,6 +34,8 @@ use std.core.is_odd_int as is_odd_int
 use std.core.is_outside_bounds_int as is_outside_bounds_int
 use std.core.is_outside_range_int as is_outside_range_int
 use std.core.is_positive_int as is_positive_int
+use std.core.is_strictly_ascending_ints as is_strictly_ascending_ints
+use std.core.is_strictly_descending_ints as is_strictly_descending_ints
 use std.core.is_within_int as is_within_int
 use std.core.lower_bound_int as lower_bound_int
 use std.core.max_int as max_int

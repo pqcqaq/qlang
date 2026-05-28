@@ -47,7 +47,7 @@
 - dependency generic body 内显式 typed local 会按当前 caller substitutions 记录 concrete 绑定，避免 helper specialization 残留外层泛型名。
 - `ql test` 已用真实 smoke 覆盖 package/workspace/direct test file、package-under-test bridge、direct dependency bridge、generic wrapper/helper bridge、UI snapshot、selector/listing、profile/release 和 JSON/text 合同。
 - repo stdlib workspace 的 source-only 复制 fixture 已覆盖 interface sync/check、starter package/workspace `check/build/run/test`、listing、graph/status/targets/dependencies/dependents、lock stale failure 和关键 JSON 合同；6 个 package/example smoke、接口同步产物、lockfile、构建产物与可执行产物存在性作为 downstream 可用性 gate。
-- `Option[T]`、`Result[T, E]`、`std.core` scalar/predicate/bool helpers、`std.core` / `std.array` length-generic aggregate/order/median helpers、`std.test` 泛型 equality/array/option/result assertions 和 `merge_statuses[N]` 已有真实 smoke；`std.option` smoke 覆盖 `none_option[T]` 在 typed array、repeat array、tuple item 和 struct field 上下文中的推断；`std.test` 数组/option/result 断言内部复用 canonical `std.array`、`std.option`、`std.result` helper。
+- `Option[T]`、`Result[T, E]`、`std.core` scalar/predicate/bool helpers、`std.core` / `std.array` length-generic aggregate/order/median helpers、`std.test` 泛型 equality/array/option/result assertions 和 `merge_statuses[N]` 已有真实 smoke；`std.option` smoke 覆盖 `none_option[T]` 在 typed array、repeat array、tuple item 和 struct field 上下文中的推断；`std.test` 数组/option/result 断言内部复用 canonical `std.array`、`std.core` ordering、`std.option`、`std.result` helper。
 - stdlib package-local smoke 已改用 length-generic 状态数组聚合，不再保留测试内 `sum4` / `sum6` 固定 arity helper。
 - 语言级重复数组字面量 `[value; N]` 已支持整数字面量长度和数组长度泛型；`std.option` / `std.result` concrete carrier API、`std.array` 固定长度 helper 和 `std.test` concrete carrier / 固定 arity facade 已删除；Int/Bool 专用行为断言仍保留。
 
