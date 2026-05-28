@@ -43,7 +43,9 @@
     },
     {
       "default_profile": null,
-      "dependencies": [],
+      "dependencies": [
+        "packages/core/qlang.toml"
+      ],
       "manifest_path": "packages/array/qlang.toml",
       "package_name": "std.array",
       "selected": true,

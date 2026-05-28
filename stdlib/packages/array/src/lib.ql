@@ -1,5 +1,14 @@
 package std.array
 
+use std.core.all_bools as core_all_bools
+use std.core.any_bools as core_any_bools
+use std.core.average_ints as core_average_ints
+use std.core.max_ints as core_max_ints
+use std.core.min_ints as core_min_ints
+use std.core.none_bools as core_none_bools
+use std.core.product_ints as core_product_ints
+use std.core.sum_ints as core_sum_ints
+
 pub fn first_array[T, N](values: [T; N]) -> T {
     return values[0]
 }
@@ -61,71 +70,33 @@ pub fn repeat_array[T, N](value: T) -> [T; N] {
 }
 
 pub fn sum_int_array[N](values: [Int; N]) -> Int {
-    var total = 0
-    for value in values {
-        total = total + value
-    }
-    return total
+    return core_sum_ints(values)
 }
 
 pub fn product_int_array[N](values: [Int; N]) -> Int {
-    var total = 1
-    for value in values {
-        total = total * value
-    }
-    return total
+    return core_product_ints(values)
 }
 
 pub fn average_int_array[N](values: [Int; N]) -> Int {
-    if N == 0 {
-        return 0
-    }
-    return sum_int_array(values) / N
+    return core_average_ints(values)
 }
 
 pub fn max_int_array[N](values: [Int; N]) -> Int {
-    var selected = values[0]
-    for value in values {
-        if value > selected {
-            selected = value
-        }
-    }
-    return selected
+    return core_max_ints(values)
 }
 
 pub fn min_int_array[N](values: [Int; N]) -> Int {
-    var selected = values[0]
-    for value in values {
-        if value < selected {
-            selected = value
-        }
-    }
-    return selected
+    return core_min_ints(values)
 }
 
 pub fn all_bool_array[N](values: [Bool; N]) -> Bool {
-    for value in values {
-        if !value {
-            return false
-        }
-    }
-    return true
+    return core_all_bools(values)
 }
 
 pub fn any_bool_array[N](values: [Bool; N]) -> Bool {
-    for value in values {
-        if value {
-            return true
-        }
-    }
-    return false
+    return core_any_bools(values)
 }
 
 pub fn none_bool_array[N](values: [Bool; N]) -> Bool {
-    for value in values {
-        if value {
-            return false
-        }
-    }
-    return true
+    return core_none_bools(values)
 }

@@ -4,6 +4,15 @@
 // source: src/lib.ql
 package std.array
 
+use std.core.all_bools as core_all_bools
+use std.core.any_bools as core_any_bools
+use std.core.average_ints as core_average_ints
+use std.core.max_ints as core_max_ints
+use std.core.min_ints as core_min_ints
+use std.core.none_bools as core_none_bools
+use std.core.product_ints as core_product_ints
+use std.core.sum_ints as core_sum_ints
+
 pub fn first_array[T, N](values: [T; N]) -> T
 
 pub fn last_array[T, N](values: [T; N]) -> T

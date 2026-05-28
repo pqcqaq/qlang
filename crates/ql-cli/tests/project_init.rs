@@ -891,7 +891,7 @@ fn assert_repo_stdlib_lock_json(
         (
             "std.array",
             "packages/array/qlang.toml",
-            Vec::new(),
+            vec!["packages/core/qlang.toml"],
             vec![("lib", "packages/array/src/lib.ql")],
         ),
         (
