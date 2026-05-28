@@ -13,9 +13,11 @@ mod filters;
 mod listing;
 mod no_match;
 mod package_selector;
+mod paths;
 mod project;
 mod selection;
 mod targets;
+mod ui;
 
 use direct::discover_direct_test_targets;
 pub(crate) use filters::{filter_test_targets, select_test_targets_by_path};

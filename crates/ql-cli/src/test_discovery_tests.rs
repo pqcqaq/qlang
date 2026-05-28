@@ -4,7 +4,8 @@ use ql_driver::{BuildOptions, BuildProfile};
 
 use super::listing::render_test_target_listing;
 use super::package_selector::package_selector_mismatch_message;
-use super::targets::project_test_output_path;
+use super::paths::{package_test_command_path, project_test_output_path};
+use super::ui::is_project_ui_test;
 use super::*;
 use crate::test_reporting::TestTargetKind;
 
@@ -139,4 +140,28 @@ fn project_test_output_path_preserves_nested_test_layout() {
             .join("integration")
             .join(executable_name)
     );
+}
+
+#[test]
+fn package_test_command_path_is_package_relative() {
+    assert_eq!(
+        package_test_command_path(Path::new("pkg"), Path::new("pkg/tests/ui/basic.ql")),
+        PathBuf::from("tests").join("ui").join("basic.ql")
+    );
+}
+
+#[test]
+fn project_ui_test_detection_requires_tests_ui_prefix() {
+    assert!(is_project_ui_test(
+        Path::new("pkg"),
+        Path::new("pkg/tests/ui/basic.ql")
+    ));
+    assert!(!is_project_ui_test(
+        Path::new("pkg"),
+        Path::new("pkg/tests/smoke.ql")
+    ));
+    assert!(!is_project_ui_test(
+        Path::new("pkg"),
+        Path::new("other/tests/ui/basic.ql")
+    ));
 }
