@@ -14,7 +14,13 @@ mod filters;
 #[path = "test_discovery/filters_tests.rs"]
 mod filters_tests;
 mod listing;
+#[cfg(test)]
+#[path = "test_discovery/listing_tests.rs"]
+mod listing_tests;
 mod member_targets;
+#[cfg(test)]
+#[path = "test_discovery/member_targets_tests.rs"]
+mod member_targets_tests;
 mod members;
 mod no_match;
 mod no_match_messages;
@@ -27,6 +33,9 @@ mod package_selector_messages;
 #[path = "test_discovery/package_selector_messages_tests.rs"]
 mod package_selector_messages_tests;
 mod paths;
+#[cfg(test)]
+#[path = "test_discovery/paths_tests.rs"]
+mod paths_tests;
 mod project;
 mod project_error_messages;
 #[cfg(test)]
@@ -43,6 +52,9 @@ mod test_files;
 #[path = "test_discovery/test_files_tests.rs"]
 mod test_files_tests;
 mod ui;
+#[cfg(test)]
+#[path = "test_discovery/ui_tests.rs"]
+mod ui_tests;
 mod workspace_selector;
 #[cfg(test)]
 #[path = "test_discovery/workspace_selector_tests.rs"]
@@ -93,7 +105,3 @@ pub(crate) fn discover_test_targets(
         }
     }
 }
-
-#[cfg(test)]
-#[path = "test_discovery_tests.rs"]
-mod tests;
