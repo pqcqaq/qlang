@@ -22,7 +22,14 @@ mod selected_member;
 mod selection;
 mod targets;
 mod test_files;
+#[cfg(test)]
+#[path = "test_discovery/test_files_tests.rs"]
+mod test_files_tests;
 mod ui;
+mod workspace_selector;
+#[cfg(test)]
+#[path = "test_discovery/workspace_selector_tests.rs"]
+mod workspace_selector_tests;
 
 use direct::discover_direct_test_targets;
 pub(crate) use filters::{filter_test_targets, select_test_targets_by_path};

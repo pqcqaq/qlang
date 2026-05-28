@@ -6,11 +6,9 @@ use crate::project_workspace::resolve_selected_workspace_member_manifest;
 use crate::test_command::TestCommandOptions;
 
 use super::member_targets::project_test_build_targets_from_manifest;
-use super::package_selector::{
-    load_workspace_selected_member_manifest_for_json, report_package_selector_mismatch,
-    validate_test_package_selector,
-};
+use super::package_selector::{report_package_selector_mismatch, validate_test_package_selector};
 use super::project_errors::report_ql_test_project_preflight_error;
+use super::workspace_selector::load_workspace_selected_member_manifest_for_json;
 
 pub(super) fn load_selected_project_test_member(
     request_path: &Path,
