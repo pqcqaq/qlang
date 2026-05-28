@@ -1,4 +1,4 @@
-use ql_ast::{self, CallArg, Expr, ExprKind, MatchArm, StructLiteralField, TypeExpr};
+use ql_ast::{self, CallArg, Expr, ExprKind, MatchArm, StructLiteralField, TypeExpr, TypeExprKind};
 
 use super::call_args::call_arg_expr;
 use super::expr_inference::infer_dependency_generic_expr_type;
@@ -6,7 +6,7 @@ use super::inferred_types::InferredType;
 use super::instantiation_block_scanner::collect_dependency_generic_function_instantiations_from_block;
 use super::instantiation_call_scanner::scan_call_instantiation;
 use super::instantiation_scan_context::InstantiationScanContext;
-use super::value_bindings::{ValueTypeBindings, record_pattern_inferred_type_bindings};
+use super::value_bindings::{record_pattern_inferred_type_bindings, ValueTypeBindings};
 
 pub(super) fn collect_dependency_generic_function_instantiations_from_expr(
     expr: &Expr,
@@ -35,11 +35,14 @@ impl ExprInstantiationScanner<'_, '_> {
             ExprKind::Call { callee, args } => {
                 self.scan_call_expr(callee, args, expected_ty, return_expected_ty, bindings);
             }
-            ExprKind::Tuple(items) | ExprKind::Array(items) => {
-                self.scan_exprs_without_expected(items, return_expected_ty, bindings);
+            ExprKind::Tuple(items) => {
+                self.scan_tuple_expr(items, expected_ty, return_expected_ty, bindings);
+            }
+            ExprKind::Array(items) => {
+                self.scan_array_expr(items, expected_ty, return_expected_ty, bindings);
             }
             ExprKind::RepeatArray { value, .. } => {
-                self.scan_child_expr(value, return_expected_ty, bindings);
+                self.scan_repeat_array_expr(value, expected_ty, return_expected_ty, bindings);
             }
             ExprKind::StructLiteral { fields, .. } => {
                 self.scan_struct_literal_fields(fields, return_expected_ty, bindings);
@@ -98,6 +101,56 @@ impl ExprInstantiationScanner<'_, '_> {
                 self.scan_child_expr(value, return_expected_ty, bindings);
             }
         }
+    }
+
+    fn scan_tuple_expr(
+        &mut self,
+        items: &[Expr],
+        expected_ty: Option<&TypeExpr>,
+        return_expected_ty: Option<&TypeExpr>,
+        bindings: &ValueTypeBindings,
+    ) {
+        let Some(TypeExprKind::Tuple(expected_items)) = expected_ty.map(|ty| &ty.kind) else {
+            self.scan_exprs_without_expected(items, return_expected_ty, bindings);
+            return;
+        };
+        if expected_items.len() != items.len() {
+            self.scan_exprs_without_expected(items, return_expected_ty, bindings);
+            return;
+        }
+        for (item, item_expected_ty) in items.iter().zip(expected_items) {
+            self.scan_expr(item, Some(item_expected_ty), return_expected_ty, bindings);
+        }
+    }
+
+    fn scan_array_expr(
+        &mut self,
+        items: &[Expr],
+        expected_ty: Option<&TypeExpr>,
+        return_expected_ty: Option<&TypeExpr>,
+        bindings: &ValueTypeBindings,
+    ) {
+        let Some(TypeExprKind::Array { element, .. }) = expected_ty.map(|ty| &ty.kind) else {
+            self.scan_exprs_without_expected(items, return_expected_ty, bindings);
+            return;
+        };
+        for item in items {
+            self.scan_expr(item, Some(element), return_expected_ty, bindings);
+        }
+    }
+
+    fn scan_repeat_array_expr(
+        &mut self,
+        value: &Expr,
+        expected_ty: Option<&TypeExpr>,
+        return_expected_ty: Option<&TypeExpr>,
+        bindings: &ValueTypeBindings,
+    ) {
+        let Some(TypeExprKind::Array { element, .. }) = expected_ty.map(|ty| &ty.kind) else {
+            self.scan_child_expr(value, return_expected_ty, bindings);
+            return;
+        };
+        self.scan_expr(value, Some(element), return_expected_ty, bindings);
     }
 
     fn scan_binary_expr(

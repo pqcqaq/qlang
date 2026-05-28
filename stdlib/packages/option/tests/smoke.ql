@@ -50,8 +50,12 @@ fn main() -> Int {
     let bool_fallback: Option[Bool] = some(false)
     let direct_some: Option[Int] = Option.Some(15)
     let direct_none: Option[Int] = Option.None
+    let array_none_values: [Option[Int]; 2] = [option_none(), Option.Some(1)]
+    let repeat_none_values: [Option[String]; 3] = [option_none(); 3]
+    let tuple_none_values: (Option[Bool], Int) = (option_none(), 1)
     let int_status = sum_statuses([check_bool(is_some(int_some), true), check_bool(is_none(int_none), true), check_int(unwrap_or(int_some, 3), 7), check_int(unwrap_or(int_none, 3), 3), check_int(unwrap_or(or_option(int_none, int_fallback), 0), 9), check_int(unwrap_or(or_option(int_present, int_fallback), 0), 13)])
     let bool_status = sum_statuses([check_bool(is_some(bool_some), true), check_bool(is_none(bool_none), true), check_bool(unwrap_or(bool_some, false), true), check_bool(unwrap_or(bool_none, true), true), check_bool(unwrap_or(or_option(bool_none, bool_fallback), true), false), 0])
     let constructor_status = sum_statuses([check_bool(is_some(direct_some), true), check_bool(is_none(direct_none), true), check_int(unwrap_or(direct_some, 0), 15), check_int(unwrap_or(direct_none, 3), 3), 0, 0])
-    return int_status + bool_status + constructor_status + check_int(generic_option_status(Option.Some(7), Option.None), 7)
+    let composite_context_status = sum_statuses([check_bool(is_none(array_none_values[0]), true), check_int(unwrap_or(array_none_values[1], 0), 1), check_bool(is_none(repeat_none_values[2]), true), check_bool(is_none(tuple_none_values[0]), true)])
+    return int_status + bool_status + constructor_status + composite_context_status + check_int(generic_option_status(Option.Some(7), Option.None), 7)
 }
