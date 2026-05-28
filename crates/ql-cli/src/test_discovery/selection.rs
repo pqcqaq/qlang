@@ -1,21 +1,17 @@
 use std::path::Path;
 
-use ql_project::{
-    WorkspaceBuildTargets, discover_workspace_build_targets, load_project_manifest, package_name,
-};
+use ql_project::{WorkspaceBuildTargets, load_project_manifest, package_name};
 
-use crate::build_reporting::build_json_project_error;
-use crate::project_targets::load_workspace_build_targets_for_command_from_request_root;
 use crate::project_workspace::resolve_selected_workspace_member_manifest;
 use crate::test_command::TestCommandOptions;
-use crate::test_reporting::render_test_json_preflight_failure_report;
 
 use super::member_targets::project_test_build_targets_from_manifest;
+use super::members::load_all_project_test_members;
 use super::package_selector::{
     load_workspace_selected_member_manifest_for_json, report_package_selector_mismatch,
     validate_test_package_selector,
 };
-use super::project_errors::{report_ql_test_project_error, report_ql_test_project_preflight_error};
+use super::project_errors::report_ql_test_project_preflight_error;
 
 pub(super) fn load_project_test_members(
     request_path: &Path,
@@ -29,19 +25,12 @@ pub(super) fn load_project_test_members(
     let manifest = match load_project_manifest(project_path) {
         Ok(manifest) => manifest,
         Err(error) => {
-            if command_options.json {
-                print!(
-                    "{}",
-                    render_test_json_preflight_failure_report(
-                        request_path,
-                        command_options,
-                        build_json_project_error(request_path, &error, "manifest-load"),
-                    )
-                );
-            } else {
-                report_ql_test_project_error(&error);
-            }
-            return Err(1);
+            return Err(report_ql_test_project_preflight_error(
+                request_path,
+                command_options,
+                &error,
+                "manifest-load",
+            ));
         }
     };
 
@@ -59,49 +48,6 @@ pub(super) fn load_project_test_members(
         command_options,
         &manifest,
         selected_package_name,
-    )
-}
-
-fn load_all_project_test_members(
-    request_path: &Path,
-    project_path: &Path,
-    command_options: &TestCommandOptions,
-) -> Result<Vec<WorkspaceBuildTargets>, u8> {
-    if command_options.json {
-        let manifest = match load_project_manifest(project_path) {
-            Ok(manifest) => manifest,
-            Err(error) => {
-                print!(
-                    "{}",
-                    render_test_json_preflight_failure_report(
-                        request_path,
-                        command_options,
-                        build_json_project_error(request_path, &error, "manifest-load"),
-                    )
-                );
-                return Err(1);
-            }
-        };
-        return match discover_workspace_build_targets(&manifest) {
-            Ok(members) => Ok(members),
-            Err(error) => {
-                print!(
-                    "{}",
-                    render_test_json_preflight_failure_report(
-                        request_path,
-                        command_options,
-                        build_json_project_error(request_path, &error, "target-discovery"),
-                    )
-                );
-                Err(1)
-            }
-        };
-    }
-
-    load_workspace_build_targets_for_command_from_request_root(
-        request_path,
-        project_path,
-        "`ql test`",
     )
 }
 

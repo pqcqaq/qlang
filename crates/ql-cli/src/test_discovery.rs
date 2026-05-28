@@ -12,6 +12,7 @@ mod direct;
 mod filters;
 mod listing;
 mod member_targets;
+mod members;
 mod no_match;
 mod package_selector;
 mod paths;
