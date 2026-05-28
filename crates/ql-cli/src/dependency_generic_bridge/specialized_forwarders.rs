@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use ql_ast::{FunctionDecl, ItemKind, Module};
+use ql_ast::{FunctionDecl, Module};
 
 use super::function_bindings::{FunctionTypeBindings, dependency_imported_local_names};
 use super::instantiations;
@@ -69,20 +69,12 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
             return Some(());
         }
 
-        let mut body_call_rewrites = Vec::new();
-        self.collect_same_module_specialized_body_call_rewrites(
+        let body_call_rewrites = self.collect_specialized_body_call_rewrites(
             module_import_path,
             function,
             contents,
             specialization_module,
             substitutions,
-            &mut body_call_rewrites,
-        )?;
-        self.collect_imported_specialized_body_call_rewrites(
-            function,
-            specialization_module,
-            substitutions,
-            &mut body_call_rewrites,
         )?;
 
         let body = render_specialized_forwarder_body(
@@ -100,6 +92,32 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
         Some(())
     }
 
+    fn collect_specialized_body_call_rewrites(
+        &mut self,
+        module_import_path: &[String],
+        function: &FunctionDecl,
+        contents: &str,
+        specialization_module: &Module,
+        substitutions: &BTreeMap<String, String>,
+    ) -> Option<Vec<SourceRewrite>> {
+        let mut body_call_rewrites = Vec::new();
+        self.collect_same_module_specialized_body_call_rewrites(
+            module_import_path,
+            function,
+            contents,
+            specialization_module,
+            substitutions,
+            &mut body_call_rewrites,
+        )?;
+        self.collect_imported_specialized_body_call_rewrites(
+            function,
+            specialization_module,
+            substitutions,
+            &mut body_call_rewrites,
+        )?;
+        Some(body_call_rewrites)
+    }
+
     fn collect_same_module_specialized_body_call_rewrites(
         &mut self,
         module_import_path: &[String],
@@ -110,13 +128,10 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
         body_call_rewrites: &mut Vec<SourceRewrite>,
     ) -> Option<()> {
         let function_bindings = self.function_bindings;
-        for item in &specialization_module.items {
-            let ItemKind::Function(callee) = &item.kind else {
-                continue;
-            };
-            if !supports_local_function_specialization(callee) || callee.body.is_none() {
-                continue;
-            }
+        for callee in specializable_functions(
+            specialization_module,
+            supports_local_function_specialization,
+        ) {
             self.render_specialized_body_call_rewrites_for_callee(
                 SpecializedBodyCallTarget {
                     module_import_path,
@@ -146,13 +161,10 @@ impl<'a, 'm> SpecializedForwarderRenderContext<'a, 'm> {
         let function_bindings = self.function_bindings;
         let specialization_modules = self.specialization_modules;
         for target_module in specialization_modules.iter().copied() {
-            for item in &target_module.module.items {
-                let ItemKind::Function(callee) = &item.kind else {
-                    continue;
-                };
-                if !supports_public_function_specialization(callee) || callee.body.is_none() {
-                    continue;
-                }
+            for callee in specializable_functions(
+                target_module.module,
+                supports_public_function_specialization,
+            ) {
                 let local_names = dependency_imported_local_names(
                     specialization_module,
                     target_module.module_import_path,
@@ -233,6 +245,20 @@ struct SpecializedBodyCallTarget<'a> {
     contents: &'a str,
     module: &'a Module,
     callee: &'a FunctionDecl,
+}
+
+fn specializable_functions<'a>(
+    module: &'a Module,
+    supports: impl Fn(&FunctionDecl) -> bool + 'a,
+) -> impl Iterator<Item = &'a FunctionDecl> + 'a {
+    module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ql_ast::ItemKind::Function(function) => Some(function),
+            _ => None,
+        })
+        .filter(move |function| supports(function) && function.body.is_some())
 }
 
 fn render_specialized_forwarder_body(
