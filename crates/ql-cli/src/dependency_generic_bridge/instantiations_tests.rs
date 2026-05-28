@@ -322,6 +322,66 @@ fn run(flag: Bool) -> Int {
 }
 
 #[test]
+fn scans_calls_nested_in_expression_traversal_forms() {
+    let dependency = parse_module(
+        r#"
+package dep
+
+pub fn identity[T](value: T) -> T {
+    return value
+}
+"#,
+    );
+    let root = parse_module(
+        r#"
+use dep.identity as identity
+
+struct Pair {
+    number: Int,
+    flag: Bool,
+}
+
+fn run(values: [Int; 3], flag: Bool) -> Int {
+    let pair = Pair {
+        number: identity(1) + values[identity(0)],
+        flag: match flag {
+            _ if identity(true) => identity(true),
+            _ => false,
+        },
+    }
+    if pair.flag {
+        return pair.number
+    }
+    return 0
+}
+"#,
+    );
+
+    let instantiations = collect_public_function_call_instantiations(
+        &root,
+        &["dep".to_owned()],
+        function(&dependency, "identity"),
+        &FunctionTypeBindings::new(),
+    );
+
+    assert_eq!(instantiations.len(), 4);
+    assert_eq!(
+        instantiations
+            .iter()
+            .filter(|item| item.substitutions.get("T").map(String::as_str) == Some("Int"))
+            .count(),
+        2
+    );
+    assert_eq!(
+        instantiations
+            .iter()
+            .filter(|item| item.substitutions.get("T").map(String::as_str) == Some("Bool"))
+            .count(),
+        2
+    );
+}
+
+#[test]
 fn infers_substitutions_from_generic_array_parameters() {
     let dependency = parse_module(
         r#"

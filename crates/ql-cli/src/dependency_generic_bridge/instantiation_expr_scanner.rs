@@ -1,4 +1,4 @@
-use ql_ast::{self, CallArg, Expr, ExprKind, TypeExpr};
+use ql_ast::{self, CallArg, Expr, ExprKind, MatchArm, StructLiteralField, TypeExpr};
 
 use super::call_args::call_arg_expr;
 use super::instantiation_block_scanner::collect_dependency_generic_function_instantiations_from_block;
@@ -40,15 +40,10 @@ impl ExprInstantiationScanner<'_, '_> {
                 self.scan_child_expr(value, return_expected_ty, bindings);
             }
             ExprKind::StructLiteral { fields, .. } => {
-                for field in fields {
-                    if let Some(value) = &field.value {
-                        self.scan_child_expr(value, return_expected_ty, bindings);
-                    }
-                }
+                self.scan_struct_literal_fields(fields, return_expected_ty, bindings);
             }
             ExprKind::Binary { left, right, .. } => {
-                self.scan_child_expr(left, return_expected_ty, bindings);
-                self.scan_child_expr(right, return_expected_ty, bindings);
+                self.scan_binary_expr(left, right, return_expected_ty, bindings);
             }
             ExprKind::Unary { expr, .. } | ExprKind::Question(expr) => {
                 self.scan_child_expr(expr, return_expected_ty, bindings);
@@ -57,8 +52,7 @@ impl ExprInstantiationScanner<'_, '_> {
                 self.scan_child_expr(object, return_expected_ty, bindings);
             }
             ExprKind::Bracket { target, items } => {
-                self.scan_child_expr(target, return_expected_ty, bindings);
-                self.scan_exprs_without_expected(items, return_expected_ty, bindings);
+                self.scan_bracket_expr(target, items, return_expected_ty, bindings);
             }
             ExprKind::Block(block) | ExprKind::Unsafe(block) => {
                 self.scan_block_expr(block, expected_ty, return_expected_ty, bindings);
@@ -78,13 +72,7 @@ impl ExprInstantiationScanner<'_, '_> {
                 );
             }
             ExprKind::Match { value, arms } => {
-                self.scan_child_expr(value, return_expected_ty, bindings);
-                for arm in arms {
-                    if let Some(guard) = &arm.guard {
-                        self.scan_child_expr(guard, return_expected_ty, bindings);
-                    }
-                    self.scan_expr(&arm.body, expected_ty, return_expected_ty, bindings);
-                }
+                self.scan_match_expr(value, arms, expected_ty, return_expected_ty, bindings);
             }
             ExprKind::Closure { body, .. } => {
                 self.scan_expr(body, None, None, bindings);
@@ -94,6 +82,58 @@ impl ExprInstantiationScanner<'_, '_> {
             | ExprKind::Bool(_)
             | ExprKind::NoneLiteral
             | ExprKind::Name(_) => {}
+        }
+    }
+
+    fn scan_struct_literal_fields(
+        &mut self,
+        fields: &[StructLiteralField],
+        return_expected_ty: Option<&TypeExpr>,
+        bindings: &ValueTypeBindings,
+    ) {
+        for field in fields {
+            if let Some(value) = &field.value {
+                self.scan_child_expr(value, return_expected_ty, bindings);
+            }
+        }
+    }
+
+    fn scan_binary_expr(
+        &mut self,
+        left: &Expr,
+        right: &Expr,
+        return_expected_ty: Option<&TypeExpr>,
+        bindings: &ValueTypeBindings,
+    ) {
+        self.scan_child_expr(left, return_expected_ty, bindings);
+        self.scan_child_expr(right, return_expected_ty, bindings);
+    }
+
+    fn scan_bracket_expr(
+        &mut self,
+        target: &Expr,
+        items: &[Expr],
+        return_expected_ty: Option<&TypeExpr>,
+        bindings: &ValueTypeBindings,
+    ) {
+        self.scan_child_expr(target, return_expected_ty, bindings);
+        self.scan_exprs_without_expected(items, return_expected_ty, bindings);
+    }
+
+    fn scan_match_expr(
+        &mut self,
+        value: &Expr,
+        arms: &[MatchArm],
+        expected_ty: Option<&TypeExpr>,
+        return_expected_ty: Option<&TypeExpr>,
+        bindings: &ValueTypeBindings,
+    ) {
+        self.scan_child_expr(value, return_expected_ty, bindings);
+        for arm in arms {
+            if let Some(guard) = &arm.guard {
+                self.scan_child_expr(guard, return_expected_ty, bindings);
+            }
+            self.scan_expr(&arm.body, expected_ty, return_expected_ty, bindings);
         }
     }
 

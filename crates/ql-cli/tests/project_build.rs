@@ -2843,6 +2843,132 @@ fn main() -> Int {
 }
 
 #[test]
+fn build_package_path_json_scans_dependency_generic_calls_in_nested_expressions() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-json-generic-nested-expressions");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src"))
+        .expect("create dep source tree for dependency generic nested expressions");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create app source tree for dependency generic nested expressions");
+
+    let dep_manifest = temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        r#"
+pub fn identity[T](value: T) -> T {
+    return value
+}
+"#,
+    );
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "app/src/main.ql",
+        r#"
+use dep.identity as identity
+
+struct Pair {
+    number: Int,
+    flag: Bool,
+}
+
+fn main() -> Int {
+    let values: [Int; 3] = [2, 3, 4]
+    let pair: Pair = Pair {
+        number: identity(1) + values[identity(0)],
+        flag: match true {
+            _ if identity(true) => identity(true),
+            _ => false,
+        },
+    }
+    if pair.flag {
+        return pair.number
+    }
+    return 0
+}
+"#,
+    );
+
+    let dep_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let app_output = project_root.join("target/ql/debug/main.ll");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` nested dependency generic expression calls",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-package-json-generic-nested-expressions",
+        "package build json dependency generic nested expression calls",
+        &output,
+    )
+    .expect(
+        "package-path `ql build --json` should scan nested dependency generic expression calls",
+    );
+    expect_empty_stderr(
+        "project-build-package-json-generic-nested-expressions",
+        "package build json dependency generic nested expression calls",
+        &stderr,
+    )
+    .expect("nested expression generic function json build should not print stderr");
+
+    let json = parse_json_output(
+        "project-build-package-json-generic-nested-expressions",
+        &stdout,
+    );
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(json["status"], "ok");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    let built_targets = json["built_targets"]
+        .as_array()
+        .expect("nested expression generic function json should expose built_targets");
+    assert_eq!(built_targets.len(), 2);
+    assert_eq!(
+        built_targets[0]["manifest_path"],
+        dep_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        built_targets[1]["artifact_path"],
+        app_output.display().to_string().replace('\\', "/")
+    );
+    expect_file_exists(
+        "project-build-package-json-generic-nested-expressions",
+        &dep_output,
+        "dependency package artifact",
+        "package build json dependency generic nested expression calls",
+    )
+    .expect("nested expression generic function scan should preserve dependency artifact");
+    expect_file_exists(
+        "project-build-package-json-generic-nested-expressions",
+        &app_output,
+        "selected package artifact",
+        "package build json dependency generic nested expression calls",
+    )
+    .expect("nested expression generic function scan should emit selected artifact");
+}
+
+#[test]
 fn build_package_path_json_supports_dependency_generic_function_from_generic_carriers() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-package-json-generic-public-function-carriers");
