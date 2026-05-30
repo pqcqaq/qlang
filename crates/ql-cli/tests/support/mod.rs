@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod codegen;
+
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
