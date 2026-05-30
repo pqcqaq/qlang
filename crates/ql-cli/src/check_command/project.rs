@@ -57,8 +57,15 @@ pub(super) fn check_project_path(
 
     let check_command_label = format_check_command_label(sync_interfaces);
     let mut json_report = None;
-    let Ok(manifest) = load_project_manifest(manifest_request_path) else {
-        return Ok(CheckProjectPathOutcome::FallbackToFiles);
+    let manifest = match load_project_manifest(manifest_request_path) {
+        Ok(manifest) => manifest,
+        Err(ql_project::ProjectError::ManifestNotFound { .. }) => {
+            return Ok(CheckProjectPathOutcome::FallbackToFiles);
+        }
+        Err(error) => {
+            report_package_project_error(error, None, sync_interfaces, &check_command_label);
+            return Err(1);
+        }
     };
 
     if manifest.package.is_none() && manifest.workspace.is_some() {
