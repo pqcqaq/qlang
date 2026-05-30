@@ -3,6 +3,8 @@
 source_filename = "async_program_main_aliased_guard_refined_static_alias_backed_projected_root_dynamic_task_handle_reinit.ql"
 target triple = "x86_64-pc-windows-msvc"
 
+declare i32 @memcmp(ptr, ptr, i64)
+
 declare ptr @malloc(i64)
 declare void @free(ptr)
 
@@ -110,17 +112,16 @@ entry:
   %l6_alias = alloca [2 x ptr]
   %l8__t5 = alloca { i64 }
   %l9__t6 = alloca i1
-  %l10__t7 = alloca { i64 }
-  %l11__t8 = alloca i64
-  %l12_first = alloca i64
-  %l13__t9 = alloca i64
+  %l10__t7 = alloca i64
+  %l11_first = alloca i64
+  %l12__t8 = alloca i64
+  %l13__t9 = alloca ptr
   %l14__t10 = alloca ptr
-  %l15__t11 = alloca ptr
-  %l16__t12 = alloca i64
-  %l17_second = alloca i64
-  %l18__t13 = alloca i64
-  %l19_tail = alloca i64
-  %l20__t14 = alloca i64
+  %l15__t11 = alloca i64
+  %l16_second = alloca i64
+  %l17__t12 = alloca i64
+  %l18_tail = alloca i64
+  %l19__t13 = alloca i64
   br label %bb0
 bb0:
   %t0 = call ptr @ql_3_worker(i64 8)
@@ -158,52 +159,48 @@ bb2:
   %t20 = call ptr @qlrt_task_await(ptr %t19)
   %t21 = load i64, ptr %t20
   call void @qlrt_task_result_release(ptr %t20)
-  store i64 %t21, ptr %l16__t12
-  %t22 = load i64, ptr %l16__t12
-  store i64 %t22, ptr %l17_second
+  store i64 %t21, ptr %l15__t11
+  %t22 = load i64, ptr %l15__t11
+  store i64 %t22, ptr %l16_second
   %t23 = getelementptr inbounds { [2 x ptr] }, ptr %l5_pending, i32 0, i32 0
   %t24 = getelementptr inbounds [2 x ptr], ptr %t23, i64 0, i64 1
   %t25 = load ptr, ptr %t24
   %t26 = call ptr @qlrt_task_await(ptr %t25)
   %t27 = load i64, ptr %t26
   call void @qlrt_task_result_release(ptr %t26)
-  store i64 %t27, ptr %l18__t13
-  %t28 = load i64, ptr %l18__t13
-  store i64 %t28, ptr %l19_tail
-  %t29 = load i64, ptr %l17_second
-  %t30 = load i64, ptr %l19_tail
+  store i64 %t27, ptr %l17__t12
+  %t28 = load i64, ptr %l17__t12
+  store i64 %t28, ptr %l18_tail
+  %t29 = load i64, ptr %l16_second
+  %t30 = load i64, ptr %l18_tail
   %t31 = add i64 %t29, %t30
-  store i64 %t31, ptr %l20__t14
-  %t32 = load i64, ptr %l20__t14
+  store i64 %t31, ptr %l19__t13
+  %t32 = load i64, ptr %l19__t13
   store i64 %t32, ptr %l0__return
   br label %bb1
 bb3:
-  %t33 = insertvalue { i64 } undef, i64 0, 0
-  store { i64 } %t33, ptr %l10__t7
-  %t34 = getelementptr inbounds { [2 x ptr] }, ptr %l5_pending, i32 0, i32 0
-  %t35 = getelementptr inbounds { i64 }, ptr %l10__t7, i32 0, i32 0
-  %t36 = load i64, ptr %t35
-  %t37 = getelementptr inbounds [2 x ptr], ptr %t34, i64 0, i64 %t36
-  %t38 = load ptr, ptr %t37
-  %t39 = call ptr @qlrt_task_await(ptr %t38)
-  %t40 = load i64, ptr %t39
-  call void @qlrt_task_result_release(ptr %t39)
-  store i64 %t40, ptr %l11__t8
-  %t41 = load i64, ptr %l11__t8
-  store i64 %t41, ptr %l12_first
-  %t42 = load i64, ptr %l12_first
-  %t43 = add i64 %t42, 4
-  store i64 %t43, ptr %l13__t9
-  %t44 = load i64, ptr %l13__t9
-  %t45 = call ptr @ql_3_worker(i64 %t44)
-  store ptr %t45, ptr %l14__t10
-  %t46 = load ptr, ptr %l14__t10
-  %t47 = getelementptr inbounds { [2 x ptr] }, ptr %l5_pending, i32 0, i32 0
-  %t48 = getelementptr inbounds [2 x ptr], ptr %t47, i64 0, i64 0
-  store ptr %t46, ptr %t48
-  %t49 = load ptr, ptr %l14__t10
-  store ptr %t49, ptr %l15__t11
-  %t50 = load ptr, ptr %l15__t11
+  %t33 = getelementptr inbounds { [2 x ptr] }, ptr %l5_pending, i32 0, i32 0
+  %t34 = getelementptr inbounds [2 x ptr], ptr %t33, i64 0, i64 0
+  %t35 = load ptr, ptr %t34
+  %t36 = call ptr @qlrt_task_await(ptr %t35)
+  %t37 = load i64, ptr %t36
+  call void @qlrt_task_result_release(ptr %t36)
+  store i64 %t37, ptr %l10__t7
+  %t38 = load i64, ptr %l10__t7
+  store i64 %t38, ptr %l11_first
+  %t39 = load i64, ptr %l11_first
+  %t40 = add i64 %t39, 4
+  store i64 %t40, ptr %l12__t8
+  %t41 = load i64, ptr %l12__t8
+  %t42 = call ptr @ql_3_worker(i64 %t41)
+  store ptr %t42, ptr %l13__t9
+  %t43 = load ptr, ptr %l13__t9
+  %t44 = getelementptr inbounds { [2 x ptr] }, ptr %l5_pending, i32 0, i32 0
+  %t45 = getelementptr inbounds [2 x ptr], ptr %t44, i64 0, i64 0
+  store ptr %t43, ptr %t45
+  %t46 = load ptr, ptr %l13__t9
+  store ptr %t46, ptr %l14__t10
+  %t47 = load ptr, ptr %l14__t10
   br label %bb2
 }
 
