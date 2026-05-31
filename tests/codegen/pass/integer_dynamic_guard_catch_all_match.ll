@@ -23,6 +23,7 @@ bb0:
 bb0_match_dispatch1:
   br label %bb0_match_guard1
 bb0_match_guard1:
+  store i64 %t1, ptr %l5_other
   %t3 = load i1, ptr %l2_enabled
   br i1 %t3, label %bb4, label %bb5
 bb1:
