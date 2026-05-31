@@ -7260,8 +7260,45 @@ impl<'a> ModuleEmitter<'a> {
             self.input.module_name
         );
         let _ = writeln!(output, "target triple = \"{}\"", default_target_triple());
-        output.push('\n');
-        output.push_str("declare i32 @memcmp(ptr, ptr, i64)\n");
+
+        let mut body = String::new();
+        for function_ref in reachable {
+            body.push('\n');
+            if let Some(function) = functions
+                .iter()
+                .find(|function| function.signature.function_ref == *function_ref)
+            {
+                self.render_function(&mut body, function);
+                continue;
+            }
+
+            let signature = self
+                .signatures
+                .get(function_ref)
+                .expect("reachable functions should have signatures");
+            self.render_declaration(&mut body, signature);
+        }
+
+        if let Some(entry) = entry
+            && let Some(entry_function) = functions
+                .iter()
+                .find(|function| function.signature.function_ref == entry)
+        {
+            body.push('\n');
+            self.render_host_entry_wrapper(&mut body, entry_function);
+        }
+
+        let mut closures = closures.iter().collect::<Vec<_>>();
+        closures.sort_by(|left, right| left.signature.llvm_name.cmp(&right.signature.llvm_name));
+        for closure in closures {
+            body.push('\n');
+            self.render_function(&mut body, closure);
+        }
+
+        if body.contains("call i32 @memcmp(") {
+            output.push('\n');
+            output.push_str("declare i32 @memcmp(ptr, ptr, i64)\n");
+        }
 
         if !self.input.runtime_hooks.is_empty() {
             output.push('\n');
@@ -7275,39 +7312,7 @@ impl<'a> ModuleEmitter<'a> {
             self.render_string_literal_globals(&mut output);
         }
 
-        for function_ref in reachable {
-            output.push('\n');
-            if let Some(function) = functions
-                .iter()
-                .find(|function| function.signature.function_ref == *function_ref)
-            {
-                self.render_function(&mut output, function);
-                continue;
-            }
-
-            let signature = self
-                .signatures
-                .get(function_ref)
-                .expect("reachable functions should have signatures");
-            self.render_declaration(&mut output, signature);
-        }
-
-        if let Some(entry) = entry
-            && let Some(entry_function) = functions
-                .iter()
-                .find(|function| function.signature.function_ref == entry)
-        {
-            output.push('\n');
-            self.render_host_entry_wrapper(&mut output, entry_function);
-        }
-
-        let mut closures = closures.iter().collect::<Vec<_>>();
-        closures.sort_by(|left, right| left.signature.llvm_name.cmp(&right.signature.llvm_name));
-        for closure in closures {
-            output.push('\n');
-            self.render_function(&mut output, closure);
-        }
-
+        output.push_str(&body);
         output
     }
 

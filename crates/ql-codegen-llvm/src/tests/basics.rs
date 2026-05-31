@@ -192,6 +192,20 @@ return "alpha" != "beta"
 }
 
 #[test]
+fn omits_memcmp_declaration_without_string_comparison() {
+    let rendered = emit_library(
+        r#"
+fn add_one(value: Int) -> Int {
+return value + 1
+}
+"#,
+    );
+
+    assert!(!rendered.contains("declare i32 @memcmp(ptr, ptr, i64)"));
+    assert!(!rendered.contains("call i32 @memcmp(ptr"));
+}
+
+#[test]
 fn emits_string_ordered_comparisons_via_memcmp_and_length_tiebreak() {
     let rendered = emit_library(
         r#"
