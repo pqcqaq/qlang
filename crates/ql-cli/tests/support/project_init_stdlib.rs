@@ -508,6 +508,43 @@ pub fn expect_emit_interface_check_ok(
     .unwrap();
 }
 
+pub fn assert_stdlib_dependency_build_targets(context: &str, build_json: &JsonValue) {
+    let built_targets = build_json["built_targets"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose built targets: {build_json}"));
+    for package_name in [
+        "std.array",
+        "std.core",
+        "std.option",
+        "std.result",
+        "std.test",
+    ] {
+        assert!(
+            built_targets.iter().any(|target| {
+                target["package_name"] == package_name
+                    && target["dependency_only"] == true
+                    && target["kind"] == "lib"
+                    && target["selected"] == false
+            }),
+            "{context} should include dependency target `{package_name}`: {build_json}"
+        );
+    }
+}
+
+pub fn assert_build_json_includes_target(
+    context: &str,
+    build_json: &JsonValue,
+    expected: JsonValue,
+) {
+    let built_targets = build_json["built_targets"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose built targets: {build_json}"));
+    assert!(
+        built_targets.iter().any(|target| target == &expected),
+        "{context} should include target {expected}: {build_json}"
+    );
+}
+
 fn normalize_cli_json_path(path: &str) -> String {
     let normalized = path.replace('\\', "/");
     normalized
