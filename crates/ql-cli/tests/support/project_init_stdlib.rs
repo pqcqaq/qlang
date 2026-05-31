@@ -355,6 +355,155 @@ pub fn assert_repo_stdlib_starter_targets_json(
     );
 }
 
+pub fn assert_repo_stdlib_starter_run_list_json(
+    context: &str,
+    targets_json: &JsonValue,
+    stdlib_root: &Path,
+) {
+    assert_eq!(targets_json["schema"], "ql.project.targets.v1");
+    assert_eq!(
+        targets_json["members"],
+        serde_json::json!([
+            {
+                "manifest_path": json_path(&stdlib_root.join("examples/starter/qlang.toml")),
+                "package_name": "stdlib.starter",
+                "targets": [
+                    {
+                        "kind": "bin",
+                        "path": "src/main.ql",
+                    }
+                ],
+            }
+        ]),
+        "{context} should expose only the selected starter runnable target"
+    );
+}
+
+pub fn assert_repo_stdlib_test_list_json(
+    context: &str,
+    test_json: &JsonValue,
+    stdlib_root: &Path,
+    package_name: Option<&str>,
+    expected_targets: &[&str],
+) {
+    assert_eq!(test_json["schema"], "ql.test.v1");
+    assert_eq!(test_json["path"], json_path(stdlib_root));
+    assert_eq!(test_json["requested_profile"], "debug");
+    assert_eq!(test_json["profile_overridden"], false);
+    match package_name {
+        Some(package_name) => assert_eq!(test_json["package_name"], package_name),
+        None => assert_eq!(test_json["package_name"], JsonValue::Null),
+    }
+    assert_eq!(test_json["filter"], JsonValue::Null);
+    assert_eq!(test_json["list_only"], true);
+    assert_eq!(test_json["status"], "listed");
+    assert_eq!(
+        test_json["discovered_total"],
+        serde_json::json!(expected_targets.len())
+    );
+    assert_eq!(
+        test_json["selected_total"],
+        serde_json::json!(expected_targets.len())
+    );
+    assert_eq!(
+        test_json["targets"],
+        JsonValue::Array(
+            expected_targets
+                .iter()
+                .map(|path| {
+                    serde_json::json!({
+                        "path": *path,
+                        "kind": "smoke",
+                        "profile": "debug",
+                    })
+                })
+                .collect()
+        ),
+        "{context} should list the expected stdlib smoke targets"
+    );
+    assert_eq!(test_json["passed"], 0);
+    assert_eq!(test_json["failed"], 0);
+    assert_eq!(test_json["failures"], serde_json::json!([]));
+}
+
+pub fn assert_repo_stdlib_starter_dependencies_json(
+    context: &str,
+    dependencies_json: &JsonValue,
+    stdlib_root: &Path,
+) {
+    assert_eq!(dependencies_json["schema"], "ql.project.dependencies.v1");
+    assert_eq!(dependencies_json["path"], json_path(stdlib_root));
+    assert_eq!(
+        dependencies_json["workspace_manifest_path"],
+        json_path(&stdlib_root.join("qlang.toml"))
+    );
+    assert_eq!(dependencies_json["package_name"], "stdlib.starter");
+
+    let dependencies = dependencies_json["dependencies"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose dependencies: {dependencies_json}"));
+    assert_eq!(
+        dependencies.len(),
+        5,
+        "{context} should expose every stdlib starter dependency"
+    );
+    for (package_name, member, dependency_path) in [
+        ("std.array", "packages/array", "../../packages/array"),
+        ("std.core", "packages/core", "../../packages/core"),
+        ("std.option", "packages/option", "../../packages/option"),
+        ("std.result", "packages/result", "../../packages/result"),
+        ("std.test", "packages/test", "../../packages/test"),
+    ] {
+        assert!(
+            dependencies.iter().any(|actual| {
+                actual["kind"] == "workspace"
+                    && actual["package_name"] == package_name
+                    && actual["member"] == member
+                    && actual["dependency_path"] == dependency_path
+                    && actual["manifest_path"]
+                        == json_path(&stdlib_root.join(format!("{member}/qlang.toml")))
+            }),
+            "{context} should expose dependency `{package_name}`: {dependencies_json}"
+        );
+    }
+}
+
+pub fn assert_repo_stdlib_dependents_json(
+    context: &str,
+    dependents_json: &JsonValue,
+    stdlib_root: &Path,
+    package_name: &str,
+    expected_dependents: &[(&str, &str)],
+) {
+    assert_eq!(dependents_json["schema"], "ql.project.dependents.v1");
+    assert_eq!(dependents_json["path"], json_path(stdlib_root));
+    assert_eq!(
+        dependents_json["workspace_manifest_path"],
+        json_path(&stdlib_root.join("qlang.toml"))
+    );
+    assert_eq!(dependents_json["package_name"], package_name);
+    let dependents = dependents_json["dependents"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose dependents: {dependents_json}"));
+    assert_eq!(
+        dependents.len(),
+        expected_dependents.len(),
+        "{context} should expose expected dependent count for `{package_name}`"
+    );
+
+    for (dependent_name, member_path) in expected_dependents {
+        assert!(
+            dependents.iter().any(|actual| {
+                actual["package_name"] == *dependent_name
+                    && actual["member"] == *member_path
+                    && actual["manifest_path"]
+                        == json_path(&stdlib_root.join(format!("{member_path}/qlang.toml")))
+            }),
+            "{context} should expose dependent `{dependent_name}`: {dependents_json}"
+        );
+    }
+}
+
 pub fn write_repo_stdlib_fixture(temp: &TempDir, repo_root: &Path) -> PathBuf {
     let source_root = repo_root.join("stdlib");
     for relative in [
