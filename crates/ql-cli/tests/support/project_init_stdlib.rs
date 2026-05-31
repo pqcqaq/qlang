@@ -165,6 +165,58 @@ pub fn assert_stdlib_graph_json(
     }
 }
 
+pub fn assert_stdlib_workspace_graph_json(
+    context: &str,
+    graph_json: &JsonValue,
+    member_manifest: &Path,
+) {
+    assert_stdlib_graph_json(
+        context,
+        graph_json,
+        "app",
+        member_manifest,
+        "app.qi",
+        "../../../stdlib/packages",
+    );
+}
+
+pub fn assert_stdlib_workspace_status_json(
+    context: &str,
+    status_json: &JsonValue,
+    project_root: &Path,
+    member_root: &Path,
+) {
+    assert_eq!(status_json["schema"], "ql.project.status.v1");
+    assert_eq!(status_json["path"], json_path(project_root));
+    assert_eq!(
+        status_json["project_manifest_path"],
+        json_path(&project_root.join("qlang.toml"))
+    );
+    assert_eq!(status_json["kind"], "workspace");
+    assert_eq!(status_json["status"], "ok");
+    let members = status_json["members"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose members: {status_json}"));
+    assert_eq!(members.len(), 1, "{context} should select only app member");
+    let member = &members[0];
+    assert_eq!(member["member"], "packages/app");
+    assert_eq!(member["package_name"], "app");
+    assert_eq!(
+        member["manifest_path"],
+        json_path(&member_root.join("qlang.toml"))
+    );
+    assert_eq!(
+        member["interface"]["path"],
+        json_path(&member_root.join("app.qi"))
+    );
+    assert_eq!(member["interface"]["status"], "valid");
+    assert_eq!(member["interface"]["detail"], JsonValue::Null);
+    assert_eq!(member["interface"]["stale_reasons"], serde_json::json!([]));
+
+    assert_stdlib_status_member_targets(context, member);
+    assert_stdlib_status_member_dependencies(context, member, "../../../stdlib/packages");
+}
+
 pub fn assert_stdlib_package_status_json(
     context: &str,
     status_json: &JsonValue,
