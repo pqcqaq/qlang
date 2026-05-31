@@ -475,6 +475,77 @@ pub fn assert_repo_stdlib_starter_targets_json(
     );
 }
 
+pub fn assert_repo_stdlib_targets_json(
+    context: &str,
+    targets_json: &JsonValue,
+    stdlib_root: &Path,
+) {
+    assert_eq!(targets_json["schema"], "ql.project.targets.v1");
+    let members = targets_json["members"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose target members: {targets_json}"));
+    assert_eq!(
+        members.len(),
+        6,
+        "{context} should expose every stdlib target member"
+    );
+
+    for (package_name, manifest_path, expected_targets) in [
+        (
+            "std.core",
+            json_path(&stdlib_root.join("packages/core/qlang.toml")),
+            vec![("lib", "src/lib.ql")],
+        ),
+        (
+            "std.option",
+            json_path(&stdlib_root.join("packages/option/qlang.toml")),
+            vec![("lib", "src/lib.ql")],
+        ),
+        (
+            "std.result",
+            json_path(&stdlib_root.join("packages/result/qlang.toml")),
+            vec![("lib", "src/lib.ql")],
+        ),
+        (
+            "std.array",
+            json_path(&stdlib_root.join("packages/array/qlang.toml")),
+            vec![("lib", "src/lib.ql")],
+        ),
+        (
+            "std.test",
+            json_path(&stdlib_root.join("packages/test/qlang.toml")),
+            vec![("lib", "src/lib.ql")],
+        ),
+        (
+            "stdlib.starter",
+            json_path(&stdlib_root.join("examples/starter/qlang.toml")),
+            vec![("lib", "src/lib.ql"), ("bin", "src/main.ql")],
+        ),
+    ] {
+        let member = members
+            .iter()
+            .find(|actual| actual["package_name"] == package_name)
+            .unwrap_or_else(|| panic!("{context} should expose targets for `{package_name}`"));
+        assert_eq!(member["manifest_path"], manifest_path);
+        let targets = member["targets"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{context} should expose targets for `{package_name}`"));
+        assert_eq!(
+            targets.len(),
+            expected_targets.len(),
+            "{context} should expose expected target count for `{package_name}`"
+        );
+        for (kind, path) in expected_targets {
+            assert!(
+                targets
+                    .iter()
+                    .any(|actual| actual["kind"] == kind && actual["path"] == path),
+                "{context} should expose `{kind}` target `{path}` for `{package_name}`: {targets_json}"
+            );
+        }
+    }
+}
+
 pub fn assert_repo_stdlib_starter_run_list_json(
     context: &str,
     targets_json: &JsonValue,
@@ -497,6 +568,77 @@ pub fn assert_repo_stdlib_starter_run_list_json(
         ]),
         "{context} should expose only the selected starter runnable target"
     );
+}
+
+pub fn assert_repo_stdlib_run_list_json(
+    context: &str,
+    targets_json: &JsonValue,
+    stdlib_root: &Path,
+) {
+    assert_eq!(targets_json["schema"], "ql.project.targets.v1");
+    let members = targets_json["members"].as_array().unwrap_or_else(|| {
+        panic!("{context} should expose runnable target members: {targets_json}")
+    });
+    assert_eq!(
+        members.len(),
+        6,
+        "{context} should expose every stdlib workspace member"
+    );
+
+    for (package_name, manifest_path, expected_targets) in [
+        (
+            "std.core",
+            json_path(&stdlib_root.join("packages/core/qlang.toml")),
+            Vec::<(&str, &str)>::new(),
+        ),
+        (
+            "std.option",
+            json_path(&stdlib_root.join("packages/option/qlang.toml")),
+            Vec::new(),
+        ),
+        (
+            "std.result",
+            json_path(&stdlib_root.join("packages/result/qlang.toml")),
+            Vec::new(),
+        ),
+        (
+            "std.array",
+            json_path(&stdlib_root.join("packages/array/qlang.toml")),
+            Vec::new(),
+        ),
+        (
+            "std.test",
+            json_path(&stdlib_root.join("packages/test/qlang.toml")),
+            Vec::new(),
+        ),
+        (
+            "stdlib.starter",
+            json_path(&stdlib_root.join("examples/starter/qlang.toml")),
+            vec![("bin", "src/main.ql")],
+        ),
+    ] {
+        let member = members
+            .iter()
+            .find(|actual| actual["package_name"] == package_name)
+            .unwrap_or_else(|| panic!("{context} should expose run-list member `{package_name}`"));
+        assert_eq!(member["manifest_path"], manifest_path);
+        let targets = member["targets"].as_array().unwrap_or_else(|| {
+            panic!("{context} should expose runnable targets for `{package_name}`")
+        });
+        assert_eq!(
+            targets.len(),
+            expected_targets.len(),
+            "{context} should expose runnable target count for `{package_name}`"
+        );
+        for (kind, path) in expected_targets {
+            assert!(
+                targets
+                    .iter()
+                    .any(|actual| actual["kind"] == kind && actual["path"] == path),
+                "{context} should expose runnable `{kind}` target `{path}` for `{package_name}`: {targets_json}"
+            );
+        }
+    }
 }
 
 pub fn assert_repo_stdlib_test_list_json(
