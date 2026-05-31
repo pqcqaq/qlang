@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use ql_driver::{ToolchainOptions, discover_toolchain};
 use serde_json::Value as JsonValue;
 
-use super::TempDir;
+use super::{TempDir, executable_output_path, static_library_output_path};
 
 pub fn toolchain_available(context: &str) -> bool {
     let Ok(_toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
@@ -73,6 +73,22 @@ fn normalize_cli_json_path(path: &str) -> String {
         .strip_prefix("//?/")
         .unwrap_or(&normalized)
         .to_owned()
+}
+
+fn repo_stdlib_artifact_path(
+    stdlib_root: &Path,
+    package_dir: &str,
+    kind: &str,
+    stem: &str,
+) -> String {
+    let root = stdlib_root.join(package_dir).join("target/ql/debug");
+    let path = match kind {
+        "staticlib" => static_library_output_path(&root, stem),
+        "exe" => executable_output_path(&root, stem),
+        "llvm-ir" => root.join(format!("{stem}.ll")),
+        _ => panic!("unsupported stdlib artifact kind `{kind}`"),
+    };
+    json_path(&path)
 }
 
 pub fn assert_repo_stdlib_check_json(
@@ -472,6 +488,275 @@ pub fn assert_repo_stdlib_starter_targets_json(
             }
         ]),
         "{context} should expose only the selected starter targets"
+    );
+}
+
+pub fn assert_repo_stdlib_build_json(context: &str, build_json: &JsonValue, stdlib_root: &Path) {
+    assert_eq!(build_json["schema"], "ql.build.v1");
+    assert_eq!(build_json["scope"], "project");
+    assert_eq!(build_json["path"], json_path(stdlib_root));
+    assert_eq!(
+        build_json["project_manifest_path"],
+        json_path(&stdlib_root.join("qlang.toml"))
+    );
+    assert_eq!(build_json["requested_emit"], "llvm-ir");
+    assert_eq!(build_json["requested_profile"], "debug");
+    assert_eq!(build_json["profile_overridden"], false);
+    assert_eq!(build_json["emit_interface"], false);
+    assert_eq!(build_json["status"], "ok");
+    assert_eq!(build_json["failure"], JsonValue::Null);
+
+    let interfaces = build_json["interfaces"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose interface writes: {build_json}"));
+    assert_eq!(
+        interfaces.len(),
+        6,
+        "{context} should rewrite every stdlib interface"
+    );
+    for (package_name, package_dir, interface_file) in [
+        ("std.core", "packages/core", "std.core.qi"),
+        ("std.option", "packages/option", "std.option.qi"),
+        ("std.result", "packages/result", "std.result.qi"),
+        ("std.array", "packages/array", "std.array.qi"),
+        ("std.test", "packages/test", "std.test.qi"),
+        ("stdlib.starter", "examples/starter", "stdlib.starter.qi"),
+    ] {
+        assert!(
+            interfaces.iter().any(|actual| {
+                actual["manifest_path"]
+                    == json_path(&stdlib_root.join(format!("{package_dir}/qlang.toml")))
+                    && actual["package_name"] == package_name
+                    && actual["path"]
+                        == json_path(&stdlib_root.join(format!("{package_dir}/{interface_file}")))
+                    && actual["selected"] == true
+                    && actual["status"] == "wrote"
+            }),
+            "{context} should report interface write for `{package_name}`: {build_json}"
+        );
+    }
+
+    let built_targets = build_json["built_targets"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose built targets: {build_json}"));
+    assert_eq!(
+        built_targets.len(),
+        7,
+        "{context} should build every stdlib lib target and starter bin"
+    );
+    for (package_name, package_dir) in [
+        ("std.core", "packages/core"),
+        ("std.option", "packages/option"),
+        ("std.result", "packages/result"),
+        ("std.array", "packages/array"),
+        ("std.test", "packages/test"),
+        ("stdlib.starter", "examples/starter"),
+    ] {
+        assert!(
+            built_targets.iter().any(|actual| {
+                actual["manifest_path"]
+                    == json_path(&stdlib_root.join(format!("{package_dir}/qlang.toml")))
+                    && actual["package_name"] == package_name
+                    && actual["selected"] == true
+                    && actual["dependency_only"] == false
+                    && actual["kind"] == "lib"
+                    && actual["path"] == "src/lib.ql"
+                    && actual["emit"] == "staticlib"
+                    && actual["profile"] == "debug"
+                    && actual["artifact_path"]
+                        == repo_stdlib_artifact_path(stdlib_root, package_dir, "staticlib", "lib")
+                    && actual["c_header_path"] == JsonValue::Null
+            }),
+            "{context} should include lib build target for `{package_name}`: {build_json}"
+        );
+    }
+    assert!(
+        built_targets.iter().any(|actual| {
+            actual["manifest_path"] == json_path(&stdlib_root.join("examples/starter/qlang.toml"))
+                && actual["package_name"] == "stdlib.starter"
+                && actual["selected"] == true
+                && actual["dependency_only"] == false
+                && actual["kind"] == "bin"
+                && actual["path"] == "src/main.ql"
+                && actual["emit"] == "llvm-ir"
+                && actual["profile"] == "debug"
+                && actual["artifact_path"]
+                    == repo_stdlib_artifact_path(stdlib_root, "examples/starter", "llvm-ir", "main")
+                && actual["c_header_path"] == JsonValue::Null
+        }),
+        "{context} should include starter bin llvm-ir target: {build_json}"
+    );
+}
+
+pub fn assert_repo_stdlib_starter_build_json(
+    context: &str,
+    build_json: &JsonValue,
+    stdlib_root: &Path,
+) {
+    assert_eq!(build_json["schema"], "ql.build.v1");
+    assert_eq!(build_json["scope"], "project");
+    assert_eq!(build_json["path"], json_path(stdlib_root));
+    assert_eq!(
+        build_json["project_manifest_path"],
+        json_path(&stdlib_root.join("qlang.toml"))
+    );
+    assert_eq!(build_json["requested_emit"], "llvm-ir");
+    assert_eq!(build_json["requested_profile"], "debug");
+    assert_eq!(build_json["profile_overridden"], false);
+    assert_eq!(build_json["emit_interface"], false);
+    assert_eq!(build_json["status"], "ok");
+    assert_eq!(build_json["failure"], JsonValue::Null);
+
+    assert_eq!(
+        build_json["interfaces"],
+        serde_json::json!([
+            {
+                "manifest_path": json_path(&stdlib_root.join("examples/starter/qlang.toml")),
+                "package_name": "stdlib.starter",
+                "path": json_path(&stdlib_root.join("examples/starter/stdlib.starter.qi")),
+                "selected": true,
+                "status": "wrote",
+            }
+        ]),
+        "{context} should write only the selected starter interface"
+    );
+
+    let built_targets = build_json["built_targets"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose built targets: {build_json}"));
+    assert_eq!(
+        built_targets.len(),
+        7,
+        "{context} should build the selected starter plus dependency closure"
+    );
+    for (package_name, package_dir) in [
+        ("std.array", "packages/array"),
+        ("std.core", "packages/core"),
+        ("std.option", "packages/option"),
+        ("std.result", "packages/result"),
+        ("std.test", "packages/test"),
+    ] {
+        assert!(
+            built_targets.iter().any(|actual| {
+                actual["manifest_path"]
+                    == json_path(&stdlib_root.join(format!("{package_dir}/qlang.toml")))
+                    && actual["package_name"] == package_name
+                    && actual["selected"] == false
+                    && actual["dependency_only"] == true
+                    && actual["kind"] == "lib"
+                    && actual["path"] == "src/lib.ql"
+                    && actual["emit"] == "staticlib"
+                    && actual["profile"] == "debug"
+                    && actual["artifact_path"]
+                        == repo_stdlib_artifact_path(stdlib_root, package_dir, "staticlib", "lib")
+                    && actual["c_header_path"] == JsonValue::Null
+            }),
+            "{context} should build dependency-only target for `{package_name}`: {build_json}"
+        );
+    }
+    for (kind, path, emit, artifact_kind, stem) in [
+        ("lib", "src/lib.ql", "staticlib", "staticlib", "lib"),
+        ("bin", "src/main.ql", "llvm-ir", "llvm-ir", "main"),
+    ] {
+        assert!(
+            built_targets.iter().any(|actual| {
+                actual["manifest_path"]
+                    == json_path(&stdlib_root.join("examples/starter/qlang.toml"))
+                    && actual["package_name"] == "stdlib.starter"
+                    && actual["selected"] == true
+                    && actual["dependency_only"] == false
+                    && actual["kind"] == kind
+                    && actual["path"] == path
+                    && actual["emit"] == emit
+                    && actual["profile"] == "debug"
+                    && actual["artifact_path"]
+                        == repo_stdlib_artifact_path(
+                            stdlib_root,
+                            "examples/starter",
+                            artifact_kind,
+                            stem,
+                        )
+                    && actual["c_header_path"] == JsonValue::Null
+            }),
+            "{context} should build selected starter `{kind}` target: {build_json}"
+        );
+    }
+}
+
+pub fn assert_repo_stdlib_run_json(context: &str, run_json: &JsonValue, stdlib_root: &Path) {
+    assert_eq!(run_json["schema"], "ql.run.v1");
+    assert_eq!(run_json["scope"], "project");
+    assert_eq!(run_json["path"], json_path(stdlib_root));
+    assert_eq!(
+        run_json["project_manifest_path"],
+        json_path(&stdlib_root.join("qlang.toml"))
+    );
+    assert_eq!(run_json["requested_profile"], "debug");
+    assert_eq!(run_json["profile_overridden"], false);
+    assert_eq!(run_json["program_args"], serde_json::json!([]));
+    assert_eq!(run_json["status"], "completed");
+    assert_eq!(run_json["failure"], JsonValue::Null);
+    assert_eq!(
+        run_json["built_target"],
+        serde_json::json!({
+            "manifest_path": json_path(&stdlib_root.join("examples/starter/qlang.toml")),
+            "package_name": "stdlib.starter",
+            "selected": true,
+            "dependency_only": false,
+            "kind": "bin",
+            "path": "src/main.ql",
+            "emit": "exe",
+            "profile": "debug",
+            "artifact_path": repo_stdlib_artifact_path(
+                stdlib_root,
+                "examples/starter",
+                "exe",
+                "main"
+            ),
+            "c_header_path": JsonValue::Null,
+        }),
+        "{context} should run the stdlib starter executable"
+    );
+    assert_eq!(
+        run_json["execution"],
+        serde_json::json!({
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+        })
+    );
+}
+
+pub fn assert_repo_stdlib_starter_test_json(
+    context: &str,
+    test_json: &JsonValue,
+    stdlib_root: &Path,
+) {
+    assert_eq!(
+        test_json,
+        &serde_json::json!({
+            "schema": "ql.test.v1",
+            "path": json_path(stdlib_root),
+            "requested_profile": "debug",
+            "profile_overridden": false,
+            "package_name": "stdlib.starter",
+            "filter": JsonValue::Null,
+            "list_only": false,
+            "status": "ok",
+            "discovered_total": 1,
+            "selected_total": 1,
+            "targets": [
+                {
+                    "path": "examples/starter/tests/smoke.ql",
+                    "kind": "smoke",
+                    "profile": "debug",
+                },
+            ],
+            "passed": 1,
+            "failed": 0,
+            "failures": [],
+        }),
+        "{context} should keep a stable starter test json contract"
     );
 }
 
