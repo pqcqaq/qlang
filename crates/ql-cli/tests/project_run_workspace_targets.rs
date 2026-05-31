@@ -429,3 +429,57 @@ fn run_workspace_package_selector_json_reports_missing_package_relative_target_p
         "workspace missing package-relative target selector run json should not build artifacts"
     );
 }
+
+#[test]
+fn run_project_path_selects_requested_binary_target() {
+    if !toolchain_available("`ql run --bin` package test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-select-bin");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src/bin"))
+        .expect("create package source tree for target selector run test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/main.ql", "fn main() -> Int { return 1 }\n");
+    temp.write("app/src/bin/admin.ql", "fn main() -> Int { return 2 }\n");
+    let output_path = executable_output_path(&project_root.join("target/ql/debug/bin"), "admin");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["run"])
+        .arg(&project_root)
+        .args(["--bin", "admin"]);
+    let output = run_command_capture(&mut command, "`ql run --bin` package path");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-select-bin",
+        "selected binary target run",
+        &output,
+        2,
+    )
+    .expect("package-path `ql run --bin` should exit with the selected binary status");
+    expect_silent_output(
+        "project-run-select-bin",
+        "selected binary target run",
+        &stdout,
+        &stderr,
+    )
+    .expect("package-path `ql run --bin` should leave stdout/stderr to the program");
+    expect_file_exists(
+        "project-run-select-bin",
+        &output_path,
+        "selected binary executable",
+        "selected binary target run",
+    )
+    .expect(
+        "package-path `ql run --bin` should build the selected executable in the bin target dir",
+    );
+}

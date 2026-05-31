@@ -260,3 +260,41 @@ fn run_single_file_supports_local_method_value_calls() {
         "single-file `ql run` local method value should leave the built executable in the default path",
     );
 }
+
+#[test]
+fn run_preserves_large_exit_code() {
+    if !toolchain_available("`ql run` large-exit-code test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-large-exit");
+    let source_path = temp.write("large_exit.ql", "fn main() -> Int { return 690 }\n");
+    let output_path = executable_output_path(&temp.path().join("target/ql/debug"), "large_exit");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&source_path);
+    let output = run_command_capture(&mut command, "`ql run` large exit code");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-large-exit",
+        "large-exit-code run",
+        &output,
+        690,
+    )
+    .expect("`ql run` should preserve the child exit code");
+    expect_silent_output(
+        "project-run-large-exit",
+        "large-exit-code run",
+        &stdout,
+        &stderr,
+    )
+    .expect("large-exit-code `ql run` should leave stdout/stderr to the program");
+    expect_file_exists(
+        "project-run-large-exit",
+        &output_path,
+        "large-exit executable",
+        "large-exit-code run",
+    )
+    .expect("large-exit-code `ql run` should still leave the built executable in place");
+}
