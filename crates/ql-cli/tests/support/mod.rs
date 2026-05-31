@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod codegen;
+pub mod project_init_stdlib;
 
 use std::env;
 use std::fs;
