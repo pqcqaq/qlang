@@ -160,6 +160,48 @@ pub fn assert_repo_stdlib_starter_check_json(
     );
 }
 
+pub fn assert_repo_stdlib_status_json(context: &str, status_json: &JsonValue, stdlib_root: &Path) {
+    assert_eq!(status_json["schema"], "ql.project.status.v1");
+    assert_eq!(status_json["kind"], "workspace");
+    assert_eq!(status_json["status"], "ok");
+    assert_eq!(status_json["path"], json_path(stdlib_root));
+    assert_eq!(
+        status_json["project_manifest_path"],
+        json_path(&stdlib_root.join("qlang.toml"))
+    );
+
+    let members = status_json["members"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose workspace members: {status_json}"));
+    assert_eq!(
+        members.len(),
+        6,
+        "{context} should expose every stdlib member"
+    );
+
+    for (member_path, package_name, interface_path) in [
+        ("packages/core", "std.core", "std.core.qi"),
+        ("packages/option", "std.option", "std.option.qi"),
+        ("packages/result", "std.result", "std.result.qi"),
+        ("packages/array", "std.array", "std.array.qi"),
+        ("packages/test", "std.test", "std.test.qi"),
+        ("examples/starter", "stdlib.starter", "stdlib.starter.qi"),
+    ] {
+        let member = members
+            .iter()
+            .find(|actual| actual["member"] == member_path)
+            .unwrap_or_else(|| panic!("{context} should expose member `{member_path}`"));
+        assert_eq!(member["package_name"], package_name);
+        assert_eq!(
+            member["interface"]["path"],
+            json_path(&stdlib_root.join(member_path).join(interface_path))
+        );
+        assert_eq!(member["interface"]["status"], "valid");
+        assert_eq!(member["interface"]["detail"], JsonValue::Null);
+        assert_eq!(member["interface"]["stale_reasons"], serde_json::json!([]));
+    }
+}
+
 pub fn assert_repo_stdlib_starter_status_json(
     context: &str,
     status_json: &JsonValue,
@@ -235,6 +277,84 @@ pub fn assert_repo_stdlib_starter_status_json(
                         == json_path(&stdlib_root.join(format!("{member}/qlang.toml")))
             }),
             "{context} should expose dependency `{package_name}`: {status_json}"
+        );
+    }
+}
+
+pub fn assert_repo_stdlib_graph_json(context: &str, graph_json: &JsonValue, stdlib_root: &Path) {
+    assert_eq!(graph_json["schema"], "ql.project.graph.v1");
+    assert_eq!(
+        graph_json["manifest_path"],
+        json_path(&stdlib_root.join("qlang.toml"))
+    );
+    assert_eq!(graph_json["package_name"], JsonValue::Null);
+    assert_eq!(graph_json["interface"], JsonValue::Null);
+    assert_eq!(graph_json["references"], serde_json::json!([]));
+    assert_eq!(graph_json["reference_interfaces"], serde_json::json!([]));
+    assert_eq!(
+        graph_json["workspace_members"],
+        serde_json::json!([
+            "packages/core",
+            "packages/option",
+            "packages/result",
+            "packages/array",
+            "packages/test",
+            "examples/starter"
+        ])
+    );
+
+    let packages = graph_json["workspace_packages"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose workspace packages: {graph_json}"));
+    assert_eq!(
+        packages.len(),
+        6,
+        "{context} should expose every stdlib workspace package"
+    );
+
+    let starter = packages
+        .iter()
+        .find(|actual| actual["package_name"] == "stdlib.starter")
+        .unwrap_or_else(|| panic!("{context} should expose the stdlib starter package"));
+    assert_eq!(starter["member"], "examples/starter");
+    assert_eq!(
+        starter["interface"]["path"],
+        "examples/starter/stdlib.starter.qi"
+    );
+    assert_eq!(starter["interface"]["status"], "valid");
+    assert_eq!(starter["interface"]["detail"], JsonValue::Null);
+    assert_eq!(starter["interface"]["stale_reasons"], serde_json::json!([]));
+    assert_eq!(
+        starter["references"],
+        serde_json::json!([
+            "../../packages/array",
+            "../../packages/core",
+            "../../packages/option",
+            "../../packages/result",
+            "../../packages/test"
+        ])
+    );
+    for (package_name, reference) in [
+        ("std.array", "../../packages/array"),
+        ("std.core", "../../packages/core"),
+        ("std.option", "../../packages/option"),
+        ("std.result", "../../packages/result"),
+        ("std.test", "../../packages/test"),
+    ] {
+        let references = starter["reference_interfaces"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{context} should expose starter reference interfaces"));
+        assert!(
+            references.iter().any(|actual| {
+                actual["package_name"] == package_name
+                    && actual["reference"] == reference
+                    && actual["status"] == "valid"
+                    && actual["detail"] == JsonValue::Null
+                    && actual["stale_reasons"] == serde_json::json!([])
+                    && actual["transitive_reference_failures"]["count"] == 0
+                    && actual["transitive_reference_failures"]["first_failure"] == JsonValue::Null
+            }),
+            "{context} should expose valid starter dependency `{package_name}`: {graph_json}"
         );
     }
 }
