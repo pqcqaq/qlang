@@ -125,24 +125,24 @@ bb0:
   store ptr %t2, ptr %l3__t1
   %t3 = load ptr, ptr %l3__t1
   store ptr %t3, ptr %l4_second_task
-  %t4 = load ptr, ptr %l2_first_task
+  %t4 = load ptr, ptr %l1__t0
   %t5 = call ptr @qlrt_executor_spawn(ptr null, ptr %t4)
   store ptr %t5, ptr %l5__t2
   %t6 = load ptr, ptr %l5__t2
   store ptr %t6, ptr %l6_first_running
-  %t7 = load ptr, ptr %l4_second_task
+  %t7 = load ptr, ptr %l3__t1
   %t8 = call ptr @qlrt_executor_spawn(ptr null, ptr %t7)
   store ptr %t8, ptr %l7__t3
   %t9 = load ptr, ptr %l7__t3
   store ptr %t9, ptr %l8_second_running
-  %t10 = load ptr, ptr %l6_first_running
+  %t10 = load ptr, ptr %l5__t2
   %t11 = call ptr @qlrt_task_await(ptr %t10)
   %t12 = load i64, ptr %t11
   call void @qlrt_task_result_release(ptr %t11)
   store i64 %t12, ptr %l9__t4
   %t13 = load i64, ptr %l9__t4
   store i64 %t13, ptr %l10_first
-  %t14 = load ptr, ptr %l8_second_running
+  %t14 = load ptr, ptr %l7__t3
   %t15 = call ptr @qlrt_task_await(ptr %t14)
   %t16 = load i64, ptr %t15
   call void @qlrt_task_result_release(ptr %t15)

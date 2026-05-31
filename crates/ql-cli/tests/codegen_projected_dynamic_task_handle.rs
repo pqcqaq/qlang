@@ -21,7 +21,7 @@ fn projected_dynamic_task_handle_codegen_cases_match() {
     );
 }
 
-fn projected_dynamic_task_handle_pass_cases() -> Vec<PassCase> {
+fn projected_dynamic_task_handle_pass_cases() -> Vec<PassCase<'static>> {
     vec![
         PassCase {
             name: "async_program_main_projected_dynamic_task_handle_reinit_exe",

@@ -9,16 +9,16 @@ use super::{
 };
 
 #[derive(Clone, Copy)]
-pub struct PassCase {
-    pub name: &'static str,
-    pub source_relative: &'static str,
-    pub emit: &'static str,
-    pub expected_relative: &'static str,
+pub struct PassCase<'a> {
+    pub name: &'a str,
+    pub source_relative: &'a str,
+    pub emit: &'a str,
+    pub expected_relative: &'a str,
     pub mock_compiler: bool,
     pub mock_archiver: bool,
-    pub archiver_style: Option<&'static str>,
-    pub header_surface: Option<&'static str>,
-    pub expected_header_relative: Option<&'static str>,
+    pub archiver_style: Option<&'a str>,
+    pub header_surface: Option<&'a str>,
+    pub expected_header_relative: Option<&'a str>,
 }
 
 #[derive(Clone, Copy)]
@@ -30,7 +30,7 @@ pub struct FailCase {
     pub extra_args: &'static [&'static str],
 }
 
-pub fn run_pass_case(workspace_root: &Path, case: &PassCase) -> Result<(), String> {
+pub fn run_pass_case(workspace_root: &Path, case: &PassCase<'_>) -> Result<(), String> {
     let temp_prefix = short_temp_prefix(case.name);
     let temp = TempDir::new(&temp_prefix);
     let output_path = artifact_output_path(temp.path(), case.emit);

@@ -210,7 +210,7 @@ fn dynamic_task_handle_fail_cases() -> Vec<FailCase> {
     ]
 }
 
-fn dynamic_task_handle_pass_cases() -> Vec<PassCase> {
+fn dynamic_task_handle_pass_cases() -> Vec<PassCase<'static>> {
     vec![
         PassCase {
             name: "async_program_main_dynamic_task_handle_array_assignment_exe",
