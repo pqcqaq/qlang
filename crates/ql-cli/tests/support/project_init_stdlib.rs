@@ -4,7 +4,18 @@ use std::path::{Path, PathBuf};
 use ql_driver::{ToolchainOptions, discover_toolchain};
 use serde_json::Value as JsonValue;
 
-use super::{TempDir, executable_output_path, static_library_output_path};
+use super::{
+    TempDir, executable_output_path, expect_empty_stderr, expect_stdout_contains_all,
+    expect_success, ql_command, run_command_capture, static_library_output_path,
+};
+
+pub const STDLIB_PACKAGES: [(&str, &str); 5] = [
+    ("std.array", "array"),
+    ("std.core", "core"),
+    ("std.option", "option"),
+    ("std.result", "result"),
+    ("std.test", "test"),
+];
 
 pub fn toolchain_available(context: &str) -> bool {
     let Ok(_toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
@@ -65,6 +76,384 @@ fn repo_stdlib_loaded_interfaces(stdlib_root: &Path) -> Vec<PathBuf> {
 
 fn json_path_list(paths: &[PathBuf]) -> JsonValue {
     serde_json::json!(paths.iter().map(|path| json_path(path)).collect::<Vec<_>>())
+}
+
+pub fn assert_stdlib_check_json(
+    context: &str,
+    check_json: &JsonValue,
+    scope: &str,
+    project_manifest: &Path,
+    checked_files: &[PathBuf],
+    stdlib_root: &Path,
+) {
+    assert_eq!(check_json["schema"], "ql.check.v1");
+    assert_eq!(check_json["scope"], scope);
+    assert_eq!(check_json["status"], "ok");
+    assert_eq!(
+        check_json["project_manifest_path"],
+        json_path(project_manifest)
+    );
+    assert_eq!(check_json["diagnostic_files"], serde_json::json!([]));
+    assert_eq!(check_json["failing_manifests"], serde_json::json!([]));
+    assert_eq!(check_json["sync_interfaces"], false);
+    assert_eq!(check_json["written_interfaces"], serde_json::json!([]));
+    assert_eq!(
+        check_json["checked_files"],
+        json_path_list(checked_files),
+        "{context} should report the initialized package sources"
+    );
+    assert_eq!(
+        check_json["loaded_interfaces"],
+        serde_json::json!([
+            json_path(&stdlib_root.join("packages/array/std.array.qi")),
+            json_path(&stdlib_root.join("packages/core/std.core.qi")),
+            json_path(&stdlib_root.join("packages/option/std.option.qi")),
+            json_path(&stdlib_root.join("packages/result/std.result.qi")),
+            json_path(&stdlib_root.join("packages/test/std.test.qi")),
+        ]),
+        "{context} should load every initialized stdlib dependency interface"
+    );
+}
+
+pub fn assert_stdlib_graph_json(
+    context: &str,
+    graph_json: &JsonValue,
+    package_name: &str,
+    manifest_path: &Path,
+    interface_path: &str,
+    reference_prefix: &str,
+) {
+    assert_eq!(graph_json["schema"], "ql.project.graph.v1");
+    assert_eq!(graph_json["package_name"], package_name);
+    assert_eq!(graph_json["manifest_path"], json_path(manifest_path));
+    assert_eq!(graph_json["interface"]["path"], interface_path);
+    assert_eq!(graph_json["interface"]["status"], "valid");
+    assert_eq!(graph_json["interface"]["detail"], JsonValue::Null);
+    assert_eq!(
+        graph_json["interface"]["stale_reasons"],
+        serde_json::json!([])
+    );
+    assert_eq!(graph_json["workspace_members"], serde_json::json!([]));
+    assert_eq!(graph_json["workspace_packages"], serde_json::json!([]));
+
+    for (package_name, package_dir) in STDLIB_PACKAGES {
+        let reference = format!("{reference_prefix}/{package_dir}");
+        assert!(
+            graph_json["references"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{context} should expose references: {graph_json}"))
+                .iter()
+                .any(|actual| actual == reference.as_str()),
+            "{context} should expose reference `{reference}`: {graph_json}"
+        );
+        assert!(
+            graph_json["reference_interfaces"]
+                .as_array()
+                .unwrap_or_else(|| {
+                    panic!("{context} should expose reference interfaces: {graph_json}")
+                })
+                .iter()
+                .any(|actual| {
+                    actual["package_name"] == package_name
+                        && actual["reference"] == reference
+                        && actual["status"] == "valid"
+                        && actual["detail"] == JsonValue::Null
+                        && actual["stale_reasons"] == serde_json::json!([])
+                }),
+            "{context} should expose valid interface for `{package_name}`: {graph_json}"
+        );
+    }
+}
+
+pub fn assert_stdlib_package_status_json(
+    context: &str,
+    status_json: &JsonValue,
+    project_root: &Path,
+) {
+    assert_eq!(status_json["schema"], "ql.project.status.v1");
+    assert_eq!(status_json["path"], json_path(project_root));
+    assert_eq!(
+        status_json["project_manifest_path"],
+        json_path(&project_root.join("qlang.toml"))
+    );
+    assert_eq!(status_json["kind"], "package");
+    assert_eq!(status_json["status"], "ok");
+    let members = status_json["members"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose members: {status_json}"));
+    assert_eq!(members.len(), 1, "{context} should expose package member");
+    let member = &members[0];
+    assert_eq!(member["member"], JsonValue::Null);
+    assert_eq!(member["package_name"], "demo-package");
+    assert_eq!(
+        member["manifest_path"],
+        json_path(&project_root.join("qlang.toml"))
+    );
+    assert_eq!(
+        member["interface"]["path"],
+        json_path(&project_root.join("demo-package.qi"))
+    );
+    assert_eq!(member["interface"]["status"], "valid");
+    assert_eq!(member["interface"]["detail"], JsonValue::Null);
+    assert_eq!(member["interface"]["stale_reasons"], serde_json::json!([]));
+
+    assert_stdlib_status_member_targets(context, member);
+    assert_stdlib_status_member_dependencies(context, member, "../stdlib/packages");
+}
+
+pub fn assert_stdlib_dependencies_json(
+    context: &str,
+    dependencies_json: &JsonValue,
+    request_path: &Path,
+    manifest_path: &Path,
+    package_name: &str,
+    dependency_prefix: &str,
+    stdlib_root: &Path,
+) {
+    assert_eq!(dependencies_json["schema"], "ql.project.dependencies.v1");
+    assert_eq!(dependencies_json["path"], json_path(request_path));
+    assert_eq!(
+        dependencies_json["workspace_manifest_path"],
+        json_path(manifest_path)
+    );
+    assert_eq!(dependencies_json["package_name"], package_name);
+    let dependencies = dependencies_json["dependencies"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose dependencies: {dependencies_json}"));
+    assert_eq!(
+        dependencies.len(),
+        STDLIB_PACKAGES.len(),
+        "{context} should expose every initialized stdlib dependency: {dependencies_json}"
+    );
+
+    for (package_name, package_dir) in STDLIB_PACKAGES {
+        let dependency_path = format!("{dependency_prefix}/{package_dir}");
+        let dependency_manifest = stdlib_root
+            .join("packages")
+            .join(package_dir)
+            .join("qlang.toml");
+        assert!(
+            dependencies.iter().any(|actual| {
+                actual["kind"] == "local"
+                    && actual["member"] == JsonValue::Null
+                    && actual["package_name"] == package_name
+                    && actual["dependency_path"] == dependency_path
+                    && actual["manifest_path"] == json_path(&dependency_manifest)
+            }),
+            "{context} should expose stdlib dependency `{package_name}`: {dependencies_json}"
+        );
+    }
+}
+
+pub fn assert_stdlib_empty_dependents_json(
+    context: &str,
+    dependents_json: &JsonValue,
+    request_path: &Path,
+    manifest_path: &Path,
+    package_name: &str,
+) {
+    assert_eq!(dependents_json["schema"], "ql.project.dependents.v1");
+    assert_eq!(dependents_json["path"], json_path(request_path));
+    assert_eq!(
+        dependents_json["workspace_manifest_path"],
+        json_path(manifest_path)
+    );
+    assert_eq!(dependents_json["package_name"], package_name);
+    assert_eq!(
+        dependents_json["dependents"],
+        serde_json::json!([]),
+        "{context} should not expose package dependents"
+    );
+}
+
+pub fn assert_stdlib_status_member_targets(context: &str, member: &JsonValue) {
+    for (kind, path) in [("lib", "src/lib.ql"), ("bin", "src/main.ql")] {
+        assert!(
+            member["targets"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{context} should expose targets: {member}"))
+                .iter()
+                .any(|actual| actual["kind"] == kind && actual["path"] == path),
+            "{context} should expose `{kind}` target `{path}`: {member}"
+        );
+    }
+}
+
+pub fn assert_stdlib_status_member_dependencies(
+    context: &str,
+    member: &JsonValue,
+    dependency_prefix: &str,
+) {
+    for (package_name, package_dir) in STDLIB_PACKAGES {
+        let dependency_path = format!("{dependency_prefix}/{package_dir}");
+        assert!(
+            member["dependencies"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{context} should expose dependencies: {member}"))
+                .iter()
+                .any(|actual| {
+                    actual["kind"] == "local"
+                        && actual["package_name"] == package_name
+                        && actual["dependency_path"] == dependency_path
+                }),
+            "{context} should expose local dependency `{package_name}`: {member}"
+        );
+    }
+}
+
+pub fn expect_stdlib_starter_source(source: &str, context: &str) {
+    for needle in [
+        "use std.array.repeat_array as repeat_array",
+        "use std.option.Option as Option",
+        "use std.result.error_to_option as result_error_to_option",
+        "use std.result.ok_or as result_ok_or",
+        "use std.result.to_option as result_to_option",
+        "let repeated: [Int; 3] = repeat_array(1)",
+        "let failed: Result[Int, Int] = result_ok_or(missing, 7)",
+    ] {
+        assert!(
+            source.contains(needle),
+            "{context} should contain `{needle}`\n{source}"
+        );
+    }
+    for legacy in [
+        "repeat3_array",
+        "reverse3_array",
+        "some_int",
+        "ok_int",
+        "unwrap_result_or as result_unwrap_result_or",
+    ] {
+        assert!(
+            !source.contains(legacy),
+            "{context} should not contain legacy API `{legacy}`\n{source}"
+        );
+    }
+}
+
+pub fn expect_stdlib_starter_main_source(source: &str, context: &str) {
+    for needle in [
+        "use std.array.repeat_array as repeat_array",
+        "use std.result.to_option as result_to_option",
+        "let repeated_false: [Bool; 3] = repeat_array(false)",
+        "let repeated_enabled: [Bool; 3] = [option_unwrap_or(enabled, false); 3]",
+    ] {
+        assert!(
+            source.contains(needle),
+            "{context} should contain `{needle}`\n{source}"
+        );
+    }
+    for legacy in ["repeat3_array", "reverse3_array", "some_bool", "ok_bool"] {
+        assert!(
+            !source.contains(legacy),
+            "{context} should not contain legacy API `{legacy}`\n{source}"
+        );
+    }
+}
+
+pub fn expect_stdlib_starter_smoke_source(source: &str, context: &str) {
+    for needle in [
+        "use std.array.repeat_array as repeat_array",
+        "use std.result.ok_or as result_ok_or",
+        "use std.result.to_option as result_to_option",
+        "use std.test.expect_array_eq as expect_array_eq",
+        "use std.test.expect_array_reverse as expect_array_reverse",
+        "use std.test.expect_eq as expect_eq",
+        "use std.test.expect_option_none as expect_option_none",
+        "use std.test.expect_option_some as expect_option_some",
+        "use std.test.expect_result_err as expect_result_err",
+        "use std.test.expect_result_ok as expect_result_ok",
+        "let repeated: [Int; 3] = repeat_array(2)",
+        "let array_check = expect_array_eq(repeated, [2, 2, 2]) + expect_array_reverse(numbers, [3, 2, 1])",
+        "let result_value: Result[Int, Int] = result_ok_or(option_value, 9)",
+        "let failed: Result[Int, Int] = result_ok_or(missing, 4)",
+        "let option_check = expect_option_some(option_value, 6) + expect_option_none(missing)",
+        "let result_check = expect_result_ok(result_value, 6) + expect_result_err(failed, 4)",
+        "return expect_eq(total_check + length_check + contains_check + repeated_check + array_check + option_check + result_check, 0)",
+    ] {
+        assert!(
+            source.contains(needle),
+            "{context} should contain `{needle}`\n{source}"
+        );
+    }
+    assert!(
+        !source.contains("result_error_to_option"),
+        "{context} should not use conversion-only result assertions\n{source}"
+    );
+    for legacy in [
+        "repeat3_array",
+        "reverse3_array",
+        "some_int",
+        "ok_int",
+        "expect_status_ok",
+    ] {
+        assert!(
+            !source.contains(legacy),
+            "{context} should not contain legacy API `{legacy}`\n{source}"
+        );
+    }
+}
+
+pub fn expect_stdlib_starter_interface(source: &str, package_name: &str, context: &str) {
+    for needle in &[
+        "// qlang interface v1".to_owned(),
+        format!("// package: {package_name}"),
+        "// source: src/lib.ql".to_owned(),
+        "use std.array.repeat_array as repeat_array".to_owned(),
+        "use std.option.Option as Option".to_owned(),
+        "use std.result.Result as Result".to_owned(),
+        "use std.result.ok_or as result_ok_or".to_owned(),
+        "pub fn run() -> Int".to_owned(),
+    ] {
+        assert!(
+            source.contains(needle),
+            "{context} should contain `{needle}`\n{source}"
+        );
+    }
+    for legacy in ["repeat3_array", "reverse3_array", "some_int", "ok_int"] {
+        assert!(
+            !source.contains(legacy),
+            "{context} should not contain legacy API `{legacy}`\n{source}"
+        );
+    }
+}
+
+pub fn expect_emit_interface_check_ok(
+    case_name: &str,
+    workspace_root: &Path,
+    project_root: &Path,
+    package_name: Option<&str>,
+    interface_path: &Path,
+    description: &str,
+) {
+    let mut command = ql_command(workspace_root);
+    command
+        .args(["project", "emit-interface", "--check"])
+        .arg(project_root);
+    if let Some(package_name) = package_name {
+        command.args(["--package", package_name]);
+    }
+    let output = run_command_capture(&mut command, description);
+    let (stdout, stderr) = expect_success(
+        case_name,
+        "emit interface check initialized scaffold",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        case_name,
+        "emit interface check initialized scaffold",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        case_name,
+        &stdout.replace('\\', "/"),
+        &[&format!(
+            "ok interface: {}",
+            interface_path.display().to_string().replace('\\', "/")
+        )],
+    )
+    .unwrap();
 }
 
 fn normalize_cli_json_path(path: &str) -> String {
