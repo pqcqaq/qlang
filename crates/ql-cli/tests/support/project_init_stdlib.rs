@@ -504,6 +504,131 @@ pub fn assert_repo_stdlib_dependents_json(
     }
 }
 
+pub fn assert_repo_stdlib_lock_json(
+    context: &str,
+    lock_json: &JsonValue,
+    request_path: &Path,
+    stdlib_root: &Path,
+    check_only: bool,
+    status: &str,
+) {
+    assert_eq!(lock_json["schema"], "ql.project.lock.result.v1");
+    assert_eq!(lock_json["path"], json_path(request_path));
+    assert_eq!(
+        lock_json["project_manifest_path"],
+        json_path(&stdlib_root.join("qlang.toml"))
+    );
+    assert_eq!(
+        lock_json["lockfile_path"],
+        json_path(&stdlib_root.join("qlang.lock"))
+    );
+    assert_eq!(lock_json["check_only"], check_only);
+    assert_eq!(lock_json["status"], status);
+    assert_eq!(lock_json["failure"], JsonValue::Null);
+
+    let lockfile = &lock_json["lockfile"];
+    assert_eq!(lockfile["schema"], "ql.project.lock.v1");
+    assert_eq!(lockfile["root"]["kind"], "workspace");
+    assert_eq!(lockfile["root"]["manifest_path"], "qlang.toml");
+    assert_eq!(
+        lockfile["workspace_members"],
+        serde_json::json!([
+            "packages/core/qlang.toml",
+            "packages/option/qlang.toml",
+            "packages/result/qlang.toml",
+            "packages/array/qlang.toml",
+            "packages/test/qlang.toml",
+            "examples/starter/qlang.toml",
+        ])
+    );
+
+    let packages = lockfile["packages"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{context} should expose locked packages: {lock_json}"));
+    assert_eq!(
+        packages.len(),
+        6,
+        "{context} should lock every repo stdlib package"
+    );
+
+    for (package_name, manifest_path, dependencies, targets) in [
+        (
+            "std.core",
+            "packages/core/qlang.toml",
+            Vec::<&str>::new(),
+            vec![("lib", "packages/core/src/lib.ql")],
+        ),
+        (
+            "std.option",
+            "packages/option/qlang.toml",
+            Vec::new(),
+            vec![("lib", "packages/option/src/lib.ql")],
+        ),
+        (
+            "std.result",
+            "packages/result/qlang.toml",
+            vec!["packages/option/qlang.toml"],
+            vec![("lib", "packages/result/src/lib.ql")],
+        ),
+        (
+            "std.array",
+            "packages/array/qlang.toml",
+            vec!["packages/core/qlang.toml"],
+            vec![("lib", "packages/array/src/lib.ql")],
+        ),
+        (
+            "std.test",
+            "packages/test/qlang.toml",
+            vec![
+                "packages/array/qlang.toml",
+                "packages/core/qlang.toml",
+                "packages/option/qlang.toml",
+                "packages/result/qlang.toml",
+            ],
+            vec![("lib", "packages/test/src/lib.ql")],
+        ),
+        (
+            "stdlib.starter",
+            "examples/starter/qlang.toml",
+            vec![
+                "packages/array/qlang.toml",
+                "packages/core/qlang.toml",
+                "packages/option/qlang.toml",
+                "packages/result/qlang.toml",
+                "packages/test/qlang.toml",
+            ],
+            vec![
+                ("lib", "examples/starter/src/lib.ql"),
+                ("bin", "examples/starter/src/main.ql"),
+            ],
+        ),
+    ] {
+        let package = packages
+            .iter()
+            .find(|actual| actual["package_name"] == package_name)
+            .unwrap_or_else(|| panic!("{context} should lock package `{package_name}`"));
+        assert_eq!(package["manifest_path"], manifest_path);
+        assert_eq!(package["selected"], true);
+        assert_eq!(package["default_profile"], JsonValue::Null);
+        assert_eq!(package["dependencies"], serde_json::json!(dependencies));
+        assert_eq!(
+            package["targets"],
+            JsonValue::Array(
+                targets
+                    .iter()
+                    .map(|(kind, path)| {
+                        serde_json::json!({
+                            "kind": *kind,
+                            "path": *path,
+                        })
+                    })
+                    .collect()
+            ),
+            "{context} should lock expected targets for `{package_name}`"
+        );
+    }
+}
+
 pub fn write_repo_stdlib_fixture(temp: &TempDir, repo_root: &Path) -> PathBuf {
     let source_root = repo_root.join("stdlib");
     for relative in [
