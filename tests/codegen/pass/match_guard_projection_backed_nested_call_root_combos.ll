@@ -212,16 +212,8 @@ bb2_match_guard0:
   %t44 = call i64 @ql_5_offset(i64 %t43)
   %t45 = getelementptr inbounds [3 x i64], ptr %t40, i64 0, i64 %t44
   %t46 = load i64, ptr %t45
-  %t47 = add i64 %t35, 5
-  %t48 = insertvalue [3 x i64] undef, i64 %t46, 0
-  %t49 = insertvalue [3 x i64] %t48, i64 %t47, 1
-  %t50 = insertvalue [3 x i64] %t49, i64 9, 2
-  %t51 = alloca [3 x i64]
-  store [3 x i64] %t50, ptr %t51
-  %t52 = getelementptr inbounds [3 x i64], ptr %t51, i64 0, i64 0
-  %t53 = load i64, ptr %t52
-  %t54 = icmp eq i64 %t53, 4
-  br i1 %t54, label %bb6, label %bb7
+  %t47 = icmp eq i64 %t46, 4
+  br i1 %t47, label %bb6, label %bb7
 bb3:
   store i64 10, ptr %l4__t2
   br label %bb2
@@ -229,59 +221,52 @@ bb4:
   store i64 0, ptr %l4__t2
   br label %bb2
 bb5:
-  %t55 = load i64, ptr %l7__t4
-  store i64 %t55, ptr %l10_second
+  %t48 = load i64, ptr %l7__t4
+  store i64 %t48, ptr %l10_second
   store i64 3, ptr %l12__t7
-  %t56 = load i64, ptr %l12__t7
+  %t49 = load i64, ptr %l12__t7
   br label %bb5_match_guard0
 bb5_match_guard0:
-  store i64 %t56, ptr %l13_current
-  %t57 = getelementptr inbounds { { i64 } }, ptr %l3_config, i32 0, i32 0
-  %t58 = getelementptr inbounds { i64 }, ptr %t57, i32 0, i32 0
-  %t59 = load i64, ptr %t58
-  %t60 = call [3 x i64] @ql_4_bundle(i64 %t59)
-  %t61 = alloca [3 x i64]
-  store [3 x i64] %t60, ptr %t61
-  %t62 = getelementptr inbounds { { i64 } }, ptr %l3_config, i32 0, i32 0
-  %t63 = getelementptr inbounds { i64 }, ptr %t62, i32 0, i32 0
-  %t64 = load i64, ptr %t63
-  %t65 = call i64 @ql_5_offset(i64 %t64)
-  %t66 = getelementptr inbounds [3 x i64], ptr %t61, i64 0, i64 %t65
-  %t67 = load i64, ptr %t66
-  %t68 = insertvalue [3 x i64] undef, i64 %t67, 0
-  %t69 = insertvalue [3 x i64] %t68, i64 %t56, 1
-  %t70 = insertvalue [3 x i64] %t69, i64 9, 2
-  %t71 = alloca [3 x i64]
-  store [3 x i64] %t70, ptr %t71
-  %t72 = getelementptr inbounds [3 x i64], ptr %t71, i64 0, i64 0
-  %t73 = load i64, ptr %t72
-  %t74 = call i1 @ql_7_matches(i64 %t73, i64 4)
-  br i1 %t74, label %bb9, label %bb10
+  store i64 %t49, ptr %l13_current
+  %t50 = getelementptr inbounds { { i64 } }, ptr %l3_config, i32 0, i32 0
+  %t51 = getelementptr inbounds { i64 }, ptr %t50, i32 0, i32 0
+  %t52 = load i64, ptr %t51
+  %t53 = call [3 x i64] @ql_4_bundle(i64 %t52)
+  %t54 = alloca [3 x i64]
+  store [3 x i64] %t53, ptr %t54
+  %t55 = getelementptr inbounds { { i64 } }, ptr %l3_config, i32 0, i32 0
+  %t56 = getelementptr inbounds { i64 }, ptr %t55, i32 0, i32 0
+  %t57 = load i64, ptr %t56
+  %t58 = call i64 @ql_5_offset(i64 %t57)
+  %t59 = getelementptr inbounds [3 x i64], ptr %t54, i64 0, i64 %t58
+  %t60 = load i64, ptr %t59
+  %t61 = call i1 @ql_7_matches(i64 %t60, i64 4)
+  br i1 %t61, label %bb9, label %bb10
 bb6:
-  %t75 = load i64, ptr %l8__t5
-  store i64 %t75, ptr %l9_current
+  %t62 = load i64, ptr %l8__t5
+  store i64 %t62, ptr %l9_current
   store i64 12, ptr %l7__t4
   br label %bb5
 bb7:
   store i64 0, ptr %l7__t4
   br label %bb5
 bb8:
-  %t76 = load i64, ptr %l11__t6
-  store i64 %t76, ptr %l14_third
-  %t77 = load i64, ptr %l6_first
-  %t78 = load i64, ptr %l10_second
-  %t79 = add i64 %t77, %t78
-  store i64 %t79, ptr %l15__t8
-  %t80 = load i64, ptr %l15__t8
-  %t81 = load i64, ptr %l14_third
-  %t82 = add i64 %t80, %t81
-  store i64 %t82, ptr %l16__t9
-  %t83 = load i64, ptr %l16__t9
-  store i64 %t83, ptr %l0__return
+  %t63 = load i64, ptr %l11__t6
+  store i64 %t63, ptr %l14_third
+  %t64 = load i64, ptr %l6_first
+  %t65 = load i64, ptr %l10_second
+  %t66 = add i64 %t64, %t65
+  store i64 %t66, ptr %l15__t8
+  %t67 = load i64, ptr %l15__t8
+  %t68 = load i64, ptr %l14_third
+  %t69 = add i64 %t67, %t68
+  store i64 %t69, ptr %l16__t9
+  %t70 = load i64, ptr %l16__t9
+  store i64 %t70, ptr %l0__return
   br label %bb1
 bb9:
-  %t84 = load i64, ptr %l12__t7
-  store i64 %t84, ptr %l13_current
+  %t71 = load i64, ptr %l12__t7
+  store i64 %t71, ptr %l13_current
   store i64 20, ptr %l11__t6
   br label %bb8
 bb10:
