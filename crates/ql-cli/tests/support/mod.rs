@@ -3,6 +3,7 @@
 pub mod codegen;
 pub mod project_init_stdlib;
 pub mod project_run_dependencies;
+pub mod project_test_package_selector;
 pub mod project_test_profiles;
 
 use std::env;
